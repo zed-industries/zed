@@ -15,7 +15,7 @@ use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::context::{ContextId, ContextKind};
-use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
@@ -52,7 +52,6 @@ impl ContextStrip {
                 workspace.clone(),
                 thread_store.clone(),
                 context_store.downgrade(),
-                ConfirmBehavior::KeepOpen,
                 window,
                 cx,
             )

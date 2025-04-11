@@ -9,8 +9,8 @@ use editor::{
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, Entity, Focusable, Subscription, TextStyle, WeakEntity,
+    linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
 use language_model::{ConfiguredModel, LanguageModelRegistry};
@@ -20,12 +20,12 @@ use project::Project;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{Disclosure, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
-use crate::context_picker::{ConfirmBehavior, ContextPicker, ContextPickerCompletionProvider};
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::{ContextStore, refresh_context_store_text};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
@@ -45,8 +45,6 @@ pub struct MessageEditor {
     context_store: Entity<ContextStore>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    inline_context_picker: Entity<ContextPicker>,
-    inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
@@ -65,7 +63,6 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) -> Self {
         let context_picker_menu_handle = PopoverMenuHandle::default();
-        let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let language = Language::new(
@@ -106,17 +103,6 @@ impl MessageEditor {
             ))));
         });
 
-        let inline_context_picker = cx.new(|cx| {
-            ContextPicker::new(
-                workspace.clone(),
-                Some(thread_store.clone()),
-                context_store.downgrade(),
-                ConfirmBehavior::Close,
-                window,
-                cx,
-            )
-        });
-
         let context_strip = cx.new(|cx| {
             ContextStrip::new(
                 context_store.clone(),
@@ -129,14 +115,8 @@ impl MessageEditor {
             )
         });
 
-        let subscriptions = vec![
-            cx.subscribe_in(
-                &inline_context_picker,
-                window,
-                Self::handle_inline_context_picker_event,
-            ),
-            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
-        ];
+        let subscriptions =
+            vec![cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event)];
 
         Self {
             editor: editor.clone(),
@@ -146,8 +126,6 @@ impl MessageEditor {
             context_store,
             context_strip,
             context_picker_menu_handle,
-            inline_context_picker,
-            inline_context_picker_menu_handle,
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs.clone(),
@@ -280,17 +258,6 @@ impl MessageEditor {
         .detach();
     }
 
-    fn handle_inline_context_picker_event(
-        &mut self,
-        _inline_context_picker: &Entity<ContextPicker>,
-        _event: &DismissEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let editor_focus_handle = self.editor.focus_handle(cx);
-        window.focus(&editor_focus_handle);
-    }
-
     fn handle_context_strip_event(
         &mut self,
         _context_strip: &Entity<ContextStrip>,
@@ -310,9 +277,7 @@ impl MessageEditor {
     }
 
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
-        if self.context_picker_menu_handle.is_deployed()
-            || self.inline_context_picker_menu_handle.is_deployed()
-        {
+        if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
         } else {
             self.context_strip.focus_handle(cx).focus(window);
@@ -349,7 +314,6 @@ impl Render for MessageEditor {
         let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
 
         let focus_handle = self.editor.focus_handle(cx);
-        let inline_context_picker = self.inline_context_picker.clone();
 
         let thread = self.thread.read(cx);
         let is_generating = thread.is_generating();
@@ -690,23 +654,6 @@ impl Render for MessageEditor {
                                         },
                                     ).into_any()
                             })
-                            .child(
-                                PopoverMenu::new("inline-context-picker")
-                                    .menu(move |window, cx| {
-                                        inline_context_picker.update(cx, |this, cx| {
-                                            this.init(window, cx);
-                                        });
-                                        Some(inline_context_picker.clone())
-                                    })
-                                    .attach(gpui::Corner::TopLeft)
-                                    .anchor(gpui::Corner::BottomLeft)
-                                    .offset(gpui::Point {
-                                        x: px(0.0),
-                                        y: (-ThemeSettings::get_global(cx).ui_font_size(cx) * 2)
-                                            - px(4.0),
-                                    })
-                                    .with_handle(self.inline_context_picker_menu_handle.clone()),
-                            )
                             .child(
                                 h_flex()
                                     .justify_between()
