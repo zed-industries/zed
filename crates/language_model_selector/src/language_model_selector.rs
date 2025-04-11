@@ -331,7 +331,7 @@ impl GroupedModels {
                 continue;
             }
             entries.push(LanguageModelPickerEntry::Separator(
-                models[0].model.provider_name().0.into(),
+                models[0].model.provider_name().0,
             ));
             entries.extend(
                 models
