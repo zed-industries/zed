@@ -378,8 +378,7 @@ impl Project {
                 let terminal_handle = terminal_handle.clone();
                 move |cx| {
                     terminal_handle.update(cx, |terminal, cx| {
-                        // terminal.set_keyboard_layout(cx.keyboard_layout());
-                        terminal.update_esc_str_mapper(cx.keyboard_mapper());
+                        terminal.update_esc_str_mapper(cx.keyboard_mapper().as_ref());
                     });
                 }
             })

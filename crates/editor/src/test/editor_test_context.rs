@@ -8,7 +8,7 @@ use futures::Future;
 
 use gpui::{
     AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
-    VisualTestContext, Window, WindowHandle, prelude::*,
+    UsLayoutMapper, VisualTestContext, Window, WindowHandle, prelude::*,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
@@ -239,7 +239,7 @@ impl EditorTestContext {
     // unlike cx.simulate_keystrokes(), this does not run_until_parked
     // so you can use it to test detailed timing
     pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
-        let keystroke = Keystroke::parse(keystroke_text).unwrap();
+        let keystroke = Keystroke::parse(keystroke_text, true, &UsLayoutMapper).unwrap();
         self.cx.dispatch_keystroke(self.window, keystroke);
     }
 

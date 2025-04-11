@@ -324,7 +324,7 @@ impl TerminalView {
                 term.try_keystroke(
                     &keystroke,
                     TerminalSettings::get_global(cx).option_as_meta,
-                    cx.keyboard_mapper(),
+                    cx.keyboard_mapper().as_ref(),
                 )
             });
         } else {
@@ -590,14 +590,14 @@ impl TerminalView {
     }
 
     fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
-        let mapper = cx.keyboard_mapper();
-        if let Some(keystroke) = Keystroke::parse(&text.0, false, mapper).log_err() {
+        let mapper = cx.keyboard_mapper().clone();
+        if let Some(keystroke) = Keystroke::parse(&text.0, false, mapper.as_ref()).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &keystroke,
                     TerminalSettings::get_global(cx).option_as_meta,
-                    mapper,
+                    mapper.as_ref(),
                 );
             });
         }
@@ -1236,7 +1236,7 @@ impl TerminalView {
             let handled = term.try_keystroke(
                 &event.keystroke,
                 TerminalSettings::get_global(cx).option_as_meta,
-                cx.keyboard_mapper(),
+                cx.keyboard_mapper().as_ref(),
             );
             if handled {
                 cx.stop_propagation();

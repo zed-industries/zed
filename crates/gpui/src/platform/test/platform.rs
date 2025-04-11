@@ -459,4 +459,8 @@ impl KeyboardMapper for TestKeyboardMapper {
     fn keycode_to_face(&self, _code: KeyCode) -> Option<String> {
         None
     }
+
+    fn keycode_output_with_shift(&self, _code: KeyCode, _shift: bool) -> Option<String> {
+        None
+    }
 }

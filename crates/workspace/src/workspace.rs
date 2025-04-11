@@ -1985,7 +1985,7 @@ impl Workspace {
             cx.propagate();
             return;
         }
-        let mapper = cx.keyboard_mapper();
+        let mapper = cx.keyboard_mapper().as_ref();
         let mut keystrokes: Vec<Keystroke> = action
             .0
             .split(' ')

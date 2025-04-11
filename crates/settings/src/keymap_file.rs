@@ -195,7 +195,7 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        let keyboard_mapper = cx.keyboard_mapper();
+        let keyboard_mapper = cx.keyboard_mapper().as_ref();
 
         if content.is_empty() {
             return KeymapFileLoadResult::Success {

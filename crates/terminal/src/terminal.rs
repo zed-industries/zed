@@ -509,7 +509,7 @@ impl TerminalBuilder {
             debug_terminal,
             is_ssh_terminal,
             python_venv_directory,
-            manual_esc_str_mapper: generate_esc_str_mapper(cx.keyboard_mapper()),
+            manual_esc_str_mapper: generate_esc_str_mapper(cx.keyboard_mapper().as_ref()),
         };
 
         Ok(TerminalBuilder {

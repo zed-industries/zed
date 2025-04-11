@@ -1611,8 +1611,8 @@ impl App {
     }
 
     /// TODO:
-    pub fn keyboard_mapper(&self) -> &dyn KeyboardMapper {
-        self.keyboard_mapper.as_ref()
+    pub fn keyboard_mapper(&self) -> &Rc<dyn KeyboardMapper> {
+        &self.keyboard_mapper
     }
 }
 
