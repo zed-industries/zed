@@ -516,7 +516,6 @@ pub(crate) fn insert_fold_for_mention(
     crease_label: SharedString,
     crease_icon_path: SharedString,
     editor_entity: Entity<Editor>,
-    window: &mut Window,
     cx: &mut App,
 ) {
     editor_entity.update(cx, |editor, cx| {

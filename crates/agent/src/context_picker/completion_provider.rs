@@ -610,13 +610,13 @@ fn confirm_completion_callback(
     editor: Entity<Editor>,
     add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
-    Arc::new(move |_, window, cx| {
+    Arc::new(move |_, _, cx| {
         add_context_fn(cx);
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
         let editor = editor.clone();
-        window.defer(cx, move |window, cx| {
+        cx.defer(move |cx| {
             crate::context_picker::insert_fold_for_mention(
                 excerpt_id,
                 start,
@@ -624,7 +624,6 @@ fn confirm_completion_callback(
                 crease_text,
                 crease_icon_path,
                 editor,
-                window,
                 cx,
             );
         });
