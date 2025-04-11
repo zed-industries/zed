@@ -5,8 +5,10 @@ use client::{Client, UserStore};
 pub(crate) use example::*;
 
 use ::fs::RealFs;
-use anyhow::anyhow;
-use gpui::{App, AppContext, Application, Entity, SemanticVersion, Task};
+use anyhow::{Result, anyhow};
+use clap::Parser;
+use futures::future;
+use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task};
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
@@ -16,10 +18,44 @@ use project::Project;
 use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+const EXAMPLES_DIR: &str = "./crates/eval/examples";
+
+#[derive(Parser, Debug)]
+#[command(name = "eval", disable_version_flag = true)]
+struct Args {
+    /// Runs all examples that contain these substrings. If unspecified, all examples are run.
+    #[arg(value_name = "EXAMPLE_SUBSTRING")]
+    examples: Vec<String>,
+    /// Model to use (default: "claude-3-7-sonnet-latest")
+    #[arg(long, default_value = "claude-3-7-sonnet-latest")]
+    model: String,
+}
 
 fn main() {
     env_logger::init();
+
+    let args = Args::parse();
+    let all_available_examples = list_all_examples().unwrap();
+    let example_paths = all_available_examples
+        .iter()
+        .filter_map(|example_path| {
+            let name = example_path.file_name()?.to_string_lossy();
+            if args.examples.is_empty()
+                || args
+                    .examples
+                    .iter()
+                    .any(|name_substring| name.contains(name_substring))
+            {
+                Some(example_path.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
     let http_client = Arc::new(ReqwestClient::new());
     let app = Application::headless().with_http_client(http_client.clone());
 
@@ -39,17 +75,89 @@ fn main() {
         cx.spawn(async move |cx| {
             authenticate.await.unwrap();
 
-            let example =
-                Example::load_from_directory("./crates/eval/examples/find_and_replace_diff_card")?;
-            // example.setup().await?;
-            // cx.update(|cx| example.run(model, app_state, cx))?.await?;
-            let diff = example.repository_diff().await?;
-            example.judge(model, diff, cx).await?;
+            let tasks = example_paths
+                .into_iter()
+                .map(|example_path| {
+                    let app_state = app_state.clone();
+                    let model = model.clone();
+                    cx.spawn(async move |cx| {
+                        (
+                            example_path.to_path_buf(),
+                            run_example(&example_path, model, app_state, cx).await,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let results: Vec<(PathBuf, Result<JudgeOutput>)> = future::join_all(tasks).await;
+
+            println!("\n\n");
+            println!("========================================");
+            println!("              EVAL RESULTS              ");
+            println!("========================================");
+            println!("");
+
+            let mut judge_scores = Vec::new();
+
+            for (example_path, result) in results {
+                let example_name = example_path.file_name().unwrap().to_string_lossy();
+                match result {
+                    Err(err) => {
+                        println!("{}: 💥 {:?}", example_name, err);
+                    }
+                    Ok(judge_output) => {
+                        const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
+
+                        println!(
+                            "{}: {} {}",
+                            example_name,
+                            judge_output.score,
+                            SCORES[judge_output.score.min(5) as usize]
+                        );
+                        judge_scores.push(judge_output.score);
+                    }
+                }
+            }
+
+            let score_count = judge_scores.len();
+            let average_score = judge_scores
+                .into_iter()
+                .map(|score| score as f32)
+                .sum::<f32>()
+                / (score_count as f32);
+            println!("\nAverage score: {average_score}");
 
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     });
+}
+
+async fn run_example(
+    example_path: &Path,
+    model: Arc<dyn LanguageModel>,
+    app_state: Arc<AgentAppState>,
+    cx: &mut AsyncApp,
+) -> Result<JudgeOutput> {
+    let example = Example::load_from_directory(example_path)?;
+    example.setup().await?;
+    cx.update(|cx| example.run(model.clone(), app_state, cx))?
+        .await?;
+    let diff = example.repository_diff().await?;
+    example.judge(model, diff, cx).await
+}
+
+fn list_all_examples() -> Result<Vec<PathBuf>> {
+    let entries = std::fs::read_dir(EXAMPLES_DIR)?;
+    let mut result_paths = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            result_paths.push(path);
+        }
+    }
+    Ok(result_paths)
 }
 
 /// Subset of `workspace::AppState` needed by `HeadlessAssistant`, with additional fields.

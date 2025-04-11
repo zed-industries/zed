@@ -66,12 +66,15 @@ impl Example {
         let criteria_path = dir_path.as_ref().join("criteria.md");
 
         let mut base: ExampleBase = toml::from_str(&fs::read_to_string(&base_path)?)?;
-        base.path = base.path.canonicalize()?;
+        base.path = base
+            .path
+            .canonicalize()
+            .with_context(|| format!("Failed to canonicalize path: {:?}", base.path))?;
 
         Ok(Example {
             base,
-            prompt: fs::read_to_string(prompt_path)?,
-            criteria: fs::read_to_string(criteria_path)?,
+            prompt: fs::read_to_string(prompt_path.clone())?,
+            criteria: fs::read_to_string(criteria_path.clone())?,
         })
     }
 

@@ -4862,6 +4862,7 @@ dependencies = [
  "assistant_settings",
  "assistant_tool",
  "assistant_tools",
+ "clap",
  "client",
  "context_server",
  "dap",
