@@ -8,22 +8,24 @@ use std::{
     usize,
 };
 
-use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP, Scope, ScopeAlloc, env_config};
+use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config};
 
-use log as log_impl;
+use log;
 
 static ENV_FILTER: OnceLock<env_config::EnvFilter> = OnceLock::new();
 static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
 static SCOPE_MAP_HASH: AtomicU64 = AtomicU64::new(0);
 
+const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
 /// The maximum log level of verbosity that is enabled by default.
-/// All messages more verbose than this level will be discarded by default.
+/// All messages more verbose than this level will be discarded
+/// by default unless specially configured.
 ///
 /// This is used instead of the `log::max_level` as we need to tell the `log`
 /// crate that the max level is everything, so that we can dynamically enable
 /// logs that are more verbose than this level without the `log` crate throwing
 /// them away before we see them
-const LEVEL_ENABLED_MAX_STATIC: log_impl::Level = log_impl::Level::Info;
+static mut LEVEL_ENABLED_MAX_STATIC: log::LevelFilter = LEVEL_ENABLED_MAX_DEFAULT;
 
 /// A cache of the true maximum log level that _could_ be printed. This is based
 /// on the maximally verbose level that is configured by the user, and is used
@@ -34,20 +36,23 @@ const LEVEL_ENABLED_MAX_STATIC: log_impl::Level = log_impl::Level::Info;
 /// `trace` logs will be discarded.
 /// Therefore, it should always be `>= LEVEL_ENABLED_MAX_STATIC`
 // PERF: this doesn't need to be an atomic, we don't actually care about race conditions here
-static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_STATIC as u8);
+static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFAULT as u8);
 
 pub fn init_env_filter(filter: env_config::EnvFilter) {
+    if let Some(level_max) = filter.level_global {
+        unsafe { LEVEL_ENABLED_MAX_STATIC = level_max }
+    }
     if ENV_FILTER.set(filter).is_err() {
         panic!("Environment filter cannot be initialized twice");
     }
 }
 
-pub fn is_possibly_enabled_level(level: log_impl::Level) -> bool {
+pub fn is_possibly_enabled_level(level: log::Level) -> bool {
     return LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed) <= level as u8;
 }
 
-pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> bool {
-    if level <= LEVEL_ENABLED_MAX_STATIC {
+pub fn is_scope_enabled(scope: &Scope, level: log::Level) -> bool {
+    if level <= unsafe { LEVEL_ENABLED_MAX_STATIC } {
         // [FAST PATH]
         // if the message is at or below the minimum printed log level
         // (where error < warn < info etc) then always enable
@@ -106,6 +111,13 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     }
     let env_config = ENV_FILTER.get();
     let map_new = ScopeMap::new_from_settings_and_env(settings, env_config);
+    let mut level_enabled_max = unsafe { LEVEL_ENABLED_MAX_STATIC };
+    for entry in &map_new.entries {
+        if let Some(level) = entry.enabled {
+            level_enabled_max = level_enabled_max.max(level.to_level_filter());
+        }
+    }
+    LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max as u8, Ordering::Release);
 
     if let Ok(_) =
         SCOPE_MAP_HASH.compare_exchange(hash_old, hash_new, Ordering::Release, Ordering::Relaxed)
@@ -118,19 +130,19 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     }
 }
 
-fn level_from_level_str(level_str: &String) -> Option<log_impl::Level> {
+fn level_from_level_str(level_str: &String) -> Option<log::Level> {
     let level = match level_str.to_ascii_lowercase().as_str() {
-        "" => log_impl::Level::Trace,
-        "trace" => log_impl::Level::Trace,
-        "debug" => log_impl::Level::Debug,
-        "info" => log_impl::Level::Info,
-        "warn" => log_impl::Level::Warn,
-        "error" => log_impl::Level::Error,
+        "" => log::Level::Trace,
+        "trace" => log::Level::Trace,
+        "debug" => log::Level::Debug,
+        "info" => log::Level::Info,
+        "warn" => log::Level::Warn,
+        "error" => log::Level::Error,
         "off" | "disable" | "no" | "none" | "disabled" => {
             crate::warn!(
                 "Invalid log level \"{level_str}\", set to error to disable non-error logging. Defaulting to error"
             );
-            log_impl::Level::Error
+            log::Level::Error
         }
         _ => {
             crate::warn!("Invalid log level \"{level_str}\", ignoring");
@@ -143,7 +155,7 @@ fn level_from_level_str(level_str: &String) -> Option<log_impl::Level> {
 fn scope_alloc_from_scope_str(scope_str: &String) -> Option<ScopeAlloc> {
     let mut scope_buf = [""; SCOPE_DEPTH_MAX];
     let mut index = 0;
-    let mut scope_iter = scope_str.split(SCOPE_STRING_SEP);
+    let mut scope_iter = scope_str.split(SCOPE_STRING_SEP_STR);
     while index < SCOPE_DEPTH_MAX {
         let Some(scope) = scope_iter.next() else {
             break;
@@ -174,7 +186,7 @@ pub struct ScopeMap {
 
 pub struct ScopeMapEntry {
     scope: String,
-    enabled: Option<log_impl::Level>,
+    enabled: Option<log::Level>,
     descendants: std::ops::Range<usize>,
 }
 
@@ -309,11 +321,7 @@ impl ScopeMap {
         self.entries.is_empty()
     }
 
-    pub fn is_enabled<S>(
-        &self,
-        scope: &[S; SCOPE_DEPTH_MAX],
-        level: log_impl::Level,
-    ) -> EnabledStatus
+    pub fn is_enabled<S>(&self, scope: &[S; SCOPE_DEPTH_MAX], level: log::Level) -> EnabledStatus
     where
         S: AsRef<str>,
     {
@@ -398,7 +406,7 @@ mod tests {
     fn scope_from_scope_str(scope_str: &'static str) -> Scope {
         let mut scope_buf = [""; SCOPE_DEPTH_MAX];
         let mut index = 0;
-        let mut scope_iter = scope_str.split(SCOPE_STRING_SEP);
+        let mut scope_iter = scope_str.split(SCOPE_STRING_SEP_STR);
         while index < SCOPE_DEPTH_MAX {
             let Some(scope) = scope_iter.next() else {
                 break;
@@ -423,7 +431,7 @@ mod tests {
             ("m.n.o.p", "warn"),
             ("q.r.s.t", "error"),
         ]);
-        use log_impl::Level;
+        use log::Level;
         assert_eq!(
             map.is_enabled(&scope_from_scope_str("a.b.c.d"), Level::Trace),
             EnabledStatus::Enabled
@@ -497,15 +505,15 @@ mod tests {
         assert_eq!(map.root_count, 2);
         assert_eq!(map.entries.len(), 3);
         assert_eq!(
-            map.is_enabled(&scope_new(&["a"]), log_impl::Level::Debug),
+            map.is_enabled(&scope_new(&["a"]), log::Level::Debug),
             EnabledStatus::NotConfigured
         );
         assert_eq!(
-            map.is_enabled(&scope_new(&["a", "b"]), log_impl::Level::Debug),
+            map.is_enabled(&scope_new(&["a", "b"]), log::Level::Debug),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_new(&["a", "b", "c"]), log_impl::Level::Trace),
+            map.is_enabled(&scope_new(&["a", "b", "c"]), log::Level::Trace),
             EnabledStatus::Disabled
         );
 
@@ -529,20 +537,20 @@ mod tests {
         assert_eq!(map.entries[4].scope, "q");
         assert_eq!(map.entries[5].scope, "u");
         assert_eq!(
-            map.is_enabled(&scope_new(&["a", "b", "c", "d"]), log_impl::Level::Trace),
+            map.is_enabled(&scope_new(&["a", "b", "c", "d"]), log::Level::Trace),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_new(&["a", "b", "c"]), log_impl::Level::Trace),
+            map.is_enabled(&scope_new(&["a", "b", "c"]), log::Level::Trace),
             EnabledStatus::Disabled
         );
         assert_eq!(
-            map.is_enabled(&scope_new(&["u", "v"]), log_impl::Level::Warn),
+            map.is_enabled(&scope_new(&["u", "v"]), log::Level::Warn),
             EnabledStatus::Disabled
         );
         // settings override env
         assert_eq!(
-            map.is_enabled(&scope_new(&["e", "f", "g", "h"]), log_impl::Level::Trace),
+            map.is_enabled(&scope_new(&["e", "f", "g", "h"]), log::Level::Trace),
             EnabledStatus::Disabled,
         );
     }

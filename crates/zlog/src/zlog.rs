@@ -5,7 +5,7 @@ mod env_config;
 pub mod scope_map;
 pub mod sink;
 
-pub use sink::{init_file_output, init_stdout_output};
+pub use sink::{init_output_file, init_output_stdout};
 
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
@@ -51,8 +51,7 @@ impl log::Log for Zlog {
                 private::scope_new(&[crate_name])
             }
             // TODO: when do we hit this
-            // FIXME: do unknown or something
-            None => private::scope_new(&[]),
+            None => private::scope_new(&["*unknown*"]),
         };
         let level = record.metadata().level();
         if !scope_map::is_scope_enabled(&scope, level) {
@@ -238,26 +237,12 @@ pub mod private {
 
 pub type Scope = [&'static str; SCOPE_DEPTH_MAX];
 pub type ScopeAlloc = [String; SCOPE_DEPTH_MAX];
-const SCOPE_STRING_SEP: &'static str = ".";
+const SCOPE_STRING_SEP_STR: &'static str = ".";
 const SCOPE_STRING_SEP_CHAR: char = '.';
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Logger {
     pub scope: Scope,
-}
-
-impl Logger {
-    pub fn fmt_scope(&self) -> String {
-        let mut last = 0;
-        for s in self.scope {
-            if s.is_empty() {
-                break;
-            }
-            last += 1;
-        }
-
-        return self.scope[0..last].join(SCOPE_STRING_SEP);
-    }
 }
 
 pub struct Timer {

@@ -19,3 +19,6 @@ chrono.workspace = true
 log.workspace = true
 workspace-hack.workspace = true
 anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

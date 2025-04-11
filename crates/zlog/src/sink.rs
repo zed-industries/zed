@@ -23,13 +23,13 @@ static SINK_FILE_SIZE_BYTES: AtomicU64 = AtomicU64::new(0);
 /// Maximum size of the log file before it will be rotated, in bytes.
 const SINK_FILE_SIZE_BYTES_MAX: u64 = 1024 * 1024; // 1 MB
 
-pub fn init_stdout_output() {
+pub fn init_output_stdout() {
     unsafe {
         ENABLED_SINKS_STDOUT = true;
     }
 }
 
-pub fn init_file_output(
+pub fn init_output_file(
     path: &'static PathBuf,
     path_rotate: Option<&'static PathBuf>,
 ) -> io::Result<()> {
@@ -37,10 +37,6 @@ pub fn init_file_output(
         .create(true)
         .append(true)
         .open(path)?;
-
-    let mut enabled_sinks_file = ENABLED_SINKS_FILE
-        .try_lock()
-        .expect("Log file lock is available during init");
 
     SINK_FILE_PATH
         .set(path)
@@ -51,14 +47,19 @@ pub fn init_file_output(
             .expect("Init file output should only be called once");
     }
 
+    let mut enabled_sinks_file = ENABLED_SINKS_FILE
+        .try_lock()
+        .expect("Log file lock is available during init");
+
     let size_bytes = file.metadata().map_or(0, |metadata| metadata.len());
     if size_bytes >= SINK_FILE_SIZE_BYTES_MAX {
-        rotate_log_file(&mut file);
+        rotate_log_file(&mut file, Some(path), path_rotate, &SINK_FILE_SIZE_BYTES);
     } else {
         SINK_FILE_SIZE_BYTES.store(size_bytes, Ordering::Relaxed);
     }
 
     *enabled_sinks_file = Some(file);
+
     Ok(())
 }
 
@@ -116,7 +117,12 @@ pub fn submit(record: Record) {
             SINK_FILE_SIZE_BYTES.fetch_add(writer.written, Ordering::Relaxed) + writer.written
         };
         if file_size_bytes > SINK_FILE_SIZE_BYTES_MAX {
-            rotate_log_file(file);
+            rotate_log_file(
+                file,
+                SINK_FILE_PATH.get(),
+                SINK_FILE_PATH_ROTATE.get(),
+                &SINK_FILE_SIZE_BYTES,
+            );
             #[cfg(debug_assertions)]
             println!(
                 "Log file rotated at {} bytes now = {}",
@@ -153,29 +159,28 @@ pub struct Record<'a> {
     pub message: &'a std::fmt::Arguments<'a>,
 }
 
-fn rotate_log_file(file: &mut fs::File) {
+fn rotate_log_file<PathRef>(
+    file: &mut fs::File,
+    path: Option<PathRef>,
+    path_rotate: Option<PathRef>,
+    atomic_size: &AtomicU64,
+) where
+    PathRef: AsRef<std::path::Path>,
+{
     if let Err(err) = file.flush() {
         eprintln!(
             "Failed to flush log file before rotating, some logs may be lost: {}",
             err
         );
     }
-    let mut rotate_error: Option<anyhow::Error> = Some(anyhow::anyhow!(
-        "Failed to copy log file for unknown reason"
-    ));
-    if let Some(path) = SINK_FILE_PATH.get() {
-        if let Some(path_rotate) = SINK_FILE_PATH_ROTATE.get() {
-            rotate_error = fs::copy(path, path_rotate)
-                .err()
-                .map(|err| anyhow::anyhow!(err));
-        } else {
-            rotate_error.replace(anyhow::anyhow!("No rotation log file path configured"));
-        }
-    } else {
-        // should never happen, but a panic here doesn't make sense
-        rotate_error.replace(anyhow::anyhow!("No log file path configured"));
-    }
-    if let Some(err) = rotate_error {
+    let rotation_error = match (path, path_rotate) {
+        (Some(_), None) => Some(anyhow::anyhow!("No rotation log file path configured")),
+        (None, _) => Some(anyhow::anyhow!("No log file path configured")),
+        (Some(path), Some(path_rotate)) => fs::copy(path, path_rotate)
+            .err()
+            .map(|err| anyhow::anyhow!(err)),
+    };
+    if let Some(err) = rotation_error {
         eprintln!(
             "Log file rotation failed. Truncating log file anyways: {}",
             err,
@@ -187,5 +192,39 @@ fn rotate_log_file(file: &mut fs::File) {
     // according to the documentation, it only fails if:
     // - the file is not writeable: should never happen,
     // - the size would cause an overflow (implementation specific): 0 should never cause an overflow
-    SINK_FILE_SIZE_BYTES.store(0, Ordering::Relaxed);
+    atomic_size.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rotate_log_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_file_path = temp_dir.path().join("log.txt");
+        let rotation_log_file_path = temp_dir.path().join("log_rotated.txt");
+
+        let mut file = fs::File::create(&log_file_path).unwrap();
+        let contents = String::from("Hello, world!");
+        file.write_all(contents.as_bytes()).unwrap();
+
+        let size = AtomicU64::new(contents.len() as u64);
+
+        rotate_log_file(
+            &mut file,
+            Some(&log_file_path),
+            Some(&rotation_log_file_path),
+            &size,
+        );
+
+        assert!(log_file_path.exists());
+        assert_eq!(log_file_path.metadata().unwrap().len(), 0);
+        assert!(rotation_log_file_path.exists());
+        assert_eq!(
+            std::fs::read_to_string(&rotation_log_file_path).unwrap(),
+            contents,
+        );
+        assert_eq!(size.load(Ordering::Relaxed), 0);
+    }
 }

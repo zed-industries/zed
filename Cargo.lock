@@ -18551,6 +18551,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "log",
+ "tempfile",
  "workspace-hack",
 ]
 
