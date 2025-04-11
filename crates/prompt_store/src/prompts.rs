@@ -16,17 +16,17 @@ use std::{
 use text::LineEnding;
 use util::{ResultExt, get_system_shell};
 
-#[derive(Serialize)]
-pub struct AssistantSystemPromptContext {
-    pub worktrees: Vec<WorktreeInfoForSystemPrompt>,
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectContext {
+    pub worktrees: Vec<WorktreeContext>,
     pub has_rules: bool,
     pub os: String,
     pub arch: String,
     pub shell: String,
 }
 
-impl AssistantSystemPromptContext {
-    pub fn new(worktrees: Vec<WorktreeInfoForSystemPrompt>) -> Self {
+impl ProjectContext {
+    pub fn new(worktrees: Vec<WorktreeContext>) -> Self {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
@@ -40,15 +40,15 @@ impl AssistantSystemPromptContext {
     }
 }
 
-#[derive(Serialize)]
-pub struct WorktreeInfoForSystemPrompt {
+#[derive(Debug, Clone, Serialize)]
+pub struct WorktreeContext {
     pub root_name: String,
     pub abs_path: Arc<Path>,
-    pub rules_file: Option<SystemPromptRulesFile>,
+    pub rules_file: Option<RulesFileContext>,
 }
 
-#[derive(Serialize)]
-pub struct SystemPromptRulesFile {
+#[derive(Debug, Clone, Serialize)]
+pub struct RulesFileContext {
     pub path_in_worktree: Arc<Path>,
     pub abs_path: Arc<Path>,
     pub text: String,
@@ -260,7 +260,7 @@ impl PromptBuilder {
 
     pub fn generate_assistant_system_prompt(
         &self,
-        context: &AssistantSystemPromptContext,
+        context: &ProjectContext,
     ) -> Result<String, RenderError> {
         self.handlebars
             .lock()
