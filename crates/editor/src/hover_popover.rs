@@ -30,6 +30,7 @@ pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
+pub const POPOVER_RIGHT_OFFSET: Pixels = px(8.0);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover

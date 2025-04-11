@@ -1,7 +1,25 @@
 //! # logger
 pub use log as log_impl;
 
+mod env_config;
+
 pub const SCOPE_DEPTH_MAX: usize = 4;
+
+pub fn init_from_env() {
+    let Ok(env_config) = std::env::var("ZED_LOG").or_else(|_| std::env::var("RUST_LOG")) else {
+        return;
+    };
+    match env_config::parse(&env_config) {
+        Ok(filter) => {
+            scope_map::init_env_filter(filter);
+            scope_map::refresh();
+            // TODO: set max level once removing `env_logger` and `simple_log` crates
+        }
+        Err(err) => {
+            eprintln!("Failed to parse log filter: {}", err);
+        }
+    }
+}
 
 /// because we are currently just wrapping the `log` crate in `zlog`,
 /// we need to work around the fact that the `log` crate only provides a
@@ -275,16 +293,22 @@ pub mod scope_map {
         collections::{HashMap, VecDeque},
         hash::{DefaultHasher, Hasher},
         sync::{
-            RwLock,
+            OnceLock, RwLock,
             atomic::{AtomicU64, Ordering},
         },
         usize,
     };
 
     use super::*;
-
+    static ENV_FILTER: OnceLock<env_config::EnvFilter> = OnceLock::new();
     static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
     static SCOPE_MAP_HASH: AtomicU64 = AtomicU64::new(0);
+
+    pub fn init_env_filter(filter: env_config::EnvFilter) {
+        if ENV_FILTER.set(filter).is_err() {
+            panic!("Environment filter cannot be initialized twice");
+        }
+    }
 
     pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> (bool, log_impl::Level) {
         let level_min = min_printed_log_level(level);
@@ -340,13 +364,18 @@ pub mod scope_map {
         return hasher.finish();
     }
 
-    pub fn refresh(settings: &HashMap<String, String>) {
+    pub(crate) fn refresh() {
+        refresh_from_settings(&HashMap::default());
+    }
+
+    pub fn refresh_from_settings(settings: &HashMap<String, String>) {
         let hash_old = SCOPE_MAP_HASH.load(Ordering::Acquire);
         let hash_new = hash_scope_map_settings(settings);
         if hash_old == hash_new && hash_old != 0 {
             return;
         }
-        let map_new = ScopeMap::new_from_settings(settings);
+        let env_config = ENV_FILTER.get();
+        let map_new = ScopeMap::new_from_settings_and_env(settings, env_config);
 
         if let Ok(_) = SCOPE_MAP_HASH.compare_exchange(
             hash_old,
@@ -430,15 +459,41 @@ pub mod scope_map {
     }
 
     impl ScopeMap {
-        pub fn new_from_settings(items_input_map: &HashMap<String, String>) -> Self {
-            let mut items = items_input_map
-                .into_iter()
-                .filter_map(|(scope_str, level_str)| {
-                    let scope = scope_alloc_from_scope_str(&scope_str)?;
-                    let level = level_from_level_str(&level_str)?;
-                    return Some((scope, level));
-                })
-                .collect::<Vec<_>>();
+        pub fn new_from_settings_and_env(
+            items_input_map: &HashMap<String, String>,
+            env_config: Option<&env_config::EnvFilter>,
+        ) -> Self {
+            let mut items = Vec::with_capacity(
+                items_input_map.len() + env_config.map_or(0, |c| c.directive_names.len()),
+            );
+            if let Some(env_filter) = env_config {
+                // TODO: parse on load instead of every reload
+                items.extend(
+                    env_filter
+                        .directive_names
+                        .iter()
+                        .zip(env_filter.directive_levels.iter())
+                        .filter_map(|(scope, level_filter)| {
+                            if items_input_map.get(scope).is_some() {
+                                return None;
+                            }
+                            let scope = scope_alloc_from_scope_str(scope)?;
+                            // TODO: use level filters instead of scopes in scope map
+                            let level = level_filter.to_level()?;
+
+                            Some((scope, level))
+                        }),
+                );
+            }
+            items.extend(
+                items_input_map
+                    .into_iter()
+                    .filter_map(|(scope_str, level_str)| {
+                        let scope = scope_alloc_from_scope_str(&scope_str)?;
+                        let level = level_from_level_str(&level_str)?;
+                        return Some((scope, level));
+                    }),
+            );
 
             items.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -491,7 +546,12 @@ pub mod scope_map {
                     let is_last = depth + 1 == SCOPE_DEPTH_MAX || !is_valid_scope;
                     let mut enabled = None;
                     if is_last {
-                        assert_eq!(sub_items_start + 1, sub_items_end);
+                        assert_eq!(
+                            sub_items_start + 1,
+                            sub_items_end,
+                            "Expected one item: got: {:?}",
+                            &items[items_range.clone()]
+                        );
                         enabled = Some(items[sub_items_start].1);
                     } else {
                         let entry_index = this.entries.len();
@@ -562,6 +622,8 @@ pub mod scope_map {
 
     #[cfg(test)]
     mod tests {
+        use crate::private::scope_new;
+
         use super::*;
 
         fn scope_map_from_keys(kv: &[(&str, &str)]) -> ScopeMap {
@@ -569,7 +631,7 @@ pub mod scope_map {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect();
-            ScopeMap::new_from_settings(&hash_map)
+            ScopeMap::new_from_settings_and_env(&hash_map, None)
         }
 
         #[test]
@@ -690,6 +752,74 @@ pub mod scope_map {
             assert_eq!(
                 map.is_enabled(&scope_from_scope_str("q.r.s.t"), Level::Warn),
                 EnabledStatus::Disabled
+            );
+        }
+
+        fn scope_map_from_keys_and_env(
+            kv: &[(&str, &str)],
+            env: &env_config::EnvFilter,
+        ) -> ScopeMap {
+            let hash_map: HashMap<String, String> = kv
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            ScopeMap::new_from_settings_and_env(&hash_map, Some(env))
+        }
+
+        #[test]
+        fn test_initialization_with_env() {
+            let env_filter = env_config::parse("a.b=debug,u=error").unwrap();
+            let map = scope_map_from_keys_and_env(&[], &env_filter);
+            assert_eq!(map.root_count, 2);
+            assert_eq!(map.entries.len(), 3);
+            assert_eq!(
+                map.is_enabled(&scope_new(&["a"]), log_impl::Level::Debug),
+                EnabledStatus::NotConfigured
+            );
+            assert_eq!(
+                map.is_enabled(&scope_new(&["a", "b"]), log_impl::Level::Debug),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_new(&["a", "b", "c"]), log_impl::Level::Trace),
+                EnabledStatus::Disabled
+            );
+
+            let env_filter = env_config::parse("a.b=debug,e.f.g.h=trace,u=error").unwrap();
+            let map = scope_map_from_keys_and_env(
+                &[
+                    ("a.b.c.d", "trace"),
+                    ("e.f.g.h", "debug"),
+                    ("i.j.k.l", "info"),
+                    ("m.n.o.p", "warn"),
+                    ("q.r.s.t", "error"),
+                ],
+                &env_filter,
+            );
+            assert_eq!(map.root_count, 6);
+            assert_eq!(map.entries.len(), 21);
+            assert_eq!(map.entries[0].scope, "a");
+            assert_eq!(map.entries[1].scope, "e");
+            assert_eq!(map.entries[2].scope, "i");
+            assert_eq!(map.entries[3].scope, "m");
+            assert_eq!(map.entries[4].scope, "q");
+            assert_eq!(map.entries[5].scope, "u");
+            assert_eq!(
+                map.is_enabled(&scope_new(&["a", "b", "c", "d"]), log_impl::Level::Trace),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_new(&["a", "b", "c"]), log_impl::Level::Trace),
+                EnabledStatus::Disabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_new(&["u", "v"]), log_impl::Level::Warn),
+                EnabledStatus::Disabled
+            );
+            // settings override env
+            assert_eq!(
+                map.is_enabled(&scope_new(&["e", "f", "g", "h"]), log_impl::Level::Trace),
+                EnabledStatus::Disabled,
             );
         }
     }

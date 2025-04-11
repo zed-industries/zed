@@ -105,6 +105,10 @@ impl Console {
         }
     }
 
+    pub(crate) fn show_indicator(&self, cx: &App) -> bool {
+        self.session.read(cx).has_new_output(self.last_token)
+    }
+
     pub fn add_messages<'a>(
         &mut self,
         events: impl Iterator<Item = &'a OutputEvent>,
@@ -231,7 +235,6 @@ impl Render for Console {
             .when(self.is_local(cx), |this| {
                 this.child(Divider::horizontal())
                     .child(self.render_query_bar(cx))
-                    .pt(DynamicSpacing::Base04.rems(cx))
             })
             .border_2()
     }

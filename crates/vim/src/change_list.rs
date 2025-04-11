@@ -24,6 +24,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         if self.change_list.is_empty() {
             return;
         }

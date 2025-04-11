@@ -2277,7 +2277,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
     #[gpui::test]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
@@ -2292,7 +2291,7 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = cx.update(|cx| {
-            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(60.)), cx)
+            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(90.)), cx)
         });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 

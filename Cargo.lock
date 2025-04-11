@@ -52,7 +52,6 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
- "agent_rules",
  "anyhow",
  "assistant_context_editor",
  "assistant_settings",
@@ -116,6 +115,7 @@ dependencies = [
  "terminal_view",
  "text",
  "theme",
+ "thiserror 2.0.12",
  "time",
  "time_format",
  "ui",
@@ -125,57 +125,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "agent_eval"
-version = "0.1.0"
-dependencies = [
- "agent",
- "anyhow",
- "assistant_tool",
- "assistant_tools",
- "clap",
- "client",
- "collections",
- "context_server",
- "dap",
- "env_logger 0.11.8",
- "fs",
- "futures 0.3.31",
- "gpui",
- "gpui_tokio",
- "language",
- "language_model",
- "language_models",
- "node_runtime",
- "project",
- "prompt_store",
- "release_channel",
- "reqwest_client",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "settings",
- "smol",
- "tempfile",
- "util",
- "walkdir",
- "workspace-hack",
-]
-
-[[package]]
-name = "agent_rules"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "fs",
- "gpui",
- "indoc",
- "prompt_store",
- "util",
- "workspace-hack",
- "worktree",
 ]
 
 [[package]]
@@ -3226,14 +3175,18 @@ dependencies = [
 name = "component_preview"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "collections",
  "component",
+ "db",
  "gpui",
  "languages",
  "notifications",
  "project",
+ "serde",
  "ui",
+ "ui_input",
  "workspace",
  "workspace-hack",
 ]
@@ -4232,6 +4185,7 @@ dependencies = [
  "settings",
  "sysinfo",
  "task",
+ "tasks_ui",
  "terminal_view",
  "theme",
  "ui",
@@ -4915,14 +4869,15 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "anyhow",
+ "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "client",
- "collections",
  "context_server",
  "dap",
  "env_logger 0.11.8",
  "fs",
+ "futures 0.3.31",
  "gpui",
  "gpui_tokio",
  "language",
@@ -4935,7 +4890,6 @@ dependencies = [
  "reqwest_client",
  "serde",
  "settings",
- "smol",
  "toml 0.8.20",
  "workspace-hack",
 ]
@@ -5031,10 +4985,10 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
- "convert_case 0.8.0",
  "fs",
  "futures 0.3.31",
  "gpui",
+ "heck 0.5.0",
  "http_client",
  "language",
  "log",
@@ -7227,9 +7181,12 @@ name = "install_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "gpui",
+ "release_channel",
  "smol",
  "util",
+ "workspace",
  "workspace-hack",
 ]
 
@@ -14244,9 +14201,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "debugger_ui",
  "editor",
- "feature_flags",
  "file_icons",
  "fuzzy",
  "gpui",
@@ -17654,6 +17609,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "windows 0.61.1",
  "workspace-hack",
  "zed_actions",
 ]
@@ -18291,6 +18247,7 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zeta",
+ "zlog",
  "zlog_settings",
 ]
 
@@ -18340,7 +18297,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -18603,6 +18560,7 @@ dependencies = [
 name = "zlog"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "log",
  "workspace-hack",
 ]

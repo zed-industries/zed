@@ -1,6 +1,6 @@
 use crate::{
     Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DebuggerEvaluateSelectedText, DisplayPoint,
-    DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration, GoToDefinition,
+    DisplaySnapshot, Editor, FindAllReferences, GoToDeclaration, GoToDefinition,
     GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode,
     ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
@@ -123,7 +123,7 @@ pub fn deploy_context_menu(
     }
 
     // Don't show context menu for inline editors
-    if editor.mode() != EditorMode::Full {
+    if !editor.mode().is_full() {
         return;
     }
 

@@ -110,7 +110,7 @@ pub(crate) fn build_editor(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, None, window, cx)
+    Editor::new(EditorMode::full(), buffer, None, window, cx)
 }
 
 pub(crate) fn build_editor_with_project(
@@ -119,7 +119,7 @@ pub(crate) fn build_editor_with_project(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, Some(project), window, cx)
+    Editor::new(EditorMode::full(), buffer, Some(project), window, cx)
 }
 
 #[derive(Default)]
