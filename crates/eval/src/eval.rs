@@ -80,6 +80,7 @@ fn main() {
                 examples.push((example_path, example));
             }
 
+            std::fs::create_dir_all(REPOS_DIR)?;
             std::fs::create_dir_all(WORKTREES_DIR)?;
 
             let mut repo_urls = HashSet::new();
