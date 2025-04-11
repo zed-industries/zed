@@ -415,32 +415,58 @@ impl DebugPanel {
         })
     }
 
-    fn close_session(&mut self, entity_id: EntityId, cx: &mut Context<Self>) {
+    fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self
             .sessions
             .iter()
             .find(|other| entity_id == other.entity_id())
+            .cloned()
         else {
             return;
         };
 
-        session.update(cx, |session, cx| session.shutdown(cx));
+        let session_id = session.update(cx, |this, cx| this.session_id(cx));
+        let should_prompt = self
+            .project
+            .update(cx, |this, cx| {
+                let session = this.dap_store().read(cx).session_by_id(session_id);
+                session.map(|session| !session.read(cx).is_terminated())
+            })
+            .ok()
+            .flatten()
+            .unwrap_or_default();
 
-        self.sessions.retain(|other| entity_id != other.entity_id());
-
-        if let Some(active_session_id) = self
-            .active_session
-            .as_ref()
-            .map(|session| session.entity_id())
-        {
-            if active_session_id == entity_id {
-                self.active_session = self.sessions.first().cloned();
+        cx.spawn_in(window, async move |this, cx| {
+            if should_prompt {
+                let response = cx.prompt(
+                    gpui::PromptLevel::Warning,
+                    "This Debug Session is still running. Are you sure you want to terminate it?",
+                    None,
+                    &["Yes", "No"],
+                );
+                if response.await == Ok(1) {
+                    return;
+                }
             }
-        }
+            session.update(cx, |session, cx| session.shutdown(cx)).ok();
+            this.update(cx, |this, cx| {
+                this.sessions.retain(|other| entity_id != other.entity_id());
 
-        cx.notify();
+                if let Some(active_session_id) = this
+                    .active_session
+                    .as_ref()
+                    .map(|session| session.entity_id())
+                {
+                    if active_session_id == entity_id {
+                        this.active_session = this.sessions.first().cloned();
+                    }
+                }
+                cx.notify()
+            })
+            .ok();
+        })
+        .detach();
     }
-
     fn sessions_drop_down_menu(
         &self,
         active_session: &Entity<DebugSession>,
@@ -487,8 +513,11 @@ impl DebugPanel {
                                                     let weak = weak.clone();
                                                     move |_, window, cx| {
                                                         weak.update(cx, |panel, cx| {
-                                                            panel
-                                                                .close_session(weak_session_id, cx);
+                                                            panel.close_session(
+                                                                weak_session_id,
+                                                                window,
+                                                                cx,
+                                                            );
                                                         })
                                                         .ok();
                                                         context_menu
