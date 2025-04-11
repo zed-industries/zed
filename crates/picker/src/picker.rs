@@ -3,8 +3,8 @@ use editor::{Editor, scroll::Autoscroll};
 use gpui::{
     AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
-    ScrollHandle, ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div,
-    impl_actions, list, prelude::*, uniform_list,
+    ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div, impl_actions,
+    list, prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
@@ -285,10 +285,7 @@ impl<D: PickerDelegate> Picker<D> {
             ElementContainer::UniformList(scroll_handle) => {
                 ScrollbarState::new(scroll_handle.clone())
             }
-            ElementContainer::List(_) => {
-                // todo smit: implement for list
-                ScrollbarState::new(ScrollHandle::new())
-            }
+            ElementContainer::List(state) => ScrollbarState::new(state.clone()),
         };
         let focus_handle = cx.focus_handle();
         let mut this = Self {
