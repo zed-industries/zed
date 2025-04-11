@@ -612,6 +612,7 @@ fn render_fold_icon_button(
                         .child(
                             Label::new(label.clone())
                                 .size(LabelSize::Small)
+                                .buffer_font(cx)
                                 .single_line(),
                         ),
                 )
