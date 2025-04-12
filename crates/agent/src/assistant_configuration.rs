@@ -12,7 +12,9 @@ use fs::Fs;
 use gpui::{Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use settings::{Settings, update_settings_file};
-use ui::{Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, prelude::*};
+use ui::{
+    Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, Tooltip, prelude::*,
+};
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
 
@@ -236,7 +238,10 @@ impl AssistantConfiguration {
             .child(
                 v_flex()
                     .gap_0p5()
-                    .child(Headline::new("Context Servers (MCP)").size(HeadlineSize::Small))
+                    .child(
+                        Headline::new("Model Context Protocol (MCP) Servers")
+                            .size(HeadlineSize::Small),
+                    )
                     .child(Label::new(SUBHEADING).color(Color::Muted)),
             )
             .children(context_servers.into_iter().map(|context_server| {
@@ -262,10 +267,9 @@ impl AssistantConfiguration {
                     .bg(cx.theme().colors().editor_background)
                     .child(
                         h_flex()
+                            .p_1()
                             .justify_between()
-                            .px_2()
-                            .py_1()
-                            .when(are_tools_expanded, |element| {
+                            .when(are_tools_expanded && tool_count > 1, |element| {
                                 element
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border)
@@ -275,6 +279,7 @@ impl AssistantConfiguration {
                                     .gap_2()
                                     .child(
                                         Disclosure::new("tool-list-disclosure", are_tools_expanded)
+                                            .disabled(tool_count == 0)
                                             .on_click(cx.listener({
                                                 let context_server_id = context_server.id();
                                                 move |this, _event, _window, _cx| {
@@ -295,10 +300,11 @@ impl AssistantConfiguration {
                                     .child(Label::new(context_server.id()))
                                     .child(
                                         Label::new(format!("{tool_count} tools"))
-                                            .color(Color::Muted),
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
                                     ),
                             )
-                            .child(h_flex().child(
+                            .child(
                                 Switch::new("context-server-switch", is_running.into()).on_click({
                                     let context_server_manager =
                                         self.context_server_manager.clone();
@@ -334,7 +340,7 @@ impl AssistantConfiguration {
                                         }
                                     }
                                 }),
-                            )),
+                            ),
                     )
                     .map(|parent| {
                         if !are_tools_expanded {
@@ -344,14 +350,29 @@ impl AssistantConfiguration {
                         parent.child(v_flex().children(tools.into_iter().enumerate().map(
                             |(ix, tool)| {
                                 h_flex()
-                                    .px_2()
+                                    .id("tool-item")
+                                    .pl_2()
+                                    .pr_1()
                                     .py_1()
+                                    .gap_2()
+                                    .justify_between()
                                     .when(ix < tool_count - 1, |element| {
                                         element
                                             .border_b_1()
-                                            .border_color(cx.theme().colors().border)
+                                            .border_color(cx.theme().colors().border_variant)
                                     })
-                                    .child(Label::new(tool.name()))
+                                    .child(
+                                        Label::new(tool.name())
+                                            .buffer_font(cx)
+                                            .size(LabelSize::Small),
+                                    )
+                                    .child(
+                                        IconButton::new(("tool-description", ix), IconName::Info)
+                                            .shape(ui::IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Ignored)
+                                            .tooltip(Tooltip::text(tool.description())),
+                                    )
                             },
                         )))
                     })
@@ -362,7 +383,7 @@ impl AssistantConfiguration {
                     .gap_2()
                     .child(
                         h_flex().w_full().child(
-                            Button::new("add-context-server", "Add Context Server")
+                            Button::new("add-context-server", "Add MCPs Directly")
                                 .style(ButtonStyle::Filled)
                                 .layer(ElevationIndex::ModalSurface)
                                 .full_width()
@@ -378,7 +399,7 @@ impl AssistantConfiguration {
                         h_flex().w_full().child(
                             Button::new(
                                 "install-context-server-extensions",
-                                "Install Context Server Extensions",
+                                "Install MCP Extensions",
                             )
                             .style(ButtonStyle::Filled)
                             .layer(ElevationIndex::ModalSurface)
