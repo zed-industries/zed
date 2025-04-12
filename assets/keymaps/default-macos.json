@@ -460,7 +460,7 @@
       "cmd-k cmd-w": "workspace::CloseAllItemsAndPanes",
       "cmd-f": "project_search::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
-      "cmd-shift-g": "search::SelectPreviousMatch",
+      "cmd-alt-shift-g": "search::SelectPreviousMatch",
       "cmd-shift-h": "search::ToggleReplace",
       "cmd-alt-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
