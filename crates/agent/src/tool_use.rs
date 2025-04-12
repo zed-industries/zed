@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{Tool, ToolWorkingSet};
+use assistant_tool::{AnyToolCard, Tool, ToolWorkingSet};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
@@ -54,7 +54,7 @@ pub struct ToolUseState {
     tool_uses_by_user_message: HashMap<MessageId, Vec<LanguageModelToolUseId>>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
-    tool_result_cards: HashMap<LanguageModelToolUseId, gpui::AnyView>,
+    tool_result_cards: HashMap<LanguageModelToolUseId, AnyToolCard>,
 }
 
 pub const USING_TOOL_MARKER: &str = "<using_tool>";
@@ -259,14 +259,14 @@ impl ToolUseState {
         self.tool_results.get(tool_use_id)
     }
 
-    pub fn tool_result_card(&self, tool_use_id: &LanguageModelToolUseId) -> Option<&gpui::AnyView> {
+    pub fn tool_result_card(&self, tool_use_id: &LanguageModelToolUseId) -> Option<&AnyToolCard> {
         self.tool_result_cards.get(tool_use_id)
     }
 
     pub fn insert_tool_result_card(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        card: gpui::AnyView,
+        card: AnyToolCard,
     ) {
         self.tool_result_cards.insert(tool_use_id, card);
     }

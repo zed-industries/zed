@@ -2315,7 +2315,7 @@ impl ActiveThread {
                         )
                         .child(div().w_full().text_ui_sm(cx).children(
                             if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
-                                Some(card.clone().into_any_element())
+                                Some(card.render(is_open, window, cx))
                             } else {
                                 rendered_tool_use.as_ref().map(|rendered| {
                                     MarkdownElement::new(
@@ -2374,7 +2374,7 @@ impl ActiveThread {
                         )
                         .child(div().text_ui_sm(cx).children(
                             if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
-                                Some(card.clone().into_any_element())
+                                Some(card.render(is_open, window, cx))
                             } else {
                                 rendered_tool_use.as_ref().map(|rendered| {
                                     MarkdownElement::new(

@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
-use assistant_tool::{ActionLog, Tool, ToolResult, ToolWorkingSet};
+use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolResult, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
 use feature_flags::{self, FeatureFlagAppExt};
@@ -618,8 +618,8 @@ impl Thread {
         Some(&self.tool_use.tool_result(id)?.content)
     }
 
-    pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&gpui::AnyView> {
-        self.tool_use.tool_result_card(id)
+    pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<AnyToolCard> {
+        self.tool_use.tool_result_card(id).cloned()
     }
 
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {

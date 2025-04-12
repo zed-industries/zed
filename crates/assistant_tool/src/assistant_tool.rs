@@ -8,6 +8,10 @@ use std::fmt::Formatter;
 use std::sync::Arc;
 
 use anyhow::Result;
+use gpui::AnyElement;
+use gpui::Context;
+use gpui::IntoElement;
+use gpui::Window;
 use gpui::{AnyView, App, Entity, SharedString, Task};
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
@@ -28,7 +32,54 @@ pub struct ToolResult {
     /// The asynchronous task that will eventually resolve to the tool's output
     pub output: Task<Result<String>>,
     /// An optional view to present the output of the tool.
-    pub card: Option<AnyView>,
+    pub card: Option<AnyToolCard>,
+}
+
+pub trait ToolCard: 'static + Sized {
+    fn render(
+        &mut self,
+        expanded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement;
+}
+
+#[derive(Clone)]
+pub struct AnyToolCard {
+    entity: gpui::AnyEntity,
+    render: fn(
+        entity: gpui::AnyEntity,
+        expanded: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement,
+}
+
+impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
+    fn from(entity: Entity<T>) -> Self {
+        fn downcast_render<T: ToolCard>(
+            entity: gpui::AnyEntity,
+            expanded: bool,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> AnyElement {
+            let entity = entity.downcast::<T>().unwrap();
+            entity.update(cx, |entity, cx| {
+                entity.render(expanded, window, cx).into_any_element()
+            })
+        }
+
+        Self {
+            entity: entity.into(),
+            render: downcast_render::<T>,
+        }
+    }
+}
+
+impl AnyToolCard {
+    pub fn render(&self, expanded: bool, window: &mut Window, cx: &mut App) -> AnyElement {
+        (self.render)(self.entity.clone(), expanded, window, cx)
+    }
 }
 
 impl From<Task<Result<String>>> for ToolResult {

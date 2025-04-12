@@ -12,18 +12,18 @@ pub fn init(cx: &mut App) {
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct WebSearchProviderId(pub SharedString);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct WebSearchResponse {
     pub results: Vec<WebSearchResult>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct WebSearchResult {
     pub summary: String,
     pub citations: Vec<WebSearchCitation>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct WebSearchCitation {
     pub title: String,
     pub url: String,
