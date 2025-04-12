@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
+use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{
@@ -336,6 +338,476 @@ impl MessageEditor {
             diff.update(cx, |diff, cx| diff.move_to_path(path_key, window, cx));
         }
     }
+
+    fn render_editor(
+        &self,
+        font_size: Rems,
+        line_height: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let thread = self.thread.read(cx);
+
+        let editor_bg_color = cx.theme().colors().editor_background;
+        let is_generating = thread.is_generating();
+        let focus_handle = self.editor.focus_handle(cx);
+
+        let is_model_selected = self.is_model_selected(cx);
+        let is_editor_empty = self.is_editor_empty(cx);
+
+        let is_editor_expanded = self.editor_is_expanded;
+        let expand_icon = if is_editor_expanded {
+            IconName::Minimize
+        } else {
+            IconName::Maximize
+        };
+
+        v_flex()
+            .key_context("MessageEditor")
+            .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                this.profile_selector
+                    .read(cx)
+                    .menu_handle()
+                    .toggle(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                this.model_selector
+                    .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+            }))
+            .on_action(cx.listener(Self::toggle_context_picker))
+            .on_action(cx.listener(Self::remove_all_context))
+            .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::toggle_chat_mode))
+            .on_action(cx.listener(Self::expand_message_editor))
+            .gap_2()
+            .p_2()
+            .bg(editor_bg_color)
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .items_start()
+                    .justify_between()
+                    .child(self.context_strip.clone())
+                    .child(
+                        IconButton::new("toggle-height", expand_icon)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |window, cx| {
+                                    let expand_label = if is_editor_expanded {
+                                        "Minimize Message Editor".to_string()
+                                    } else {
+                                        "Expand Message Editor".to_string()
+                                    };
+
+                                    Tooltip::for_action_in(
+                                        expand_label,
+                                        &ExpandMessageEditor,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click(cx.listener(|_, _, window, cx| {
+                                window.dispatch_action(Box::new(ExpandMessageEditor), cx);
+                            })),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .size_full()
+                    .gap_4()
+                    .when(is_editor_expanded, |this| {
+                        this.h(vh(0.8, window)).justify_between()
+                    })
+                    .child(div().when(is_editor_expanded, |this| this.h_full()).child({
+                        let settings = ThemeSettings::get_global(cx);
+
+                        let text_style = TextStyle {
+                            color: cx.theme().colors().text,
+                            font_family: settings.buffer_font.family.clone(),
+                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                            font_features: settings.buffer_font.features.clone(),
+                            font_size: font_size.into(),
+                            line_height: line_height.into(),
+                            ..Default::default()
+                        };
+
+                        EditorElement::new(
+                            &self.editor,
+                            EditorStyle {
+                                background: editor_bg_color,
+                                local_player: cx.theme().players().local(),
+                                text: text_style,
+                                syntax: cx.theme().syntax().clone(),
+                                ..Default::default()
+                            },
+                        )
+                        .into_any()
+                    }))
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .justify_between()
+                            .child(h_flex().gap_2().child(self.profile_selector.clone()))
+                            .child(h_flex().gap_1().child(self.model_selector.clone()).map({
+                                let focus_handle = focus_handle.clone();
+                                move |parent| {
+                                    if is_generating {
+                                        parent.child(
+                                            IconButton::new(
+                                                "stop-generation",
+                                                IconName::StopFilled,
+                                            )
+                                            .icon_color(Color::Error)
+                                            .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::for_action(
+                                                    "Stop Generation",
+                                                    &editor::actions::Cancel,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click({
+                                                let focus_handle = focus_handle.clone();
+                                                move |_event, window, cx| {
+                                                    focus_handle.dispatch_action(
+                                                        &editor::actions::Cancel,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            })
+                                            .with_animation(
+                                                "pulsating-label",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 1.0)),
+                                                |icon_button, delta| icon_button.alpha(delta),
+                                            ),
+                                        )
+                                    } else {
+                                        parent.child(
+                                            IconButton::new("send-message", IconName::Send)
+                                                .icon_color(Color::Accent)
+                                                .style(ButtonStyle::Filled)
+                                                .disabled(
+                                                    is_editor_empty
+                                                        || !is_model_selected
+                                                        || self.waiting_for_summaries_to_send,
+                                                )
+                                                .on_click({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |_event, window, cx| {
+                                                        focus_handle
+                                                            .dispatch_action(&Chat, window, cx);
+                                                    }
+                                                })
+                                                .when(
+                                                    !is_editor_empty && is_model_selected,
+                                                    |button| {
+                                                        button.tooltip(move |window, cx| {
+                                                            Tooltip::for_action(
+                                                                "Send", &Chat, window, cx,
+                                                            )
+                                                        })
+                                                    },
+                                                )
+                                                .when(is_editor_empty, |button| {
+                                                    button.tooltip(Tooltip::text(
+                                                        "Type a message to submit",
+                                                    ))
+                                                })
+                                                .when(!is_model_selected, |button| {
+                                                    button.tooltip(Tooltip::text(
+                                                        "Select a model to continue",
+                                                    ))
+                                                }),
+                                        )
+                                    }
+                                }
+                            })),
+                    ),
+            )
+    }
+
+    fn render_changed_buffers(
+        &self,
+        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let focus_handle = self.editor.focus_handle(cx);
+
+        let editor_bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border;
+        let active_color = cx.theme().colors().element_selected;
+        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
+        let is_edit_changes_expanded = self.edits_expanded;
+
+        v_flex()
+            .mx_2()
+            .bg(bg_edit_files_disclosure)
+            .border_1()
+            .border_b_0()
+            .border_color(border_color)
+            .rounded_t_md()
+            .shadow(smallvec::smallvec![gpui::BoxShadow {
+                color: gpui::black().opacity(0.15),
+                offset: point(px(1.), px(-1.)),
+                blur_radius: px(3.),
+                spread_radius: px(0.),
+            }])
+            .child(
+                h_flex()
+                    .id("edits-container")
+                    .cursor_pointer()
+                    .p_1p5()
+                    .justify_between()
+                    .when(is_edit_changes_expanded, |this| {
+                        this.border_b_1().border_color(border_color)
+                    })
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.handle_review_click(window, cx)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Disclosure::new("edits-disclosure", is_edit_changes_expanded)
+                                    .on_click(cx.listener(|this, _ev, _window, cx| {
+                                        this.edits_expanded = !this.edits_expanded;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Label::new("Edits")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
+                            .child(
+                                Label::new(format!(
+                                    "{} {}",
+                                    changed_buffers.len(),
+                                    if changed_buffers.len() == 1 {
+                                        "file"
+                                    } else {
+                                        "files"
+                                    }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        Button::new("review", "Review Changes")
+                            .label_size(LabelSize::Small)
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &OpenAgentDiff,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.handle_review_click(window, cx)
+                            })),
+                    ),
+            )
+            .when(is_edit_changes_expanded, |parent| {
+                parent.child(
+                    v_flex().children(changed_buffers.into_iter().enumerate().flat_map(
+                        |(index, (buffer, _diff))| {
+                            let file = buffer.read(cx).file()?;
+                            let path = file.path();
+
+                            let parent_label = path.parent().and_then(|parent| {
+                                let parent_str = parent.to_string_lossy();
+
+                                if parent_str.is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        Label::new(format!(
+                                            "/{}{}",
+                                            parent_str,
+                                            std::path::MAIN_SEPARATOR_STR
+                                        ))
+                                        .color(Color::Muted)
+                                        .size(LabelSize::XSmall)
+                                        .buffer_font(cx),
+                                    )
+                                }
+                            });
+
+                            let name_label = path.file_name().map(|name| {
+                                Label::new(name.to_string_lossy().to_string())
+                                    .size(LabelSize::XSmall)
+                                    .buffer_font(cx)
+                            });
+
+                            let file_icon = FileIcons::get_icon(&path, cx)
+                                .map(Icon::from_path)
+                                .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+                                .unwrap_or_else(|| {
+                                    Icon::new(IconName::File)
+                                        .color(Color::Muted)
+                                        .size(IconSize::Small)
+                                });
+
+                            let hover_color = cx
+                                .theme()
+                                .colors()
+                                .element_background
+                                .blend(cx.theme().colors().editor_foreground.opacity(0.025));
+
+                            let overlay_gradient = linear_gradient(
+                                90.,
+                                linear_color_stop(editor_bg_color, 1.),
+                                linear_color_stop(editor_bg_color.opacity(0.2), 0.),
+                            );
+
+                            let overlay_gradient_hover = linear_gradient(
+                                90.,
+                                linear_color_stop(hover_color, 1.),
+                                linear_color_stop(hover_color.opacity(0.2), 0.),
+                            );
+
+                            let element = h_flex()
+                                .group("edited-code")
+                                .id(("file-container", index))
+                                .cursor_pointer()
+                                .relative()
+                                .py_1()
+                                .pl_2()
+                                .pr_1()
+                                .gap_2()
+                                .justify_between()
+                                .bg(cx.theme().colors().editor_background)
+                                .hover(|style| style.bg(hover_color))
+                                .when(index + 1 < changed_buffers.len(), |parent| {
+                                    parent.border_color(border_color).border_b_1()
+                                })
+                                .child(
+                                    h_flex()
+                                        .id("file-name")
+                                        .pr_8()
+                                        .gap_1p5()
+                                        .max_w_full()
+                                        .overflow_x_scroll()
+                                        .child(file_icon)
+                                        .child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .children(name_label)
+                                                .children(parent_label),
+                                        ) // TODO: show lines changed
+                                        .child(Label::new("+").color(Color::Created))
+                                        .child(Label::new("-").color(Color::Deleted)),
+                                )
+                                .child(
+                                    div().visible_on_hover("edited-code").child(
+                                        Button::new("review", "Review")
+                                            .label_size(LabelSize::Small)
+                                            .on_click({
+                                                let buffer = buffer.clone();
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.handle_file_click(
+                                                        buffer.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                            }),
+                                    ),
+                                )
+                                .child(
+                                    div()
+                                        .id("gradient-overlay")
+                                        .absolute()
+                                        .h_5_6()
+                                        .w_12()
+                                        .bottom_0()
+                                        .right(px(52.))
+                                        .bg(overlay_gradient)
+                                        .group_hover("edited-code", |style| {
+                                            style.bg(overlay_gradient_hover)
+                                        }),
+                                )
+                                .on_click({
+                                    let buffer = buffer.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.handle_file_click(buffer.clone(), window, cx);
+                                    })
+                                });
+
+                            Some(element)
+                        },
+                    )),
+                )
+            })
+    }
+
+    fn render_reaching_token_limit(&self, line_height: Pixels, cx: &mut Context<Self>) -> Div {
+        h_flex()
+            .p_2()
+            .gap_2()
+            .flex_wrap()
+            .justify_between()
+            .bg(cx.theme().status().warning_background.opacity(0.1))
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_start()
+                    .child(
+                        h_flex()
+                            .h(line_height)
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::Warning)
+                                    .color(Color::Warning)
+                                    .size(IconSize::XSmall),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .mr_auto()
+                            .child(Label::new("Thread reaching the token limit soon").size(LabelSize::Small))
+                            .child(
+                                Label::new(
+                                    "Start a new thread from a summary to continue the conversation.",
+                                )
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    ),
+            )
+            .child(
+                Button::new("new-thread", "Start New Thread")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let from_thread_id = Some(this.thread.read(cx).id().clone());
+
+                        window.dispatch_action(Box::new(NewThread {
+                            from_thread_id
+                        }), cx);
+                    }))
+                    .icon(IconName::Plus)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                    .label_size(LabelSize::Small),
+            )
+    }
 }
 
 impl Focusable for MessageEditor {
@@ -346,33 +818,14 @@ impl Focusable for MessageEditor {
 
 impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let font_size = TextSize::Small.rems(cx);
-        let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
-
-        let focus_handle = self.editor.focus_handle(cx);
-
-        let is_editor_expanded = self.editor_is_expanded;
-        let expand_icon = if is_editor_expanded {
-            IconName::Minimize
-        } else {
-            IconName::Maximize
-        };
-
         let thread = self.thread.read(cx);
-        let is_generating = thread.is_generating();
         let total_token_usage = thread.total_token_usage(cx);
-        let is_model_selected = self.is_model_selected(cx);
-        let is_editor_empty = self.is_editor_empty(cx);
-        let is_edit_changes_expanded = self.edits_expanded;
 
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
-        let changed_buffers_count = changed_buffers.len();
 
-        let editor_bg_color = cx.theme().colors().editor_background;
-        let border_color = cx.theme().colors().border;
-        let active_color = cx.theme().colors().element_selected;
-        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
+        let font_size = TextSize::Small.rems(cx);
+        let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
 
         v_flex()
             .size_full()
@@ -383,7 +836,7 @@ impl Render for MessageEditor {
                             .flex_none()
                             .px_2()
                             .py_2()
-                            .bg(editor_bg_color)
+                            .bg(cx.theme().colors().editor_background)
                             .border_1()
                             .border_color(cx.theme().colors().border_variant)
                             .rounded_lg()
@@ -411,465 +864,13 @@ impl Render for MessageEditor {
                     ),
                 )
             })
-            .when(changed_buffers_count > 0, |parent| {
-                parent.child(
-                    v_flex()
-                        .mx_2()
-                        .bg(bg_edit_files_disclosure)
-                        .border_1()
-                        .border_b_0()
-                        .border_color(border_color)
-                        .rounded_t_md()
-                        .shadow(smallvec::smallvec![gpui::BoxShadow {
-                            color: gpui::black().opacity(0.15),
-                            offset: point(px(1.), px(-1.)),
-                            blur_radius: px(3.),
-                            spread_radius: px(0.),
-                        }])
-                        .child(
-                            h_flex()
-                                .id("edits-container")
-                                .cursor_pointer()
-                                .p_1p5()
-                                .justify_between()
-                                .when(is_edit_changes_expanded, |this| {
-                                    this.border_b_1().border_color(border_color)
-                                })
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.handle_review_click(window, cx)
-                                }))
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Disclosure::new(
-                                                "edits-disclosure",
-                                                is_edit_changes_expanded,
-                                            )
-                                            .on_click(
-                                                cx.listener(|this, _ev, _window, cx| {
-                                                    this.edits_expanded = !this.edits_expanded;
-                                                    cx.notify();
-                                                }),
-                                            ),
-                                        )
-                                        .child(
-                                            Label::new("Edits")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new("•")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new(format!(
-                                                "{} {}",
-                                                changed_buffers_count,
-                                                if changed_buffers_count == 1 {
-                                                    "file"
-                                                } else {
-                                                    "files"
-                                                }
-                                            ))
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                        ),
-                                )
-                                .child(
-                                    Button::new("review", "Review Changes")
-                                        .label_size(LabelSize::Small)
-                                        .key_binding(
-                                            KeyBinding::for_action_in(
-                                                &OpenAgentDiff,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
-                                        )
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.handle_review_click(window, cx)
-                                        })),
-                                ),
-                        )
-                        .when(is_edit_changes_expanded, |parent| {
-                            parent.child(
-                                v_flex().children(
-                                    changed_buffers.into_iter().enumerate().flat_map(
-                                        |(index, (buffer, _diff))| {
-                                            let file = buffer.read(cx).file()?;
-                                            let path = file.path();
-
-                                            let parent_label = path.parent().and_then(|parent| {
-                                                let parent_str = parent.to_string_lossy();
-
-                                                if parent_str.is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(
-                                                        Label::new(format!(
-                                                            "/{}{}",
-                                                            parent_str,
-                                                            std::path::MAIN_SEPARATOR_STR
-                                                        ))
-                                                        .color(Color::Muted)
-                                                        .size(LabelSize::XSmall)
-                                                        .buffer_font(cx),
-                                                    )
-                                                }
-                                            });
-
-                                            let name_label = path.file_name().map(|name| {
-                                                Label::new(name.to_string_lossy().to_string())
-                                                    .size(LabelSize::XSmall)
-                                                    .buffer_font(cx)
-                                            });
-
-                                            let file_icon = FileIcons::get_icon(&path, cx)
-                                                .map(Icon::from_path)
-                                                .map(|icon| {
-                                                    icon.color(Color::Muted).size(IconSize::Small)
-                                                })
-                                                .unwrap_or_else(|| {
-                                                    Icon::new(IconName::File)
-                                                        .color(Color::Muted)
-                                                        .size(IconSize::Small)
-                                                });
-
-                                            let hover_color = cx.theme()
-                                                .colors()
-                                                .element_background
-                                                .blend(cx.theme().colors().editor_foreground.opacity(0.025));
-
-                                            let overlay_gradient = linear_gradient(
-                                                90.,
-                                                linear_color_stop(
-                                                    editor_bg_color,
-                                                    1.,
-                                                ),
-                                                linear_color_stop(
-                                                    editor_bg_color
-                                                        .opacity(0.2),
-                                                    0.,
-                                                ),
-                                            );
-
-                                            let overlay_gradient_hover = linear_gradient(
-                                                90.,
-                                                linear_color_stop(
-                                                    hover_color,
-                                                    1.,
-                                                ),
-                                                linear_color_stop(
-                                                    hover_color
-                                                        .opacity(0.2),
-                                                    0.,
-                                                ),
-                                            );
-
-                                            let element = h_flex()
-                                                .group("edited-code")
-                                                .id(("file-container", index))
-                                                .cursor_pointer()
-                                                .relative()
-                                                .py_1()
-                                                .pl_2()
-                                                .pr_1()
-                                                .gap_2()
-                                                .justify_between()
-                                                .bg(cx.theme().colors().editor_background)
-                                                .hover(|style| style.bg(hover_color))
-                                                .when(index + 1 < changed_buffers_count, |parent| {
-                                                    parent.border_color(border_color).border_b_1()
-                                                })
-                                                .child(
-                                                    h_flex()
-                                                        .id("file-name")
-                                                        .pr_8()
-                                                        .gap_1p5()
-                                                        .max_w_full()
-                                                        .overflow_x_scroll()
-                                                        .child(file_icon)
-                                                        .child(
-                                                            h_flex()
-                                                                .gap_0p5()
-                                                                .children(name_label)
-                                                                .children(parent_label)
-                                                        ) // TODO: show lines changed
-                                                        .child(
-                                                            Label::new("+")
-                                                                .color(Color::Created),
-                                                        )
-                                                        .child(
-                                                            Label::new("-")
-                                                                .color(Color::Deleted),
-                                                        ),
-                                                )
-                                                .child(
-                                                    div().visible_on_hover("edited-code").child(
-                                                        Button::new("review", "Review")
-                                                            .label_size(LabelSize::Small)
-                                                            .on_click({
-                                                                let buffer = buffer.clone();
-                                                                cx.listener(move |this, _, window, cx| {
-                                                                    this.handle_file_click(buffer.clone(), window, cx);
-                                                                })
-                                                            })
-                                                    )
-                                                )
-                                                .child(
-                                                    div()
-                                                        .id("gradient-overlay")
-                                                        .absolute()
-                                                        .h_5_6()
-                                                        .w_12()
-                                                        .bottom_0()
-                                                        .right(px(52.))
-                                                        .bg(overlay_gradient)
-                                                        .group_hover("edited-code", |style| style.bg(overlay_gradient_hover))
-                                                    ,
-                                                )
-                                                .on_click({
-                                                    let buffer = buffer.clone();
-                                                    cx.listener(move |this, _, window, cx| {
-                                                        this.handle_file_click(buffer.clone(), window, cx);
-                                                    })
-                                                });
-
-                                            Some(element)
-                                        },
-                                    ),
-                                ),
-                            )
-                        }),
-                )
+            .when(changed_buffers.len() > 0, |parent| {
+                parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
-            .child(
-                v_flex()
-                    .key_context("MessageEditor")
-                    .on_action(cx.listener(Self::chat))
-                    .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
-                        this.profile_selector
-                            .read(cx)
-                            .menu_handle()
-                            .toggle(window, cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                        this.model_selector
-                            .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
-                    }))
-                    .on_action(cx.listener(Self::toggle_context_picker))
-                    .on_action(cx.listener(Self::remove_all_context))
-                    .on_action(cx.listener(Self::move_up))
-                    .on_action(cx.listener(Self::toggle_chat_mode))
-                    .on_action(cx.listener(Self::expand_message_editor))
-                    .gap_2()
-                    .p_2()
-                    .bg(editor_bg_color)
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        h_flex()
-                            .items_start()
-                            .justify_between()
-                            .child(self.context_strip.clone())
-                            .child(
-                                IconButton::new("toggle-height", expand_icon)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Muted)
-                                    .tooltip({
-                                        let focus_handle = focus_handle.clone();
-                                        move |window, cx| {
-                                        let expand_label = if is_editor_expanded {
-                                            "Minimize Message Editor".to_string()
-                                        } else {
-                                            "Expand Message Editor".to_string()
-                                        };
-
-                                        Tooltip::for_action_in(
-                                            expand_label,
-                                            &ExpandMessageEditor,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }})
-                                    .on_click(cx.listener(|_, _, window, cx| {
-                                        window.dispatch_action(Box::new(ExpandMessageEditor), cx);
-                                    }))
-                            )
-                    )
-                    .child(
-                        v_flex()
-                            .size_full()
-                            .gap_4()
-                            .when(is_editor_expanded, |this| this.h(vh(0.8, window)).justify_between())
-                            .child(div().when(is_editor_expanded, |this| this.h_full()).child({
-                                    let settings = ThemeSettings::get_global(cx);
-
-                                    let text_style = TextStyle {
-                                        color: cx.theme().colors().text,
-                                        font_family: settings.buffer_font.family.clone(),
-                                        font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                                        font_features: settings.buffer_font.features.clone(),
-                                        font_size: font_size.into(),
-                                        line_height: line_height.into(),
-                                        ..Default::default()
-                                    };
-
-                                    EditorElement::new(
-                                        &self.editor,
-                                        EditorStyle {
-                                            background: editor_bg_color,
-                                            local_player: cx.theme().players().local(),
-                                            text: text_style,
-                                            syntax: cx.theme().syntax().clone(),
-                                            ..Default::default()
-                                        },
-                                    ).into_any()
-                            }))
-                            .child(
-                                h_flex()
-                                    .flex_none()
-                                    .justify_between()
-                                    .child(h_flex().gap_2().child(self.profile_selector.clone()))
-                                    .child(
-                                        h_flex().gap_1()
-                                            .child(self.model_selector.clone())
-                                            .map({
-                                                let focus_handle = focus_handle.clone();
-                                                move |parent| {
-                                                if is_generating {
-                                                    parent.child(
-                                                        IconButton::new("stop-generation", IconName::StopFilled)
-                                                            .icon_color(Color::Error)
-                                                            .style(ButtonStyle::Tinted(ui::TintColor::Error))
-                                                            .tooltip(move |window, cx| {
-                                                                Tooltip::for_action(
-                                                                    "Stop Generation",
-                                                                    &editor::actions::Cancel,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                            })
-                                                            .on_click({
-                                                                let focus_handle = focus_handle.clone();
-                                                                move |_event, window, cx| {
-                                                                    focus_handle.dispatch_action(
-                                                                        &editor::actions::Cancel,
-                                                                        window,
-                                                                        cx,
-                                                                    );
-                                                                }
-                                                            })
-                                                            .with_animation(
-                                                                "pulsating-label",
-                                                                Animation::new(Duration::from_secs(2))
-                                                                    .repeat()
-                                                                    .with_easing(pulsating_between(0.4, 1.0)),
-                                                                |icon_button, delta| icon_button.alpha(delta),
-                                                            ),
-                                                    )
-                                                } else {
-                                                    parent.child(
-                                                        IconButton::new("send-message", IconName::Send)
-                                                            .icon_color(Color::Accent)
-                                                            .style(ButtonStyle::Filled)
-                                                            .disabled(
-                                                                is_editor_empty
-                                                                    || !is_model_selected
-                                                                    || self.waiting_for_summaries_to_send
-                                                            )
-                                                            .on_click({
-                                                                let focus_handle = focus_handle.clone();
-                                                                move |_event, window, cx| {
-                                                                    focus_handle.dispatch_action(&Chat, window, cx);
-                                                                }
-                                                            })
-                                                            .when(!is_editor_empty && is_model_selected, |button| {
-                                                                button.tooltip(move |window, cx| {
-                                                                    Tooltip::for_action(
-                                                                        "Send",
-                                                                        &Chat,
-                                                                        window,
-                                                                        cx,
-                                                                    )
-                                                                })
-                                                            })
-                                                            .when(is_editor_empty, |button| {
-                                                                button.tooltip(Tooltip::text(
-                                                                    "Type a message to submit",
-                                                                ))
-                                                            })
-                                                            .when(!is_model_selected, |button| {
-                                                                button.tooltip(Tooltip::text(
-                                                                    "Select a model to continue",
-                                                                ))
-                                                            })
-                                                    )
-                                                }
-                                                }
-                                            }
-                                        )
-                                    ),
-                            ),
-                    )
+            .child(self.render_editor(font_size, line_height, window, cx))
+            .when(
+                total_token_usage.ratio != TokenUsageRatio::Normal,
+                |parent| parent.child(self.render_reaching_token_limit(line_height, cx)),
             )
-            .when(total_token_usage.ratio != TokenUsageRatio::Normal, |parent| {
-                parent.child(
-                    h_flex()
-                        .p_2()
-                        .gap_2()
-                        .flex_wrap()
-                        .justify_between()
-                        .bg(cx.theme().status().warning_background.opacity(0.1))
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .items_start()
-                                .child(
-                                    h_flex()
-                                        .h(line_height)
-                                        .justify_center()
-                                        .child(
-                                            Icon::new(IconName::Warning)
-                                                .color(Color::Warning)
-                                                .size(IconSize::XSmall),
-                                        ),
-                                )
-                                .child(
-                                    v_flex()
-                                        .mr_auto()
-                                        .child(Label::new("Thread reaching the token limit soon").size(LabelSize::Small))
-                                        .child(
-                                            Label::new(
-                                                "Start a new thread from a summary to continue the conversation.",
-                                            )
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                        ),
-                                ),
-                        )
-                        .child(
-                            Button::new("new-thread", "Start New Thread")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let from_thread_id = Some(this.thread.read(cx).id().clone());
-
-                                    window.dispatch_action(Box::new(NewThread {
-                                        from_thread_id
-                                    }), cx);
-                                }))
-                                .icon(IconName::Plus)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                .label_size(LabelSize::Small),
-                        ),
-                )
-            })
     }
 }
