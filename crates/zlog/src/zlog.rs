@@ -23,7 +23,6 @@ pub fn process_env() {
         Ok(filter) => {
             filter::init_env_filter(filter);
             filter::refresh();
-            // TODO: set max level once removing `env_logger` and `simple_log` crates
         }
         Err(err) => {
             eprintln!("Failed to parse log filter: {}", err);

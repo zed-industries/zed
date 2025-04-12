@@ -93,7 +93,7 @@ pub fn submit(record: Record) {
             file: &'a mut std::fs::File,
             written: u64,
         }
-        impl<'a> io::Write for SizedWriter<'a> {
+        impl io::Write for SizedWriter<'_> {
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
                 self.file.write(buf)?;
                 self.written += buf.len() as u64;
