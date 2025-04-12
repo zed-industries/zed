@@ -2,7 +2,7 @@
 pub use log as log_impl;
 
 mod env_config;
-pub mod scope_map;
+pub mod filter;
 pub mod sink;
 
 pub use sink::{init_output_file, init_output_stdout};
@@ -21,8 +21,8 @@ pub fn process_env() {
     };
     match env_config::parse(&env_config) {
         Ok(filter) => {
-            scope_map::init_env_filter(filter);
-            scope_map::refresh();
+            filter::init_env_filter(filter);
+            filter::refresh();
             // TODO: set max level once removing `env_logger` and `simple_log` crates
         }
         Err(err) => {
@@ -37,7 +37,7 @@ pub struct Zlog {}
 
 impl log::Log for Zlog {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        scope_map::is_possibly_enabled_level(metadata.level())
+        filter::is_possibly_enabled_level(metadata.level())
     }
 
     fn log(&self, record: &log::Record) {
@@ -54,7 +54,7 @@ impl log::Log for Zlog {
             None => private::scope_new(&["*unknown*"]),
         };
         let level = record.metadata().level();
-        if !scope_map::is_scope_enabled(&scope, level) {
+        if !filter::is_scope_enabled(&scope, level) {
             return;
         }
         sink::submit(sink::Record {
@@ -75,7 +75,7 @@ macro_rules! log {
     ($logger:expr, $level:expr, $($arg:tt)+) => {
         let level = $level;
         let logger = $logger;
-        let enabled = $crate::scope_map::is_scope_enabled(&logger.scope, level);
+        let enabled = $crate::filter::is_scope_enabled(&logger.scope, level);
         if enabled {
             $crate::sink::submit($crate::sink::Record {
                 scope: logger.scope,
