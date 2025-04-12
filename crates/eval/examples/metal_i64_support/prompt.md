@@ -1,0 +1,5 @@
+I’m currently working on improving the Metal backend for the Candle framework, specifically to enhance its support for tensor operations involving additional data types. Right now, the gather operation has limited dtype combinations, and I’d like to extend this to include i64 support—both for indices and values. This involves adding cases like u32 indices with i64 values, as well as i64 indices paired with other common types (e.g., f32, f16, bf16, u32, and i64).
+
+While implementing these changes, I also noticed a few minor syntax issues in the Metal kernels that could use cleanup, such as extra commas in function parameters and unnecessary ampersands in method calls within the scaled dot product attention code. Additionally, one of the test tolerances might need a slight adjustment to account for expected numerical variations.
+
+The changes touch a few files across candle-core and candle-metal-kernels, following the existing pattern of macro-based shader definitions in Metal and their Rust bindings. Would you be able to review this approach or suggest any considerations I might have missed?
