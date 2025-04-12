@@ -193,8 +193,6 @@ impl Example {
                     .context("Failed to find a file for example language")
             })??;
 
-            dbg!(&language_file);
-
             let open_language_file_buffer_task =
                 project.update(cx, |project, cx| project.open_buffer(language_file, cx))?;
 
@@ -385,7 +383,7 @@ fn has_pending_diagnostics(lsp_store: Entity<LspStore>, cx: &App) -> bool {
     lsp_store
         .read(cx)
         .language_server_statuses()
-        .all(|(_, status)| dbg!(status).pending_work.is_empty())
+        .all(|(_, status)| !status.pending_work.is_empty())
 }
 
 async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> Result<String> {

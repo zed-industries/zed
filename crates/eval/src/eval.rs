@@ -7,6 +7,7 @@ pub(crate) use example::*;
 use ::fs::RealFs;
 use anyhow::{Result, anyhow};
 use clap::Parser;
+use extension::ExtensionHostProxy;
 use futures::future;
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task};
 use language::LanguageRegistry;
@@ -237,9 +238,17 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
 
+    extension::init(cx);
+
+    // todo! actually configure node runtime?
+    let node_runtime = NodeRuntime::unavailable();
+    let extension_host_proxy = ExtensionHostProxy::global(cx);
+
     language::init(cx);
+    language_extension::init(extension_host_proxy.clone(), languages.clone());
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+    languages::init(languages.clone(), node_runtime.clone(), cx);
     assistant_tools::init(client.http_client().clone(), cx);
     context_server::init(cx);
     let stdout_is_a_pty = false;
@@ -259,7 +268,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         client,
         user_store,
         fs,
-        node_runtime: NodeRuntime::unavailable(),
+        node_runtime,
         prompt_builder,
     })
 }
