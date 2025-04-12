@@ -56,7 +56,7 @@ pub struct MessageEditor {
     _subscriptions: Vec<Subscription>,
 }
 
-const MAX_EDITOR_LINES: usize = 10;
+const MAX_EDITOR_LINES: usize = 3;
 
 impl MessageEditor {
     pub fn new(
@@ -424,31 +424,36 @@ impl MessageEditor {
                     .when(is_editor_expanded, |this| {
                         this.h(vh(0.8, window)).justify_between()
                     })
-                    .child(div().when(is_editor_expanded, |this| this.h_full()).child({
-                        let settings = ThemeSettings::get_global(cx);
+                    .child(
+                        div()
+                            .min_h_16()
+                            .when(is_editor_expanded, |this| this.h_full())
+                            .child({
+                                let settings = ThemeSettings::get_global(cx);
 
-                        let text_style = TextStyle {
-                            color: cx.theme().colors().text,
-                            font_family: settings.buffer_font.family.clone(),
-                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                            font_features: settings.buffer_font.features.clone(),
-                            font_size: font_size.into(),
-                            line_height: line_height.into(),
-                            ..Default::default()
-                        };
+                                let text_style = TextStyle {
+                                    color: cx.theme().colors().text,
+                                    font_family: settings.buffer_font.family.clone(),
+                                    font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                                    font_features: settings.buffer_font.features.clone(),
+                                    font_size: font_size.into(),
+                                    line_height: line_height.into(),
+                                    ..Default::default()
+                                };
 
-                        EditorElement::new(
-                            &self.editor,
-                            EditorStyle {
-                                background: editor_bg_color,
-                                local_player: cx.theme().players().local(),
-                                text: text_style,
-                                syntax: cx.theme().syntax().clone(),
-                                ..Default::default()
-                            },
-                        )
-                        .into_any()
-                    }))
+                                EditorElement::new(
+                                    &self.editor,
+                                    EditorStyle {
+                                        background: editor_bg_color,
+                                        local_player: cx.theme().players().local(),
+                                        text: text_style,
+                                        syntax: cx.theme().syntax().clone(),
+                                        ..Default::default()
+                                    },
+                                )
+                                .into_any()
+                            }),
+                    )
                     .child(
                         h_flex()
                             .flex_none()
