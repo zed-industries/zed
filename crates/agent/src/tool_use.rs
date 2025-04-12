@@ -54,6 +54,7 @@ pub struct ToolUseState {
     tool_uses_by_user_message: HashMap<MessageId, Vec<LanguageModelToolUseId>>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
+    tool_result_cards: HashMap<LanguageModelToolUseId, gpui::AnyView>,
 }
 
 pub const USING_TOOL_MARKER: &str = "<using_tool>";
@@ -66,6 +67,7 @@ impl ToolUseState {
             tool_uses_by_user_message: HashMap::default(),
             tool_results: HashMap::default(),
             pending_tool_uses_by_id: HashMap::default(),
+            tool_result_cards: HashMap::default(),
         }
     }
 
@@ -255,6 +257,18 @@ impl ToolUseState {
         tool_use_id: &LanguageModelToolUseId,
     ) -> Option<&LanguageModelToolResult> {
         self.tool_results.get(tool_use_id)
+    }
+
+    pub fn tool_result_card(&self, tool_use_id: &LanguageModelToolUseId) -> Option<&gpui::AnyView> {
+        self.tool_result_cards.get(tool_use_id)
+    }
+
+    pub fn insert_tool_result_card(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        card: gpui::AnyView,
+    ) {
+        self.tool_result_cards.insert(tool_use_id, card);
     }
 
     pub fn request_tool_use(

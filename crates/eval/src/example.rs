@@ -156,8 +156,9 @@ impl Example {
                             if let Some(tool_use) = pending_tool_use {
                                 println!("\nTOOL FINISHED: {}", tool_use.name);
                             }
-                            if let Some(tool_result) = thread.read(cx).tool_result(tool_use_id) {
-                                println!("\n{}\n", tool_result.content);
+                            if let Some(tool_result) = thread.read(cx).output_for_tool(tool_use_id)
+                            {
+                                println!("\n{}\n", tool_result);
                             }
                         }
                         _ => {}

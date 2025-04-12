@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, Tool, ToolResult, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
 use feature_flags::{self, FeatureFlagAppExt};
@@ -614,8 +614,12 @@ impl Thread {
         self.tool_use.tool_results_for_message(id)
     }
 
-    pub fn tool_result(&self, id: &LanguageModelToolUseId) -> Option<&LanguageModelToolResult> {
-        self.tool_use.tool_result(id)
+    pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
+        Some(&self.tool_use.tool_result(id)?.content)
+    }
+
+    pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&gpui::AnyView> {
+        self.tool_use.tool_result_card(id)
     }
 
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
@@ -1372,8 +1376,11 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
-            Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
+        let tool_result = if self.tools.is_disabled(&tool.source(), &tool_name) {
+            ToolResult {
+                output: Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))),
+                card: None,
+            }
         } else {
             tool.run(
                 input,
@@ -1384,9 +1391,15 @@ impl Thread {
             )
         };
 
+        // Store the card separately if it exists
+        if let Some(card) = tool_result.card.clone() {
+            self.tool_use
+                .insert_tool_result_card(tool_use_id.clone(), card);
+        }
+
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
-                let output = run_tool.await;
+                let output = tool_result.output.await;
 
                 thread
                     .update(cx, |thread, cx| {

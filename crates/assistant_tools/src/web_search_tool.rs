@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
-use anyhow::{Context, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use anyhow::{Context, anyhow};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -51,17 +51,17 @@ impl Tool for WebSearchTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<WebSearchToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
         let Some(provider) = WebSearchRegistry::read_global(cx)
             .providers()
             .next()
             .cloned()
         else {
-            return Task::ready(Err(anyhow!("No web search provider configured.")));
+            return Task::ready(Err(anyhow!("No web search provider configured."))).into();
         };
 
         let search_task = provider.search(input.query, cx);
@@ -69,5 +69,6 @@ impl Tool for WebSearchTool {
             let response = search_task.await?;
             serde_json::to_string(&response).context("Failed to retrieve search results")
         })
+        .into()
     }
 }

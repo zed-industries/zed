@@ -8,7 +8,7 @@ use std::fmt::Formatter;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{AnyView, App, Entity, SharedString, Task};
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -20,6 +20,22 @@ pub use crate::tool_working_set::*;
 
 pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
+}
+
+/// The result of running a tool, containing both the asynchronous output
+/// and an optional card view that can be rendered immediately.
+pub struct ToolResult {
+    /// The asynchronous task that will eventually resolve to the tool's output
+    pub output: Task<Result<String>>,
+    /// An optional view to present the output of the tool.
+    pub card: Option<AnyView>,
+}
+
+impl From<Task<Result<String>>> for ToolResult {
+    /// Convert from a task to a ToolResult with no card
+    fn from(output: Task<Result<String>>) -> Self {
+        Self { output, card: None }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
@@ -66,7 +82,7 @@ pub trait Tool: 'static + Send + Sync {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>>;
+    ) -> ToolResult;
 }
 
 impl Debug for dyn Tool {
