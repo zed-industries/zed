@@ -2,6 +2,7 @@
 // #![cfg_attr(test, allow(dead_code))]
 
 use std::{
+    os::windows::process::CommandExt,
     path::Path,
     time::{Duration, Instant},
 };
@@ -9,6 +10,7 @@ use std::{
 use anyhow::{Context, Result};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, WPARAM},
+    System::Threading::CREATE_NEW_PROCESS_GROUP,
     UI::WindowsAndMessaging::PostMessageW,
 };
 
@@ -83,23 +85,38 @@ pub(crate) const JOBS: [Job; 6] = [
 ];
 
 #[cfg(test)]
-pub(crate) const JOBS: [Job; 1] = [|_| {
-    if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
-        match config.as_str() {
-            "err" => {
-                std::thread::sleep(Duration::from_millis(500));
-                Err(std::io::Error::new(
+pub(crate) const JOBS: [Job; 2] = [
+    |_| {
+        std::thread::sleep(Duration::from_millis(1000));
+        if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
+            match config.as_str() {
+                "err" => Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Simulated error",
                 ))
-                .context("Anyhow!")
+                .context("Anyhow!"),
+                _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
-            _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
+        } else {
+            Ok(())
         }
-    } else {
-        Ok(())
-    }
-}];
+    },
+    |_| {
+        std::thread::sleep(Duration::from_millis(1000));
+        if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
+            match config.as_str() {
+                "err" => Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Simulated error",
+                ))
+                .context("Anyhow!"),
+                _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
+            }
+        } else {
+            Ok(())
+        }
+    },
+];
 
 pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
@@ -130,7 +147,10 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             }
         }
     }
-
+    let _ = std::process::Command::new(app_dir.join("Zed.exe"))
+        .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
+        .spawn();
+    log::info!("Update completed successfully");
     Ok(())
 }
 
