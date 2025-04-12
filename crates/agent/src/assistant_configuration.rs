@@ -359,9 +359,13 @@ impl AssistantConfiguration {
                                     .when(ix < tool_count - 1, |element| {
                                         element
                                             .border_b_1()
-                                            .border_color(cx.theme().colors().border)
+                                            .border_color(cx.theme().colors().border_variant)
                                     })
-                                    .child(Label::new(tool.name()).size(LabelSize::Small))
+                                    .child(
+                                        Label::new(tool.name())
+                                            .buffer_font(cx)
+                                            .size(LabelSize::Small),
+                                    )
                                     .child(
                                         IconButton::new(("tool-description", ix), IconName::Info)
                                             .shape(ui::IconButtonShape::Square)
