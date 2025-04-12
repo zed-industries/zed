@@ -10,6 +10,7 @@ anyhow.workspace = true
 assistant_settings.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
+chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 context_server.workspace = true

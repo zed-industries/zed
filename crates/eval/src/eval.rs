@@ -20,8 +20,10 @@ use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+pub const RUNS_DIR: &str = "./crates/eval/runs";
 
 #[derive(Parser, Debug)]
 #[command(name = "eval", disable_version_flag = true)]
@@ -75,15 +77,20 @@ fn main() {
         cx.spawn(async move |cx| {
             authenticate.await.unwrap();
 
-            let mut examples = Vec::new();
-            for example_path in example_paths {
-                let example = Example::load_from_directory(&example_path)?;
-                examples.push((example_path, example));
-            }
-
             std::fs::create_dir_all(REPOS_DIR)?;
             std::fs::create_dir_all(WORKTREES_DIR)?;
 
+            let run_dir = Path::new(RUNS_DIR).join(format!(
+                "{}",
+                chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
+            ));
+            std::fs::create_dir_all(&run_dir)?;
+
+            let mut examples = Vec::new();
+            for example_path in example_paths {
+                let example = Example::load_from_directory(&example_path, &run_dir)?;
+                examples.push((example_path, example));
+            }
             let mut repo_urls = HashSet::new();
 
             let mut clone_tasks = Vec::new();
@@ -175,7 +182,7 @@ fn main() {
 }
 
 async fn run_example(
-    example: Example,
+    mut example: Example,
     model: Arc<dyn LanguageModel>,
     app_state: Arc<AgentAppState>,
     cx: &mut AsyncApp,

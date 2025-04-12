@@ -14,14 +14,17 @@ use language_model::{
 };
 use project::{LspStore, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
-use std::fmt::Write;
-use std::sync::Arc;
+use std::fmt::Write as _;
+use std::fs::File;
+use std::io::Write as _;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 use unindent::Unindent as _;
+use util::ResultExt as _;
 use util::command::new_smol_command;
 
 use crate::AgentAppState;
@@ -40,8 +43,10 @@ pub struct ExampleBase {
 
 #[derive(Clone, Debug)]
 pub struct Example {
+    /// Path to the example's directory
     pub path: PathBuf,
 
+    /// Contents of the base.toml file
     pub base: ExampleBase,
 
     /// Content of the prompt.md file
@@ -49,6 +54,9 @@ pub struct Example {
 
     /// Content of the criteria.md file
     pub criteria: String,
+
+    /// Log file to output results
+    pub log_file: Arc<Mutex<File>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -73,16 +81,25 @@ pub struct JudgeOutput {
 
 impl Example {
     /// Load an example from a directory containing base.toml, prompt.md, and criteria.md
-    pub fn load_from_directory(dir_path: &Path) -> Result<Self> {
+    pub fn load_from_directory(dir_path: &Path, run_dir: &Path) -> Result<Self> {
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
         let criteria_path = dir_path.join("criteria.md");
+
+        let log_file = Arc::new(Mutex::new(
+            File::create(run_dir.join(format!(
+                "{}.md",
+                dir_path.file_name().unwrap().to_str().unwrap()
+            )))
+            .unwrap(),
+        ));
 
         Ok(Example {
             path: dir_path.to_path_buf(),
             base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
             criteria: fs::read_to_string(criteria_path.clone())?,
+            log_file,
         })
     }
 
@@ -163,9 +180,17 @@ impl Example {
         let this = self.clone();
         let language_extension = self.base.language_extension.clone();
 
-        println!("👤 USER:");
-        println!("{}", self.prompt);
-        println!("🤖 ASSISTANT:");
+        let name = self.name();
+
+        {
+            let mut log_file = this.log_file.lock().unwrap();
+
+            writeln!(&mut log_file, "👤 USER:").log_err();
+            writeln!(&mut log_file, "{}", self.prompt).log_err();
+            writeln!(&mut log_file, "🤖 ASSISTANT:").log_err();
+            log_file.flush().log_err();
+        }
+
         cx.spawn(async move |cx| {
             let worktree = worktree.await?;
 
@@ -209,9 +234,9 @@ impl Example {
 
             // TODO: remove this once the diagnostics tool waits for new diagnostics
             cx.background_executor().timer(Duration::new(5, 0)).await;
-            println!("Waiting for LSP diagnostics");
-            wait_for_lsp_diagnostics(lsp_store.clone(), cx).await?;
-            println!("Done waiting for LSP diagnostics");
+            println!("{}> Waiting for LSP diagnostics", name);
+            wait_for_lsp_diagnostics(lsp_store.clone(), name.clone(), cx).await?;
+            println!("{}> Done waiting for LSP diagnostics", name);
 
             let thread_store = thread_store.await;
             let thread =
@@ -220,10 +245,13 @@ impl Example {
             let (tx, rx) = oneshot::channel();
             let mut tx = Some(tx);
 
-            let _subscription =
-                cx.subscribe(
-                    &thread,
-                    move |thread, event: &ThreadEvent, cx| match event {
+            let _subscription = cx.subscribe(&thread, {
+                let log_file = this.log_file.clone();
+                let name = name.clone();
+                move |thread, event: &ThreadEvent, cx| {
+                    let mut log_file = log_file.lock().unwrap();
+
+                    match event {
                         ThreadEvent::Stopped(reason) => match reason {
                             Ok(StopReason::EndTurn) => {
                                 if let Some(tx) = tx.take() {
@@ -248,15 +276,16 @@ impl Example {
                             }
                         }
                         ThreadEvent::StreamedAssistantText(_, chunk) => {
-                            print!("{}", chunk);
+                            write!(&mut log_file, "{}", chunk).log_err();
                         }
                         ThreadEvent::StreamedAssistantThinking(_, chunk) => {
-                            print!("{}", chunk);
+                            write!(&mut log_file, "{}", chunk).log_err();
                         }
                         ThreadEvent::UsePendingTools { tool_uses } => {
-                            println!("\n\nUSING TOOLS:");
+                            writeln!(&mut log_file, "\n\nUSING TOOLS:").log_err();
                             for tool_use in tool_uses {
-                                println!("{}: {}", tool_use.name, tool_use.input);
+                                writeln!(&mut log_file, "{}: {}", tool_use.name, tool_use.input)
+                                    .log_err();
                             }
                         }
                         ThreadEvent::ToolFinished {
@@ -265,15 +294,21 @@ impl Example {
                             ..
                         } => {
                             if let Some(tool_use) = pending_tool_use {
-                                println!("\nTOOL FINISHED: {}", tool_use.name);
+                                let message = format!("TOOL FINISHED: {}", tool_use.name);
+                                println!("{name}> {message}");
+                                writeln!(&mut log_file, "\n{}", message).log_err();
                             }
                             if let Some(tool_result) = thread.read(cx).tool_result(tool_use_id) {
-                                println!("\n{}\n", tool_result.content);
+                                let message = format!("\n{}\n", tool_result.content);
+                                writeln!(&mut log_file, "{}", message).log_err();
                             }
                         }
                         _ => {}
-                    },
-                )?;
+                    }
+
+                    log_file.flush().log_err();
+                }
+            })?;
 
             thread.update(cx, |thread, cx| {
                 let context = vec![];
@@ -283,7 +318,7 @@ impl Example {
 
             rx.await??;
 
-            wait_for_lsp_diagnostics(lsp_store, cx).await?;
+            wait_for_lsp_diagnostics(lsp_store, name.clone(), cx).await?;
 
             let repository_diff = this.repository_diff().await?;
             let diagnostics = cx
@@ -311,7 +346,7 @@ impl Example {
     }
 
     pub async fn judge(
-        &self,
+        &mut self,
         model: Arc<dyn LanguageModel>,
         repository_diff: String,
         cx: &AsyncApp,
@@ -341,6 +376,14 @@ impl Example {
 
         let response = send_language_model_request(model, request, cx).await?;
 
+        let mut log_file = self.log_file.lock().unwrap();
+
+        writeln!(&mut log_file, "\n\n").log_err();
+        writeln!(&mut log_file, "========================================").log_err();
+        writeln!(&mut log_file, "              JUDGE OUTPUT              ").log_err();
+        writeln!(&mut log_file, "========================================").log_err();
+        writeln!(&mut log_file, "\n{}", &response).log_err();
+
         parse_judge_output(&response)
     }
 
@@ -351,7 +394,11 @@ impl Example {
     }
 }
 
-fn wait_for_lsp_diagnostics(lsp_store: Entity<LspStore>, cx: &mut AsyncApp) -> Task<Result<()>> {
+fn wait_for_lsp_diagnostics(
+    lsp_store: Entity<LspStore>,
+    name: String,
+    cx: &mut AsyncApp,
+) -> Task<Result<()>> {
     if cx
         .update(|cx| !has_pending_diagnostics(lsp_store.clone(), cx))
         .unwrap()
@@ -370,7 +417,7 @@ fn wait_for_lsp_diagnostics(lsp_store: Entity<LspStore>, cx: &mut AsyncApp) -> T
                         ..
                     }),
                 ..
-            } => println!("{message}"),
+            } => println!("{name}> {message}"),
             _ => {}
         }
 
