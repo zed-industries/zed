@@ -1,6 +1,7 @@
 use agent::{RequestKind, ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
+use client::proto::LspWorkProgress;
 use dap::DapRegistry;
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, StreamExt as _};
@@ -33,7 +34,7 @@ pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
 pub struct ExampleBase {
     pub url: String,
     pub revision: String,
-    pub language: String,
+    pub language_extension: String,
     pub insert_id: Option<String>,
 }
 
@@ -160,27 +161,28 @@ impl Example {
         let thread_store =
             ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
         let this = self.clone();
+        let language_extension = self.base.language_extension.clone();
 
-        println!("USER:");
+        println!("👤 USER:");
         println!("{}", self.prompt);
-        println!("ASSISTANT:");
+        println!("🤖 ASSISTANT:");
         cx.spawn(async move |cx| {
             let worktree = worktree.await?;
 
-            // Start language server for example language
-            // TODO: unhardcode
-            let language_extension = "rs";
+            // Wait for worktree scan to finish before choosing a file to open.
+            worktree
+                .update(cx, |worktree, _cx| {
+                    worktree.as_local().unwrap().scan_complete()
+                })?
+                .await;
 
-            cx.background_executor().timer(Duration::new(5, 0)).await;
-
-            // std::thread::sleep(Duration::new(5, 0));
-
+            // Open a file that matches the language to cause LSP to start.
             let language_file = worktree.read_with(cx, |worktree, _cx| {
                 worktree
                     .files(false, 0)
                     .find_map(|e| {
                         if e.path.clone().extension().and_then(|ext| ext.to_str())
-                            == Some(language_extension)
+                            == Some(&language_extension)
                         {
                             Some(ProjectPath {
                                 worktree_id: worktree.id(),
@@ -205,8 +207,8 @@ impl Example {
                 )
             })?;
 
+            // TODO: remove this once the diagnostics tool waits for new diagnostics
             cx.background_executor().timer(Duration::new(5, 0)).await;
-
             println!("Waiting for LSP diagnostics");
             wait_for_lsp_diagnostics(lsp_store.clone(), cx).await?;
             println!("Done waiting for LSP diagnostics");
@@ -360,7 +362,18 @@ fn wait_for_lsp_diagnostics(lsp_store: Entity<LspStore>, cx: &mut AsyncApp) -> T
     let (mut tx, mut rx) = mpsc::channel(1);
 
     let subscription = cx.subscribe(&lsp_store, move |lsp_store, event, cx| {
-        println!("{event:?}");
+        match event {
+            project::LspStoreEvent::LanguageServerUpdate {
+                message:
+                    client::proto::update_language_server::Variant::WorkProgress(LspWorkProgress {
+                        message: Some(message),
+                        ..
+                    }),
+                ..
+            } => println!("{message}"),
+            _ => {}
+        }
+
         if !has_pending_diagnostics(lsp_store, cx) {
             tx.try_send(()).ok();
         }

@@ -37,6 +37,7 @@ toml.workspace = true
 unindent.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
+worktree.workspace = true
 
 [[bin]]
 name = "eval"
