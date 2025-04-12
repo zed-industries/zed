@@ -1088,20 +1088,30 @@ impl AssistantPanel {
                                             window,
                                             cx,
                                             |menu, _window, _cx| {
-                                                menu.action(
+                                                menu
+                                                    .when(!is_empty, |menu| {
+                                                        menu.action(
+                                                            "Start New From Summary",
+                                                            Box::new(NewThread {
+                                                                from_thread_id: Some(thread_id.clone()),
+                                                            }),
+                                                        ).separator()
+                                                    })
+                                                    .action(
                                                     "New Text Thread",
                                                     NewTextThread.boxed_clone(),
                                                 )
-                                                .when(!is_empty, |menu| {
-                                                    menu.action(
-                                                        "Continue in New Thread",
-                                                        Box::new(NewThread {
-                                                            from_thread_id: Some(thread_id.clone()),
-                                                        }),
-                                                    )
-                                                })
-                                                .separator()
                                                 .action("Settings", OpenConfiguration.boxed_clone())
+                                                .separator()
+                                                .action(
+                                                    "Install MCPs",
+                                                    zed_actions::Extensions {
+                                                        category_filter: Some(
+                                                            zed_actions::ExtensionCategoryFilter::ContextServers,
+                                                        ),
+                                                    }
+                                                    .boxed_clone(),
+                                                )
                                             },
                                         ))
                                     }),
