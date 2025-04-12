@@ -14,14 +14,10 @@ use windows::Win32::{
 
 use crate::windows_impl::WM_JOB_UPDATED;
 
-// The number here equals the number of calls to `retry_loop` in `perform_update`.
-// So if you add or remove a call to `retry_loop`, make sure to update this number too.
-pub(crate) const JOBS_COUNT: usize = 6;
-
 type Job = fn(&Path) -> Result<()>;
 
 #[cfg(not(test))]
-const JOBS: [Job; 6] = [
+pub(crate) const JOBS: [Job; 6] = [
     |app_dir| {
         let zed_executable = app_dir.join("Zed.exe");
         log::info!("Removing old file: {}", zed_executable.display());
@@ -87,7 +83,7 @@ const JOBS: [Job; 6] = [
 ];
 
 #[cfg(test)]
-const JOBS: [Job; 1] = [|_| {
+pub(crate) const JOBS: [Job; 1] = [|_| {
     if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
         match config.as_str() {
             "err" => {
