@@ -14,19 +14,14 @@ pub struct WebSearchProviderId(pub SharedString);
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct WebSearchResponse {
-    pub results: Vec<WebSearchResult>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct WebSearchResult {
-    pub summary: String,
+    pub summary: SharedString,
     pub citations: Vec<WebSearchCitation>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct WebSearchCitation {
-    pub title: String,
-    pub url: String,
+    pub title: SharedString,
+    pub url: SharedString,
     pub range: Option<Range<usize>>,
 }
 

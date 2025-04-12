@@ -5,9 +5,7 @@ use futures::AsyncReadExt;
 use gpui::{App, AppContext, Task};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::Deserialize;
-use web_search::{
-    WebSearchCitation, WebSearchProvider, WebSearchProviderId, WebSearchResponse, WebSearchResult,
-};
+use web_search::{WebSearchCitation, WebSearchProvider, WebSearchProviderId, WebSearchResponse};
 
 const OPENAI_API_URL: &str = "https://api.openai.com/v1";
 
@@ -42,7 +40,9 @@ impl WebSearchProvider for OpenAiWebSearchProvider {
             let response_json = perform_web_search(client, &input, &api_key).await?;
             let parsed_response: OpenAiWebSearchResponse =
                 serde_json::from_str(&response_json).context("Failed to parse OpenAI response")?;
-            Ok(parsed_response.into())
+            Ok(parsed_response
+                .try_into()
+                .context("Failed to convert OpenAI response")?)
         })
     }
 }
@@ -89,15 +89,16 @@ fn read_api_key(api_url: &str, cx: &mut App) -> Task<Result<String>> {
     })
 }
 
-impl Into<WebSearchResponse> for OpenAiWebSearchResponse {
-    fn into(self) -> WebSearchResponse {
-        let mut results = Vec::new();
+impl TryInto<WebSearchResponse> for OpenAiWebSearchResponse {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<WebSearchResponse> {
         for item in self.output {
             if let OutputItem::Message { content } = item {
                 for content_item in content {
-                    results.push(match content_item {
-                        MessageContent::OutputText { text, annotations } => WebSearchResult {
-                            summary: text,
+                    return Ok(match content_item {
+                        MessageContent::OutputText { text, annotations } => WebSearchResponse {
+                            summary: text.into(),
                             citations: annotations
                                 .into_iter()
                                 .map(|annotation| match annotation {
@@ -107,18 +108,18 @@ impl Into<WebSearchResponse> for OpenAiWebSearchResponse {
                                         start_index,
                                         end_index,
                                     } => WebSearchCitation {
-                                        title,
-                                        url,
+                                        title: title.into(),
+                                        url: url.into(),
                                         range: Some(start_index..end_index),
                                     },
                                 })
                                 .collect(),
                         },
-                    })
+                    });
                 }
             }
         }
-        WebSearchResponse { results }
+        Err(anyhow!("Missing web search results"))
     }
 }
 

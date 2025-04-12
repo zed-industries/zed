@@ -1,15 +1,18 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt, TryFutureExt};
-use gpui::{App, AppContext, Context, Entity, IntoElement, Task, Window};
+use gpui::{
+    Animation, AnimationExt, App, AppContext, Context, Entity, IntoElement, Task, Window,
+    pulsating_between,
+};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::{IconName, prelude::*};
+use ui::{IconName, Tooltip, prelude::*};
 use web_search::{WebSearchRegistry, WebSearchResponse};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -113,16 +116,99 @@ impl WebSearchToolCard {
 impl ToolCard for WebSearchToolCard {
     fn render(
         &mut self,
-        status: &ToolUseStatus,
-        window: &mut Window,
+        _status: &ToolUseStatus,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        match status {
-            ToolUseStatus::NeedsConfirmation => div().child("Needs Confirmation"),
-            ToolUseStatus::Pending => div().child("Pending"),
-            ToolUseStatus::Running => div().child("Running"),
-            ToolUseStatus::Finished(shared_string) => div().child("Finished"),
-            ToolUseStatus::Error(shared_string) => div().child("Error"),
-        }
+        let header = h_flex()
+            .id("tool-label-container")
+            .gap_1p5()
+            .max_w_full()
+            .overflow_x_scroll()
+            .child(
+                Icon::new(IconName::Globe)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .pr_8()
+                    .text_ui_sm(cx)
+                    .child(match self.response.as_ref() {
+                        Some(Ok(response)) => h_flex()
+                            .gap_1()
+                            .child(Label::new("Web Search"))
+                            .child(
+                                Label::new(format!("{} results", response.citations.len()))
+                                    .color(Color::Muted),
+                            )
+                            .into_any_element(),
+                        Some(Err(_)) => Label::new("Web Search failed").into_any_element(),
+                        None => Label::new("Web Search")
+                            .with_animation(
+                                "web-search-label",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.6, 1.)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element(),
+                    }),
+            )
+            .into_any();
+
+        let content =
+            self.response.as_ref().and_then(|response| match response {
+                Ok(response) => Some(
+                    v_flex()
+                        .gap_2()
+                        .child(
+                            Label::new(response.summary.clone())
+                                .single_line()
+                                .truncate(),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .children(response.citations.iter().enumerate().map(
+                                    |(index, citation)| {
+                                        h_flex()
+                                            .justify_between()
+                                            .child(
+                                                Label::new(citation.title.clone())
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall)
+                                                    .truncate(),
+                                            )
+                                            .child(
+                                                IconButton::new(
+                                                    ("web-search-citation", index),
+                                                    IconName::ExternalLink,
+                                                )
+                                                .icon_color(Color::Muted)
+                                                .icon_size(IconSize::Small)
+                                                .tooltip(Tooltip::text(citation.url.clone()))
+                                                .on_click({
+                                                    let url = citation.url.clone();
+                                                    move |_, _, cx| cx.open_url(&url)
+                                                }),
+                                            )
+                                    },
+                                )),
+                        )
+                        .into_any(),
+                ),
+                Err(_) => None,
+            });
+
+        v_flex()
+            .gap_1()
+            .border_1()
+            .rounded_md()
+            .border_color(cx.theme().colors().border)
+            .px_2()
+            .py_1()
+            .child(header)
+            .children(content)
     }
 }
