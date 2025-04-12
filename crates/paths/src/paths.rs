@@ -377,7 +377,7 @@ pub fn local_settings_folder_relative_path() -> &'static Path {
 
 /// Returns the relative path to a `.vscode` folder within a project.
 pub fn local_vscode_folder_relative_path() -> &'static Path {
-    Path::new(".zed")
+    Path::new(".vscode")
 }
 
 /// Returns the relative path to a `settings.json` file within a project.
