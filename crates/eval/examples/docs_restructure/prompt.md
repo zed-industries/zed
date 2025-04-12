@@ -1,0 +1,7 @@
+I need to update our Arena-Baselines repository to improve its documentation and make the configuration system more flexible, especially for multi-agent reinforcement learning. My goal is to enhance usability while keeping the core functionality intact.
+
+First, I plan to reorganize the README by adding clearer sections, including tables that list supported baselines and games. Additionally, I’ll create a separate games.md file with detailed descriptions of each game to help users understand their mechanics and use cases. For better clarity in the code, I’ll rename the parameter selfplay_recent_prob to playing_policy_load_recent_prob.
+
+To improve usability, I’ll add visualization instructions using TensorBoard, making it easier for users to monitor training progress. I’ll also simplify the configuration structure by reducing unnecessary nesting related to population size iterations. Furthermore, I’ll introduce a dedicated documentation section explaining all available parameters and their functions. Finally, I’ll create a comprehensive table to track which games and algorithms are officially supported and benchmarked.
+
+These changes should make the repository more accessible to new users, helping them understand the codebase, run experiments efficiently, and interpret results with ease. The modifications will focus on improving clarity and flexibility without altering the underlying functionality.
