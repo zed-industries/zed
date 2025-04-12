@@ -1011,7 +1011,7 @@ impl Vim {
     }
 
     pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
-        let vim_settings = VimSettings::get_global(cx);
+        let cursor_shape = VimSettings::get_global(cx).cursor_shape;
         match self.mode {
             Mode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
@@ -1029,13 +1029,18 @@ impl Vim {
                         _ => CursorShape::Underline,
                     }
                 } else {
-                    vim_settings.cursor_shape.normal
+                    cursor_shape.normal.unwrap_or(CursorShape::Block)
                 }
             }
-            Mode::Replace => vim_settings.cursor_shape.replace,
-            Mode::HelixNormal => vim_settings.cursor_shape.normal,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => vim_settings.cursor_shape.visual,
-            Mode::Insert => vim_settings.cursor_shape.insert,
+            Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
+            Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                cursor_shape.visual.unwrap_or(CursorShape::Block)
+            }
+            Mode::Insert => cursor_shape.insert.unwrap_or({
+                let editor_settings = EditorSettings::get_global(cx);
+                editor_settings.cursor_shape.unwrap_or_default()
+            }),
         }
     }
 
@@ -1680,13 +1685,21 @@ pub enum UseSystemClipboard {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
-    pub normal: CursorShape,
-    /// Cursor shape for the insert mode.
-    pub insert: CursorShape,
+    ///
+    /// Default: block
+    pub normal: Option<CursorShape>,
     /// Cursor shape for the replace mode.
-    pub replace: CursorShape,
+    ///
+    /// Default: underline
+    pub replace: Option<CursorShape>,
     /// Cursor shape for the visual mode.
-    pub visual: CursorShape,
+    ///
+    /// Default: block
+    pub visual: Option<CursorShape>,
+    /// Cursor shape for the insert mode.
+    ///
+    /// The default value follows the primary cursor_shape.
+    pub insert: Option<CursorShape>,
 }
 
 #[derive(Deserialize)]
