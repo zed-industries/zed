@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
 
+use crate::schema::json_schema_for;
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RenameToolInput {
     /// The relative path to the file containing the symbol to rename.
@@ -68,10 +70,9 @@ impl Tool for RenameTool {
 
     fn input_schema(
         &self,
-        _format: language_model::LanguageModelToolSchemaFormat,
+        format: language_model::LanguageModelToolSchemaFormat,
     ) -> serde_json::Value {
-        let schema = schemars::schema_for!(RenameToolInput);
-        serde_json::to_value(&schema).unwrap()
+        json_schema_for::<RenameToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
