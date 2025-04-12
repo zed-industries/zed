@@ -56,7 +56,7 @@ pub struct MessageEditor {
     _subscriptions: Vec<Subscription>,
 }
 
-const MAX_EDITOR_LINES: usize = 4;
+const MAX_EDITOR_LINES: usize = 3;
 
 impl MessageEditor {
     pub fn new(
@@ -426,7 +426,7 @@ impl MessageEditor {
                     })
                     .child(
                         div()
-                            .min_h(px(72.))
+                            .min_h_16()
                             .when(is_editor_expanded, |this| this.h_full())
                             .child({
                                 let settings = ThemeSettings::get_global(cx);
