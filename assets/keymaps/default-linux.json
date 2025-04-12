@@ -150,7 +150,9 @@
     "context": "AgentDiff",
     "bindings": {
       "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject"
+      "ctrl-n": "agent::Reject",
+      "ctrl-shift-y": "agent::KeepAll",
+      "ctrl-shift-n": "agent::RejectAll"
     }
   },
   {
