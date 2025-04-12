@@ -108,7 +108,6 @@ session.workspace = true
 settings.workspace = true
 settings_ui.workspace = true
 shellexpand.workspace = true
-simplelog.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
