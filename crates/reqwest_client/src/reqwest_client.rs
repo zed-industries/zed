@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::sync::{LazyLock, OnceLock};
 use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
 
@@ -50,7 +51,13 @@ impl ReqwestClient {
 
         let client_has_proxy = if let Some(proxy) = proxy.clone().and_then(|proxy_uri| {
             reqwest::Proxy::all(proxy_uri.to_string())
-                .inspect_err(|e| log::error!("Failed to parse proxy URI '{}': {}", proxy_uri, e))
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to parse proxy URI '{}': {}",
+                        proxy_uri,
+                        e.source().unwrap_or(&e as &_)
+                    )
+                })
                 .ok()
         }) {
             client = client.proxy(proxy);
