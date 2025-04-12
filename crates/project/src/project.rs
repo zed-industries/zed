@@ -48,6 +48,8 @@ use debugger::{
     session::Session,
 };
 pub use environment::ProjectEnvironment;
+#[cfg(test)]
+use futures::future::join_all;
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
@@ -4806,6 +4808,30 @@ impl Project {
 
     pub fn git_store(&self) -> &Entity<GitStore> {
         &self.git_store
+    }
+
+    #[cfg(test)]
+    fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            let scans_complete = this
+                .read_with(cx, |this, cx| {
+                    this.worktrees(cx)
+                        .filter_map(|worktree| Some(worktree.read(cx).as_local()?.scan_complete()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap();
+            join_all(scans_complete).await;
+            let barriers = this
+                .update(cx, |this, cx| {
+                    let repos = this.repositories(cx).values().cloned().collect::<Vec<_>>();
+                    repos
+                        .into_iter()
+                        .map(|repo| repo.update(cx, |repo, _| repo.barrier()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap();
+            join_all(barriers).await;
+        })
     }
 
     pub fn active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
