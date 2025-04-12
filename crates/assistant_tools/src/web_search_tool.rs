@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult};
+use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt, TryFutureExt};
-use gpui::{App, AppContext, Context, Entity, IntoElement, Render, Task, Window};
+use gpui::{App, AppContext, Context, Entity, IntoElement, Task, Window};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -113,23 +113,16 @@ impl WebSearchToolCard {
 impl ToolCard for WebSearchToolCard {
     fn render(
         &mut self,
-        expanded: bool,
+        status: &ToolUseStatus,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        if expanded {
-            return div().child("Expanded content");
-        }
-
-        match self.response.as_ref() {
-            Some(Ok(response)) => div().children(
-                response
-                    .results
-                    .iter()
-                    .map(|result| div().child(result.summary.clone())),
-            ),
-            Some(Err(err)) => div().child(err.to_string()),
-            None => div().child("Loading..."),
+        match status {
+            ToolUseStatus::NeedsConfirmation => div().child("Needs Confirmation"),
+            ToolUseStatus::Pending => div().child("Pending"),
+            ToolUseStatus::Running => div().child("Running"),
+            ToolUseStatus::Finished(shared_string) => div().child("Finished"),
+            ToolUseStatus::Error(shared_string) => div().child("Error"),
         }
     }
 }

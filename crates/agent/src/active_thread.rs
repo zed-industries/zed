@@ -5,11 +5,12 @@ use crate::thread::{
     ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
-use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
+use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::{AssistantPanel, OpenActiveThreadAsMarkdown};
 use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
+use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{Editor, MultiBuffer};
@@ -2229,12 +2230,15 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
+            return card.render(&tool_use.status, window, cx);
+        }
+
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)
             .copied()
             .unwrap_or_default();
-
         let is_status_finished = matches!(&tool_use.status, ToolUseStatus::Finished(_));
 
         let fs = self
@@ -2314,23 +2318,19 @@ impl ActiveThread {
                                 .buffer_font(cx),
                         )
                         .child(div().w_full().text_ui_sm(cx).children(
-                            if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
-                                Some(card.render(is_open, window, cx))
-                            } else {
-                                rendered_tool_use.as_ref().map(|rendered| {
-                                    MarkdownElement::new(
-                                        rendered.output.clone(),
-                                        tool_use_markdown_style(window, cx),
-                                    )
-                                    .on_url_click({
-                                        let workspace = self.workspace.clone();
-                                        move |text, window, cx| {
-                                            open_markdown_link(text, workspace.clone(), window, cx);
-                                        }
-                                    })
-                                    .into_any_element()
+                            rendered_tool_use.as_ref().map(|rendered| {
+                                MarkdownElement::new(
+                                    rendered.output.clone(),
+                                    tool_use_markdown_style(window, cx),
+                                )
+                                .on_url_click({
+                                    let workspace = self.workspace.clone();
+                                    move |text, window, cx| {
+                                        open_markdown_link(text, workspace.clone(), window, cx);
+                                    }
                                 })
-                            },
+                                .into_any_element()
+                            }),
                         )),
                 ),
                 ToolUseStatus::Running => container.child(
@@ -2372,11 +2372,10 @@ impl ActiveThread {
                                 .color(Color::Muted)
                                 .buffer_font(cx),
                         )
-                        .child(div().text_ui_sm(cx).children(
-                            if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
-                                Some(card.render(is_open, window, cx))
-                            } else {
-                                rendered_tool_use.as_ref().map(|rendered| {
+                        .child(
+                            div()
+                                .text_ui_sm(cx)
+                                .children(rendered_tool_use.as_ref().map(|rendered| {
                                     MarkdownElement::new(
                                         rendered.output.clone(),
                                         tool_use_markdown_style(window, cx),
@@ -2388,9 +2387,8 @@ impl ActiveThread {
                                         }
                                     })
                                     .into_any_element()
-                                })
-                            },
-                        )),
+                                })),
+                        ),
                 ),
                 ToolUseStatus::Pending => container,
                 ToolUseStatus::NeedsConfirmation => container.child(
@@ -2719,7 +2717,7 @@ impl ActiveThread {
                         )
                     })
             }
-        })
+        }).into_any_element()
     }
 
     fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {

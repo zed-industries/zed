@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{AnyToolCard, Tool, ToolWorkingSet};
+use assistant_tool::{AnyToolCard, Tool, ToolUseStatus, ToolWorkingSet};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
@@ -27,26 +27,7 @@ pub struct ToolUse {
     pub needs_confirmation: bool,
 }
 
-#[derive(Debug, Clone)]
-pub enum ToolUseStatus {
-    NeedsConfirmation,
-    Pending,
-    Running,
-    Finished(SharedString),
-    Error(SharedString),
-}
-
-impl ToolUseStatus {
-    pub fn text(&self) -> SharedString {
-        match self {
-            ToolUseStatus::NeedsConfirmation => "".into(),
-            ToolUseStatus::Pending => "".into(),
-            ToolUseStatus::Running => "".into(),
-            ToolUseStatus::Finished(out) => out.clone(),
-            ToolUseStatus::Error(out) => out.clone(),
-        }
-    }
-}
+pub const USING_TOOL_MARKER: &str = "<using_tool>";
 
 pub struct ToolUseState {
     tools: Arc<ToolWorkingSet>,
@@ -56,8 +37,6 @@ pub struct ToolUseState {
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
     tool_result_cards: HashMap<LanguageModelToolUseId, AnyToolCard>,
 }
-
-pub const USING_TOOL_MARKER: &str = "<using_tool>";
 
 impl ToolUseState {
     pub fn new(tools: Arc<ToolWorkingSet>) -> Self {

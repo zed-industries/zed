@@ -12,7 +12,7 @@ use gpui::AnyElement;
 use gpui::Context;
 use gpui::IntoElement;
 use gpui::Window;
-use gpui::{AnyView, App, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task};
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -24,6 +24,27 @@ pub use crate::tool_working_set::*;
 
 pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
+}
+
+#[derive(Debug, Clone)]
+pub enum ToolUseStatus {
+    NeedsConfirmation,
+    Pending,
+    Running,
+    Finished(SharedString),
+    Error(SharedString),
+}
+
+impl ToolUseStatus {
+    pub fn text(&self) -> SharedString {
+        match self {
+            ToolUseStatus::NeedsConfirmation => "".into(),
+            ToolUseStatus::Pending => "".into(),
+            ToolUseStatus::Running => "".into(),
+            ToolUseStatus::Finished(out) => out.clone(),
+            ToolUseStatus::Error(out) => out.clone(),
+        }
+    }
 }
 
 /// The result of running a tool, containing both the asynchronous output
@@ -38,7 +59,7 @@ pub struct ToolResult {
 pub trait ToolCard: 'static + Sized {
     fn render(
         &mut self,
-        expanded: bool,
+        status: &ToolUseStatus,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement;
@@ -49,7 +70,7 @@ pub struct AnyToolCard {
     entity: gpui::AnyEntity,
     render: fn(
         entity: gpui::AnyEntity,
-        expanded: bool,
+        status: &ToolUseStatus,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement,
@@ -59,13 +80,13 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
     fn from(entity: Entity<T>) -> Self {
         fn downcast_render<T: ToolCard>(
             entity: gpui::AnyEntity,
-            expanded: bool,
+            status: &ToolUseStatus,
             window: &mut Window,
             cx: &mut App,
         ) -> AnyElement {
             let entity = entity.downcast::<T>().unwrap();
             entity.update(cx, |entity, cx| {
-                entity.render(expanded, window, cx).into_any_element()
+                entity.render(status, window, cx).into_any_element()
             })
         }
 
@@ -77,8 +98,8 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
 }
 
 impl AnyToolCard {
-    pub fn render(&self, expanded: bool, window: &mut Window, cx: &mut App) -> AnyElement {
-        (self.render)(self.entity.clone(), expanded, window, cx)
+    pub fn render(&self, status: &ToolUseStatus, window: &mut Window, cx: &mut App) -> AnyElement {
+        (self.render)(self.entity.clone(), status, window, cx)
     }
 }
 
