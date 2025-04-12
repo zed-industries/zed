@@ -1,6 +1,3 @@
-// #![cfg_attr(test, allow(unused_macros))]
-// #![cfg_attr(test, allow(dead_code))]
-
 use std::{
     os::windows::process::CommandExt,
     path::Path,
@@ -20,6 +17,7 @@ type Job = fn(&Path) -> Result<()>;
 
 #[cfg(not(test))]
 pub(crate) const JOBS: [Job; 6] = [
+    // Delete old files
     |app_dir| {
         let zed_executable = app_dir.join("Zed.exe");
         log::info!("Removing old file: {}", zed_executable.display());
@@ -34,6 +32,7 @@ pub(crate) const JOBS: [Job; 6] = [
         std::fs::remove_file(&zed_cli)
             .context(format!("Failed to remove old file {}", zed_cli.display()))
     },
+    // Copy new files
     |app_dir| {
         let zed_executable_source = app_dir.join("install\\Zed.exe");
         let zed_executable_dest = app_dir.join("Zed.exe");
@@ -66,6 +65,7 @@ pub(crate) const JOBS: [Job; 6] = [
                 zed_cli_dest.display()
             ))
     },
+    // Clean up installer folder and updates folder
     |app_dir| {
         let updates_folder = app_dir.join("updates");
         log::info!("Cleaning up: {}", updates_folder.display());
