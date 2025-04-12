@@ -54,7 +54,7 @@ impl ReqwestClient {
                 .inspect_err(|e| {
                     log::error!(
                         "Failed to parse proxy URL '{}': {}",
-                        proxy_url.to_string(),
+                        proxy_url,
                         e.source().unwrap_or(&e as &_)
                     )
                 })
