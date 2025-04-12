@@ -1,10 +1,10 @@
 //! socks proxy
 use anyhow::{Result, anyhow};
-use http_client::Uri;
+use http_client::Url;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
 pub(crate) async fn connect_socks_proxy_stream(
-    proxy: Option<&Uri>,
+    proxy: Option<&Url>,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
     let stream = match parse_socks_proxy(proxy) {
@@ -32,9 +32,9 @@ pub(crate) async fn connect_socks_proxy_stream(
     Ok(stream)
 }
 
-fn parse_socks_proxy(proxy: Option<&Uri>) -> Option<((String, u16), SocksVersion)> {
-    let proxy_uri = proxy?;
-    let scheme = proxy_uri.scheme_str()?;
+fn parse_socks_proxy(proxy: Option<&Url>) -> Option<((String, u16), SocksVersion)> {
+    let proxy_url = proxy?;
+    let scheme = proxy_url.scheme();
     let socks_version = if scheme.starts_with("socks4") {
         // socks4
         SocksVersion::V4
@@ -44,7 +44,7 @@ fn parse_socks_proxy(proxy: Option<&Uri>) -> Option<((String, u16), SocksVersion
     } else {
         return None;
     };
-    if let (Some(host), Some(port)) = (proxy_uri.host(), proxy_uri.port_u16()) {
+    if let Some((host, port)) = proxy_url.host().zip(proxy_url.port_or_known_default()) {
         Some(((host.to_string(), port), socks_version))
     } else {
         None
