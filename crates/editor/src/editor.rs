@@ -1693,6 +1693,7 @@ impl Editor {
         self.mouse_context_menu = Some(MouseContextMenu::new(
             crate::mouse_context_menu::MenuPosition::PinnedToScreen(position),
             context_menu,
+            None,
             window,
             cx,
         ));
@@ -4984,7 +4985,10 @@ impl Editor {
                                 }));
                             if spawn_straight_away {
                                 if let Some(task) = editor.confirm_code_action(
-                                    &ConfirmCodeAction { item_ix: Some(0) },
+                                    &ConfirmCodeAction {
+                                        item_ix: Some(0),
+                                        deployed_from_mouse_context_menu: false,
+                                    },
                                     window,
                                     cx,
                                 ) {
@@ -5021,17 +5025,24 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
-        let actions_menu =
+        let (action, buffer) = if action.deployed_from_mouse_context_menu {
+            let menu = self.mouse_context_menu.as_ref()?;
+            let code_action = menu.code_action.as_ref()?;
+            let index = action.item_ix?;
+            let action = code_action.actions.get(index)?;
+            (action, code_action.buffer.clone())
+        } else {
             if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
-                menu
+                let action_ix = action.item_ix.unwrap_or(menu.selected_item);
+                let action = menu.actions.get(action_ix)?;
+                let buffer = menu.buffer;
+                (action, buffer)
             } else {
                 return None;
-            };
+            }
+        };
 
-        let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
-        let action = actions_menu.actions.get(action_ix)?;
         let title = action.label();
-        let buffer = actions_menu.buffer;
         let workspace = self.workspace()?;
 
         match action {
@@ -8828,6 +8839,7 @@ impl Editor {
             self,
             source,
             clicked_point,
+            None,
             context_menu,
             window,
             cx,

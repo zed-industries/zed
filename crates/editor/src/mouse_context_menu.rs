@@ -4,6 +4,7 @@ use crate::{
     GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode,
     ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
+    code_context_menus::CodeActionContents,
     selections_collection::SelectionsCollection,
 };
 use feature_flags::{Debugger, FeatureFlagAppExt as _};
@@ -29,9 +30,15 @@ pub enum MenuPosition {
     },
 }
 
+pub struct MouseCodeAction {
+    pub actions: CodeActionContents,
+    pub buffer: Entity<language::Buffer>,
+}
+
 pub struct MouseContextMenu {
     pub(crate) position: MenuPosition,
     pub(crate) context_menu: Entity<ui::ContextMenu>,
+    pub(crate) code_action: Option<MouseCodeAction>,
     _subscription: Subscription,
 }
 
@@ -49,6 +56,7 @@ impl MouseContextMenu {
         editor: &mut Editor,
         source: multi_buffer::Anchor,
         position: Point<Pixels>,
+        code_action: Option<MouseCodeAction>,
         context_menu: Entity<ui::ContextMenu>,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -67,6 +75,7 @@ impl MouseContextMenu {
         return Some(MouseContextMenu::new(
             menu_position,
             context_menu,
+            code_action,
             window,
             cx,
         ));
@@ -75,6 +84,7 @@ impl MouseContextMenu {
     pub(crate) fn new(
         position: MenuPosition,
         context_menu: Entity<ui::ContextMenu>,
+        code_action: Option<MouseCodeAction>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Self {
@@ -95,6 +105,7 @@ impl MouseContextMenu {
         Self {
             position,
             context_menu,
+            code_action,
             _subscription,
         }
     }
@@ -139,7 +150,7 @@ pub fn deploy_context_menu(
         let Some(menu) = menu else {
             return;
         };
-        set_context_menu(editor, menu, source_anchor, position, window, cx);
+        set_context_menu(editor, menu, source_anchor, position, None, window, cx);
     } else {
         // Don't show the context menu if there isn't a project associated with this editor
         let Some(project) = editor.project.clone() else {
@@ -193,7 +204,11 @@ pub fn deploy_context_menu(
                 };
                 let code_actions_task = editor.prepare_code_actions_task(&action, window, cx);
                 Some(cx.spawn_in(window, async move |editor, cx| {
-                    if let Some((_, actions)) = code_actions_task.await {
+                    if let Some((buffer, actions)) = code_actions_task.await {
+                        let code_action = Some(MouseCodeAction {
+                            actions: actions.clone(),
+                            buffer,
+                        });
                         if let Ok(editor_task) = editor.update_in(cx, |editor, window, cx| {
                             let menu = ui::ContextMenu::build(window, cx, |menu, _window, cx| {
                                 let menu = menu
@@ -223,6 +238,7 @@ pub fn deploy_context_menu(
                                                     action.label(),
                                                     Box::new(ConfirmCodeAction {
                                                         item_ix: Some(ix),
+                                                        deployed_from_mouse_context_menu: true,
                                                     }),
                                                 )
                                             })
@@ -301,7 +317,15 @@ pub fn deploy_context_menu(
                                     None => menu,
                                 }
                             });
-                            set_context_menu(editor, menu, source_anchor, position, window, cx);
+                            set_context_menu(
+                                editor,
+                                menu,
+                                source_anchor,
+                                position,
+                                code_action,
+                                window,
+                                cx,
+                            );
                             Task::ready(Ok(()))
                         }) {
                             editor_task.await
@@ -327,6 +351,7 @@ fn set_context_menu(
     context_menu: Entity<ui::ContextMenu>,
     source_anchor: multi_buffer::Anchor,
     position: Option<Point<Pixels>>,
+    code_action: Option<MouseCodeAction>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -335,6 +360,7 @@ fn set_context_menu(
             editor,
             source_anchor,
             position,
+            code_action,
             context_menu,
             window,
             cx,
@@ -348,6 +374,7 @@ fn set_context_menu(
             Some(MouseContextMenu::new(
                 menu_position,
                 context_menu,
+                code_action,
                 window,
                 cx,
             ))
