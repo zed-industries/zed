@@ -900,7 +900,6 @@ impl DiagnosticPopover {
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
-
         div()
             .id("diagnostic")
             .block()
