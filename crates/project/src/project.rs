@@ -3575,12 +3575,12 @@ impl Project {
         let snapshot = buffer_handle.read(cx).snapshot();
 
         let stack_frame_start = snapshot.anchor_before(PointUtf16::new(
-            stack_frame.dap.line as u32,
+            stack_frame.dap.line as u32 - 1,
             stack_frame.dap.column as u32,
         ));
 
         let stack_frame_end = snapshot.anchor_after(PointUtf16::new(
-            stack_frame.dap.end_line.unwrap_or(stack_frame.dap.line) as u32,
+            stack_frame.dap.end_line.unwrap_or(stack_frame.dap.line) as u32 - 1,
             stack_frame.dap.end_column.unwrap_or(stack_frame.dap.column) as u32,
         ));
 
