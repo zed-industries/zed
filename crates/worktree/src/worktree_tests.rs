@@ -1984,6 +1984,58 @@ fn test_unrelativize() {
     );
 }
 
+#[gpui::test]
+async fn test_gitignore_with_git_info_exclude(cx: &mut TestAppContext) {
+    init_test(cx);
+    
+    // Test that .git/info/exclude entries are properly recognized
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {
+                "info": {
+                    "exclude": "excluded_file.txt\n",
+                },
+            },
+            ".gitignore": "local_ignored.txt\n",
+            "normal_file.txt": "normal file content",
+            "local_ignored.txt": "locally ignored content",
+            "excluded_file.txt": "excluded content",
+        }),
+    )
+    .await;
+    
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(
+            tree,
+            &[],
+            &[
+                "local_ignored.txt",    // Ignored by .gitignore
+                "excluded_file.txt",    // Ignored by .git/info/exclude
+            ],
+            &[
+                "normal_file.txt",      // Not ignored
+                ".gitignore",           // Not ignored
+            ],
+            &[],
+        )
+    });
+}
+
 #[track_caller]
 fn check_worktree_entries(
     tree: &Worktree,
