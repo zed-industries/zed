@@ -1982,7 +1982,7 @@ impl Session {
     }
 
     pub fn all_variables(&self) -> Vec<dap::Variable> {
-        self.variables.values().cloned().flatten().collect()
+        self.variables.values().flatten().cloned().collect()
     }
 
     pub fn variables(
