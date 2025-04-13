@@ -141,8 +141,8 @@ impl Console {
             expression
         });
 
-        self.session.update(cx, |state, cx| {
-            state
+        self.session.update(cx, |session, cx| {
+            session
                 .evaluate(
                     expression,
                     Some(dap::EvaluateArgumentsContext::Variables),
