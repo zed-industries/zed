@@ -684,7 +684,7 @@ impl JsonSchema for LanguageModelProviderSetting {
         schemars::schema::SchemaObject {
             enum_values: Some(vec![
                 "anthropic".into(),
-                "bedrock".into(),
+                "amazon-bedrock".into(),
                 "google".into(),
                 "lmstudio".into(),
                 "ollama".into(),
