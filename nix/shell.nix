@@ -11,6 +11,7 @@
   nixfmt-rfc-style,
   protobuf,
   nodejs_22,
+  libX11,
 }:
 (mkShell.override { inherit (zed-editor) stdenv; }) {
   inputsFrom = [ zed-editor ];
@@ -26,6 +27,8 @@
     # `build.nix` adds this to the `zed-editor` wrapper (see `postFixup`)
     # we'll just put it on `$PATH`:
     nodejs_22
+
+    libX11
   ];
 
   env =
