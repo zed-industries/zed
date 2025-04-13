@@ -44,8 +44,8 @@ use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
+    AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
+    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
 pub fn init(cx: &mut App) {
@@ -89,6 +89,16 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         let thread = panel.read(cx).thread.read(cx).thread().clone();
                         AgentDiff::deploy_in_workspace(thread, workspace, window, cx);
+                    }
+                })
+                .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.message_editor.update(cx, |editor, cx| {
+                                editor.expand_message_editor(&ExpandMessageEditor, window, cx);
+                            });
+                        });
                     }
                 });
         },
