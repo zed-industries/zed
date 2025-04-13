@@ -36,6 +36,7 @@ pub struct BufferStore {
     loading_buffers: HashMap<ProjectPath, Shared<Task<Result<Entity<Buffer>, Arc<anyhow::Error>>>>>,
     worktree_store: Entity<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
+    path_to_buffer_id: HashMap<ProjectPath, BufferId>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
 }
@@ -368,8 +369,9 @@ impl LocalBufferStore {
         let line_ending = buffer.line_ending();
         let version = buffer.version();
         let buffer_id = buffer.remote_id();
-        if buffer
-            .file()
+        let file = buffer.file().cloned();
+        if file
+            .as_ref()
             .is_some_and(|file| file.disk_state() == DiskState::New)
         {
             has_changed_file = true;
@@ -385,6 +387,7 @@ impl LocalBufferStore {
             this.update(cx, |this, cx| {
                 if let Some((downstream_client, project_id)) = this.downstream_client.clone() {
                     if has_changed_file {
+                        this.update_file_mapping(buffer_id, file.as_ref(), &new_file, cx);
                         downstream_client
                             .send(proto::UpdateBufferFile {
                                 project_id,
@@ -474,6 +477,11 @@ impl LocalBufferStore {
             Some(buffer)
         } else {
             this.opened_buffers.remove(&buffer_id);
+            // debug_assert!(
+            //     this.path_to_buffer_id
+            //         .values()
+            //         .all(|buff_id| *buff_id != buffer_id)
+            // );
             None
         };
 
@@ -565,7 +573,7 @@ impl LocalBufferStore {
                     })
                     .ok();
             }
-
+            this.update_file_mapping(buffer_id, Some(file), &new_file, cx);
             buffer.file_updated(Arc::new(new_file), cx);
             Some(events)
         })?;
@@ -760,6 +768,7 @@ impl BufferStore {
             }),
             downstream_client: None,
             opened_buffers: Default::default(),
+            path_to_buffer_id: Default::default(),
             shared_buffers: Default::default(),
             loading_buffers: Default::default(),
             worktree_store,
@@ -783,6 +792,7 @@ impl BufferStore {
             }),
             downstream_client: None,
             opened_buffers: Default::default(),
+            path_to_buffer_id: Default::default(),
             loading_buffers: Default::default(),
             shared_buffers: Default::default(),
             worktree_store,
@@ -915,6 +925,10 @@ impl BufferStore {
     fn add_buffer(&mut self, buffer_entity: Entity<Buffer>, cx: &mut Context<Self>) -> Result<()> {
         let buffer = buffer_entity.read(cx);
         let remote_id = buffer.remote_id();
+        let path = File::from_dyn(buffer.file()).map(|file| ProjectPath {
+            path: file.path.clone(),
+            worktree_id: file.worktree_id(cx),
+        });
         let is_remote = buffer.replica_id() != 0;
         let open_buffer = OpenBuffer::Complete {
             buffer: buffer_entity.downgrade(),
@@ -931,10 +945,11 @@ impl BufferStore {
             })
             .detach()
         });
-
+        let _expect_path_to_exist;
         match self.opened_buffers.entry(remote_id) {
             hash_map::Entry::Vacant(entry) => {
                 entry.insert(open_buffer);
+                _expect_path_to_exist = false;
             }
             hash_map::Entry::Occupied(mut entry) => {
                 if let OpenBuffer::Operations(operations) = entry.get_mut() {
@@ -948,7 +963,13 @@ impl BufferStore {
                     }
                 }
                 entry.insert(open_buffer);
+                _expect_path_to_exist = true;
             }
+        }
+
+        if let Some(path) = path {
+            let _existing_path_map = self.path_to_buffer_id.insert(path, remote_id);
+            // debug_assert_eq!(_existing_path_map.is_some(), _expect_path_to_exist);
         }
 
         cx.subscribe(&buffer_entity, Self::on_buffer_event).detach();
@@ -976,14 +997,20 @@ impl BufferStore {
             .and_then(|state| state.local_buffer_ids_by_path.get(project_path))
     }
 
-    pub fn get_by_path(&self, path: &ProjectPath, cx: &App) -> Option<Entity<Buffer>> {
-        self.buffers().find_map(|buffer| {
-            let file = File::from_dyn(buffer.read(cx).file())?;
-            if file.worktree_id(cx) == path.worktree_id && file.path == path.path {
-                Some(buffer)
-            } else {
-                None
+    pub fn get_by_path(&self, path: &ProjectPath, _cx: &App) -> Option<Entity<Buffer>> {
+        self.path_to_buffer_id.get(path).and_then(|buffer_id| {
+            let buffer = self.get(*buffer_id);
+            if cfg!(debug_assertions) {
+                if let Some(buffer) = &buffer {
+                    let file = File::from_dyn(buffer.read(_cx).file());
+                    // debug_assert_eq!(
+                    //     file.map(|file| file.worktree_id(_cx)),
+                    //     Some(path.worktree_id)
+                    // );
+                    // debug_assert_eq!(file.as_ref().map(|file| &file.path), Some(&path.path));
+                }
             }
+            buffer
         })
     }
 
@@ -1003,6 +1030,28 @@ impl BufferStore {
         })
     }
 
+    fn update_file_mapping(
+        &mut self,
+        id: BufferId,
+        old_file: Option<&Arc<dyn language::File>>,
+        new_file: &File,
+        cx: &App,
+    ) {
+        let new_path = ProjectPath {
+            path: new_file.path.clone(),
+            worktree_id: new_file.worktree_id(cx),
+        };
+        if let Some(old_file) = old_file {
+            let old_path = ProjectPath {
+                path: old_file.path().clone(),
+                worktree_id: old_file.worktree_id(cx),
+            };
+            if old_path != new_path {
+                self.path_to_buffer_id.remove(&old_path);
+            }
+        }
+        self.path_to_buffer_id.insert(new_path, id);
+    }
     pub fn buffer_version_info(&self, cx: &App) -> (Vec<proto::BufferVersion>, Vec<BufferId>) {
         let buffers = self
             .buffers()
@@ -1316,6 +1365,7 @@ impl BufferStore {
                 let old_file = buffer.update(cx, |buffer, cx| {
                     let old_file = buffer.file().cloned();
                     let new_path = file.path.clone();
+                    this.update_file_mapping(buffer_id, old_file.as_ref(), &file, cx);
                     buffer.file_updated(Arc::new(file), cx);
                     if old_file
                         .as_ref()
