@@ -685,7 +685,7 @@ impl LanguageRegistry {
         let path_suffixes = [extension, filename, path.to_str()];
         let path_suffixes_candidates = path_suffixes
             .iter()
-            .filter_map(|suffix| suffix.map(|s| globset::Candidate::new(s)))
+            .filter_map(|suffix| suffix.map(globset::Candidate::new))
             .collect::<SmallVec<[_; 3]>>();
         let empty = GlobSet::empty();
         self.find_matching_language(move |language_name, config| {
