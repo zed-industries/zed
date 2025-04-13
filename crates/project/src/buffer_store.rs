@@ -477,11 +477,6 @@ impl LocalBufferStore {
             Some(buffer)
         } else {
             this.opened_buffers.remove(&buffer_id);
-            // debug_assert!(
-            //     this.path_to_buffer_id
-            //         .values()
-            //         .all(|buff_id| *buff_id != buffer_id)
-            // );
             None
         };
 
@@ -968,8 +963,7 @@ impl BufferStore {
         }
 
         if let Some(path) = path {
-            let _existing_path_map = self.path_to_buffer_id.insert(path, remote_id);
-            // debug_assert_eq!(_existing_path_map.is_some(), _expect_path_to_exist);
+            self.path_to_buffer_id.insert(path, remote_id);
         }
 
         cx.subscribe(&buffer_entity, Self::on_buffer_event).detach();
@@ -1000,16 +994,6 @@ impl BufferStore {
     pub fn get_by_path(&self, path: &ProjectPath, _cx: &App) -> Option<Entity<Buffer>> {
         self.path_to_buffer_id.get(path).and_then(|buffer_id| {
             let buffer = self.get(*buffer_id);
-            if cfg!(debug_assertions) {
-                if let Some(buffer) = &buffer {
-                    let file = File::from_dyn(buffer.read(_cx).file());
-                    // debug_assert_eq!(
-                    //     file.map(|file| file.worktree_id(_cx)),
-                    //     Some(path.worktree_id)
-                    // );
-                    // debug_assert_eq!(file.as_ref().map(|file| &file.path), Some(&path.path));
-                }
-            }
             buffer
         })
     }
