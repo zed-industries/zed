@@ -774,19 +774,10 @@ pub struct AvailableCodeAction {
     pub provider: Rc<dyn CodeActionProvider>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CodeActionContents {
     pub tasks: Option<Rc<ResolvedTasks>>,
     pub actions: Option<Rc<[AvailableCodeAction]>>,
-}
-
-impl Default for CodeActionContents {
-    fn default() -> Self {
-        Self {
-            tasks: None,
-            actions: None,
-        }
-    }
 }
 
 impl CodeActionContents {
