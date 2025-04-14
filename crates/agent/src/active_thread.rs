@@ -67,8 +67,6 @@ pub struct ActiveThread {
     open_feedback_editors: HashMap<MessageId, Entity<Editor>>,
 }
 
-const MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK: usize = 5;
-
 struct RenderedMessage {
     language_registry: Arc<LanguageRegistry>,
     segments: Vec<RenderedMessageSegment>,
@@ -292,6 +290,8 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
         ..Default::default()
     }
 }
+
+const MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK: usize = 10;
 
 fn render_markdown_code_block(
     message_id: MessageId,
@@ -579,7 +579,7 @@ fn render_markdown_code_block(
                 if is_expanded {
                     this.h_full()
                 } else {
-                    this.max_h_40()
+                    this.max_h_80()
                 }
             },
         )
