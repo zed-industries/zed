@@ -182,7 +182,6 @@ impl Example {
         let thread_store =
             ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
         let this = self.clone();
-        let language_extension = self.base.language_extension.clone();
 
         let name = self.name();
 
@@ -202,7 +201,7 @@ impl Example {
                     .files(false, 0)
                     .find_map(|e| {
                         if e.path.clone().extension().and_then(|ext| ext.to_str())
-                            == Some(&language_extension)
+                            == Some(&this.base.language_extension)
                         {
                             Some(ProjectPath {
                                 worktree_id: worktree.id(),
@@ -460,7 +459,7 @@ fn has_pending_lang_server_work(lsp_store: Entity<LspStore>, cx: &App) -> bool {
     lsp_store
         .read(cx)
         .language_server_statuses()
-        .all(|(_, status)| !status.pending_work.is_empty())
+        .any(|(_, status)| !status.pending_work.is_empty())
 }
 
 async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> Result<String> {
@@ -591,6 +590,8 @@ pub async fn send_language_model_request(
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
     #[test]
     fn test_parse_judge_output() {
         let response = r#"
