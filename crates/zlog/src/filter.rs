@@ -3,7 +3,7 @@ use std::{
     hash::{DefaultHasher, Hasher},
     sync::{
         OnceLock, RwLock,
-        atomic::{AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicU8, Ordering},
     },
     usize,
 };
@@ -13,8 +13,11 @@ use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config
 use log;
 
 static ENV_FILTER: OnceLock<env_config::EnvFilter> = OnceLock::new();
-static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
-static SCOPE_MAP_HASH: AtomicU64 = AtomicU64::new(0);
+static SCOPE_MAP: RwLock<Option<GlobalScopeMap>> = RwLock::new(None);
+struct GlobalScopeMap {
+    map: ScopeMap,
+    hash: u64,
+}
 
 const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
 /// The maximum log level of verbosity that is enabled by default.
@@ -65,12 +68,12 @@ pub fn is_scope_enabled(scope: &Scope, level: log::Level) -> bool {
         // scope map
         return false;
     }
-    let Ok(map) = SCOPE_MAP.read() else {
-        // on failure, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
-        return false;
-    };
+    let global_scope_map = SCOPE_MAP.read().unwrap_or_else(|err| {
+        SCOPE_MAP.clear_poison();
+        return err.into_inner();
+    });
 
-    let Some(map) = map.as_ref() else {
+    let Some(GlobalScopeMap { map, .. }) = global_scope_map.as_ref() else {
         // on failure, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
         return false;
     };
@@ -104,9 +107,18 @@ pub(crate) fn refresh() {
 }
 
 pub fn refresh_from_settings(settings: &HashMap<String, String>) {
-    let hash_old = SCOPE_MAP_HASH.load(Ordering::Acquire);
+    let hash_old = {
+        SCOPE_MAP
+            .read()
+            .unwrap_or_else(|err| {
+                SCOPE_MAP.clear_poison();
+                err.into_inner()
+            })
+            .as_ref()
+            .map(|scope_map| scope_map.hash)
+    };
     let hash_new = hash_scope_map_settings(settings);
-    if hash_old == hash_new && hash_old != 0 {
+    if hash_old == Some(hash_new) {
         return;
     }
     let env_config = ENV_FILTER.get();
@@ -119,15 +131,14 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     }
     LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max as u8, Ordering::Release);
 
-    if let Ok(_) =
-        SCOPE_MAP_HASH.compare_exchange(hash_old, hash_new, Ordering::Release, Ordering::Relaxed)
-    {
-        let mut map = SCOPE_MAP.write().unwrap_or_else(|err| {
-            SCOPE_MAP.clear_poison();
-            err.into_inner()
-        });
-        *map = Some(map_new);
-    }
+    let mut global_map = SCOPE_MAP.write().unwrap_or_else(|err| {
+        SCOPE_MAP.clear_poison();
+        err.into_inner()
+    });
+    global_map.replace(GlobalScopeMap {
+        map: map_new,
+        hash: hash_new,
+    });
 }
 
 fn level_from_level_str(level_str: &String) -> Option<log::Level> {

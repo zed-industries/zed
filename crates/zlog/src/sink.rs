@@ -63,8 +63,8 @@ pub fn init_output_file(
     Ok(())
 }
 
-const LEVEL_OUTPUT_STRINGS: [&str; 5] = [
-    //
+const LEVEL_OUTPUT_STRINGS: [&str; 6] = [
+    "     ", // nop: ERROR = 1
     "ERROR", //
     "WARN ", //
     "INFO ", //
@@ -122,12 +122,6 @@ pub fn submit(record: Record) {
                 SINK_FILE_PATH.get(),
                 SINK_FILE_PATH_ROTATE.get(),
                 &SINK_FILE_SIZE_BYTES,
-            );
-            #[cfg(debug_assertions)]
-            println!(
-                "Log file rotated at {} bytes now = {}",
-                file_size_bytes,
-                file.metadata().map_or(-1, |meta| meta.len() as i128)
             );
         }
     }
@@ -226,5 +220,14 @@ mod tests {
             contents,
         );
         assert_eq!(size.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_log_level_names() {
+        assert_eq!(LEVEL_OUTPUT_STRINGS[log::Level::Error as usize], "ERROR");
+        assert_eq!(LEVEL_OUTPUT_STRINGS[log::Level::Warn as usize], "WARN ");
+        assert_eq!(LEVEL_OUTPUT_STRINGS[log::Level::Info as usize], "INFO ");
+        assert_eq!(LEVEL_OUTPUT_STRINGS[log::Level::Debug as usize], "DEBUG");
+        assert_eq!(LEVEL_OUTPUT_STRINGS[log::Level::Trace as usize], "TRACE");
     }
 }
