@@ -3262,7 +3262,6 @@ impl BufferSnapshot {
             while cursor.goto_first_child() {
                 while cursor.node().end_byte() < range.start {
                     if !cursor.goto_next_sibling() {
-                        println!("break at {}", cursor.node());
                         break;
                     }
                 }
