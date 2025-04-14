@@ -31,10 +31,10 @@ use util::ResultExt;
 
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
-    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, DispatchPhase, DisplayId, EventEmitter,
-    FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
+    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
+    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
+    LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
     ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem,
     Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator, current_platform, hash,
     init_app_menus,
@@ -648,6 +648,11 @@ impl App {
     /// Returns the primary display that will be used for new windows.
     pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    /// Returns whether `screen_capture_sources` may work.
+    pub fn is_screen_capture_supported(&self) -> bool {
+        self.platform.is_screen_capture_supported()
     }
 
     /// Returns a list of available screen capture sources.
@@ -1798,6 +1803,9 @@ pub struct AnyDrag {
     /// This is used to render the dragged item in the same place
     /// on the original element that the drag was initiated
     pub cursor_offset: Point<Pixels>,
+
+    /// The cursor style to use while dragging
+    pub cursor_style: Option<CursorStyle>,
 }
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing

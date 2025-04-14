@@ -49,13 +49,21 @@
       "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd"
+      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "f3": "editor::FindNextMatch",
+      "shift-f3": "editor::FindPreviousMatch"
     }
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
       "ctrl-r": "outline::Toggle"
+    }
+  },
+  {
+    "context": "Editor && !agent_diff",
+    "bindings": {
+      "ctrl-k ctrl-z": "git::Restore"
     }
   },
   {

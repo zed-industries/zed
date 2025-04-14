@@ -51,13 +51,21 @@
       "cmd-shift-j": "editor::JoinLines",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd"
+      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "cmd-g": "editor::FindNextMatch",
+      "cmd-shift-g": "editor::FindPreviousMatch"
     }
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
       "cmd-r": "outline::Toggle"
+    }
+  },
+  {
+    "context": "Editor && !agent_diff",
+    "bindings": {
+      "cmd-k cmd-z": "git::Restore"
     }
   },
   {

@@ -5,7 +5,7 @@ use std::{
 };
 
 use editor::RowHighlightOptions;
-use editor::{Anchor, AnchorRangeExt, Editor, EditorMode, scroll::Autoscroll};
+use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use fuzzy::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
@@ -88,7 +88,7 @@ impl Render for OutlineView {
 
 impl OutlineView {
     fn register(editor: &mut Editor, _: Option<&mut Window>, cx: &mut Context<Editor>) {
-        if editor.mode() == EditorMode::Full {
+        if editor.mode().is_full() {
             let handle = cx.entity().downgrade();
             editor
                 .register_action(move |action, window, cx| {

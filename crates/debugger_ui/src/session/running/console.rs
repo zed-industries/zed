@@ -8,7 +8,7 @@ use dap::OutputEvent;
 use editor::{CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
-use language::{Buffer, CodeLabel};
+use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
 use project::{
     Completion,
@@ -17,7 +17,7 @@ use project::{
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{Divider, prelude::*};
 
 pub struct Console {
     console: Entity<Editor>,
@@ -85,14 +85,9 @@ impl Console {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn editor(&self) -> &Entity<Editor> {
+    #[cfg(test)]
+    pub(crate) fn editor(&self) -> &Entity<Editor> {
         &self.console
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn query_bar(&self) -> &Entity<Editor> {
-        &self.query_bar
     }
 
     fn is_local(&self, cx: &Context<Self>) -> bool {
@@ -108,6 +103,10 @@ impl Console {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
         }
+    }
+
+    pub(crate) fn show_indicator(&self, cx: &App) -> bool {
+        self.session.read(cx).has_new_output(self.last_token)
     }
 
     pub fn add_messages<'a>(
@@ -146,7 +145,7 @@ impl Console {
             state.evaluate(
                 expression,
                 Some(dap::EvaluateArgumentsContext::Variables),
-                self.stack_frame_list.read(cx).current_stack_frame_id(),
+                self.stack_frame_list.read(cx).selected_stack_frame_id(),
                 None,
                 cx,
             );
@@ -234,8 +233,8 @@ impl Render for Console {
             .size_full()
             .child(self.render_console(cx))
             .when(self.is_local(cx), |this| {
-                this.child(self.render_query_bar(cx))
-                    .pt(DynamicSpacing::Base04.rems(cx))
+                this.child(Divider::horizontal())
+                    .child(self.render_query_bar(cx))
             })
             .border_2()
     }
@@ -361,7 +360,7 @@ impl ConsoleQueryBarCompletionProvider {
                         let variable_value = variables.get(&string_match.string)?;
 
                         Some(project::Completion {
-                            old_range: buffer_position..buffer_position,
+                            replace_range: buffer_position..buffer_position,
                             new_text: string_match.string.clone(),
                             label: CodeLabel {
                                 filter_range: 0..string_match.string.len(),
@@ -372,6 +371,7 @@ impl ConsoleQueryBarCompletionProvider {
                             documentation: None,
                             confirm: None,
                             source: project::CompletionSource::Custom,
+                            insert_text_mode: None,
                         })
                     })
                     .collect(),
@@ -388,7 +388,7 @@ impl ConsoleQueryBarCompletionProvider {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
-                let frame_id = console.stack_frame_list.read(cx).current_stack_frame_id();
+                let frame_id = console.stack_frame_list.read(cx).selected_stack_frame_id();
 
                 state.completions(
                     CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
@@ -396,24 +396,61 @@ impl ConsoleQueryBarCompletionProvider {
                 )
             })
         });
-
+        let snapshot = buffer.read(cx).text_snapshot();
         cx.background_executor().spawn(async move {
+            let completions = completion_task.await?;
+
             Ok(Some(
-                completion_task
-                    .await?
-                    .iter()
-                    .map(|completion| project::Completion {
-                        old_range: buffer_position..buffer_position, // TODO(debugger): change this
-                        new_text: completion.text.clone().unwrap_or(completion.label.clone()),
-                        label: CodeLabel {
-                            filter_range: 0..completion.label.len(),
-                            text: completion.label.clone(),
-                            runs: Vec::new(),
-                        },
-                        icon_path: None,
-                        documentation: None,
-                        confirm: None,
-                        source: project::CompletionSource::Custom,
+                completions
+                    .into_iter()
+                    .map(|completion| {
+                        let new_text = completion
+                            .text
+                            .as_ref()
+                            .unwrap_or(&completion.label)
+                            .to_owned();
+                        let mut word_bytes_length = 0;
+                        for chunk in snapshot
+                            .reversed_chunks_in_range(language::Anchor::MIN..buffer_position)
+                        {
+                            let mut processed_bytes = 0;
+                            if let Some(_) = chunk.chars().rfind(|c| {
+                                let is_whitespace = c.is_whitespace();
+                                if !is_whitespace {
+                                    processed_bytes += c.len_utf8();
+                                }
+
+                                is_whitespace
+                            }) {
+                                word_bytes_length += processed_bytes;
+                                break;
+                            } else {
+                                word_bytes_length += chunk.len();
+                            }
+                        }
+
+                        let buffer_offset = buffer_position.to_offset(&snapshot);
+                        let start = buffer_offset - word_bytes_length;
+                        let start = snapshot.anchor_before(start);
+                        let replace_range = start..buffer_position;
+
+                        project::Completion {
+                            replace_range,
+                            new_text,
+                            label: CodeLabel {
+                                filter_range: 0..completion.label.len(),
+                                text: completion.label,
+                                runs: Vec::new(),
+                            },
+                            icon_path: None,
+                            documentation: None,
+                            confirm: None,
+                            source: project::CompletionSource::BufferWord {
+                                word_range: buffer_position..language::Anchor::MAX,
+                                resolved: false,
+                            },
+                            insert_text_mode: None,
+                        }
                     })
                     .collect(),
             ))

@@ -28,7 +28,6 @@ collections.workspace = true
 ctor.workspace = true
 buffer_diff.workspace = true
 env_logger.workspace = true
-futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true

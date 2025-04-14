@@ -7,10 +7,11 @@ use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, SharedString, Task};
 use language_model::{
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role,
+    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
 };
 use ui::IconName;
+use util::truncate_lines_to_byte_limit;
 
 use crate::thread::MessageId;
 use crate::thread_store::SerializedMessage;
@@ -35,6 +36,18 @@ pub enum ToolUseStatus {
     Error(SharedString),
 }
 
+impl ToolUseStatus {
+    pub fn text(&self) -> SharedString {
+        match self {
+            ToolUseStatus::NeedsConfirmation => "".into(),
+            ToolUseStatus::Pending => "".into(),
+            ToolUseStatus::Running => "".into(),
+            ToolUseStatus::Finished(out) => out.clone(),
+            ToolUseStatus::Error(out) => out.clone(),
+        }
+    }
+}
+
 pub struct ToolUseState {
     tools: Arc<ToolWorkingSet>,
     tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
@@ -42,6 +55,8 @@ pub struct ToolUseState {
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
 }
+
+pub const USING_TOOL_MARKER: &str = "<using_tool>";
 
 impl ToolUseState {
     pub fn new(tools: Arc<ToolWorkingSet>) -> Self {
@@ -186,7 +201,7 @@ impl ToolUseState {
 
             let (icon, needs_confirmation) = if let Some(tool) = self.tools.tool(&tool_use.name, cx)
             {
-                (tool.icon(), tool.needs_confirmation())
+                (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
             } else {
                 (IconName::Cog, false)
             };
@@ -317,9 +332,34 @@ impl ToolUseState {
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
         output: Result<String>,
+        cx: &App,
     ) -> Option<PendingToolUse> {
+        telemetry::event!("Agent Tool Finished", tool_name, success = output.is_ok());
+
         match output {
             Ok(tool_result) => {
+                let model_registry = LanguageModelRegistry::read_global(cx);
+
+                const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
+
+                // Protect from clearly large output
+                let tool_output_limit = model_registry
+                    .default_model()
+                    .map(|model| model.model.max_token_count() * BYTES_PER_TOKEN_ESTIMATE)
+                    .unwrap_or(usize::MAX);
+
+                let tool_result = if tool_result.len() <= tool_output_limit {
+                    tool_result
+                } else {
+                    let truncated = truncate_lines_to_byte_limit(&tool_result, tool_output_limit);
+
+                    format!(
+                        "Tool result too long. The first {} bytes:\n\n{}",
+                        truncated.len(),
+                        truncated
+                    )
+                };
+
                 self.tool_results.insert(
                     tool_use_id.clone(),
                     LanguageModelToolResult {
@@ -357,8 +397,28 @@ impl ToolUseState {
         request_message: &mut LanguageModelRequestMessage,
     ) {
         if let Some(tool_uses) = self.tool_uses_by_assistant_message.get(&message_id) {
+            let mut found_tool_use = false;
+
             for tool_use in tool_uses {
                 if self.tool_results.contains_key(&tool_use.id) {
+                    if !found_tool_use {
+                        // The API fails if a message contains a tool use without any (non-whitespace) text around it
+                        match request_message.content.last_mut() {
+                            Some(MessageContent::Text(txt)) => {
+                                if txt.is_empty() {
+                                    txt.push_str(USING_TOOL_MARKER);
+                                }
+                            }
+                            None | Some(_) => {
+                                request_message
+                                    .content
+                                    .push(MessageContent::Text(USING_TOOL_MARKER.into()));
+                            }
+                        };
+                    }
+
+                    found_tool_use = true;
+
                     // Do not send tool uses until they are completed
                     request_message
                         .content

@@ -14,36 +14,42 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::ResultExt;
+use util::{ResultExt, get_system_shell};
 
-#[derive(Serialize)]
-pub struct AssistantSystemPromptContext {
-    pub worktrees: Vec<WorktreeInfoForSystemPrompt>,
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectContext {
+    pub worktrees: Vec<WorktreeContext>,
     pub has_rules: bool,
+    pub os: String,
+    pub arch: String,
+    pub shell: String,
 }
 
-impl AssistantSystemPromptContext {
-    pub fn new(worktrees: Vec<WorktreeInfoForSystemPrompt>) -> Self {
+impl ProjectContext {
+    pub fn new(worktrees: Vec<WorktreeContext>) -> Self {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
         Self {
             worktrees,
             has_rules,
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            shell: get_system_shell(),
         }
     }
 }
 
-#[derive(Serialize)]
-pub struct WorktreeInfoForSystemPrompt {
+#[derive(Debug, Clone, Serialize)]
+pub struct WorktreeContext {
     pub root_name: String,
     pub abs_path: Arc<Path>,
-    pub rules_file: Option<RulesFile>,
+    pub rules_file: Option<RulesFileContext>,
 }
 
-#[derive(Serialize)]
-pub struct RulesFile {
-    pub rel_path: Arc<Path>,
+#[derive(Debug, Clone, Serialize)]
+pub struct RulesFileContext {
+    pub path_in_worktree: Arc<Path>,
     pub abs_path: Arc<Path>,
     pub text: String,
 }
@@ -75,11 +81,6 @@ pub struct TerminalAssistantPromptContext {
     pub working_directory: Option<String>,
     pub latest_output: Vec<String>,
     pub user_prompt: String,
-}
-
-#[derive(Serialize)]
-pub struct ProjectSlashCommandPromptContext {
-    pub context_buffer: String,
 }
 
 pub struct PromptLoadingParams<'a> {
@@ -241,7 +242,11 @@ impl PromptBuilder {
 
     fn register_built_in_templates(handlebars: &mut Handlebars) -> Result<()> {
         for path in Assets.list("prompts")? {
-            if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
+            if let Some(id) = path
+                .split('/')
+                .next_back()
+                .and_then(|s| s.strip_suffix(".hbs"))
+            {
                 if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
                     log::debug!("Registering built-in prompt template: {}", id);
                     let prompt = String::from_utf8_lossy(prompt.as_ref());
@@ -255,7 +260,7 @@ impl PromptBuilder {
 
     pub fn generate_assistant_system_prompt(
         &self,
-        context: &AssistantSystemPromptContext,
+        context: &ProjectContext,
     ) -> Result<String, RenderError> {
         self.handlebars
             .lock()
@@ -370,15 +375,5 @@ impl PromptBuilder {
 
     pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
         self.handlebars.lock().render("suggest_edits", &())
-    }
-
-    pub fn generate_project_slash_command_prompt(
-        &self,
-        context_buffer: String,
-    ) -> Result<String, RenderError> {
-        self.handlebars.lock().render(
-            "project_slash_command",
-            &ProjectSlashCommandPromptContext { context_buffer },
-        )
     }
 }

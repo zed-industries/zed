@@ -63,6 +63,16 @@ pub struct FindReplaceFileToolInput {
     /// even one character in this string is different in any way from how it appears
     /// in the file, then the tool call will fail.
     ///
+    /// If you get an error that the `find` string was not found, this means that either
+    /// you made a mistake, or that the file has changed since you last looked at it.
+    /// Either way, when this happens, you should retry doing this tool call until it
+    /// succeeds, up to 3 times. Each time you retry, you should take another look at
+    /// the exact text of the file in question, to make sure that you are searching for
+    /// exactly the right string. Regardless of whether it was because you made a mistake
+    /// or because the file changed since you last looked at it, you should be extra
+    /// careful when retrying in this way. It's a bad experience for the user if
+    /// this `find` string isn't found, so be super careful to get it exactly right!
+    ///
     /// <example>
     /// If a file contains this code:
     ///
@@ -129,7 +139,7 @@ impl Tool for FindReplaceFileTool {
         "find_replace_file".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 

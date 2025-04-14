@@ -2,7 +2,7 @@ use super::{
     BoolExt,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    renderer, screen_capture,
+    is_macos_version_at_least, renderer, screen_capture,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
@@ -22,8 +22,8 @@ use cocoa::{
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
-        NSUInteger, NSURL,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSOperatingSystemVersion,
+        NSProcessInfo, NSRange, NSString, NSUInteger, NSURL,
     },
 };
 use core_foundation::{
@@ -550,6 +550,11 @@ impl Platform for MacPlatform {
         MacDisplay::all()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
+    }
+
+    fn is_screen_capture_supported(&self) -> bool {
+        let min_version = NSOperatingSystemVersion::new(12, 3, 0);
+        is_macos_version_at_least(min_version)
     }
 
     fn screen_capture_sources(

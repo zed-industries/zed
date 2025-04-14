@@ -19,6 +19,5 @@ log.workspace = true
 picker.workspace = true
 proto.workspace = true
 ui.workspace = true
-workspace.workspace = true
-zed_actions.workspace = true
 workspace-hack.workspace = true
+zed_actions.workspace = true

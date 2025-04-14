@@ -21,6 +21,9 @@ platforms = [
 workspace-members = [
     "remote_server",
 ]
+third-party = [
+    { name = "reqwest", version = "0.11.27" },
+]
 
 [final-excludes]
 workspace-members = [
