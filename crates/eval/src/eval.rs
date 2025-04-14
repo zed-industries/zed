@@ -247,7 +247,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     extension::init(cx);
 
-    // todo! actually configure node runtime?
     let node_runtime = NodeRuntime::unavailable();
     let extension_host_proxy = ExtensionHostProxy::global(cx);
 

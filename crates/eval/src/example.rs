@@ -522,40 +522,6 @@ pub fn repo_path_for_url(repo_url: &str) -> PathBuf {
         .join(repo_name)
 }
 
-#[cfg(test)]
-#[test]
-fn test_parse_judge_output() {
-    let response = r#"
-        <analysis>The model did a good job but there were still compilations errors.</analysis>
-        <score>3</score>
-    "#
-    .unindent();
-
-    let output = parse_judge_output(&response).unwrap();
-    assert_eq!(
-        output.analysis,
-        "The model did a good job but there were still compilations errors."
-    );
-    assert_eq!(output.score, 3);
-
-    let response = r#"
-        Text around ignored
-
-        <analysis>
-            Failed to compile:
-            - Error 1
-            - Error 2
-        </analysis>
-
-        <score>1</score>
-    "#
-    .unindent();
-
-    let output = parse_judge_output(&response).unwrap();
-    assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
-    assert_eq!(output.score, 1);
-}
-
 pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
     let output = new_smol_command("git")
         .current_dir(repo_path)
@@ -603,5 +569,41 @@ pub async fn send_language_model_request(
         Err(err) => Err(anyhow!(
             "Failed to get response from language model. Error was: {err}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_parse_judge_output() {
+        let response = r#"
+            <analysis>The model did a good job but there were still compilations errors.</analysis>
+            <score>3</score>
+        "#
+        .unindent();
+
+        let output = parse_judge_output(&response).unwrap();
+        assert_eq!(
+            output.analysis,
+            "The model did a good job but there were still compilations errors."
+        );
+        assert_eq!(output.score, 3);
+
+        let response = r#"
+            Text around ignored
+
+            <analysis>
+                Failed to compile:
+                - Error 1
+                - Error 2
+            </analysis>
+
+            <score>1</score>
+        "#
+        .unindent();
+
+        let output = parse_judge_output(&response).unwrap();
+        assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
+        assert_eq!(output.score, 1);
     }
 }
