@@ -144,6 +144,10 @@ fn main() {
 
             future::join_all(clone_tasks).await;
 
+            for (_, example) in examples.iter() {
+                example.setup().await?;
+            }
+
             let tasks = examples
                 .into_iter()
                 .map(|(example_path, example)| {
@@ -208,7 +212,6 @@ async fn run_example(
     app_state: Arc<AgentAppState>,
     cx: &mut AsyncApp,
 ) -> Result<JudgeOutput> {
-    example.setup().await?;
     cx.update(|cx| example.run(model.clone(), app_state, cx))?
         .await?;
     let diff = example.repository_diff().await?;
