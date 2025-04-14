@@ -108,7 +108,9 @@ async fn test_show_attach_modal_and_select_process(
                             name: "fake-binary-2".into(),
                             command: vec![],
                         },
-                    ],
+                    ]
+                    .into_iter()
+                    .collect(),
                     true,
                     window,
                     cx,
