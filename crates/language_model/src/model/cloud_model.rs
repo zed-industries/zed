@@ -80,6 +80,7 @@ impl CloudModel {
             Self::OpenAi(model) => match model {
                 open_ai::Model::ThreePointFiveTurbo
                 | open_ai::Model::Four
+                | open_ai::Model::FourPointOne
                 | open_ai::Model::FourTurbo
                 | open_ai::Model::FourOmni
                 | open_ai::Model::FourOmniMini

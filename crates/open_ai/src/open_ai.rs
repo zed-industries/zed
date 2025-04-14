@@ -64,6 +64,8 @@ pub enum Model {
     ThreePointFiveTurbo,
     #[serde(rename = "gpt-4", alias = "gpt-4")]
     Four,
+    #[serde(rename = "gpt-4.1", alias = "gpt-4.1")]
+    FourPointOne,
     #[serde(rename = "gpt-4-turbo", alias = "gpt-4-turbo")]
     FourTurbo,
     #[serde(rename = "gpt-4o", alias = "gpt-4o")]
@@ -96,6 +98,7 @@ impl Model {
         match id {
             "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
             "gpt-4" => Ok(Self::Four),
+            "gpt-4.1" => Ok(Self::FourPointOne),
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
@@ -111,6 +114,7 @@ impl Model {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
+            Self::FourPointOne => "gpt-4.1",
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
@@ -126,6 +130,7 @@ impl Model {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
+            Self::FourPointOne => "gpt-4.1",
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
@@ -143,6 +148,7 @@ impl Model {
         match self {
             Self::ThreePointFiveTurbo => 16_385,
             Self::Four => 8_192,
+            Self::FourPointOne => 1_000_000,
             Self::FourTurbo => 128_000,
             Self::FourOmni => 128_000,
             Self::FourOmniMini => 128_000,
