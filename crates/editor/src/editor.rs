@@ -4674,61 +4674,69 @@ impl Editor {
             snippet = None;
             new_text = completion.new_text.clone();
         };
-        let selections = self.selections.all::<usize>(cx);
 
         let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);
         let buffer = buffer_handle.read(cx);
-        let old_text = buffer
-            .text_for_range(replace_range.clone())
-            .collect::<String>();
-
-        let newest_selection = self.selections.newest_anchor();
-        if newest_selection.start.buffer_id != Some(buffer_handle.read(cx).remote_id()) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let replace_range_multibuffer = {
+            let excerpt = snapshot
+                .excerpt_containing(self.selections.newest_anchor().range())
+                .unwrap();
+            let multibuffer_anchor = snapshot
+                .anchor_in_excerpt(excerpt.id(), buffer.anchor_before(replace_range.start))
+                .unwrap()
+                ..snapshot
+                    .anchor_in_excerpt(excerpt.id(), buffer.anchor_before(replace_range.end))
+                    .unwrap();
+            multibuffer_anchor.start.to_offset(&snapshot)
+                ..multibuffer_anchor.end.to_offset(&snapshot)
+        };
+        let newest_anchor = self.selections.newest_anchor();
+        if newest_anchor.head().buffer_id != Some(buffer.remote_id()) {
             return None;
         }
 
-        let lookbehind = newest_selection
+        let old_text = buffer
+            .text_for_range(replace_range.clone())
+            .collect::<String>();
+        let lookbehind = newest_anchor
             .start
             .text_anchor
             .to_offset(buffer)
             .saturating_sub(replace_range.start);
         let lookahead = replace_range
             .end
-            .saturating_sub(newest_selection.end.text_anchor.to_offset(buffer));
-        let mut common_prefix_len = 0;
-        for (a, b) in old_text.chars().zip(new_text.chars()) {
-            if a == b {
-                common_prefix_len += a.len_utf8();
-            } else {
-                break;
-            }
-        }
+            .saturating_sub(newest_anchor.end.text_anchor.to_offset(buffer));
+        let prefix = &old_text[..old_text.len() - lookahead];
+        let suffix = &old_text[lookbehind..];
 
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let mut range_to_replace: Option<Range<usize>> = None;
-        let mut ranges = Vec::new();
+        let selections = self.selections.all::<usize>(cx);
+        let mut edits = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
+
         for selection in &selections {
-            if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
-                let start = selection.start.saturating_sub(lookbehind);
-                let end = selection.end + lookahead;
-                if selection.id == newest_selection.id {
-                    range_to_replace = Some(start + common_prefix_len..end);
-                }
-                ranges.push(start + common_prefix_len..end);
+            let edit = if selection.id == newest_anchor.id {
+                (replace_range_multibuffer.clone(), new_text.as_str())
             } else {
-                common_prefix_len = 0;
-                ranges.clear();
-                ranges.extend(selections.iter().map(|s| {
-                    if s.id == newest_selection.id {
-                        range_to_replace = Some(replace_range.clone());
-                        replace_range.clone()
-                    } else {
-                        s.start..s.end
+                let mut range = selection.range();
+                let mut text = new_text.as_str();
+
+                // if prefix is present, don't duplicate it
+                if snapshot.contains_str_at(range.start.saturating_sub(lookbehind), prefix) {
+                    text = &new_text[lookbehind..];
+
+                    // if suffix is also present, mimic the newest cursor and replace it
+                    if selection.id != newest_anchor.id
+                        && snapshot.contains_str_at(range.end, suffix)
+                    {
+                        range.end += lookahead;
                     }
-                }));
-                break;
-            }
+                }
+                (range, text)
+            };
+
+            edits.push(edit);
+
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.head());
                 let end_anchor = snapshot.anchor_after(selection.tail());
@@ -4736,45 +4744,30 @@ impl Editor {
                     .linked_editing_ranges_for(start_anchor.text_anchor..end_anchor.text_anchor, cx)
                 {
                     for (buffer, edits) in ranges {
-                        linked_edits.entry(buffer.clone()).or_default().extend(
-                            edits
-                                .into_iter()
-                                .map(|range| (range, new_text[common_prefix_len..].to_owned())),
-                        );
+                        linked_edits
+                            .entry(buffer.clone())
+                            .or_default()
+                            .extend(edits.into_iter().map(|range| (range, new_text.to_owned())));
                     }
                 }
             }
         }
-        let text = &new_text[common_prefix_len..];
 
-        let utf16_range_to_replace = range_to_replace.map(|range| {
-            let newest_selection = self.selections.newest::<OffsetUtf16>(cx).range();
-            let selection_start_utf16 = newest_selection.start.0 as isize;
-
-            range.start.to_offset_utf16(&snapshot).0 as isize - selection_start_utf16
-                ..range.end.to_offset_utf16(&snapshot).0 as isize - selection_start_utf16
-        });
         cx.emit(EditorEvent::InputHandled {
-            utf16_range_to_replace,
-            text: text.into(),
+            utf16_range_to_replace: None,
+            text: new_text.clone().into(),
         });
 
         self.transact(window, cx, |this, window, cx| {
             if let Some(mut snippet) = snippet {
-                snippet.text = text.to_string();
-                for tabstop in snippet
-                    .tabstops
-                    .iter_mut()
-                    .flat_map(|tabstop| tabstop.ranges.iter_mut())
-                {
-                    tabstop.start -= common_prefix_len as isize;
-                    tabstop.end -= common_prefix_len as isize;
-                }
-
+                snippet.text = new_text.to_string();
+                let ranges = edits
+                    .iter()
+                    .map(|(range, _)| range.clone())
+                    .collect::<Vec<_>>();
                 this.insert_snippet(&ranges, snippet, window, cx).log_err();
             } else {
                 this.buffer.update(cx, |buffer, cx| {
-                    let edits = ranges.iter().map(|range| (range.clone(), text));
                     let auto_indent = if completion.insert_text_mode == Some(InsertTextMode::AS_IS)
                     {
                         None
