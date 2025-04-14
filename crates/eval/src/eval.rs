@@ -100,7 +100,7 @@ fn main() {
             for example_path in example_paths {
                 let example = Example::load_from_directory(&example_path, &run_dir)?;
 
-                if !languages.contains(&example.base.language_extension) {
+                if !example.base.language_extension.as_ref().map_or(false, |lang| languages.contains(lang)) {
                     println!("Skipping {}", example.name());
                     continue;
                 }
