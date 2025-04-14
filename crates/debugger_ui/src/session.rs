@@ -60,6 +60,7 @@ impl DebugSession {
                 session.clone(),
                 project.clone(),
                 workspace.clone(),
+                None,
                 window,
                 cx,
             )
