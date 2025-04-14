@@ -1,3 +1,3 @@
 url = "https://github.com/huggingface/candle.git"
-revision = "333d94a19adbc6d1de31b6b63d690d782d7ac53d"
+revision = "3164a19a5dc18f5e0f7a063ae85a0cfd289e98f1"
 language_extension = "rs"
