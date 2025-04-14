@@ -1,3 +1,0 @@
-1. A new test case is added to verify the behavior of merging appends parameters when one role has appends ['a', 'b'] and another has empty appends []. The test expects the result to contain both 'a' and 'b' in the appends array.
-2. The implementation change modifies the merge behavior for appends parameters from using `andMerge` (which would intersect the arrays) to using 'union' (which combines all elements from both arrays). This change ensures that appends from different roles are combined rather than intersected.
-3. The test case demonstrates the expected behavior where combining roles with appends ['a', 'b'] and empty appends [] results in a union containing ['a', 'b'], which matches the new 'union' strategy implemented in the utility function.
