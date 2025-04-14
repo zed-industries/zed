@@ -3889,9 +3889,6 @@ impl Repository {
                 })
                 .await?;
 
-            debug_assert_eq!(backend.path().as_path(), repository_dir_abs_path.as_ref());
-            debug_assert_eq!(backend.main_repository_path().as_path(), common_dir_abs_path.as_ref());
-
             if let Some(git_hosting_provider_registry) =
                 cx.update(|cx| GitHostingProviderRegistry::try_global(cx))?
             {
