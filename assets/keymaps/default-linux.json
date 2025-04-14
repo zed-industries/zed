@@ -792,6 +792,13 @@
     }
   },
   {
+    "context": "GitPanel && CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git::Cancel"
+    }
+  },
+  {
     "context": "GitCommit > Editor",
     "bindings": {
       "escape": "menu::Cancel",

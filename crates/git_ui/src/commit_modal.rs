@@ -378,15 +378,9 @@ impl CommitModal {
                                     }
                                 })
                                 .disabled(!can_commit)
-                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                    this.git_panel.update(cx, |git_panel, cx| {
-                                        git_panel.commit_changes(
-                                            CommitOptions { amend: true },
-                                            window,
-                                            cx,
-                                        )
-                                    });
-                                })),
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(Box::new(git::Commit), cx);
+                                }),
                         )
                     })
                     .when(!is_amend_pending, |this| {
@@ -460,7 +454,13 @@ impl CommitModal {
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(DismissEvent);
+        if self.git_panel.read(cx).amend_pending() {
+            self.git_panel
+                .update(cx, |git_panel, _| git_panel.set_amend_pending(false));
+            cx.notify();
+        } else {
+            cx.emit(DismissEvent);
+        }
     }
 
     pub fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
@@ -474,6 +474,9 @@ impl CommitModal {
     }
 
     fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_panel.read(cx).amend_pending() {
+            return;
+        }
         telemetry::event!("Git Committed", source = "Git Modal");
         self.git_panel.update(cx, |git_panel, cx| {
             git_panel.commit_changes(CommitOptions { amend: false }, window, cx)
@@ -482,8 +485,6 @@ impl CommitModal {
     }
 
     fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
-        telemetry::event!("Git Amended", source = "Git Modal");
-
         let Some(active_repository) = self.git_panel.read(cx).active_repository.as_ref() else {
             return;
         };
@@ -502,32 +503,32 @@ impl CommitModal {
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
-            if !self.git_panel.read(cx).amend_pending() && self.commit_editor.read(cx).is_empty(cx)
-            {
+            if !self.git_panel.read(cx).amend_pending() {
                 self.git_panel.update(cx, |git_panel, _| {
                     git_panel.set_amend_pending(true);
                 });
                 cx.notify();
-
-                let detail_task = self.git_panel.update(cx, |git_panel, cx| {
-                    git_panel.load_commit_details(recent_sha, cx)
-                });
-                cx.spawn(async move |this, cx| {
-                    if let Ok(message) = detail_task.await.map(|detail| detail.message) {
-                        this.update(cx, |this, cx| {
-                            this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                let insert_position = buffer.anchor_before(buffer.len());
-                                buffer.edit(
-                                    [(insert_position..insert_position, message)],
-                                    None,
-                                    cx,
-                                );
-                            });
-                        })
-                        .log_err();
-                    }
-                })
-                .detach();
+                if self.commit_editor.read(cx).is_empty(cx) {
+                    let detail_task = self.git_panel.update(cx, |git_panel, cx| {
+                        git_panel.load_commit_details(recent_sha, cx)
+                    });
+                    cx.spawn(async move |this, cx| {
+                        if let Ok(message) = detail_task.await.map(|detail| detail.message) {
+                            this.update(cx, |this, cx| {
+                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                    let insert_position = buffer.anchor_before(buffer.len());
+                                    buffer.edit(
+                                        [(insert_position..insert_position, message)],
+                                        None,
+                                        cx,
+                                    );
+                                });
+                            })
+                            .log_err();
+                        }
+                    })
+                    .detach();
+                }
             } else {
                 telemetry::event!("Git Amended", source = "Git Panel");
                 self.git_panel.update(cx, |git_panel, cx| {

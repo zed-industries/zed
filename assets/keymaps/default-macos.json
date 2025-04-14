@@ -863,6 +863,13 @@
     }
   },
   {
+    "context": "GitPanel && CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git::Cancel"
+    }
+  },
+  {
     "context": "GitDiff > Editor",
     "use_key_equivalents": true,
     "bindings": {
