@@ -83,12 +83,12 @@ const LEVEL_OUTPUT_STRINGS: [&str; 6] = [
 
 // Colors for different log levels
 static LEVEL_ANSI_COLORS: [&str; 6] = [
-    "",                 // nop
-    ANSI_RED,           // Error: Red
-    ANSI_YELLOW,        // Warn: Yellow
-    ANSI_GREEN,         // Info: Green
-    ANSI_BLUE,          // Debug: Blue
-    ANSI_MAGENTA,       // Trace: Magenta
+    "",           // nop
+    ANSI_RED,     // Error: Red
+    ANSI_YELLOW,  // Warn: Yellow
+    ANSI_GREEN,   // Info: Green
+    ANSI_BLUE,    // Debug: Blue
+    ANSI_MAGENTA, // Trace: Magenta
 ];
 
 pub fn submit(record: Record) {
