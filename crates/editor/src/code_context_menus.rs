@@ -780,6 +780,15 @@ pub struct CodeActionContents {
     pub actions: Option<Rc<[AvailableCodeAction]>>,
 }
 
+impl Default for CodeActionContents {
+    fn default() -> Self {
+        Self {
+            tasks: None,
+            actions: None,
+        }
+    }
+}
+
 impl CodeActionContents {
     fn len(&self) -> usize {
         match (&self.tasks, &self.actions) {

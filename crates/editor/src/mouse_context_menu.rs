@@ -44,6 +44,11 @@ pub struct MouseContextMenu {
     _subscription: Subscription,
 }
 
+enum CodeActionLoadState {
+    Loading,
+    Loaded(CodeActionContents),
+}
+
 impl std::fmt::Debug for MouseContextMenu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MouseContextMenu")
@@ -197,7 +202,7 @@ pub fn deploy_context_menu(
             has_reveal_target,
             has_git_repo,
             evaluate_selection,
-            None,
+            Some(CodeActionLoadState::Loading),
             window,
             cx,
         );
@@ -216,43 +221,45 @@ pub fn deploy_context_menu(
             let context_menu_task = editor.update_in(cx, |editor, window, cx| {
                 let code_actions_task = editor.prepare_code_actions_task(&action, window, cx);
                 Some(cx.spawn_in(window, async move |editor, cx| {
-                    if let Some((buffer, actions)) = code_actions_task.await {
-                        if actions.is_empty() {
-                            return Ok::<(), anyhow::Error>(());
-                        }
-                        if let Ok(editor_task) = editor.update_in(cx, |editor, window, cx| {
-                            let Some(_) = editor.mouse_context_menu.take() else {
-                                return Task::ready(Ok(()));
+                    let code_action_result = code_actions_task.await;
+                    if let Ok(editor_task) = editor.update_in(cx, |editor, window, cx| {
+                        let Some(_) = editor.mouse_context_menu.take() else {
+                            return Task::ready(Ok::<_, anyhow::Error>(()));
+                        };
+                        let (state, code_action) =
+                            if let Some((buffer, actions)) = code_action_result {
+                                (
+                                    CodeActionLoadState::Loaded(actions.clone()),
+                                    Some(MouseCodeAction { actions, buffer }),
+                                )
+                            } else {
+                                (
+                                    CodeActionLoadState::Loaded(CodeActionContents::default()),
+                                    None,
+                                )
                             };
-                            let menu = build_context_menu(
-                                Some(editor.focus_handle(cx)),
-                                has_selections,
-                                has_reveal_target,
-                                has_git_repo,
-                                evaluate_selection,
-                                Some(&actions),
-                                window,
-                                cx,
-                            );
-                            let code_action = Some(MouseCodeAction {
-                                actions: actions.clone(),
-                                buffer,
-                            });
-                            set_context_menu(
-                                editor,
-                                menu,
-                                source_anchor,
-                                position,
-                                code_action,
-                                window,
-                                cx,
-                            );
-                            Task::ready(Ok(()))
-                        }) {
-                            editor_task.await
-                        } else {
-                            Ok(())
-                        }
+                        let menu = build_context_menu(
+                            Some(editor.focus_handle(cx)),
+                            has_selections,
+                            has_reveal_target,
+                            has_git_repo,
+                            evaluate_selection,
+                            Some(state),
+                            window,
+                            cx,
+                        );
+                        set_context_menu(
+                            editor,
+                            menu,
+                            source_anchor,
+                            position,
+                            code_action,
+                            window,
+                            cx,
+                        );
+                        Task::ready(Ok(()))
+                    }) {
+                        editor_task.await
                     } else {
                         Ok(())
                     }
@@ -273,41 +280,59 @@ fn build_context_menu(
     has_reveal_target: bool,
     has_git_repo: bool,
     evaluate_selection: bool,
-    code_actions: Option<&CodeActionContents>,
+    code_action_load_state: Option<CodeActionLoadState>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Entity<ContextMenu> {
     ui::ContextMenu::build(window, cx, |menu, _window, cx| {
         let menu = menu
             .on_blur_subscription(Subscription::new(|| {}))
-            .when_some(code_actions, |menu, actions| {
-                if actions.is_empty() {
-                    menu
-                } else {
-                    actions
-                        .iter()
-                        .filter(|action| {
-                            if action
-                                .as_task()
-                                .map(|task| matches!(task.task_type(), task::TaskType::Debug(_)))
-                                .unwrap_or(false)
-                            {
-                                cx.has_flag::<Debugger>()
-                            } else {
-                                true
-                            }
-                        })
-                        .enumerate()
-                        .fold(menu, |menu, (ix, action)| {
-                            menu.action(
-                                action.label(),
-                                Box::new(ConfirmCodeAction {
-                                    item_ix: Some(ix),
-                                    from_mouse_context_menu: true,
-                                }),
-                            )
-                        })
+            .when_some(code_action_load_state, |menu, state| match state {
+                CodeActionLoadState::Loading => menu.disabled_action(
+                    "Loading code actions...",
+                    Box::new(ConfirmCodeAction {
+                        item_ix: None,
+                        from_mouse_context_menu: true,
+                    }),
+                ),
+                CodeActionLoadState::Loaded(actions) => {
+                    if actions.is_empty() {
+                        menu.disabled_action(
+                            "No code actions available",
+                            Box::new(ConfirmCodeAction {
+                                item_ix: None,
+                                from_mouse_context_menu: true,
+                            }),
+                        )
                         .separator()
+                    } else {
+                        actions
+                            .iter()
+                            .filter(|action| {
+                                if action
+                                    .as_task()
+                                    .map(|task| {
+                                        matches!(task.task_type(), task::TaskType::Debug(_))
+                                    })
+                                    .unwrap_or(false)
+                                {
+                                    cx.has_flag::<Debugger>()
+                                } else {
+                                    true
+                                }
+                            })
+                            .enumerate()
+                            .fold(menu, |menu, (ix, action)| {
+                                menu.action(
+                                    action.label(),
+                                    Box::new(ConfirmCodeAction {
+                                        item_ix: Some(ix),
+                                        from_mouse_context_menu: true,
+                                    }),
+                                )
+                            })
+                            .separator()
+                    }
                 }
             })
             .when(evaluate_selection && has_selections, |builder| {
