@@ -8,7 +8,7 @@ use crate::{
     with_parser,
 };
 use anyhow::{Context as _, Result, anyhow};
-use collections::{HashMap, HashSet, hash_map};
+use collections::{FxHashMap, HashMap, HashSet, hash_map};
 
 use futures::{
     Future,
@@ -675,7 +675,7 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&HashMap<Arc<str>, GlobSet>>,
+        user_file_types: Option<&FxHashMap<Arc<str>, GlobSet>>,
     ) -> Option<AvailableLanguage> {
         let filename = path.file_name().and_then(|name| name.to_str());
         // `Path.extension()` returns None for files with a leading '.'
