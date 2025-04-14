@@ -569,6 +569,7 @@ impl AssistantPanel {
             ActiveView::Configuration | ActiveView::History => {
                 self.active_view =
                     ActiveView::thread(self.thread.read(cx).thread().clone(), window, cx);
+                self.message_editor.focus_handle(cx).focus(window);
                 cx.notify();
             }
             _ => {}
