@@ -231,6 +231,10 @@ impl Example {
             cx.background_executor().timer(Duration::new(5, 0)).await;
             wait_for_lang_server(lsp_store.clone(), name.clone(), cx).await?;
 
+            if std::env::var("ZED_EVAL_SETUP_ONLY").is_ok() {
+                return Err(anyhow!("Setup only mode"));
+            }
+
             let thread_store = thread_store.await;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
