@@ -278,6 +278,12 @@ pub trait LanguageModel: Send + Sync {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum LanguageModelKnownError {
+    #[error("Context window limit exceeded ({tokens})")]
+    ContextWindowLimitExceeded { tokens: usize },
+}
+
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
     fn name() -> String;
     fn description() -> String;
@@ -347,7 +353,7 @@ pub trait LanguageModelProviderState: 'static {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct LanguageModelId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
