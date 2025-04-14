@@ -5026,11 +5026,14 @@ impl Editor {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
         let (action, buffer) = if action.from_mouse_context_menu {
-            let menu = self.mouse_context_menu.as_ref()?;
-            let code_action = menu.code_action.as_ref()?;
-            let index = action.item_ix?;
-            let action = code_action.actions.get(index)?;
-            (action, code_action.buffer.clone())
+            if let Some(menu) = self.mouse_context_menu.take() {
+                let code_action = menu.code_action?;
+                let index = action.item_ix?;
+                let action = code_action.actions.get(index)?;
+                (action, code_action.buffer)
+            } else {
+                return None;
+            }
         } else {
             if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
                 let action_ix = action.item_ix.unwrap_or(menu.selected_item);
