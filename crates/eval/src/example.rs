@@ -459,7 +459,7 @@ fn has_pending_lang_server_work(lsp_store: Entity<LspStore>, cx: &App) -> bool {
     lsp_store
         .read(cx)
         .language_server_statuses()
-        .all(|(_, status)| !status.pending_work.is_empty())
+        .any(|(_, status)| !status.pending_work.is_empty())
 }
 
 async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> Result<String> {
