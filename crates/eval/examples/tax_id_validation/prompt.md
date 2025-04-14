@@ -1,3 +1,10 @@
-Please add a new tool entry to our README.md file's integration list: "@j4c0bs/mcp-server-sql-analyzer" with GitHub link, described as "MCP server that provides SQL analysis, linting, and dialect conversion using SQLGlot", tagged with the Python emoji (🐍). Place it after the website-downloader entry and before the Data Science Tools section.
 
-Please make sure to follow our existing format and style conventions for both files.
+Add validation support for Employer Identification Numbers (EIN) to the Go validator library
+
+I need to implement a new validator function for US Employer Identification Numbers (EIN) in this Go validation library. The EIN validator should:
+
+1. Create a new tag called "ein" that validates if a string is a valid US Employer Identification Number
+2. Follow the pattern of ##-#######, where # is a digit (regex pattern would be ^(\d{2}-\d{7})$)
+3. Ensure the field contains exactly 10 characters (including the hyphen)
+4. Document the new validator in the README.md and doc.go files
+5. Add proper unit tests to verify validation works correctly for valid and invalid EINs
