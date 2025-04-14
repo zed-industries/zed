@@ -1,7 +1,7 @@
-mod breakpoint_list;
-mod console;
-mod loaded_source_list;
-mod module_list;
+pub(crate) mod breakpoint_list;
+pub(crate) mod console;
+pub(crate) mod loaded_source_list;
+pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
 
@@ -94,7 +94,7 @@ pub(crate) struct SubView {
 }
 
 impl SubView {
-    fn new(
+    pub(crate) fn new(
         pane_focus_handle: FocusHandle,
         view: AnyView,
         tab_name: SharedString,
@@ -158,7 +158,7 @@ impl Render for SubView {
     }
 }
 
-fn new_debugger_pane(
+pub(crate) fn new_debugger_pane(
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     window: &mut Window,
