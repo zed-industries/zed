@@ -115,6 +115,8 @@ impl Example {
     pub async fn setup(&self) -> Result<()> {
         let repo_path = repo_path_for_url(&self.base.url);
 
+        println!("{}> Fetching", self.name);
+
         run_git(
             &repo_path,
             &["fetch", "--depth", "1", "origin", &self.base.revision],
