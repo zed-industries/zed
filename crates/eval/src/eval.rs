@@ -110,13 +110,15 @@ fn main() {
                     continue;
                 }
 
-                examples.push((example_path, example));
+                println!("{}> Logging to {:?}", example.name, example.log_file_path);
+
+                examples.push(example);
             }
             let mut repo_urls = HashSet::new();
 
             let mut clone_tasks = Vec::new();
 
-            for (_, example) in examples.iter() {
+            for example in examples.iter() {
                 let repo_url = example.base.url.clone();
                 if repo_urls.insert(repo_url.clone()) {
                     let repo_path = repo_path_for_url(&repo_url);
@@ -149,25 +151,22 @@ fn main() {
 
             future::join_all(clone_tasks).await;
 
-            for (_, example) in examples.iter() {
+            for example in examples.iter() {
                 example.setup().await?;
             }
 
             let tasks = examples
                 .into_iter()
-                .map(|(example_path, example)| {
+                .map(|example| {
                     let app_state = app_state.clone();
                     let model = model.clone();
                     cx.spawn(async move |cx| {
-                        (
-                            example_path,
-                            run_example(example, model, app_state, cx).await,
-                        )
+                        (run_example(&example, model, app_state, cx).await, example)
                     })
                 })
                 .collect::<Vec<_>>();
 
-            let results: Vec<(PathBuf, Result<JudgeOutput>)> = future::join_all(tasks).await;
+            let results: Vec<(Result<JudgeOutput>, Example)> = future::join_all(tasks).await;
 
             println!("\n\n");
             println!("========================================");
@@ -177,11 +176,11 @@ fn main() {
 
             let mut judge_scores = Vec::new();
 
-            for (example_path, result) in results {
-                let example_name = example_path.file_name().unwrap().to_string_lossy();
+            for (result, example) in results {
+                println!("📜 {:<30}: {:?}", example.name, example.log_file_path);
                 match result {
                     Err(err) => {
-                        println!("💥 {:<30}: {:?}", example_name, err);
+                        println!("💥 {:<30}: {:?}", example.name, err);
                     }
                     Ok(judge_output) => {
                         const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
@@ -189,7 +188,7 @@ fn main() {
                         println!(
                             "{} {:<30}: {}",
                             SCORES[judge_output.score.min(5) as usize],
-                            example_name,
+                            example.name,
                             judge_output.score,
                         );
                         judge_scores.push(judge_output.score);
@@ -212,7 +211,7 @@ fn main() {
 }
 
 async fn run_example(
-    mut example: Example,
+    example: &Example,
     model: Arc<dyn LanguageModel>,
     app_state: Arc<AgentAppState>,
     cx: &mut AsyncApp,

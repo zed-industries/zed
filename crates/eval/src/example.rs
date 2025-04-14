@@ -58,6 +58,8 @@ pub struct Example {
     pub criteria: String,
     /// Markdown log file to append to
     pub log_file: Arc<Mutex<File>>,
+    /// Path to markdown log file
+    pub log_file_path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -102,6 +104,7 @@ impl Example {
             prompt: fs::read_to_string(prompt_path.clone())?,
             criteria: fs::read_to_string(criteria_path.clone())?,
             log_file,
+            log_file_path,
         })
     }
 
@@ -400,7 +403,7 @@ impl Example {
     }
 
     pub async fn judge(
-        &mut self,
+        &self,
         model: Arc<dyn LanguageModel>,
         repository_diff: String,
         cx: &AsyncApp,
