@@ -2,7 +2,7 @@ use gpui::App;
 use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, VSCodeSettings};
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
@@ -476,21 +476,21 @@ impl Settings for EditorSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(source: serde_json::Value, _: &mut App) -> anyhow::Result<Self> {
-        let this = Self::default();
-        bool_setting("editor.enabled", source, &mut this.enabled);
-        bool_setting("editor.enabled", source, &mut this.enabled);
-        bool_setting("editor.enabled", source, &mut this.enabled);
+    // fn import_from_vscode(source: serde_json::Value, _: &mut App) -> anyhow::Result<Self> {
+    //     let this = Self::default();
+    //     bool_setting("editor.enabled", source, &mut this.enabled);
+    //     bool_setting("editor.enabled", source, &mut this.enabled);
+    //     bool_setting("editor.enabled", source, &mut this.enabled);
 
+    //     fn bool_setting(key: &str, source: serde_json::Value, value: &mut bool) -> {
+    //         normalize_key(key, source);
+    //     }
 
-
-        fn bool_setting(key: &str, source: serde_json::Value, value: &mut bool) -> {
-            normalize_key(key, source);
-        }
-
-        fn bool_setting_converted(key: &str, source: serde_json::Value, value: &mut bool, f: impl FnOnce() -> bool) -> {
-            *value = f(normalize_key(key, source));
-        }
+    //     fn bool_setting_converted(key: &str, source: serde_json::Value, value: &mut bool, f: impl FnOnce() -> bool) -> {
+    //         *value = f(normalize_key(key, source));
+    //     }
+    // }
+    fn import_from_vscode(&mut self, source: VSCodeSettings, _: &mut App) {
+        source.bool_setting("editor.showFoldingControls", &mut self.gutter.folds)
     }
-
 }
