@@ -6761,20 +6761,16 @@ impl EditorElement {
     ///
     /// This allows UI elements to scale based on the `buffer_font_size`.
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
-        let mode = self.editor.read(cx).mode;
-        let scale_ui_elements_with_buffer_font_size = match mode {
+        let is_some = match self.editor.read(cx).mode {
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size,
                 ..
-            } => scale_ui_elements_with_buffer_font_size,
-            _ => false,
+            } => !scale_ui_elements_with_buffer_font_size,
+            EditorMode::Minimap => true,
+            EditorMode::SingleLine { .. } | EditorMode::AutoHeight { .. } => false,
         };
-        if mode.is_full() || matches!(mode, EditorMode::Minimap) {
-            if !scale_ui_elements_with_buffer_font_size {
-                return None;
-            }
-            let buffer_font_size = self.style.text.font_size;
-            match buffer_font_size {
+        if is_some {
+            match self.style.text.font_size {
                 AbsoluteLength::Pixels(pixels) => {
                     let rem_size_scale = {
                         // Our default UI font size is 14px on a 16px base scale.
