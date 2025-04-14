@@ -74,6 +74,11 @@ impl Upstream {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct CommitOptions {
+    pub amend: bool,
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum UpstreamTracking {
     /// Remote ref not present in local repository.
@@ -252,6 +257,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
+        options: CommitOptions,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
 
@@ -368,8 +374,8 @@ impl RealGitRepository {
 
 #[derive(Clone, Debug)]
 pub struct GitRepositoryCheckpoint {
-    ref_name: String,
-    commit_sha: Oid,
+    pub ref_name: String,
+    pub commit_sha: Oid,
 }
 
 impl GitRepository for RealGitRepository {
@@ -957,6 +963,7 @@ impl GitRepository for RealGitRepository {
         &self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
+        options: CommitOptions,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
@@ -968,6 +975,10 @@ impl GitRepository for RealGitRepository {
                     .args(["commit", "--quiet", "-m"])
                     .arg(&message.to_string())
                     .arg("--cleanup=strip");
+
+                if options.amend {
+                    cmd.arg("--amend");
+                }
 
                 if let Some((name, email)) = name_and_email {
                     cmd.arg("--author").arg(&format!("{name} <{email}>"));
@@ -1765,6 +1776,7 @@ mod tests {
         repo.commit(
             "Initial commit".into(),
             None,
+            CommitOptions::default(),
             Arc::new(checkpoint_author_envs()),
         )
         .await
@@ -1793,6 +1805,7 @@ mod tests {
         repo.commit(
             "Commit after checkpoint".into(),
             None,
+            CommitOptions::default(),
             Arc::new(checkpoint_author_envs()),
         )
         .await
