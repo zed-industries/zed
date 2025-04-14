@@ -10,6 +10,15 @@ use std::{
 
 use crate::{SCOPE_STRING_SEP_CHAR, Scope};
 
+// ANSI color escape codes for log levels
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_RED: &str = "\x1b[31m";
+const ANSI_YELLOW: &str = "\x1b[33m";
+const ANSI_GREEN: &str = "\x1b[32m";
+const ANSI_BLUE: &str = "\x1b[34m";
+const ANSI_MAGENTA: &str = "\x1b[35m";
+
 /// Whether stdout output is enabled.
 static mut ENABLED_SINKS_STDOUT: bool = false;
 
@@ -72,15 +81,30 @@ const LEVEL_OUTPUT_STRINGS: [&str; 6] = [
     "TRACE", //
 ];
 
+// Colors for different log levels
+static LEVEL_ANSI_COLORS: [&str; 6] = [
+    "",           // nop
+    ANSI_RED,     // Error: Red
+    ANSI_YELLOW,  // Warn: Yellow
+    ANSI_GREEN,   // Info: Green
+    ANSI_BLUE,    // Debug: Blue
+    ANSI_MAGENTA, // Trace: Magenta
+];
+
 pub fn submit(record: Record) {
     if unsafe { ENABLED_SINKS_STDOUT } {
         let mut stdout = std::io::stdout().lock();
         _ = writeln!(
             &mut stdout,
-            "{} {} [{}] {}",
+            "{} {}{}{}{} {}[{}]{} {}",
             chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z"),
+            ANSI_BOLD,
+            LEVEL_ANSI_COLORS[record.level as usize],
             LEVEL_OUTPUT_STRINGS[record.level as usize],
+            ANSI_RESET,
+            ANSI_BOLD,
             ScopeFmt(record.scope),
+            ANSI_RESET,
             record.message
         );
     }
