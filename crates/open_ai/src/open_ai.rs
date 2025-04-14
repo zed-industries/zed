@@ -123,7 +123,7 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::FourPointOne => "gpt-4-1",
+            Self::FourPointOne => "gpt-4.1",
             Self::FourPointOneMini => "gpt-4.1-mini",
             Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
