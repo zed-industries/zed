@@ -1489,7 +1489,7 @@
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
-    "highlight_on_focus_duration": 0
+    "highlight_on_jump": 0
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
