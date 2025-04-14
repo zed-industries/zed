@@ -4880,6 +4880,7 @@ dependencies = [
  "language_models",
  "languages",
  "node_runtime",
+ "paths",
  "project",
  "prompt_store",
  "release_channel",
