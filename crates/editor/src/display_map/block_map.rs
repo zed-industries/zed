@@ -61,7 +61,7 @@ pub struct BlockSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CustomBlockId(usize);
+pub struct CustomBlockId(pub usize);
 
 impl From<CustomBlockId> for ElementId {
     fn from(val: CustomBlockId) -> Self {

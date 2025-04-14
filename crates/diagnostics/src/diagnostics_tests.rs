@@ -2,9 +2,7 @@ use super::*;
 use collections::{HashMap, HashSet};
 use editor::{DisplayPoint, display_map::DisplayRow, test::editor_content_with_blocks};
 use gpui::{TestAppContext, VisualTestContext};
-use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, PointUtf16, Rope, Unclipped,
-};
+use language::Rope;
 use lsp::LanguageServerId;
 use pretty_assertions::assert_eq;
 use project::FakeFs;
@@ -536,14 +534,12 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         assert!(diagnostics.focus_handle.is_focused(window));
     });
 
-    let mut next_group_id = 0;
+    let mut next_id = 0;
     let mut next_filename = 0;
     let mut language_server_ids = vec![LanguageServerId(0)];
     let mut updated_language_servers = HashSet::default();
-    let mut current_diagnostics: HashMap<
-        (PathBuf, LanguageServerId),
-        Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-    > = Default::default();
+    let mut current_diagnostics: HashMap<(PathBuf, LanguageServerId), Vec<lsp::Diagnostic>> =
+        Default::default();
 
     for _ in 0..operations {
         match rng.gen_range(0..100) {
@@ -603,11 +599,22 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                         &fs,
                         &path,
                         diagnostics,
-                        &mut next_group_id,
+                        &mut next_id,
                         &mut rng,
                     );
                     lsp_store
-                        .update_diagnostic_entries(server_id, path, None, diagnostics.clone(), cx)
+                        .update_diagnostics(
+                            server_id,
+                            lsp::PublishDiagnosticsParams {
+                                uri: lsp::Url::from_file_path(&path).unwrap_or_else(|_| {
+                                    lsp::Url::parse("file:///test/fallback.rs").unwrap()
+                                }),
+                                diagnostics: diagnostics.clone(),
+                                version: None,
+                            },
+                            &[],
+                            cx,
+                        )
                         .unwrap()
                 });
                 cx.executor()
@@ -622,7 +629,6 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
         diagnostics.update_stale_excerpts(window, cx)
     });
-    cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
     let reference_diagnostics = window.build_entity(cx, |window, cx| {
@@ -632,22 +638,32 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
     cx.run_until_parked();
 
-    let mutated_excerpts = get_diagnostics_excerpts(&mutated_diagnostics, cx);
-    let reference_excerpts = get_diagnostics_excerpts(&reference_diagnostics, cx);
+    let mutated_excerpts =
+        editor_content_with_blocks(&mutated_diagnostics.update(cx, |d, _| d.editor.clone()), cx);
+    let reference_excerpts = editor_content_with_blocks(
+        &reference_diagnostics.update(cx, |d, _| d.editor.clone()),
+        cx,
+    );
 
-    for ((path, language_server_id), diagnostics) in current_diagnostics {
-        for diagnostic in diagnostics {
-            let found_excerpt = reference_excerpts.iter().any(|info| {
-                let row_range = info.range.context.start.row..info.range.context.end.row;
-                info.path == path.strip_prefix(path!("/test")).unwrap()
-                    && info.language_server == language_server_id
-                    && row_range.contains(&diagnostic.range.start.0.row)
-            });
-            assert!(found_excerpt, "diagnostic not found in reference view");
+    // The mutated view may contain more than the reference view as
+    // we don't currently shrink excerpts when diagnostics were removed.
+    let mut ref_iter = reference_excerpts.lines();
+    let mut next_ref_line = ref_iter.next();
+    let mut skipped_block = false;
+
+    for mut_line in mutated_excerpts.lines() {
+        if let Some(ref_line) = next_ref_line {
+            if mut_line == ref_line {
+                next_ref_line = ref_iter.next();
+            } else if mut_line.contains('§') {
+                skipped_block = true;
+            }
         }
     }
 
-    assert_eq!(mutated_excerpts, reference_excerpts);
+    if next_ref_line.is_some() || skipped_block {
+        pretty_assertions::assert_eq!(mutated_excerpts, reference_excerpts);
+    }
 }
 
 fn init_test(cx: &mut TestAppContext) {
@@ -664,134 +680,114 @@ fn init_test(cx: &mut TestAppContext) {
     });
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct ExcerptInfo {
-    path: PathBuf,
-    range: ExcerptRange<Point>,
-    group_id: usize,
-    primary: bool,
-    language_server: LanguageServerId,
-}
-
-fn get_diagnostics_excerpts(
-    diagnostics: &Entity<ProjectDiagnosticsEditor>,
-    cx: &mut VisualTestContext,
-) -> Vec<ExcerptInfo> {
-    diagnostics.update(cx, |diagnostics, cx| {
-        let mut result = vec![];
-        let mut excerpt_indices_by_id = HashMap::default();
-        diagnostics.multibuffer.update(cx, |multibuffer, cx| {
-            let snapshot = multibuffer.snapshot(cx);
-            for (id, buffer, range) in snapshot.excerpts() {
-                excerpt_indices_by_id.insert(id, result.len());
-                result.push(ExcerptInfo {
-                    path: buffer.file().unwrap().path().to_path_buf(),
-                    range: ExcerptRange {
-                        context: range.context.to_point(buffer),
-                        primary: range.primary.to_point(buffer),
-                    },
-                    group_id: usize::MAX,
-                    primary: false,
-                    language_server: LanguageServerId(0),
-                });
-            }
-        });
-
-        // for state in &diagnostics.path_states {
-        //     for group in &state.diagnostic_groups {
-        //         for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
-        //             let excerpt_ix = excerpt_indices_by_id[excerpt_id];
-        //             let excerpt = &mut result[excerpt_ix];
-        //             excerpt.group_id = group.primary_diagnostic.diagnostic.group_id;
-        //             excerpt.language_server = group.language_server_id;
-        //             excerpt.primary = ix == group.primary_excerpt_ix;
-        //         }
-        //     }
-        // }
-
-        result
-    })
-}
-
 fn randomly_update_diagnostics_for_path(
     fs: &FakeFs,
     path: &Path,
-    diagnostics: &mut Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-    next_group_id: &mut usize,
+    diagnostics: &mut Vec<lsp::Diagnostic>,
+    next_id: &mut usize,
     rng: &mut impl Rng,
 ) {
-    let file_content = fs.read_file_sync(path).unwrap();
-    let file_text = Rope::from(String::from_utf8_lossy(&file_content).as_ref());
-
-    let mut group_ids = diagnostics
-        .iter()
-        .map(|d| d.diagnostic.group_id)
-        .collect::<HashSet<_>>();
-
     let mutation_count = rng.gen_range(1..=3);
     for _ in 0..mutation_count {
-        if rng.gen_bool(0.5) && !group_ids.is_empty() {
-            let group_id = *group_ids.iter().choose(rng).unwrap();
-            log::info!("  removing diagnostic group {group_id}");
-            diagnostics.retain(|d| d.diagnostic.group_id != group_id);
-            group_ids.remove(&group_id);
+        if rng.gen_bool(0.3) && !diagnostics.is_empty() {
+            let idx = rng.gen_range(0..diagnostics.len());
+            log::info!("  removing diagnostic at index {idx}");
+            diagnostics.remove(idx);
         } else {
-            let group_id = *next_group_id;
-            *next_group_id += 1;
+            let unique_id = *next_id;
+            *next_id += 1;
 
-            let mut new_diagnostics = vec![random_diagnostic(rng, &file_text, group_id, true)];
-            for _ in 0..rng.gen_range(0..=1) {
-                new_diagnostics.push(random_diagnostic(rng, &file_text, group_id, false));
-            }
+            let new_diagnostic = random_lsp_diagnostic(rng, fs, path, unique_id);
 
             let ix = rng.gen_range(0..=diagnostics.len());
             log::info!(
-                "  inserting diagnostic group {group_id} at index {ix}. ranges: {:?}",
-                new_diagnostics
-                    .iter()
-                    .map(|d| (d.range.start.0, d.range.end.0))
-                    .collect::<Vec<_>>()
+                "  inserting {} at index {ix}. {},{}..{},{}",
+                new_diagnostic.message,
+                new_diagnostic.range.start.line,
+                new_diagnostic.range.start.character,
+                new_diagnostic.range.end.line,
+                new_diagnostic.range.end.character,
             );
-            diagnostics.splice(ix..ix, new_diagnostics);
+            for related in new_diagnostic.related_information.iter().flatten() {
+                log::info!(
+                    "   {}. {},{}..{},{}",
+                    related.message,
+                    related.location.range.start.line,
+                    related.location.range.start.character,
+                    related.location.range.end.line,
+                    related.location.range.end.character,
+                );
+            }
+            diagnostics.insert(ix, new_diagnostic);
         }
     }
 }
 
-fn random_diagnostic(
+fn random_lsp_diagnostic(
     rng: &mut impl Rng,
-    file_text: &Rope,
-    group_id: usize,
-    is_primary: bool,
-) -> DiagnosticEntry<Unclipped<PointUtf16>> {
+    fs: &FakeFs,
+    path: &Path,
+    unique_id: usize,
+) -> lsp::Diagnostic {
     // Intentionally allow erroneous ranges some of the time (that run off the end of the file),
     // because language servers can potentially give us those, and we should handle them gracefully.
     const ERROR_MARGIN: usize = 10;
 
+    let file_content = fs.read_file_sync(path).unwrap();
+    let file_text = Rope::from(String::from_utf8_lossy(&file_content).as_ref());
+
     let start = rng.gen_range(0..file_text.len().saturating_add(ERROR_MARGIN));
     let end = rng.gen_range(start..file_text.len().saturating_add(ERROR_MARGIN));
-    let range = Range {
-        start: Unclipped(file_text.offset_to_point_utf16(start)),
-        end: Unclipped(file_text.offset_to_point_utf16(end)),
-    };
-    let severity = if rng.gen_bool(0.5) {
-        DiagnosticSeverity::WARNING
-    } else {
-        DiagnosticSeverity::ERROR
-    };
-    let message = format!("diagnostic group {group_id}");
 
-    DiagnosticEntry {
+    let start_point = file_text.offset_to_point_utf16(start);
+    let end_point = file_text.offset_to_point_utf16(end);
+
+    let range = lsp::Range::new(
+        lsp::Position::new(start_point.row, start_point.column),
+        lsp::Position::new(end_point.row, end_point.column),
+    );
+
+    let severity = if rng.gen_bool(0.5) {
+        Some(lsp::DiagnosticSeverity::ERROR)
+    } else {
+        Some(lsp::DiagnosticSeverity::WARNING)
+    };
+
+    let message = format!("diagnostic {unique_id}");
+
+    let related_information = if rng.gen_bool(0.3) {
+        let info_count = rng.gen_range(1..=3);
+        let mut related_info = Vec::with_capacity(info_count);
+
+        for i in 0..info_count {
+            let info_start = rng.gen_range(0..file_text.len().saturating_add(ERROR_MARGIN));
+            let info_end = rng.gen_range(info_start..file_text.len().saturating_add(ERROR_MARGIN));
+
+            let info_start_point = file_text.offset_to_point_utf16(info_start);
+            let info_end_point = file_text.offset_to_point_utf16(info_end);
+
+            let info_range = lsp::Range::new(
+                lsp::Position::new(info_start_point.row, info_start_point.column),
+                lsp::Position::new(info_end_point.row, info_end_point.column),
+            );
+
+            related_info.push(lsp::DiagnosticRelatedInformation {
+                location: lsp::Location::new(lsp::Url::from_file_path(path).unwrap(), info_range),
+                message: format!("related info {i} for diagnostic {unique_id}"),
+            });
+        }
+
+        Some(related_info)
+    } else {
+        None
+    };
+
+    lsp::Diagnostic {
         range,
-        diagnostic: Diagnostic {
-            source: None, // (optional) service that created the diagnostic
-            code: None,   // (optional) machine-readable code that identifies the diagnostic
-            severity,
-            message,
-            group_id,
-            is_primary,
-            is_disk_based: false,
-            is_unnecessary: false,
-            data: None,
-        },
+        severity,
+        message,
+        related_information,
+        data: None,
+        ..Default::default()
     }
 }

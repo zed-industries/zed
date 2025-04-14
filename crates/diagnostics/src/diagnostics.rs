@@ -510,13 +510,18 @@ impl ProjectDiagnosticsEditor {
                 {
                     for (block_id, block) in block_ids.iter().zip(cloned_blocks.iter()) {
                         let markdown = block.markdown.clone();
-                        editor::test::set_block_content_for_tests(*block_id, cx, move |cx| {
-                            markdown::MarkdownElement::rendered_text(
-                                markdown.clone(),
-                                cx,
-                                editor::hover_markdown_style,
-                            )
-                        });
+                        editor::test::set_block_content_for_tests(
+                            &this.editor,
+                            *block_id,
+                            cx,
+                            move |cx| {
+                                markdown::MarkdownElement::rendered_text(
+                                    markdown.clone(),
+                                    cx,
+                                    editor::hover_markdown_style,
+                                )
+                            },
+                        );
                     }
                 }
 

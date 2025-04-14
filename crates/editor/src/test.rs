@@ -9,7 +9,7 @@ use crate::{
 };
 use collections::HashMap;
 use gpui::{
-    AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels,
+    AppContext as _, Context, Entity, EntityId, Font, FontFeatures, FontStyle, FontWeight, Pixels,
     VisualTestContext, Window, font, size,
 };
 use project::Project;
@@ -123,27 +123,41 @@ pub(crate) fn build_editor_with_project(
 }
 
 #[derive(Default)]
-struct TestBlockContent(HashMap<CustomBlockId, Rc<dyn Fn(&mut VisualTestContext) -> String>>);
+struct TestBlockContent(
+    HashMap<(EntityId, CustomBlockId), Rc<dyn Fn(&mut VisualTestContext) -> String>>,
+);
 
 impl gpui::Global for TestBlockContent {}
 
 pub fn set_block_content_for_tests(
+    editor: &Entity<Editor>,
     id: CustomBlockId,
     cx: &mut App,
     f: impl Fn(&mut VisualTestContext) -> String + 'static,
 ) {
-    cx.update_default_global::<TestBlockContent, _>(|bc, _| bc.0.insert(id, Rc::new(f)));
+    cx.update_default_global::<TestBlockContent, _>(|bc, _| {
+        bc.0.insert((editor.entity_id(), id), Rc::new(f))
+    });
 }
 
-pub fn block_content_for_tests(id: CustomBlockId, cx: &mut VisualTestContext) -> Option<String> {
-    let f = cx.update(|_, cx| cx.default_global::<TestBlockContent>().0.get(&id).cloned())?;
+pub fn block_content_for_tests(
+    editor: &Entity<Editor>,
+    id: CustomBlockId,
+    cx: &mut VisualTestContext,
+) -> Option<String> {
+    let f = cx.update(|_, cx| {
+        cx.default_global::<TestBlockContent>()
+            .0
+            .get(&(editor.entity_id(), id))
+            .cloned()
+    })?;
     Some(f(cx))
 }
 
 pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
     cx.draw(
         gpui::Point::default(),
-        size(px(1000.0), px(1000.0)),
+        size(px(3000.0), px(3000.0)),
         |_, _| editor.clone(),
     );
     let (mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
@@ -159,8 +173,9 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
     for (row, block) in blocks {
         match block {
             Block::Custom(custom_block) => {
-                let content =
-                    block_content_for_tests(custom_block.id, cx).expect("block content not found");
+                let content = block_content_for_tests(&editor, custom_block.id, cx)
+                    .expect("block content not found");
+                // 2: "related info 1 for diagnostic 0"
                 if let Some(height) = custom_block.height {
                     if height == 0 {
                         lines[row.0 as usize - 1].push_str(" § ");
