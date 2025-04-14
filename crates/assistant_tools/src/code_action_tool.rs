@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::{ops::Range, sync::Arc};
 use ui::IconName;
 
+use crate::schema::json_schema_for;
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CodeActionToolInput {
     /// The relative path to the file containing the text range.
@@ -97,10 +99,9 @@ impl Tool for CodeActionTool {
 
     fn input_schema(
         &self,
-        _format: language_model::LanguageModelToolSchemaFormat,
+        format: language_model::LanguageModelToolSchemaFormat,
     ) -> serde_json::Value {
-        let schema = schemars::schema_for!(CodeActionToolInput);
-        serde_json::to_value(&schema).unwrap()
+        json_schema_for::<CodeActionToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
