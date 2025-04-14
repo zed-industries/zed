@@ -4987,7 +4987,7 @@ impl Editor {
                                 if let Some(task) = editor.confirm_code_action(
                                     &ConfirmCodeAction {
                                         item_ix: Some(0),
-                                        deployed_from_mouse_context_menu: false,
+                                        from_mouse_context_menu: false,
                                     },
                                     window,
                                     cx,
@@ -5025,7 +5025,7 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
-        let (action, buffer) = if action.deployed_from_mouse_context_menu {
+        let (action, buffer) = if action.from_mouse_context_menu {
             let menu = self.mouse_context_menu.as_ref()?;
             let code_action = menu.code_action.as_ref()?;
             let index = action.item_ix?;

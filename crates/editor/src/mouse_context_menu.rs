@@ -303,7 +303,7 @@ fn build_context_menu(
                                 action.label(),
                                 Box::new(ConfirmCodeAction {
                                     item_ix: Some(ix),
-                                    deployed_from_mouse_context_menu: true,
+                                    from_mouse_context_menu: true,
                                 }),
                             )
                         })

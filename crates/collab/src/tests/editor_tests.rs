@@ -698,7 +698,7 @@ async fn test_collaborating_with_code_actions(
                 editor,
                 &ConfirmCodeAction {
                     item_ix: Some(0),
-                    deployed_from_mouse_context_menu: false,
+                    from_mouse_context_menu: false,
                 },
                 window,
                 cx,

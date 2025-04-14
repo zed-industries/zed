@@ -101,7 +101,7 @@ pub struct ConfirmCodeAction {
     pub item_ix: Option<usize>,
     #[serde(default)]
     #[serde(skip)]
-    pub deployed_from_mouse_context_menu: bool,
+    pub from_mouse_context_menu: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]

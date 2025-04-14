@@ -1014,7 +1014,7 @@ impl CodeActionsMenu {
                                         if let Some(task) = editor.confirm_code_action(
                                             &ConfirmCodeAction {
                                                 item_ix: Some(item_ix),
-                                                deployed_from_mouse_context_menu: false,
+                                                from_mouse_context_menu: false,
                                             },
                                             window,
                                             cx,
@@ -1040,7 +1040,7 @@ impl CodeActionsMenu {
                                         if let Some(task) = editor.confirm_code_action(
                                             &ConfirmCodeAction {
                                                 item_ix: Some(item_ix),
-                                                deployed_from_mouse_context_menu: false,
+                                                from_mouse_context_menu: false,
                                             },
                                             window,
                                             cx,
