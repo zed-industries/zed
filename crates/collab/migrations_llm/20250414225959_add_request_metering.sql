@@ -1,0 +1,1 @@
+ALTER TABLE monthly_usages ADD requests INTEGER NOT NULL DEFAULT 0;
