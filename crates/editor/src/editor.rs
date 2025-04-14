@@ -3169,6 +3169,7 @@ impl Editor {
                 let mut is_bracket_pair_start = false;
                 let mut is_bracket_pair_end = false;
                 if !text.is_empty() {
+                    let mut bracket_pair_matching_end = None;
                     // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
@@ -3193,11 +3194,16 @@ impl Editor {
                                 break;
                             }
                         }
-                        if pair.end.as_str() == text.as_ref() {
-                            bracket_pair = Some(pair.clone());
-                            is_bracket_pair_end = true;
-                            break;
+                        if pair.end.as_str() == text.as_ref() && bracket_pair_matching_end.is_none()
+                        {
+                            // take first bracket pair matching end, but don't break in case a later bracket
+                            // pair matches start
+                            bracket_pair_matching_end = Some(pair.clone());
                         }
+                    }
+                    if bracket_pair.is_none() && bracket_pair_matching_end.is_some() {
+                        bracket_pair = Some(bracket_pair_matching_end.unwrap());
+                        is_bracket_pair_end = true;
                     }
                 }
 
