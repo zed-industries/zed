@@ -3193,10 +3193,17 @@ impl Editor {
                                 break;
                             }
                         }
-                        if pair.end.as_str() == text.as_ref() {
-                            bracket_pair = Some(pair.clone());
-                            is_bracket_pair_end = true;
-                            break;
+                    }
+                    if bracket_pair.is_none() {
+                        for (pair, enabled) in scope.brackets() {
+                            if !enabled || (!pair.close && !pair.surround) {
+                                continue;
+                            }
+                            if pair.end.as_str() == text.as_ref() {
+                                bracket_pair = Some(pair.clone());
+                                is_bracket_pair_end = true;
+                                break;
+                            }
                         }
                     }
                 }
