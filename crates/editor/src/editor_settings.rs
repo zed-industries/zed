@@ -476,21 +476,12 @@ impl Settings for EditorSettings {
         sources.json_merge()
     }
 
-    // fn import_from_vscode(source: serde_json::Value, _: &mut App) -> anyhow::Result<Self> {
-    //     let this = Self::default();
-    //     bool_setting("editor.enabled", source, &mut this.enabled);
-    //     bool_setting("editor.enabled", source, &mut this.enabled);
-    //     bool_setting("editor.enabled", source, &mut this.enabled);
-
-    //     fn bool_setting(key: &str, source: serde_json::Value, value: &mut bool) -> {
-    //         normalize_key(key, source);
-    //     }
-
-    //     fn bool_setting_converted(key: &str, source: serde_json::Value, value: &mut bool, f: impl FnOnce() -> bool) -> {
-    //         *value = f(normalize_key(key, source));
-    //     }
-    // }
-    fn import_from_vscode(&mut self, source: VSCodeSettings, _: &mut App) {
-        source.bool_setting("editor.showFoldingControls", &mut self.gutter.folds)
+    fn import_from_vscode(
+        vscode: &VSCodeSettings,
+        current: &mut Self::FileContent,
+    ) {
+        let mut gutter = current.gutter.unwrap_or_default();
+        vscode.bool_setting("editor.showFoldingControls", &mut gutter.folds);
+        current.gutter = Some(gutter);
     }
 }
