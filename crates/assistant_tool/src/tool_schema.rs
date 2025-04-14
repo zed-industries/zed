@@ -30,6 +30,11 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             }
         }
 
+        const KEYS_TO_REMOVE: [&str; 2] = ["format", "$schema"];
+        for key in KEYS_TO_REMOVE {
+            obj.remove(key);
+        }
+
         if let Some(default) = obj.get("default") {
             let is_null = default.is_null();
             // Default is not supported, so we need to remove it
@@ -48,9 +53,6 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
         {
             obj.insert("type".to_string(), Value::String("string".to_string()));
         }
-
-        // Format field is only partially supported
-        obj.remove("format");
 
         // Handle oneOf -> anyOf conversion
         if let Some(subschemas) = obj.get_mut("oneOf") {
