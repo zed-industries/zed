@@ -12,12 +12,12 @@ use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, EditorElement, EditorStyle, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardItem,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Hsla, ListAlignment, ListState,
     MouseButton, PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription, Task,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
+    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
@@ -33,7 +33,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
-use ui::{Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip, prelude::*};
+use ui::{
+    Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, TextSize, Tooltip, prelude::*,
+};
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
@@ -1496,12 +1498,36 @@ impl ActiveThread {
                     .when(!message_is_empty, |parent| {
                         parent.child(
                             if let Some(edit_message_editor) = edit_message_editor.clone() {
+                                let settings = ThemeSettings::get_global(cx);
+                                let font_size = TextSize::Small.rems(cx);
+                                let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
+
+                                let text_style = TextStyle {
+                                    color: cx.theme().colors().text,
+                                    font_family: settings.buffer_font.family.clone(),
+                                    font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                                    font_features: settings.buffer_font.features.clone(),
+                                    font_size: font_size.into(),
+                                    line_height: line_height.into(),
+                                    ..Default::default()
+                                };
+
                                 div()
                                     .key_context("EditMessageEditor")
                                     .on_action(cx.listener(Self::cancel_editing_message))
                                     .on_action(cx.listener(Self::confirm_editing_message))
                                     .min_h_6()
-                                    .child(edit_message_editor)
+                                    .pt_1()
+                                    .child(EditorElement::new(
+                                        &edit_message_editor,
+                                        EditorStyle {
+                                            background: colors.editor_background,
+                                            local_player: cx.theme().players().local(),
+                                            text: text_style,
+                                            syntax: cx.theme().syntax().clone(),
+                                            ..Default::default()
+                                        },
+                                    ))
                                     .into_any()
                             } else {
                                 div()
