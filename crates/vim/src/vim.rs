@@ -40,7 +40,7 @@ use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{Settings, SettingsSources, SettingsStore, update_settings_file};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
-use std::{mem, ops::Range, sync::Arc};
+use std::{mem, ops::Range, sync::Arc, time::Duration};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
@@ -114,6 +114,8 @@ struct PushDigraph {
 struct PushLiteral {
     prefix: Option<String>,
 }
+
+struct HighlightCurrentLine;
 
 actions!(
     vim,
@@ -844,7 +846,12 @@ impl Vim {
                 self.transaction_undone(transaction_id, window, cx)
             }
             EditorEvent::Edited { .. } => self.push_to_change_list(window, cx),
-            EditorEvent::FocusedIn => self.sync_vim_settings(window, cx),
+            EditorEvent::FocusedIn => {
+                self.sync_vim_settings(window, cx);
+                if VimSettings::get_global(cx).highlight_on_focus_duration > 0 {
+                    self.highlight_current_line(window, cx);
+                }
+            }
             EditorEvent::CursorShapeChanged => self.cursor_shape_changed(window, cx),
             EditorEvent::PushedToNavHistory {
                 anchor,
@@ -1162,6 +1169,10 @@ impl Vim {
             }
         }
 
+        if VimSettings::get_global(cx).highlight_on_focus_duration > 0 {
+            self.highlight_current_line(window, cx);
+        }
+
         cx.emit(VimEvent::Focused);
         self.sync_vim_settings(window, cx);
 
@@ -1187,6 +1198,34 @@ impl Vim {
             }
         }
         Vim::globals(cx).focused_vim = Some(cx.entity().downgrade());
+    }
+
+    fn highlight_current_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let selection = editor.selections.newest::<Point>(cx);
+            let display_map = editor.snapshot(window, cx);
+            let line_range = display_map.expand_to_line(selection.start..selection.start);
+
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            editor.highlight_background::<HighlightCurrentLine>(
+                &[buffer.anchor_before(line_range.start)..buffer.anchor_after(line_range.end)],
+                |colors| colors.editor_document_highlight_read_background,
+                cx,
+            );
+
+            let highlight_duration = VimSettings::get_global(cx).highlight_on_focus_duration;
+
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(highlight_duration))
+                    .await;
+                this.update(cx, |editor, cx| {
+                    editor.clear_background_highlights::<HighlightCurrentLine>(cx)
+                })
+                .ok();
+            })
+            .detach();
+        });
     }
 
     fn blurred(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1706,6 +1745,7 @@ struct VimSettings {
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
+    pub highlight_on_focus_duration: u64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1717,6 +1757,7 @@ struct VimSettingsContent {
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
+    pub highlight_on_focus_duration: Option<u64>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1774,6 +1815,9 @@ impl Settings for VimSettings {
             custom_digraphs: settings.custom_digraphs.ok_or_else(Self::missing_default)?,
             highlight_on_yank_duration: settings
                 .highlight_on_yank_duration
+                .ok_or_else(Self::missing_default)?,
+            highlight_on_focus_duration: settings
+                .highlight_on_focus_duration
                 .ok_or_else(Self::missing_default)?,
         })
     }
