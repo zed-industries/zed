@@ -76,3 +76,42 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
 }
+
+#[cfg(test)]
+mod tests {
+    use http_client::FakeHttpClient;
+
+    use super::*;
+
+    #[gpui::test]
+    fn test_builtin_tool_schema_compatibility(cx: &mut App) {
+        crate::init(
+            Arc::new(http_client::HttpClientWithUrl::new(
+                FakeHttpClient::with_200_response(),
+                "https://zed.dev",
+                None,
+            )),
+            cx,
+        );
+
+        for tool in ToolRegistry::global(cx).tools() {
+            let actual_schema = tool
+                .input_schema(language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset)
+                .unwrap();
+            let mut expected_schema = actual_schema.clone();
+            assistant_tool::adapt_schema_to_format(
+                &mut expected_schema,
+                language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset,
+            )
+            .unwrap();
+
+            let error_message = format!(
+                "Tool schema for `{}` is not compatible with `language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset` (Gemini Models).\n\
+                Are you using `schema::json_schema_for<T>(format)` to generate the schema?",
+                tool.name(),
+            );
+
+            assert_eq!(actual_schema, expected_schema, "{}", error_message)
+        }
+    }
+}
