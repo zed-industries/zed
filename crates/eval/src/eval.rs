@@ -39,6 +39,9 @@ struct Args {
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
+    /// Languages to run (comma-separated, e.g. "js,ts,py"). If unspecified, only Rust examples are run.
+    #[arg(long, value_delimiter = ',')]
+    languages: Option<Vec<String>>,
 }
 
 fn main() {
@@ -46,6 +49,8 @@ fn main() {
 
     let args = Args::parse();
     let all_available_examples = list_all_examples().unwrap();
+    let languages = args.languages.unwrap_or_else(|| vec!["rs".to_string()]);
+
     let example_paths = all_available_examples
         .iter()
         .filter_map(|example_path| {
@@ -94,6 +99,12 @@ fn main() {
             let mut examples = Vec::new();
             for example_path in example_paths {
                 let example = Example::load_from_directory(&example_path, &run_dir)?;
+
+                if !languages.contains(&example.base.language_extension) {
+                    println!("Skipping {}", example.name());
+                    continue;
+                }
+
                 examples.push((example_path, example));
             }
             let mut repo_urls = HashSet::new();
