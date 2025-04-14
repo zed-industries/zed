@@ -827,7 +827,7 @@ impl Thread {
                     })
                     .collect(),
                 initial_project_snapshot,
-                cumulative_token_usage: this.cumulative_token_usage.clone(),
+                cumulative_token_usage: this.cumulative_token_usage,
                 detailed_summary_state: this.detailed_summary_state.clone(),
                 exceeded_window_error: this.exceeded_window_error.clone(),
             })
@@ -1009,7 +1009,7 @@ impl Thread {
         let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion(request, &cx);
             let initial_token_usage =
-                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage.clone());
+                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
@@ -1031,9 +1031,9 @@ impl Thread {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
-                                thread.cumulative_token_usage =
-                                    thread.cumulative_token_usage.clone() + token_usage.clone()
-                                        - current_token_usage.clone();
+                                thread.cumulative_token_usage = thread.cumulative_token_usage
+                                    + token_usage
+                                    - current_token_usage;
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
@@ -1176,7 +1176,7 @@ impl Thread {
                     thread.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
-                        let usage = thread.cumulative_token_usage.clone() - initial_usage;
+                        let usage = thread.cumulative_token_usage - initial_usage;
 
                         telemetry::event!(
                             "Assistant Thread Completion",
@@ -1853,6 +1853,10 @@ impl Thread {
                 }
             })
             .detach();
+    }
+
+    pub fn cumulative_token_usage(&self) -> TokenUsage {
+        self.cumulative_token_usage
     }
 
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
