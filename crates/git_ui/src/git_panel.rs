@@ -2981,6 +2981,10 @@ impl GitPanel {
         let editor_is_long = self.commit_editor.update(cx, |editor, cx| {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
+        let has_previous_commit = branch
+            .as_ref()
+            .and_then(|branch| branch.most_recent_commit.as_ref())
+            .is_some();
 
         let footer = v_flex()
             .child(PanelRepoFooter::new(display_name, branch, Some(git_panel)))
@@ -3035,42 +3039,37 @@ impl GitPanel {
                                                         }
                                                     })
                                                     .disabled(!can_commit || self.modal_open)
-                                                    .on_click({
-                                                        cx.listener(
-                                                        move |this, _: &ClickEvent, window, cx| {
-                                                            telemetry::event!(
-                                                                "Git Amended",
-                                                                source = "Git Panel"
-                                                            );
-                                                            this.commit_changes(
-                                                                CommitOptions { amend: true },
-                                                                window,
-                                                                cx,
-                                                            )
-                                                        },
-                                                    )
+                                                    .on_click(move |_, window, cx| {
+                                                        window.dispatch_action(
+                                                            Box::new(git::Amend),
+                                                            cx,
+                                                        );
                                                     }),
                                             )
                                         }
                                     })
                                     .when(!self.amend_pending, |this| {
-                                        this.child(SplitButton::new(
-                                            ui::ButtonLike::new_rounded_left(ElementId::Name(
-                                                format!("split-button-left-{}", title).into(),
-                                            ))
-                                            .layer(ui::ElevationIndex::ModalSurface)
-                                            .size(ui::ButtonSize::Compact)
-                                            .child(
-                                                div()
-                                                    .child(Label::new(title).size(LabelSize::Small))
-                                                    .mr_0p5(),
-                                            )
-                                            .on_click(move |_, window, cx| {
-                                                window.dispatch_action(Box::new(git::Commit), cx);
-                                            })
-                                            .disabled(!can_commit || self.modal_open)
-                                            .tooltip(
-                                                {
+                                        this.when(has_previous_commit, |this| {
+                                            this.child(SplitButton::new(
+                                                ui::ButtonLike::new_rounded_left(ElementId::Name(
+                                                    format!("split-button-left-{}", title).into(),
+                                                ))
+                                                .layer(ui::ElevationIndex::ModalSurface)
+                                                .size(ui::ButtonSize::Compact)
+                                                .child(
+                                                    div()
+                                                        .child(
+                                                            Label::new(title)
+                                                                .size(LabelSize::Small),
+                                                        )
+                                                        .mr_0p5(),
+                                                )
+                                                .on_click(move |_, window, cx| {
+                                                    window
+                                                        .dispatch_action(Box::new(git::Commit), cx);
+                                                })
+                                                .disabled(!can_commit || self.modal_open)
+                                                .tooltip({
                                                     let commit_tooltip_focus_handle =
                                                         commit_tooltip_focus_handle.clone();
                                                     move |window, cx| {
@@ -3088,16 +3087,46 @@ impl GitPanel {
                                                             Tooltip::simple(tooltip, cx)
                                                         }
                                                     }
-                                                },
-                                            ),
-                                            self.render_git_commit_menu(
-                                                ElementId::Name(
-                                                    format!("split-button-right-{}", title).into(),
-                                                ),
-                                                Some(commit_tooltip_focus_handle.clone()),
-                                            )
-                                            .into_any_element(),
-                                        ))
+                                                }),
+                                                self.render_git_commit_menu(
+                                                    ElementId::Name(
+                                                        format!("split-button-right-{}", title)
+                                                            .into(),
+                                                    ),
+                                                    Some(commit_tooltip_focus_handle.clone()),
+                                                )
+                                                .into_any_element(),
+                                            ))
+                                        })
+                                        .when(
+                                            !has_previous_commit,
+                                            |this| {
+                                                this.child(
+                                                    panel_filled_button(title)
+                                                        .tooltip(move |window, cx| {
+                                                            if can_commit {
+                                                                Tooltip::with_meta_in(
+                                                                    tooltip,
+                                                                    Some(&git::Commit),
+                                                                    "git commit",
+                                                                    &commit_tooltip_focus_handle,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                            } else {
+                                                                Tooltip::simple(tooltip, cx)
+                                                            }
+                                                        })
+                                                        .disabled(!can_commit || self.modal_open)
+                                                        .on_click(move |_, window, cx| {
+                                                            window.dispatch_action(
+                                                                Box::new(git::Commit),
+                                                                cx,
+                                                            );
+                                                        }),
+                                                )
+                                            },
+                                        )
                                     }),
                             ),
                     )
