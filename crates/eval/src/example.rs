@@ -407,6 +407,7 @@ fn wait_for_lang_server(
     if cx
         .update(|cx| !has_pending_lang_server_work(lsp_store.clone(), cx))
         .unwrap()
+        || std::env::var("ZED_EVAL_SKIP_LS_WAIT").is_ok()
     {
         return Task::ready(anyhow::Ok(()));
     }
