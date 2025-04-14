@@ -76,7 +76,7 @@ pub fn active_debug_session_panel(
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, _| this.active_session())
                 .unwrap()
         })
         .unwrap()

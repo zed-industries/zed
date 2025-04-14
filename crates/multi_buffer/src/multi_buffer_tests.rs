@@ -1380,6 +1380,7 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
         "
         one
         four
+        five
         six
         "
     );
@@ -1413,6 +1414,7 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
             + TWO
             + THREE
               four
+            - five
             + FIVE
               six
             "
@@ -1440,6 +1442,58 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
             + TWO
             + THREE
               four
+            - five
+            + FIVE
+              six
+            "
+        ),
+    );
+
+    // Now collapse all diff hunks
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+            one
+            TWO
+            THREE
+            four
+            FIVE
+            six
+            "
+        ),
+    );
+
+    // Expand the hunks again, but this time provide two ranges that are both within the same hunk
+    // Target the first hunk which is between "one" and "four"
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(
+            vec![
+                snapshot.anchor_before(Point::new(4, 0))..snapshot.anchor_before(Point::new(4, 0)),
+                snapshot.anchor_before(Point::new(4, 2))..snapshot.anchor_before(Point::new(4, 2)),
+            ],
+            cx,
+        );
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+              TWO
+              THREE
+              four
+            - five
             + FIVE
               six
             "
@@ -1742,6 +1796,88 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         );
     });
+}
+
+#[gpui::test]
+fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
+    let buf1 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "zero
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            ",
+            },
+            cx,
+        )
+    });
+    let path: PathKey = PathKey::namespaced(0, Path::new("/").into());
+    let buf2 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "000
+            111
+            222
+            333
+            "
+            },
+            cx,
+        )
+    });
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buf1.clone(),
+            vec![Point::row_range(1..1), Point::row_range(4..5)],
+            1,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {
+        "-----
+        zero
+        one
+        two
+        -----
+        three
+        four
+        five
+        six
+        "
+        },
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buf2.clone(),
+            vec![Point::row_range(0..1)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                000
+                111
+                222
+                333
+                "},
+    );
 }
 
 #[gpui::test]

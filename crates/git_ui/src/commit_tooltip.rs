@@ -8,7 +8,7 @@ use gpui::{
     App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, WeakEntity, prelude::*,
 };
-use markdown::Markdown;
+use markdown::{Markdown, MarkdownElement};
 use project::git_store::Repository;
 use settings::Settings;
 use std::hash::Hash;
@@ -118,7 +118,6 @@ impl CommitTooltip {
         details: Option<ParsedCommitMessage>,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let commit_time = blame
@@ -140,7 +139,6 @@ impl CommitTooltip {
             },
             repository,
             workspace,
-            window,
             cx,
         )
     }
@@ -149,13 +147,8 @@ impl CommitTooltip {
         commit: CommitDetails,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut style = hover_markdown_style(window, cx);
-        if let Some(code_block) = &style.code_block.text {
-            style.base_text_style.refine(code_block);
-        }
         let markdown = cx.new(|cx| {
             Markdown::new(
                 commit
@@ -163,7 +156,6 @@ impl CommitTooltip {
                     .as_ref()
                     .map(|message| message.message.clone())
                     .unwrap_or_default(),
-                style,
                 None,
                 None,
                 cx,
@@ -199,12 +191,19 @@ impl Render for CommitTooltip {
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         );
+        let markdown_style = {
+            let mut style = hover_markdown_style(window, cx);
+            if let Some(code_block) = &style.code_block.text {
+                style.base_text_style.refine(code_block);
+            }
+            style
+        };
 
         let message = self
             .commit
             .message
             .as_ref()
-            .map(|_| self.markdown.clone().into_any_element())
+            .map(|_| MarkdownElement::new(self.markdown.clone(), markdown_style).into_any())
             .unwrap_or("<no commit message>".into_any());
 
         let pull_request = self

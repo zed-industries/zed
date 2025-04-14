@@ -1,9 +1,9 @@
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 
 use gpui::{App, Entity, SharedString};
 use language::{Buffer, File};
 use language_model::LanguageModelRequestMessage;
-use project::ProjectPath;
+use project::{ProjectPath, Worktree};
 use serde::{Deserialize, Serialize};
 use text::{Anchor, BufferId};
 use ui::IconName;
@@ -69,8 +69,19 @@ pub struct FileContext {
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
     pub id: ContextId,
-    pub project_path: ProjectPath,
+    pub worktree: Entity<Worktree>,
+    pub path: Arc<Path>,
+    /// Buffers of the files within the directory.
     pub context_buffers: Vec<ContextBuffer>,
+}
+
+impl DirectoryContext {
+    pub fn project_path(&self, cx: &App) -> ProjectPath {
+        ProjectPath {
+            worktree_id: self.worktree.read(cx).id(),
+            path: self.path.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -86,12 +97,11 @@ pub struct FetchedUrlContext {
     pub text: SharedString,
 }
 
-// TODO: Model<Thread> holds onto the thread even if the thread is deleted. Can either handle this
-// explicitly or have a WeakModel<Thread> and remove during snapshot.
-
 #[derive(Debug, Clone)]
 pub struct ThreadContext {
     pub id: ContextId,
+    // TODO: Entity<Thread> holds onto the thread even if the thread is deleted. Should probably be
+    // a WeakEntity and handle removal from the UI when it has dropped.
     pub thread: Entity<Thread>,
     pub text: SharedString,
 }
@@ -105,12 +115,11 @@ impl ThreadContext {
     }
 }
 
-// TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
-// the context from the message editor in this case.
-
 #[derive(Clone)]
 pub struct ContextBuffer {
     pub id: BufferId,
+    // TODO: Entity<Buffer> holds onto the thread even if the thread is deleted. Should probably be
+    // a WeakEntity and handle removal from the UI when it has dropped.
     pub buffer: Entity<Buffer>,
     pub file: Arc<dyn File>,
     pub version: clock::Global,
@@ -146,11 +155,11 @@ pub struct ContextSymbolId {
     pub range: Range<Anchor>,
 }
 
-pub fn attach_context_to_message<'a>(
-    message: &mut LanguageModelRequestMessage,
+/// Formats a collection of contexts into a string representation
+pub fn format_context_as_string<'a>(
     contexts: impl Iterator<Item = &'a AssistantContext>,
     cx: &App,
-) {
+) -> Option<String> {
     let mut file_context = Vec::new();
     let mut directory_context = Vec::new();
     let mut symbol_context = Vec::new();
@@ -167,64 +176,78 @@ pub fn attach_context_to_message<'a>(
         }
     }
 
-    let mut context_chunks = Vec::new();
+    if file_context.is_empty()
+        && directory_context.is_empty()
+        && symbol_context.is_empty()
+        && fetch_context.is_empty()
+        && thread_context.is_empty()
+    {
+        return None;
+    }
+
+    let mut result = String::new();
+    result.push_str("\n<context>\n\
+        The following items were attached by the user. You don't need to use other tools to read them.\n\n");
 
     if !file_context.is_empty() {
-        context_chunks.push("<files>\n");
+        result.push_str("<files>\n");
         for context in file_context {
-            context_chunks.push(&context.context_buffer.text);
+            result.push_str(&context.context_buffer.text);
         }
-        context_chunks.push("\n</files>\n");
+        result.push_str("</files>\n");
     }
 
     if !directory_context.is_empty() {
-        context_chunks.push("<directories>\n");
+        result.push_str("<directories>\n");
         for context in directory_context {
             for context_buffer in &context.context_buffers {
-                context_chunks.push(&context_buffer.text);
+                result.push_str(&context_buffer.text);
             }
         }
-        context_chunks.push("\n</directories>\n");
+        result.push_str("</directories>\n");
     }
 
     if !symbol_context.is_empty() {
-        context_chunks.push("<symbols>\n");
+        result.push_str("<symbols>\n");
         for context in symbol_context {
-            context_chunks.push(&context.context_symbol.text);
+            result.push_str(&context.context_symbol.text);
+            result.push('\n');
         }
-        context_chunks.push("\n</symbols>\n");
+        result.push_str("</symbols>\n");
     }
 
     if !fetch_context.is_empty() {
-        context_chunks.push("<fetched_urls>\n");
+        result.push_str("<fetched_urls>\n");
         for context in &fetch_context {
-            context_chunks.push(&context.url);
-            context_chunks.push(&context.text);
+            result.push_str(&context.url);
+            result.push('\n');
+            result.push_str(&context.text);
+            result.push('\n');
         }
-        context_chunks.push("\n</fetched_urls>\n");
+        result.push_str("</fetched_urls>\n");
     }
 
-    // Need to own the SharedString for summary so that it can be referenced.
-    let mut thread_context_chunks = Vec::new();
     if !thread_context.is_empty() {
-        context_chunks.push("<conversation_threads>\n");
+        result.push_str("<conversation_threads>\n");
         for context in &thread_context {
-            thread_context_chunks.push(context.summary(cx));
-            thread_context_chunks.push(context.text.clone());
+            result.push_str(&context.summary(cx));
+            result.push('\n');
+            result.push_str(&context.text);
+            result.push('\n');
         }
-        context_chunks.push("\n</conversation_threads>\n");
+        result.push_str("</conversation_threads>\n");
     }
 
-    for chunk in &thread_context_chunks {
-        context_chunks.push(chunk);
-    }
+    result.push_str("</context>\n");
+    Some(result)
+}
 
-    if !context_chunks.is_empty() {
-        message.content.push(
-            "\n<context>\n\
-                The following items were attached by the user. You don't need to use other tools to read them.\n\n".into(),
-        );
-        message.content.push(context_chunks.join("\n").into());
-        message.content.push("\n</context>\n".into());
+pub fn attach_context_to_message<'a>(
+    message: &mut LanguageModelRequestMessage,
+    contexts: impl Iterator<Item = &'a AssistantContext>,
+    cx: &App,
+) {
+    if let Some(context_string) = format_context_as_string(contexts, cx) {
+        message.content.push(context_string.into());
     }
 }

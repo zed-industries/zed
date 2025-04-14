@@ -306,7 +306,7 @@ pub enum BufferEvent {
 }
 
 /// The file associated with a buffer.
-pub trait File: Send + Sync {
+pub trait File: Send + Sync + Any {
     /// Returns the [`LocalFile`] associated with this file, if the
     /// file is local.
     fn as_local(&self) -> Option<&dyn LocalFile>;
@@ -335,9 +335,6 @@ pub trait File: Send + Sync {
     ///
     /// This is needed for looking up project-specific settings.
     fn worktree_id(&self, cx: &App) -> WorktreeId;
-
-    /// Converts this file into an [`Any`] trait object.
-    fn as_any(&self) -> &dyn Any;
 
     /// Converts this file into a protobuf message.
     fn to_proto(&self, cx: &App) -> rpc::proto::File;
@@ -1376,6 +1373,25 @@ impl Buffer {
             .or_else(|| self.language.clone())
     }
 
+    /// Returns each [`Language`] for the active syntax layers at the given location.
+    pub fn languages_at<D: ToOffset>(&self, position: D) -> Vec<Arc<Language>> {
+        let offset = position.to_offset(self);
+        let mut languages: Vec<Arc<Language>> = self
+            .syntax_map
+            .lock()
+            .layers_for_range(offset..offset, &self.text, false)
+            .map(|info| info.language.clone())
+            .collect();
+
+        if languages.is_empty() {
+            if let Some(buffer_language) = self.language() {
+                languages.push(buffer_language.clone());
+            }
+        }
+
+        languages
+    }
+
     /// An integer version number that accounts for all updates besides
     /// the buffer's text itself (which is versioned via a version vector).
     pub fn non_text_state_update_count(&self) -> usize {
@@ -2018,11 +2034,16 @@ impl Buffer {
     }
 
     /// Manually remove a transaction from the buffer's undo history
-    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
-        self.text.forget_transaction(transaction_id);
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        self.text.forget_transaction(transaction_id)
     }
 
-    /// Manually merge two adjacent transactions in the buffer's undo history.
+    /// Retrieve a transaction from the buffer's undo history
+    pub fn get_transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.text.get_transaction(transaction_id)
+    }
+
+    /// Manually merge two transactions in the buffer's undo history.
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.text.merge_transactions(transaction, destination);
     }
@@ -2210,7 +2231,12 @@ impl Buffer {
                         original_indent_columns,
                     } = &mode
                     {
-                        original_indent_column = Some(
+                        original_indent_column = Some(if new_text.starts_with('\n') {
+                            indent_size_for_text(
+                                new_text[range_of_insertion_to_indent.clone()].chars(),
+                            )
+                            .len
+                        } else {
                             original_indent_columns
                                 .get(ix)
                                 .copied()
@@ -2220,8 +2246,8 @@ impl Buffer {
                                         new_text[range_of_insertion_to_indent.clone()].chars(),
                                     )
                                     .len
-                                }),
-                        );
+                                })
+                        });
 
                         // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
@@ -2876,7 +2902,7 @@ impl BufferSnapshot {
             if let Some(range_to_truncate) = indent_ranges
                 .iter_mut()
                 .filter(|indent_range| indent_range.contains(&outdent_position))
-                .last()
+                .next_back()
             {
                 range_to_truncate.end = outdent_position;
             }
@@ -4120,10 +4146,10 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn words_in_range(&self, query: WordsQuery) -> HashMap<String, Range<Anchor>> {
+    pub fn words_in_range(&self, query: WordsQuery) -> BTreeMap<String, Range<Anchor>> {
         let query_str = query.fuzzy_contents;
         if query_str.map_or(false, |query| query.is_empty()) {
-            return HashMap::default();
+            return BTreeMap::default();
         }
 
         let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
@@ -4135,7 +4161,7 @@ impl BufferSnapshot {
         let query_chars = query_str.map(|query| query.chars().collect::<Vec<_>>());
         let query_len = query_chars.as_ref().map_or(0, |query| query.len());
 
-        let mut words = HashMap::default();
+        let mut words = BTreeMap::default();
         let mut current_word_start_ix = None;
         let mut chunk_ix = query.range.start;
         for chunk in self.chunks(query.range, false) {
@@ -4603,10 +4629,6 @@ impl File for TestFile {
 
     fn worktree_id(&self, _: &App) -> WorktreeId {
         WorktreeId::from_usize(0)
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        unimplemented!()
     }
 
     fn to_proto(&self, _: &App) -> rpc::proto::File {

@@ -145,6 +145,66 @@ pub fn truncate_lines_and_trailoff(s: &str, max_lines: usize) -> String {
     }
 }
 
+/// Truncates the string at a character boundary, such that the result is less than `max_bytes` in
+/// length.
+pub fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() < max_bytes {
+        return s;
+    }
+
+    for i in (0..max_bytes).rev() {
+        if s.is_char_boundary(i) {
+            return &s[..i];
+        }
+    }
+
+    ""
+}
+
+/// Takes a prefix of complete lines which fit within the byte limit. If the first line is longer
+/// than the limit, truncates at a character boundary.
+pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() < max_bytes {
+        return s;
+    }
+
+    for i in (0..max_bytes).rev() {
+        if s.is_char_boundary(i) {
+            if s.as_bytes()[i] == b'\n' {
+                // Since the i-th character is \n, valid to slice at i + 1.
+                return &s[..i + 1];
+            }
+        }
+    }
+
+    truncate_to_byte_limit(s, max_bytes)
+}
+
+#[test]
+fn test_truncate_lines_to_byte_limit() {
+    let text = "Line 1\nLine 2\nLine 3\nLine 4";
+
+    // Limit that includes all lines
+    assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
+
+    // Exactly the first line
+    assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
+
+    // Limit between lines
+    assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
+    assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
+
+    // Limit before first newline
+    assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
+
+    // Test with non-ASCII characters
+    let text_utf8 = "Line 1\nLíne 2\nLine 3";
+    assert_eq!(
+        truncate_lines_to_byte_limit(text_utf8, 15),
+        "Line 1\nLíne 2\n"
+    );
+}
+
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
     *value += T::from(1);
@@ -417,7 +477,7 @@ pub fn iterate_expanded_and_wrapped_usize_range(
 }
 
 #[cfg(target_os = "windows")]
-pub fn retrieve_system_shell() -> String {
+pub fn get_windows_system_shell() -> String {
     use std::path::PathBuf;
 
     fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
@@ -932,6 +992,18 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
 
 pub fn default<D: Default>() -> D {
     Default::default()
+}
+
+pub fn get_system_shell() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_system_shell()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+    }
 }
 
 #[cfg(test)]

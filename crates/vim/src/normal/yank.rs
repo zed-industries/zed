@@ -21,6 +21,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -33,8 +34,19 @@ impl Vim {
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let original_position = (selection.head(), selection.goal);
-                        original_positions.insert(selection.id, original_position);
-                        kind = motion.expand_selection(map, selection, times, &text_layout_details);
+                        kind = motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        );
+                        if kind == Some(MotionKind::Exclusive) {
+                            original_positions
+                                .insert(selection.id, (selection.start, selection.goal));
+                        } else {
+                            original_positions.insert(selection.id, original_position);
+                        }
                     })
                 });
                 let Some(kind) = kind else { return };

@@ -14,6 +14,7 @@ use std::{
     fmt, iter,
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub},
     sync::Arc,
+    usize,
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary, TreeMap};
 use ui::IntoElement as _;

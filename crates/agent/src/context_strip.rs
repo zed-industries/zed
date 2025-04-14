@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::rc::Rc;
 
 use collections::HashSet;
@@ -9,11 +10,12 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::Buffer;
+use project::ProjectItem;
 use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::context::{ContextId, ContextKind};
-use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
@@ -50,7 +52,6 @@ impl ContextStrip {
                 workspace.clone(),
                 thread_store.clone(),
                 context_store.downgrade(),
-                ConfirmBehavior::KeepOpen,
                 window,
                 cx,
             )
@@ -59,6 +60,7 @@ impl ContextStrip {
         let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
+            cx.observe(&context_store, |_, _, cx| cx.notify()),
             cx.subscribe_in(&context_picker, window, Self::handle_context_picker_event),
             cx.on_focus(&focus_handle, window, Self::handle_focus),
             cx.on_blur(&focus_handle, window, Self::handle_blur),
@@ -92,26 +94,23 @@ impl ContextStrip {
         let active_buffer_entity = editor.buffer().read(cx).as_singleton()?;
         let active_buffer = active_buffer_entity.read(cx);
 
-        let path = active_buffer.file()?.full_path(cx);
+        let project_path = active_buffer.project_path(cx)?;
 
         if self
             .context_store
             .read(cx)
-            .will_include_buffer(active_buffer.remote_id(), &path)
+            .will_include_buffer(active_buffer.remote_id(), &project_path)
             .is_some()
         {
             return None;
         }
 
-        let name = match path.file_name() {
-            Some(name) => name.to_string_lossy().into_owned().into(),
-            None => path.to_string_lossy().into_owned().into(),
-        };
+        let file_name = active_buffer.file()?.file_name(cx);
 
-        let icon_path = FileIcons::get_icon(&path, cx);
+        let icon_path = FileIcons::get_icon(&Path::new(&file_name), cx);
 
         Some(SuggestedContext::File {
-            name,
+            name: file_name.to_string_lossy().into_owned().into(),
             buffer: active_buffer_entity.downgrade(),
             icon_path,
         })
@@ -290,9 +289,9 @@ impl ContextStrip {
         if let Some(index) = self.focused_index {
             let mut is_empty = false;
 
-            self.context_store.update(cx, |this, _cx| {
+            self.context_store.update(cx, |this, cx| {
                 if let Some(item) = this.context().get(index) {
-                    this.remove_context(item.id());
+                    this.remove_context(item.id(), cx);
                 }
 
                 is_empty = this.context().is_empty();
@@ -475,8 +474,8 @@ impl Render for ContextStrip {
                             Some({
                                 let context_store = self.context_store.clone();
                                 Rc::new(cx.listener(move |_this, _event, _window, cx| {
-                                    context_store.update(cx, |this, _cx| {
-                                        this.remove_context(id);
+                                    context_store.update(cx, |this, cx| {
+                                        this.remove_context(id, cx);
                                     });
                                     cx.notify();
                                 }))
