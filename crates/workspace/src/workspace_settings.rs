@@ -10,6 +10,7 @@ use settings::{Settings, SettingsSources};
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
+    pub bottom_dock_layout: BottomDockLayout,
     pub pane_split_direction_horizontal: PaneSplitDirectionHorizontal,
     pub pane_split_direction_vertical: PaneSplitDirectionVertical,
     pub centered_layout: CenteredLayoutSettings,
@@ -71,6 +72,20 @@ pub struct ActivePanelModifiers {
     pub inactive_opacity: Option<f32>,
 }
 
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BottomDockLayout {
+    /// Contained between the left and right docks
+    #[default]
+    Contained,
+    /// Takes up the full width of the window
+    Full,
+    /// Extends under the left dock while snapping to the right dock
+    LeftAligned,
+    /// Extends under the right dock while snapping to the left dock
+    RightAligned,
+}
+
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseWindowWhenNoItems {
@@ -109,6 +124,10 @@ pub enum RestoreOnStartupBehavior {
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
+    /// Layout mode for the bottom dock
+    ///
+    /// Default: contained
+    pub bottom_dock_layout: Option<BottomDockLayout>,
     /// Direction to split horizontally.
     ///
     /// Default: "up"

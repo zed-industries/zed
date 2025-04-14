@@ -1,0 +1,56 @@
+name: Bug Report (Other)
+description: |
+  Something else is broken in Zed (exclude crashing).
+type: "Bug"
+body:
+  - type: textarea
+    attributes:
+      label: Summary
+      description: Provide a one sentence summary and detailed reproduction steps
+      value: |
+        <!-- Begin your issue with a one sentence summary -->
+        SUMMARY_SENTENCE_HERE
+
+        ### Description
+        <!--  Describe with sufficient detail to reproduce from a clean Zed install.
+          - Any code must be sufficient to reproduce (include context!)
+          - Code must as text, not just as a screenshot.
+          - Issues with insufficient detail may be summarily closed.
+        -->
+
+        Steps to reproduce:
+        1.
+        2.
+        3.
+        4.
+
+        Expected Behavior:
+        Actual Behavior:
+
+        <!-- Before Submitting, did you:
+          1. Include settings.json, keymap.json, .editorconfig if relevant?
+          2. Check your Zed.log for relevant errors? (please include!)
+          3. Click Preview to ensure everything looks right?
+          4. Hide videos, large images and logs in ``` inside collapsible blocks:
+
+        <details><summary>click to expand</summary>
+
+        ```json
+
+        ```
+        </details>
+        -->
+
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Zed Version and System Specs
+      description: |
+        Open Zed, from the command palette select "zed: Copy System Specs Into Clipboard"
+      placeholder: |
+        Output of "zed: Copy System Specs Into Clipboard"
+    validations:
+      required: true

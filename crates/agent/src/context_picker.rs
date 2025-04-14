@@ -13,7 +13,8 @@ use editor::display_map::{Crease, FoldId};
 use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use file_context_picker::render_file_context_entry;
 use gpui::{
-    App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
+    App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task,
+    WeakEntity,
 };
 use multi_buffer::MultiBufferRow;
 use project::{Entry, ProjectPath};
@@ -32,12 +33,6 @@ use crate::context_picker::thread_context_picker::ThreadContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
-
-#[derive(Debug, Clone, Copy)]
-pub enum ConfirmBehavior {
-    KeepOpen,
-    Close,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPickerMode {
@@ -104,7 +99,7 @@ pub(super) struct ContextPicker {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
-    confirm_behavior: ConfirmBehavior,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ContextPicker {
@@ -112,10 +107,25 @@ impl ContextPicker {
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let subscriptions = context_store
+            .upgrade()
+            .map(|context_store| {
+                cx.observe(&context_store, |this, _, cx| this.notify_current_picker(cx))
+            })
+            .into_iter()
+            .chain(
+                thread_store
+                    .as_ref()
+                    .and_then(|thread_store| thread_store.upgrade())
+                    .map(|thread_store| {
+                        cx.observe(&thread_store, |this, _, cx| this.notify_current_picker(cx))
+                    }),
+            )
+            .collect::<Vec<Subscription>>();
+
         ContextPicker {
             mode: ContextPickerState::Default(ContextMenu::build(
                 window,
@@ -125,7 +135,7 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
-            confirm_behavior,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -147,37 +157,32 @@ impl ContextPicker {
 
             let modes = supported_context_picker_modes(&self.thread_store);
 
-            let menu = menu
-                .when(has_recent, |menu| {
-                    menu.custom_row(|_, _| {
-                        div()
-                            .mb_1()
-                            .child(
-                                Label::new("Recent")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            )
-                            .into_any_element()
-                    })
+            menu.when(has_recent, |menu| {
+                menu.custom_row(|_, _| {
+                    div()
+                        .mb_1()
+                        .child(
+                            Label::new("Recent")
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .into_any_element()
                 })
-                .extend(recent_entries)
-                .when(has_recent, |menu| menu.separator())
-                .extend(modes.into_iter().map(|mode| {
-                    let context_picker = context_picker.clone();
+            })
+            .extend(recent_entries)
+            .when(has_recent, |menu| menu.separator())
+            .extend(modes.into_iter().map(|mode| {
+                let context_picker = context_picker.clone();
 
-                    ContextMenuEntry::new(mode.label())
-                        .icon(mode.icon())
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .handler(move |window, cx| {
-                            context_picker.update(cx, |this, cx| this.select_mode(mode, window, cx))
-                        })
-                }));
-
-            match self.confirm_behavior {
-                ConfirmBehavior::KeepOpen => menu.keep_open_on_confirm(),
-                ConfirmBehavior::Close => menu,
-            }
+                ContextMenuEntry::new(mode.label())
+                    .icon(mode.icon())
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .handler(move |window, cx| {
+                        context_picker.update(cx, |this, cx| this.select_mode(mode, window, cx))
+                    })
+            }))
+            .keep_open_on_confirm()
         });
 
         cx.subscribe(&menu, move |_, _, _: &DismissEvent, cx| {
@@ -208,7 +213,6 @@ impl ContextPicker {
                         context_picker.clone(),
                         self.workspace.clone(),
                         self.context_store.clone(),
-                        self.confirm_behavior,
                         window,
                         cx,
                     )
@@ -220,7 +224,6 @@ impl ContextPicker {
                         context_picker.clone(),
                         self.workspace.clone(),
                         self.context_store.clone(),
-                        self.confirm_behavior,
                         window,
                         cx,
                     )
@@ -232,7 +235,6 @@ impl ContextPicker {
                         context_picker.clone(),
                         self.workspace.clone(),
                         self.context_store.clone(),
-                        self.confirm_behavior,
                         window,
                         cx,
                     )
@@ -245,7 +247,6 @@ impl ContextPicker {
                             thread_store.clone(),
                             context_picker.clone(),
                             self.context_store.clone(),
-                            self.confirm_behavior,
                             window,
                             cx,
                         )
@@ -270,12 +271,14 @@ impl ContextPicker {
                 path_prefix,
             } => {
                 let context_store = self.context_store.clone();
+                let worktree_id = project_path.worktree_id;
                 let path = project_path.path.clone();
 
                 ContextMenuItem::custom_entry(
                     move |_window, cx| {
                         render_file_context_entry(
                             ElementId::NamedInteger("ctx-recent".into(), ix),
+                            worktree_id,
                             &path,
                             &path_prefix,
                             false,
@@ -370,6 +373,16 @@ impl ContextPicker {
 
         recent_context_picker_entries(context_store, self.thread_store.clone(), workspace, cx)
     }
+
+    fn notify_current_picker(&mut self, cx: &mut Context<Self>) {
+        match &self.mode {
+            ContextPickerState::Default(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::File(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::Symbol(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::Fetch(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::Thread(entity) => entity.update(cx, |_, cx| cx.notify()),
+        }
+    }
 }
 
 impl EventEmitter<DismissEvent> for ContextPicker {}
@@ -437,7 +450,7 @@ fn recent_context_picker_entries(
     recent.extend(
         workspace
             .recent_navigation_history_iter(cx)
-            .filter(|(path, _)| !current_files.contains(&path.path.to_path_buf()))
+            .filter(|(path, _)| !current_files.contains(path))
             .take(4)
             .filter_map(|(project_path, _)| {
                 project
@@ -478,14 +491,13 @@ fn recent_context_picker_entries(
     recent
 }
 
-pub(crate) fn insert_crease_for_mention(
+pub(crate) fn insert_fold_for_mention(
     excerpt_id: ExcerptId,
     crease_start: text::Anchor,
     content_len: usize,
     crease_label: SharedString,
     crease_icon_path: SharedString,
     editor_entity: Entity<Editor>,
-    window: &mut Window,
     cx: &mut App,
 ) {
     editor_entity.update(cx, |editor, cx| {
@@ -504,6 +516,7 @@ pub(crate) fn insert_crease_for_mention(
                 crease_label,
                 editor_entity.downgrade(),
             ),
+            merge_adjacent: false,
             ..Default::default()
         };
 
@@ -517,8 +530,9 @@ pub(crate) fn insert_crease_for_mention(
             render_trailer,
         );
 
-        editor.insert_creases(vec![crease.clone()], cx);
-        editor.fold_creases(vec![crease], false, window, cx);
+        editor.display_map.update(cx, |display_map, cx| {
+            display_map.fold(vec![crease], cx);
+        });
     });
 }
 
@@ -575,12 +589,13 @@ fn render_fold_icon_button(
                         .gap_1()
                         .child(
                             Icon::from_path(icon_path.clone())
-                                .size(IconSize::Small)
+                                .size(IconSize::XSmall)
                                 .color(Color::Muted),
                         )
                         .child(
                             Label::new(label.clone())
                                 .size(LabelSize::Small)
+                                .buffer_font(cx)
                                 .single_line(),
                         ),
                 )
@@ -609,24 +624,45 @@ fn fold_toggle(
 pub enum MentionLink {
     File(ProjectPath, Entry),
     Symbol(ProjectPath, String),
+    Fetch(String),
     Thread(ThreadId),
 }
 
 impl MentionLink {
+    const FILE: &str = "@file";
+    const SYMBOL: &str = "@symbol";
+    const THREAD: &str = "@thread";
+    const FETCH: &str = "@fetch";
+
+    const SEPARATOR: &str = ":";
+
+    pub fn is_valid(url: &str) -> bool {
+        url.starts_with(Self::FILE)
+            || url.starts_with(Self::SYMBOL)
+            || url.starts_with(Self::FETCH)
+            || url.starts_with(Self::THREAD)
+    }
+
     pub fn for_file(file_name: &str, full_path: &str) -> String {
-        format!("[@{}](file:{})", file_name, full_path)
+        format!("[@{}]({}:{})", file_name, Self::FILE, full_path)
     }
 
     pub fn for_symbol(symbol_name: &str, full_path: &str) -> String {
-        format!("[@{}](symbol:{}:{})", symbol_name, full_path, symbol_name)
+        format!(
+            "[@{}]({}:{}:{})",
+            symbol_name,
+            Self::SYMBOL,
+            full_path,
+            symbol_name
+        )
     }
 
     pub fn for_fetch(url: &str) -> String {
-        format!("[@{}]({})", url, url)
+        format!("[@{}]({}:{})", url, Self::FETCH, url)
     }
 
     pub fn for_thread(thread: &ThreadContextEntry) -> String {
-        format!("[@{}](thread:{})", thread.summary, thread.id)
+        format!("[@{}]({}:{})", thread.summary, Self::THREAD, thread.id)
     }
 
     pub fn try_parse(link: &str, workspace: &Entity<Workspace>, cx: &App) -> Option<Self> {
@@ -649,17 +685,10 @@ impl MentionLink {
             })
         }
 
-        let (prefix, link, target) = {
-            let mut parts = link.splitn(3, ':');
-            let prefix = parts.next();
-            let link = parts.next();
-            let target = parts.next();
-            (prefix, link, target)
-        };
-
-        match (prefix, link, target) {
-            (Some("file"), Some(path), _) => {
-                let project_path = extract_project_path_from_link(path, workspace, cx)?;
+        let (prefix, argument) = link.split_once(Self::SEPARATOR)?;
+        match prefix {
+            Self::FILE => {
+                let project_path = extract_project_path_from_link(argument, workspace, cx)?;
                 let entry = workspace
                     .read(cx)
                     .project()
@@ -667,14 +696,16 @@ impl MentionLink {
                     .entry_for_path(&project_path, cx)?;
                 Some(MentionLink::File(project_path, entry))
             }
-            (Some("symbol"), Some(path), Some(symbol_name)) => {
+            Self::SYMBOL => {
+                let (path, symbol) = argument.split_once(Self::SEPARATOR)?;
                 let project_path = extract_project_path_from_link(path, workspace, cx)?;
-                Some(MentionLink::Symbol(project_path, symbol_name.to_string()))
+                Some(MentionLink::Symbol(project_path, symbol.to_string()))
             }
-            (Some("thread"), Some(thread_id), _) => {
-                let thread_id = ThreadId::from(thread_id);
+            Self::THREAD => {
+                let thread_id = ThreadId::from(argument);
                 Some(MentionLink::Thread(thread_id))
             }
+            Self::FETCH => Some(MentionLink::Fetch(argument.to_string())),
             _ => None,
         }
     }

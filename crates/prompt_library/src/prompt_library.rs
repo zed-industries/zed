@@ -9,7 +9,7 @@ use gpui::{
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
@@ -657,7 +657,7 @@ impl PromptLibrary {
                         .iter()
                         .position(|mat| mat.id == prompt_id)
                     {
-                        picker.set_selected_index(ix, true, window, cx);
+                        picker.set_selected_index(ix, None, true, window, cx);
                     }
                 }
             } else {
@@ -777,7 +777,9 @@ impl PromptLibrary {
         };
 
         let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+        let Some(ConfiguredModel { provider, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        else {
             return;
         };
 
@@ -880,7 +882,9 @@ impl PromptLibrary {
     }
 
     fn count_tokens(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).default_model()
+        else {
             return;
         };
         if let Some(prompt) = self.prompt_editors.get_mut(&prompt_id) {
@@ -967,7 +971,9 @@ impl PromptLibrary {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
                 let focus_handle = prompt_editor.body_editor.focus_handle(cx);
-                let model = LanguageModelRegistry::read_global(cx).active_model();
+                let model = LanguageModelRegistry::read_global(cx)
+                    .default_model()
+                    .map(|default| default.model);
                 let settings = ThemeSettings::get_global(cx);
 
                 Some(

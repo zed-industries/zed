@@ -1,5 +1,5 @@
-mod derive_component;
 mod derive_path_str;
+mod derive_register_component;
 mod dynamic_spacing;
 
 use proc_macro::TokenStream;
@@ -60,26 +60,28 @@ pub fn derive_dynamic_spacing(input: TokenStream) -> TokenStream {
     dynamic_spacing::derive_spacing(input)
 }
 
-/// Derives the `Component` trait for a struct.
+/// Registers components that implement the `Component` trait.
 ///
-/// This macro generates implementations for the `Component` trait and associated
-/// registration functions for the component system.
+/// This proc macro is used to automatically register structs that implement
+/// the `Component` trait with the [`component::ComponentRegistry`].
 ///
-/// # Attributes
-///
-/// - `#[component(scope = "...")]`: Required. Specifies the scope of the component.
-/// - `#[component(description = "...")]`: Optional. Provides a description for the component.
+/// If the component trait is not implemented, it will generate a compile-time error.
 ///
 /// # Example
 ///
 /// ```
-/// use ui_macros::Component;
+/// use ui_macros::RegisterComponent;
 ///
-/// #[derive(Component)]
-/// #[component(scope = "toggle", description = "A element that can be toggled on and off")]
-/// struct Checkbox;
+/// #[derive(RegisterComponent)]
+/// struct MyComponent;
+///
+/// impl Component for MyComponent {
+///     // Component implementation
+/// }
 /// ```
-#[proc_macro_derive(IntoComponent, attributes(component))]
-pub fn derive_component(input: TokenStream) -> TokenStream {
-    derive_component::derive_into_component(input)
+///
+/// This example will add MyComponent to the ComponentRegistry.
+#[proc_macro_derive(RegisterComponent)]
+pub fn derive_register_component(input: TokenStream) -> TokenStream {
+    derive_register_component::derive_register_component(input)
 }

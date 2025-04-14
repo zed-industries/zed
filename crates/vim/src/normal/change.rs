@@ -18,6 +18,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -59,6 +60,7 @@ impl Vim {
                                     selection,
                                     times,
                                     &text_layout_details,
+                                    forced_motion,
                                 );
                                 if let Motion::CurrentLine = motion {
                                     let mut start_offset =
@@ -181,7 +183,7 @@ fn expand_changed_word_selection(
         } else {
             Motion::NextWordStart { ignore_punctuation }
         };
-        motion.expand_selection(map, selection, times, text_layout_details)
+        motion.expand_selection(map, selection, times, text_layout_details, false)
     }
 }
 

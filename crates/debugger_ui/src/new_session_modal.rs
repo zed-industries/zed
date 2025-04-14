@@ -31,6 +31,7 @@ pub(super) struct NewSessionModal {
     debug_panel: WeakEntity<DebugPanel>,
     mode: NewSessionMode,
     stop_on_entry: ToggleState,
+    initialize_args: Option<serde_json::Value>,
     debugger: Option<SharedString>,
     last_selected_profile_name: Option<SharedString>,
 }
@@ -82,17 +83,17 @@ impl NewSessionModal {
                 .map(Into::into)
                 .unwrap_or(ToggleState::Unselected),
             last_selected_profile_name: None,
+            initialize_args: None,
         }
     }
 
     fn debug_config(&self, cx: &App) -> Option<DebugTaskDefinition> {
         let request = self.mode.debug_task(cx);
-
         Some(DebugTaskDefinition {
             adapter: self.debugger.clone()?.to_string(),
             label: suggested_label(&request, self.debugger.as_deref()?),
             request,
-            initialize_args: None,
+            initialize_args: self.initialize_args.clone(),
             tcp_connection: None,
             locator: None,
             stop_on_entry: match self.stop_on_entry {
@@ -101,7 +102,8 @@ impl NewSessionModal {
             },
         })
     }
-    fn start_new_session(&self, cx: &mut Context<Self>) -> Result<()> {
+
+    fn start_new_session(&self, window: &mut Window, cx: &mut Context<Self>) -> Result<()> {
         let workspace = self.workspace.clone();
         let config = self
             .debug_config(cx)
@@ -111,10 +113,41 @@ impl NewSessionModal {
             panel.past_debug_definition = Some(config.clone());
         });
 
+        let task_contexts = workspace
+            .update(cx, |workspace, cx| {
+                tasks_ui::task_contexts(workspace, window, cx)
+            })
+            .ok();
+
         cx.spawn(async move |this, cx| {
+            let task_context = if let Some(task) = task_contexts {
+                task.await
+                    .active_worktree_context
+                    .map_or(task::TaskContext::default(), |context| context.1)
+            } else {
+                task::TaskContext::default()
+            };
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
-            let task =
-                project.update(cx, |this, cx| this.start_debug_session(config.into(), cx))?;
+
+            let task = project.update(cx, |this, cx| {
+                if let Some(debug_config) =
+                    config
+                        .clone()
+                        .to_zed_format()
+                        .ok()
+                        .and_then(|task_template| {
+                            task_template
+                                .resolve_task("debug_task", &task_context)
+                                .and_then(|resolved_task| {
+                                    resolved_task.resolved_debug_adapter_config()
+                                })
+                        })
+                {
+                    this.start_debug_session(debug_config, cx)
+                } else {
+                    this.start_debug_session(config.into(), cx)
+                }
+            })?;
             let spawn_result = task.await;
             if spawn_result.is_ok() {
                 this.update(cx, |_, cx| {
@@ -228,7 +261,7 @@ impl NewSessionModal {
                         weak.update(cx, |this, cx| {
                             this.last_selected_profile_name = Some(SharedString::from(&task.label));
                             this.debugger = Some(task.adapter.clone().into());
-
+                            this.initialize_args = task.initialize_args.clone();
                             match &task.request {
                                 DebugRequestType::Launch(launch_config) => {
                                     this.mode = NewSessionMode::launch(
@@ -613,8 +646,8 @@ impl Render for NewSessionModal {
                             })
                             .child(
                                 Button::new("debugger-spawn", "Start")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.start_new_session(cx).log_err();
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.start_new_session(window, cx).log_err();
                                     }))
                                     .disabled(self.debugger.is_none()),
                             ),

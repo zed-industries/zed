@@ -103,7 +103,7 @@ impl OpenRequest {
         let mut parts = request_path.split('/');
         if parts.next() == Some("channel") {
             if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split('-').last() {
+                if let Some(id_str) = slug.split('-').next_back() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
                             self.join_channel = Some(channel_id);
@@ -151,7 +151,7 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
 
-    let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
+    let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
     if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
         if e.kind() == std::io::ErrorKind::ConnectionRefused {
@@ -261,6 +261,7 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 env,
+                user_data_dir: _, // Ignore user_data_dir
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {

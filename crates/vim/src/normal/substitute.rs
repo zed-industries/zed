@@ -13,6 +13,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Substitute, window, cx| {
         vim.start_recording(cx);
         let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         vim.substitute(count, vim.mode == Mode::VisualLine, window, cx);
     });
 
@@ -22,6 +23,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             vim.switch_mode(Mode::VisualLine, false, window, cx)
         }
         let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         vim.substitute(count, true, window, cx)
     });
 }
@@ -47,6 +49,7 @@ impl Vim {
                                 selection,
                                 count,
                                 &text_layout_details,
+                                false,
                             );
                         }
                         if line_mode {
@@ -60,6 +63,7 @@ impl Vim {
                                 selection,
                                 None,
                                 &text_layout_details,
+                                false,
                             );
                             if let Some((point, _)) = (Motion::FirstNonWhitespace {
                                 display_lines: false,

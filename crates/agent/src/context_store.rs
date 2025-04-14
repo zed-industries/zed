@@ -1,5 +1,5 @@
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -8,11 +8,10 @@ use futures::future::join_all;
 use futures::{self, Future, FutureExt, future};
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, File};
-use project::{ProjectItem, ProjectPath, Worktree};
+use project::{Project, ProjectItem, ProjectPath, Worktree};
 use rope::Rope;
 use text::{Anchor, BufferId, OffsetRangeExt};
 use util::{ResultExt as _, maybe};
-use workspace::Workspace;
 
 use crate::ThreadStore;
 use crate::context::{
@@ -23,13 +22,13 @@ use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
 
 pub struct ContextStore {
-    workspace: WeakEntity<Workspace>,
+    project: WeakEntity<Project>,
     context: Vec<AssistantContext>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     // TODO: If an EntityId is used for all context types (like BufferId), can remove ContextId.
     next_context_id: ContextId,
     files: BTreeMap<BufferId, ContextId>,
-    directories: HashMap<PathBuf, ContextId>,
+    directories: HashMap<ProjectPath, ContextId>,
     symbols: HashMap<ContextSymbolId, ContextId>,
     symbol_buffers: HashMap<ContextSymbolId, Entity<Buffer>>,
     symbols_by_path: HashMap<ProjectPath, Vec<ContextSymbolId>>,
@@ -40,11 +39,11 @@ pub struct ContextStore {
 
 impl ContextStore {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        project: WeakEntity<Project>,
         thread_store: Option<WeakEntity<ThreadStore>>,
     ) -> Self {
         Self {
-            workspace,
+            project,
             thread_store,
             context: Vec::new(),
             next_context_id: ContextId(0),
@@ -81,12 +80,7 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let workspace = self.workspace.clone();
-
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
-        else {
+        let Some(project) = self.project.upgrade() else {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
@@ -98,11 +92,11 @@ impl ContextStore {
             let buffer = open_buffer_task.await?;
             let buffer_id = this.update(cx, |_, cx| buffer.read(cx).remote_id())?;
 
-            let already_included = this.update(cx, |this, _cx| {
-                match this.will_include_buffer(buffer_id, &project_path.path) {
+            let already_included = this.update(cx, |this, cx| {
+                match this.will_include_buffer(buffer_id, &project_path) {
                     Some(FileInclusion::Direct(context_id)) => {
                         if remove_if_exists {
-                            this.remove_context(context_id);
+                            this.remove_context(context_id, cx);
                         }
                         true
                     }
@@ -120,8 +114,8 @@ impl ContextStore {
 
             let text = text_task.await;
 
-            this.update(cx, |this, _cx| {
-                this.insert_file(make_context_buffer(buffer_info, text));
+            this.update(cx, |this, cx| {
+                this.insert_file(make_context_buffer(buffer_info, text), cx);
             })?;
 
             anyhow::Ok(())
@@ -139,19 +133,20 @@ impl ContextStore {
 
             let text = text_task.await;
 
-            this.update(cx, |this, _cx| {
-                this.insert_file(make_context_buffer(buffer_info, text))
+            this.update(cx, |this, cx| {
+                this.insert_file(make_context_buffer(buffer_info, text), cx)
             })?;
 
             anyhow::Ok(())
         })
     }
 
-    fn insert_file(&mut self, context_buffer: ContextBuffer) {
+    fn insert_file(&mut self, context_buffer: ContextBuffer, cx: &mut Context<Self>) {
         let id = self.next_context_id.post_inc();
         self.files.insert(context_buffer.id, id);
         self.context
             .push(AssistantContext::File(FileContext { id, context_buffer }));
+        cx.notify();
     }
 
     pub fn add_directory(
@@ -160,18 +155,14 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
-        else {
+        let Some(project) = self.project.upgrade() else {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
-        let already_included = match self.includes_directory(&project_path.path) {
+        let already_included = match self.includes_directory(&project_path) {
             Some(FileInclusion::Direct(context_id)) => {
                 if remove_if_exists {
-                    self.remove_context(context_id);
+                    self.remove_context(context_id, cx);
                 }
                 true
             }
@@ -232,30 +223,37 @@ impl ContextStore {
                 .collect::<Vec<_>>();
 
             if context_buffers.is_empty() {
-                return Err(anyhow!(
-                    "No text files found in {}",
-                    &project_path.path.display()
-                ));
+                let full_path = cx.update(|cx| worktree.read(cx).full_path(&project_path.path))?;
+                return Err(anyhow!("No text files found in {}", &full_path.display()));
             }
 
-            this.update(cx, |this, _| {
-                this.insert_directory(project_path, context_buffers);
+            this.update(cx, |this, cx| {
+                this.insert_directory(worktree, project_path, context_buffers, cx);
             })?;
 
             anyhow::Ok(())
         })
     }
 
-    fn insert_directory(&mut self, project_path: ProjectPath, context_buffers: Vec<ContextBuffer>) {
+    fn insert_directory(
+        &mut self,
+        worktree: Entity<Worktree>,
+        project_path: ProjectPath,
+        context_buffers: Vec<ContextBuffer>,
+        cx: &mut Context<Self>,
+    ) {
         let id = self.next_context_id.post_inc();
-        self.directories.insert(project_path.path.to_path_buf(), id);
+        let path = project_path.path.clone();
+        self.directories.insert(project_path, id);
 
         self.context
             .push(AssistantContext::Directory(DirectoryContext {
                 id,
-                project_path,
+                worktree,
+                path,
                 context_buffers,
             }));
+        cx.notify();
     }
 
     pub fn add_symbol(
@@ -286,7 +284,7 @@ impl ContextStore {
 
             if let Some(id) = matching_symbol_id {
                 if remove_if_exists {
-                    self.remove_context(id);
+                    self.remove_context(id, cx);
                 }
                 return Task::ready(Ok(false));
             }
@@ -301,21 +299,24 @@ impl ContextStore {
         cx.spawn(async move |this, cx| {
             let content = collect_content_task.await;
 
-            this.update(cx, |this, _cx| {
-                this.insert_symbol(make_context_symbol(
-                    buffer_info,
-                    project_path,
-                    symbol_name,
-                    symbol_range,
-                    symbol_enclosing_range,
-                    content,
-                ))
+            this.update(cx, |this, cx| {
+                this.insert_symbol(
+                    make_context_symbol(
+                        buffer_info,
+                        project_path,
+                        symbol_name,
+                        symbol_range,
+                        symbol_enclosing_range,
+                        content,
+                    ),
+                    cx,
+                )
             })?;
             anyhow::Ok(true)
         })
     }
 
-    fn insert_symbol(&mut self, context_symbol: ContextSymbol) {
+    fn insert_symbol(&mut self, context_symbol: ContextSymbol, cx: &mut Context<Self>) {
         let id = self.next_context_id.post_inc();
         self.symbols.insert(context_symbol.id.clone(), id);
         self.symbols_by_path
@@ -328,6 +329,7 @@ impl ContextStore {
             id,
             context_symbol,
         }));
+        cx.notify();
     }
 
     pub fn add_thread(
@@ -338,7 +340,7 @@ impl ContextStore {
     ) {
         if let Some(context_id) = self.includes_thread(&thread.read(cx).id()) {
             if remove_if_exists {
-                self.remove_context(context_id);
+                self.remove_context(context_id, cx);
             }
         } else {
             self.insert_thread(thread, cx);
@@ -353,14 +355,14 @@ impl ContextStore {
         })
     }
 
-    fn insert_thread(&mut self, thread: Entity<Thread>, cx: &mut App) {
+    fn insert_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
         if let Some(summary_task) =
             thread.update(cx, |thread, cx| thread.generate_detailed_summary(cx))
         {
             let thread = thread.clone();
             let thread_store = self.thread_store.clone();
 
-            self.thread_summary_tasks.push(cx.spawn(async move |cx| {
+            self.thread_summary_tasks.push(cx.spawn(async move |_, cx| {
                 summary_task.await;
 
                 if let Some(thread_store) = thread_store {
@@ -382,15 +384,26 @@ impl ContextStore {
         self.threads.insert(thread.read(cx).id().clone(), id);
         self.context
             .push(AssistantContext::Thread(ThreadContext { id, thread, text }));
+        cx.notify();
     }
 
-    pub fn add_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
+    pub fn add_fetched_url(
+        &mut self,
+        url: String,
+        text: impl Into<SharedString>,
+        cx: &mut Context<ContextStore>,
+    ) {
         if self.includes_url(&url).is_none() {
-            self.insert_fetched_url(url, text);
+            self.insert_fetched_url(url, text, cx);
         }
     }
 
-    fn insert_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
+    fn insert_fetched_url(
+        &mut self,
+        url: String,
+        text: impl Into<SharedString>,
+        cx: &mut Context<ContextStore>,
+    ) {
         let id = self.next_context_id.post_inc();
 
         self.fetched_urls.insert(url.clone(), id);
@@ -400,6 +413,7 @@ impl ContextStore {
                 url: url.into(),
                 text: text.into(),
             }));
+        cx.notify();
     }
 
     pub fn accept_suggested_context(
@@ -426,7 +440,7 @@ impl ContextStore {
         Task::ready(Ok(()))
     }
 
-    pub fn remove_context(&mut self, id: ContextId) {
+    pub fn remove_context(&mut self, id: ContextId, cx: &mut Context<Self>) {
         let Some(ix) = self.context.iter().position(|context| context.id() == id) else {
             return;
         };
@@ -458,28 +472,38 @@ impl ContextStore {
                 self.threads.retain(|_, context_id| *context_id != id);
             }
         }
+
+        cx.notify();
     }
 
     /// Returns whether the buffer is already included directly in the context, or if it will be
     /// included in the context via a directory. Directory inclusion is based on paths rather than
     /// buffer IDs as the directory will be re-scanned.
-    pub fn will_include_buffer(&self, buffer_id: BufferId, path: &Path) -> Option<FileInclusion> {
+    pub fn will_include_buffer(
+        &self,
+        buffer_id: BufferId,
+        project_path: &ProjectPath,
+    ) -> Option<FileInclusion> {
         if let Some(context_id) = self.files.get(&buffer_id) {
             return Some(FileInclusion::Direct(*context_id));
         }
 
-        self.will_include_file_path_via_directory(path)
+        self.will_include_file_path_via_directory(project_path)
     }
 
     /// Returns whether this file path is already included directly in the context, or if it will be
     /// included in the context via a directory.
-    pub fn will_include_file_path(&self, path: &Path, cx: &App) -> Option<FileInclusion> {
+    pub fn will_include_file_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &App,
+    ) -> Option<FileInclusion> {
         if !self.files.is_empty() {
             let found_file_context = self.context.iter().find(|context| match &context {
                 AssistantContext::File(file_context) => {
                     let buffer = file_context.context_buffer.buffer.read(cx);
-                    if let Some(file_path) = buffer_path_log_err(buffer, cx) {
-                        *file_path == *path
+                    if let Some(context_path) = buffer.project_path(cx) {
+                        &context_path == project_path
                     } else {
                         false
                     }
@@ -491,31 +515,40 @@ impl ContextStore {
             }
         }
 
-        self.will_include_file_path_via_directory(path)
+        self.will_include_file_path_via_directory(project_path)
     }
 
-    fn will_include_file_path_via_directory(&self, path: &Path) -> Option<FileInclusion> {
+    fn will_include_file_path_via_directory(
+        &self,
+        project_path: &ProjectPath,
+    ) -> Option<FileInclusion> {
         if self.directories.is_empty() {
             return None;
         }
 
-        let mut buf = path.to_path_buf();
+        let mut path_buf = project_path.path.to_path_buf();
 
-        while buf.pop() {
-            if let Some(_) = self.directories.get(&buf) {
-                return Some(FileInclusion::InDirectory(buf));
+        while path_buf.pop() {
+            // TODO: This isn't very efficient. Consider using a better representation of the
+            // directories map.
+            let directory_project_path = ProjectPath {
+                worktree_id: project_path.worktree_id,
+                path: path_buf.clone().into(),
+            };
+            if let Some(_) = self.directories.get(&directory_project_path) {
+                return Some(FileInclusion::InDirectory(directory_project_path));
             }
         }
 
         None
     }
 
-    pub fn includes_directory(&self, path: &Path) -> Option<FileInclusion> {
-        if let Some(context_id) = self.directories.get(path) {
+    pub fn includes_directory(&self, project_path: &ProjectPath) -> Option<FileInclusion> {
+        if let Some(context_id) = self.directories.get(project_path) {
             return Some(FileInclusion::Direct(*context_id));
         }
 
-        self.will_include_file_path_via_directory(path)
+        self.will_include_file_path_via_directory(project_path)
     }
 
     pub fn included_symbol(&self, symbol_id: &ContextSymbolId) -> Option<ContextId> {
@@ -549,13 +582,13 @@ impl ContextStore {
         }
     }
 
-    pub fn file_paths(&self, cx: &App) -> HashSet<PathBuf> {
+    pub fn file_paths(&self, cx: &App) -> HashSet<ProjectPath> {
         self.context
             .iter()
             .filter_map(|context| match context {
                 AssistantContext::File(file) => {
                     let buffer = file.context_buffer.buffer.read(cx);
-                    buffer_path_log_err(buffer, cx).map(|p| p.to_path_buf())
+                    buffer.project_path(cx)
                 }
                 AssistantContext::Directory(_)
                 | AssistantContext::Symbol(_)
@@ -572,7 +605,7 @@ impl ContextStore {
 
 pub enum FileInclusion {
     Direct(ContextId),
-    InDirectory(PathBuf),
+    InDirectory(ProjectPath),
 }
 
 // ContextBuffer without text.
@@ -637,19 +670,6 @@ fn collect_buffer_info_and_text(
     let text_task = cx.background_spawn(async move { to_fenced_codeblock(&full_path, content) });
 
     Ok((buffer_info, text_task))
-}
-
-pub fn buffer_path_log_err(buffer: &Buffer, cx: &App) -> Option<Arc<Path>> {
-    if let Some(file) = buffer.file() {
-        let mut path = file.path().clone();
-        if path.as_os_str().is_empty() {
-            path = file.full_path(cx).into();
-        }
-        Some(path)
-    } else {
-        log::error!("Buffer that had a path unexpectedly no longer has a path.");
-        None
-    }
 }
 
 fn to_fenced_codeblock(path: &Path, content: Rope) -> SharedString {
@@ -727,13 +747,13 @@ pub fn refresh_context_store_text(
                     }
                 }
                 AssistantContext::Directory(directory_context) => {
+                    let directory_path = directory_context.project_path(cx);
                     let should_refresh = changed_buffers.is_empty()
                         || changed_buffers.iter().any(|buffer| {
-                            let buffer = buffer.read(cx);
-
-                            buffer_path_log_err(&buffer, cx).map_or(false, |path| {
-                                path.starts_with(&directory_context.project_path.path)
-                            })
+                            let Some(buffer_path) = buffer.read(cx).project_path(cx) else {
+                                return false;
+                            };
+                            buffer_path.starts_with(&directory_path)
                         });
 
                     if should_refresh {
@@ -820,14 +840,16 @@ fn refresh_directory_text(
     let context_buffers = future::join_all(futures);
 
     let id = directory_context.id;
-    let project_path = directory_context.project_path.clone();
+    let worktree = directory_context.worktree.clone();
+    let path = directory_context.path.clone();
     Some(cx.spawn(async move |cx| {
         let context_buffers = context_buffers.await;
         context_store
             .update(cx, |context_store, _| {
                 let new_directory_context = DirectoryContext {
                     id,
-                    project_path,
+                    worktree,
+                    path,
                     context_buffers,
                 };
                 context_store.replace_context(AssistantContext::Directory(new_directory_context));
