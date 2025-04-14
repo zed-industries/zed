@@ -26,6 +26,7 @@ use std::{
 use unindent::Unindent as _;
 use util::ResultExt as _;
 use util::command::new_smol_command;
+use util::serde::default_true;
 
 use crate::AgentAppState;
 
@@ -37,8 +38,10 @@ pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
 pub struct ExampleBase {
     pub url: String,
     pub revision: String,
-    pub language_extension: String,
+    pub language_extension: Option<String>,
     pub insert_id: Option<String>,
+    #[serde(default = "default_true")]
+    pub require_lsp: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -197,40 +200,72 @@ impl Example {
                 })?
                 .await;
 
-            // Open a file that matches the language to cause LSP to start.
-            let language_file = worktree.read_with(cx, |worktree, _cx| {
-                worktree
-                    .files(false, 0)
-                    .find_map(|e| {
-                        if e.path.clone().extension().and_then(|ext| ext.to_str())
-                            == Some(&this.base.language_extension)
-                        {
-                            Some(ProjectPath {
-                                worktree_id: worktree.id(),
-                                path: e.path.clone(),
-                            })
-                        } else {
-                            None
-                        }
+            let lsp_open_handle_and_store = if this.base.require_lsp {
+                let language_extension = this.base.language_extension.as_deref().context(
+                    "language_extension field is required in base.toml when `require_lsp == true`",
+                )?;
+
+                // Open a file that matches the language to cause LSP to start.
+                let language_file = worktree.read_with(cx, |worktree, _cx| {
+                    worktree
+                        .files(false, 0)
+                        .find_map(|e| {
+                            if e.path.clone().extension().and_then(|ext| ext.to_str())
+                                == Some(language_extension)
+                            {
+                                Some(ProjectPath {
+                                    worktree_id: worktree.id(),
+                                    path: e.path.clone(),
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .context("Failed to find a file for example language")
+                })??;
+
+                let open_language_file_buffer_task = project.update(cx, |project, cx| {
+                    project.open_buffer(language_file.clone(), cx)
+                })?;
+
+                let language_file_buffer = open_language_file_buffer_task.await?;
+
+                let (lsp_open_handle, lsp_store) = project.update(cx, |project, cx| {
+                    (
+                        project.register_buffer_with_language_servers(&language_file_buffer, cx),
+                        project.lsp_store().clone(),
+                    )
+                })?;
+
+                // TODO: remove this once the diagnostics tool waits for new diagnostics
+                cx.background_executor().timer(Duration::new(5, 0)).await;
+                wait_for_lang_server(&lsp_store, name.clone(), cx).await?;
+
+                lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_open_handle.update(cx, |buffer, cx| {
+                        buffer.update(cx, |buffer, cx| {
+                            let has_language_server = lsp_store
+                                .language_servers_for_local_buffer(buffer, cx)
+                                .next()
+                                .is_some();
+                            if has_language_server {
+                                Ok(())
+                            } else {
+                                Err(anyhow!(
+                                    "`{:?}` was opened to cause the language server to start, \
+                                    but no language servers are registered for its buffer. \
+                                    Set `require_lsp = false` in `base.toml` to skip this.",
+                                    language_file
+                                ))
+                            }
+                        })
                     })
-                    .context("Failed to find a file for example language")
-            })??;
+                })??;
 
-            let open_language_file_buffer_task =
-                project.update(cx, |project, cx| project.open_buffer(language_file, cx))?;
-
-            let language_file_buffer = open_language_file_buffer_task.await?;
-
-            let (open_lsp_handle, lsp_store) = project.update(cx, |project, cx| {
-                (
-                    project.register_buffer_with_language_servers(&language_file_buffer, cx),
-                    project.lsp_store().clone(),
-                )
-            })?;
-
-            // TODO: remove this once the diagnostics tool waits for new diagnostics
-            cx.background_executor().timer(Duration::new(5, 0)).await;
-            wait_for_lang_server(lsp_store.clone(), name.clone(), cx).await?;
+                Some((lsp_open_handle, lsp_store))
+            } else {
+                None
+            };
 
             if std::env::var("ZED_EVAL_SETUP_ONLY").is_ok() {
                 return Err(anyhow!("Setup only mode"));
@@ -324,7 +359,9 @@ impl Example {
 
             rx.await??;
 
-            wait_for_lang_server(lsp_store, name.clone(), cx).await?;
+            if let Some((_, lsp_store)) = lsp_open_handle_and_store.as_ref() {
+                wait_for_lang_server(lsp_store, name.clone(), cx).await?;
+            }
 
             let repository_diff = this.repository_diff().await?;
             let diagnostics = cx
@@ -333,8 +370,7 @@ impl Example {
                 })?
                 .await?;
 
-            drop(language_file_buffer);
-            drop(open_lsp_handle);
+            drop(lsp_open_handle_and_store);
 
             thread.update(cx, |thread, _cx| {
                 let response_count = thread
@@ -401,12 +437,12 @@ impl Example {
 }
 
 fn wait_for_lang_server(
-    lsp_store: Entity<LspStore>,
+    lsp_store: &Entity<LspStore>,
     name: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
     if cx
-        .update(|cx| !has_pending_lang_server_work(lsp_store.clone(), cx))
+        .update(|cx| !has_pending_lang_server_work(lsp_store, cx))
         .unwrap()
         || std::env::var("ZED_EVAL_SKIP_LS_WAIT").is_ok()
     {
@@ -435,7 +471,7 @@ fn wait_for_lang_server(
                     _ => {}
                 }
 
-                if !has_pending_lang_server_work(lsp_store, cx) {
+                if !has_pending_lang_server_work(&lsp_store, cx) {
                     tx.try_send(()).ok();
                 }
             }
@@ -457,7 +493,7 @@ fn wait_for_lang_server(
     })
 }
 
-fn has_pending_lang_server_work(lsp_store: Entity<LspStore>, cx: &App) -> bool {
+fn has_pending_lang_server_work(lsp_store: &Entity<LspStore>, cx: &App) -> bool {
     lsp_store
         .read(cx)
         .language_server_statuses()
