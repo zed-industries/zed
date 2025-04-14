@@ -7,6 +7,8 @@ pub mod variable_list;
 
 use std::{any::Any, ops::ControlFlow, sync::Arc};
 
+use crate::persistence::DebuggerPaneItem;
+
 use super::DebugPanelItemEvent;
 use breakpoint_list::BreakpointList;
 use collections::HashMap;
@@ -84,7 +86,7 @@ impl Render for RunningState {
     }
 }
 
-struct SubView {
+pub(crate) struct SubView {
     inner: AnyView,
     pane_focus_handle: FocusHandle,
     tab_name: SharedString,
@@ -106,6 +108,10 @@ impl SubView {
             show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
         })
     }
+
+    pub(crate) fn view_kind(&self) -> Option<DebuggerPaneItem> {
+        DebuggerPaneItem::from_str(&self.tab_name)
+    }
 }
 impl Focusable for SubView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -115,6 +121,12 @@ impl Focusable for SubView {
 impl EventEmitter<()> for SubView {}
 impl Item for SubView {
     type Event = ();
+
+    /// This is used to serialize debugger pane layouts
+    /// A SharedString gets converted to a enum and back during serialization/deserialization.
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
+        Some(self.tab_name.clone())
+    }
 
     fn tab_content(
         &self,
@@ -413,7 +425,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     this.focus_handle(cx),
                     stack_frame_list.clone().into(),
-                    SharedString::new_static("Frames"),
+                    DebuggerPaneItem::Frames.to_shared_string(),
                     None,
                     cx,
                 )),
@@ -428,7 +440,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     breakpoints.focus_handle(cx),
                     breakpoints.into(),
-                    SharedString::new_static("Breakpoints"),
+                    DebuggerPaneItem::BreakpointList.to_shared_string(),
                     None,
                     cx,
                 )),
@@ -446,7 +458,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     variable_list.focus_handle(cx),
                     variable_list.clone().into(),
-                    SharedString::new_static("Variables"),
+                    DebuggerPaneItem::Variables.to_shared_string(),
                     None,
                     cx,
                 )),
@@ -460,7 +472,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     this.focus_handle(cx),
                     module_list.clone().into(),
-                    SharedString::new_static("Modules"),
+                    DebuggerPaneItem::Modules.to_shared_string(),
                     None,
                     cx,
                 )),
@@ -479,7 +491,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     this.focus_handle(cx),
                     console.clone().into(),
-                    SharedString::new_static("Console"),
+                    DebuggerPaneItem::Console.to_shared_string(),
                     Some(Box::new(move |cx| {
                         weak_console
                             .read_with(cx, |console, cx| console.show_indicator(cx))
