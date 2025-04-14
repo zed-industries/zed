@@ -14519,12 +14519,11 @@ impl Editor {
         let mut primary_message = None;
         let diagnostic_group = buffer
             .diagnostic_group(buffer_id, group_id)
-            .filter_map(|entry| {
+            .inspect(|entry| {
                 if entry.diagnostic.is_primary {
                     primary_range = Some(entry.range.clone());
                     primary_message = Some(entry.diagnostic.message.clone());
                 }
-                Some(entry)
             })
             .collect::<Vec<_>>();
         let Some(primary_range) = primary_range else {

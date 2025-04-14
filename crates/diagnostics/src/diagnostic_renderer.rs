@@ -1,7 +1,4 @@
-use std::{
-    ops::{Range, RangeBounds},
-    sync::Arc,
-};
+use std::{ops::Range, sync::Arc};
 
 use editor::{
     Anchor, Editor, EditorSnapshot, ToOffset,
@@ -236,7 +233,7 @@ impl DiagnosticBlock {
 
                 if let Some(diagnostics_editor) = diagnostics_editor {
                     if let Some(diagnostic) = diagnostics_editor
-                        .update(cx, |diagnostics, cx| {
+                        .update(cx, |diagnostics, _| {
                             diagnostics
                                 .diagnostics
                                 .get(&buffer_id)
