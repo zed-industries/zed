@@ -102,9 +102,10 @@ fn main() {
                 let repo_url = example.base.url.clone();
                 if repo_urls.insert(repo_url.clone()) {
                     let repo_path = repo_path_for_url(&repo_url);
-                    println!("Cloning {}", repo_url);
 
                     if !repo_path.join(".git").is_dir() {
+                        println!("Cloning: {}", repo_url);
+
                         let git_task = cx.spawn(async move |_cx| {
                             std::fs::create_dir_all(&repo_path)?;
                             run_git(&repo_path, &["init"]).await?;
@@ -113,6 +114,8 @@ fn main() {
 
                         clone_tasks.push(git_task);
                     } else {
+                        println!("Already cloned: {}", repo_url);
+
                         let actual_origin =
                             run_git(&repo_path, &["remote", "get-url", "origin"]).await?;
                         if actual_origin != repo_url {
