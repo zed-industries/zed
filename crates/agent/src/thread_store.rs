@@ -27,7 +27,9 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
 
-use crate::thread::{DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId};
+use crate::thread::{
+    DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
+};
 
 const RULES_FILE_NAMES: [&'static str; 6] = [
     ".rules",
