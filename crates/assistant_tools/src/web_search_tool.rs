@@ -130,85 +130,82 @@ impl ToolCard for WebSearchToolCard {
                     .size(IconSize::XSmall)
                     .color(Color::Muted),
             )
-            .child(
-                h_flex()
-                    .pr_8()
-                    .text_ui_sm(cx)
-                    .child(match self.response.as_ref() {
-                        Some(Ok(response)) => h_flex()
-                            .gap_1()
-                            .child(Label::new("Web Search"))
-                            .child(
-                                Label::new(format!("{} results", response.citations.len()))
-                                    .color(Color::Muted),
-                            )
-                            .into_any_element(),
-                        Some(Err(_)) => Label::new("Web Search failed").into_any_element(),
-                        None => Label::new("Web Search")
-                            .with_animation(
-                                "web-search-label",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.6, 1.)),
-                                |label, delta| label.alpha(delta),
-                            )
-                            .into_any_element(),
-                    }),
-            )
+            .child(match self.response.as_ref() {
+                Some(Ok(response)) => h_flex()
+                    .gap_1p5()
+                    .child(Label::new("Searched the Web").size(LabelSize::Small))
+                    .child(
+                        div()
+                            .size(px(3.))
+                            .rounded_full()
+                            .bg(cx.theme().colors().text),
+                    )
+                    .child(
+                        Label::new(format!("{} results", response.citations.len()))
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element(),
+                Some(Err(_)) => Label::new("Web Search failed")
+                    .size(LabelSize::Small)
+                    .into_any_element(),
+                None => Label::new("Searching the Web…")
+                    .size(LabelSize::Small)
+                    .with_animation(
+                        "web-search-label",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.6, 1.)),
+                        |label, delta| label.alpha(delta),
+                    )
+                    .into_any_element(),
+            })
             .into_any();
 
         let content =
             self.response.as_ref().and_then(|response| match response {
-                Ok(response) => Some(
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            Label::new(response.summary.clone())
-                                .single_line()
-                                .truncate(),
-                        )
-                        .child(
-                            v_flex()
-                                .gap_1()
-                                .children(response.citations.iter().enumerate().map(
-                                    |(index, citation)| {
-                                        h_flex()
-                                            .justify_between()
-                                            .child(
-                                                Label::new(citation.title.clone())
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::XSmall)
-                                                    .truncate(),
-                                            )
-                                            .child(
-                                                IconButton::new(
-                                                    ("web-search-citation", index),
-                                                    IconName::ExternalLink,
+                Ok(response) => {
+                    Some(
+                        v_flex()
+                            .ml_1p5()
+                            .pl_1p5()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .gap_1()
+                            .children(response.citations.iter().enumerate().map(
+                                |(index, citation)| {
+                                    let title = citation.title.clone();
+                                    let url = citation.url.clone();
+
+                                    Button::new(("citation", index), title)
+                                        .label_size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .icon(IconName::ArrowUpRight)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_position(IconPosition::End)
+                                        .tooltip({
+                                            let url_clone = url.clone();
+                                            move |window, cx| {
+                                                Tooltip::with_meta(
+                                                    "Citation Link",
+                                                    None,
+                                                    url_clone.clone(),
+                                                    window,
+                                                    cx,
                                                 )
-                                                .icon_color(Color::Muted)
-                                                .icon_size(IconSize::Small)
-                                                .tooltip(Tooltip::text(citation.url.clone()))
-                                                .on_click({
-                                                    let url = citation.url.clone();
-                                                    move |_, _, cx| cx.open_url(&url)
-                                                }),
-                                            )
-                                    },
-                                )),
-                        )
-                        .into_any(),
-                ),
+                                            }
+                                        })
+                                        .on_click({
+                                            let url_clone = url.clone();
+                                            move |_, _, cx| cx.open_url(&url_clone)
+                                        })
+                                },
+                            ))
+                            .into_any(),
+                    )
+                }
                 Err(_) => None,
             });
 
-        v_flex()
-            .gap_1()
-            .border_1()
-            .rounded_md()
-            .border_color(cx.theme().colors().border)
-            .px_2()
-            .py_1()
-            .child(header)
-            .children(content)
+        v_flex().my_2().gap_1().child(header).children(content)
     }
 }
