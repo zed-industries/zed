@@ -3862,8 +3862,8 @@ impl Repository {
     fn spawn_local_git_worker(
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
-        repository_dir_abs_path: Arc<Path>,
-        common_dir_abs_path: Arc<Path>,
+        _repository_dir_abs_path: Arc<Path>,
+        _common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
