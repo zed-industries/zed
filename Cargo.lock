@@ -326,7 +326,6 @@ dependencies = [
  "serde_json",
  "strum",
  "thiserror 2.0.12",
- "util",
  "workspace-hack",
 ]
 
@@ -4909,7 +4908,6 @@ dependencies = [
  "unindent",
  "util",
  "workspace-hack",
- "worktree",
 ]
 
 [[package]]
