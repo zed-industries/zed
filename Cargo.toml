@@ -45,6 +45,7 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
+    "crates/explorer_command_injector",
     "crates/eval",
     "crates/evals",
     "crates/extension",
@@ -597,6 +598,7 @@ wasmtime = { version = "29", default-features = false, features = [
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"
+windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
 zed_llm_client = "0.4"
@@ -782,4 +784,12 @@ let_underscore_future = "allow"
 too_many_arguments = "allow"
 
 [workspace.metadata.cargo-machete]
-ignored = ["bindgen", "cbindgen", "prost_build", "serde", "component", "linkme", "workspace-hack"]
+ignored = [
+    "bindgen",
+    "cbindgen",
+    "prost_build",
+    "serde",
+    "component",
+    "linkme",
+    "workspace-hack",
+]
