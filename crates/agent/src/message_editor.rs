@@ -157,7 +157,7 @@ impl MessageEditor {
         cx.notify();
     }
 
-    fn expand_message_editor(
+    pub fn expand_message_editor(
         &mut self,
         _: &ExpandMessageEditor,
         _window: &mut Window,
