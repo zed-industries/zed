@@ -10,10 +10,12 @@ use crate::{
 use feature_flags::{Debugger, FeatureFlagAppExt as _};
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Task, Window,
+    Context, DismissEvent, Entity, FocusHandle, Focusable as _, Pixels, Point, Subscription, Task,
+    Window,
 };
 use std::ops::Range;
 use text::PointUtf16;
+use ui::ContextMenu;
 use util::ResultExt;
 use workspace::OpenInTerminal;
 
@@ -189,133 +191,52 @@ pub fn deploy_context_menu(
                 !filter.is_hidden(&DebuggerEvaluateSelectedText)
             });
 
+        let menu = build_context_menu(
+            focus,
+            has_selections,
+            has_reveal_target,
+            has_git_repo,
+            evaluate_selection,
+            None,
+            window,
+            cx,
+        );
+
+        set_context_menu(editor, menu, source_anchor, position, None, window, cx);
+
         let mut actions_task = editor.code_actions_task.take();
         cx.spawn_in(window, async move |editor, cx| {
             while let Some(prev_task) = actions_task {
                 prev_task.await.log_err();
                 actions_task = editor.update(cx, |this, _| this.code_actions_task.take())?;
             }
+            let action = ToggleCodeActions {
+                deployed_from_indicator: Some(point.row()),
+            };
             let context_menu_task = editor.update_in(cx, |editor, window, cx| {
-                if !editor.focus_handle.is_focused(window) {
-                    return Some(Task::ready(Ok::<(), anyhow::Error>(())));
-                }
-                let action = ToggleCodeActions {
-                    deployed_from_indicator: Some(point.row()),
-                };
                 let code_actions_task = editor.prepare_code_actions_task(&action, window, cx);
                 Some(cx.spawn_in(window, async move |editor, cx| {
                     if let Some((buffer, actions)) = code_actions_task.await {
-                        let code_action = Some(MouseCodeAction {
-                            actions: actions.clone(),
-                            buffer,
-                        });
+                        if actions.is_empty() {
+                            return Ok::<(), anyhow::Error>(());
+                        }
                         if let Ok(editor_task) = editor.update_in(cx, |editor, window, cx| {
-                            let menu = ui::ContextMenu::build(window, cx, |menu, _window, cx| {
-                                let menu = menu
-                                    .on_blur_subscription(Subscription::new(|| {}))
-                                    .when(!actions.is_empty(), |menu| {
-                                        actions
-                                            .iter()
-                                            .filter(|action| {
-                                                if action
-                                                    .as_task()
-                                                    .map(|task| {
-                                                        matches!(
-                                                            task.task_type(),
-                                                            task::TaskType::Debug(_)
-                                                        )
-                                                    })
-                                                    .unwrap_or(false)
-                                                {
-                                                    cx.has_flag::<Debugger>()
-                                                } else {
-                                                    true
-                                                }
-                                            })
-                                            .enumerate()
-                                            .fold(menu, |menu, (ix, action)| {
-                                                menu.action(
-                                                    action.label(),
-                                                    Box::new(ConfirmCodeAction {
-                                                        item_ix: Some(ix),
-                                                        deployed_from_mouse_context_menu: true,
-                                                    }),
-                                                )
-                                            })
-                                            .separator()
-                                    })
-                                    .when(evaluate_selection && has_selections, |builder| {
-                                        builder
-                                            .action(
-                                                "Evaluate Selection",
-                                                Box::new(DebuggerEvaluateSelectedText),
-                                            )
-                                            .separator()
-                                    })
-                                    .action("Go to Definition", Box::new(GoToDefinition))
-                                    .action("Go to Declaration", Box::new(GoToDeclaration))
-                                    .action("Go to Type Definition", Box::new(GoToTypeDefinition))
-                                    .action("Go to Implementation", Box::new(GoToImplementation))
-                                    .action("Find All References", Box::new(FindAllReferences))
-                                    .separator()
-                                    .action("Rename Symbol", Box::new(Rename))
-                                    .action("Format Buffer", Box::new(Format))
-                                    .when(has_selections, |cx| {
-                                        cx.action("Format Selections", Box::new(FormatSelections))
-                                    })
-                                    .separator()
-                                    .action("Cut", Box::new(Cut))
-                                    .action("Copy", Box::new(Copy))
-                                    .action("Copy and trim", Box::new(CopyAndTrim))
-                                    .action("Paste", Box::new(Paste))
-                                    .separator()
-                                    .map(|builder| {
-                                        let reveal_in_finder_label = if cfg!(target_os = "macos") {
-                                            "Reveal in Finder"
-                                        } else {
-                                            "Reveal in File Manager"
-                                        };
-                                        const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
-                                        if has_reveal_target {
-                                            builder
-                                                .action(
-                                                    reveal_in_finder_label,
-                                                    Box::new(RevealInFileManager),
-                                                )
-                                                .action(
-                                                    OPEN_IN_TERMINAL_LABEL,
-                                                    Box::new(OpenInTerminal),
-                                                )
-                                        } else {
-                                            builder
-                                                .disabled_action(
-                                                    reveal_in_finder_label,
-                                                    Box::new(RevealInFileManager),
-                                                )
-                                                .disabled_action(
-                                                    OPEN_IN_TERMINAL_LABEL,
-                                                    Box::new(OpenInTerminal),
-                                                )
-                                        }
-                                    })
-                                    .map(|builder| {
-                                        const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
-                                        if has_git_repo {
-                                            builder.action(
-                                                COPY_PERMALINK_LABEL,
-                                                Box::new(CopyPermalinkToLine),
-                                            )
-                                        } else {
-                                            builder.disabled_action(
-                                                COPY_PERMALINK_LABEL,
-                                                Box::new(CopyPermalinkToLine),
-                                            )
-                                        }
-                                    });
-                                match focus {
-                                    Some(focus) => menu.context(focus),
-                                    None => menu,
-                                }
+                            let Some(_) = editor.mouse_context_menu.take() else {
+                                return Task::ready(Ok(()));
+                            };
+                            let menu = build_context_menu(
+                                Some(editor.focus_handle(cx)),
+                                has_selections,
+                                has_reveal_target,
+                                has_git_repo,
+                                evaluate_selection,
+                                Some(&actions),
+                                window,
+                                cx,
+                            );
+                            let code_action = Some(MouseCodeAction {
+                                actions: actions.clone(),
+                                buffer,
                             });
                             set_context_menu(
                                 editor,
@@ -344,6 +265,103 @@ pub fn deploy_context_menu(
         })
         .detach_and_log_err(cx);
     };
+}
+
+fn build_context_menu(
+    focus: Option<FocusHandle>,
+    has_selections: bool,
+    has_reveal_target: bool,
+    has_git_repo: bool,
+    evaluate_selection: bool,
+    code_actions: Option<&CodeActionContents>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Entity<ContextMenu> {
+    ui::ContextMenu::build(window, cx, |menu, _window, cx| {
+        let menu = menu
+            .on_blur_subscription(Subscription::new(|| {}))
+            .when_some(code_actions, |menu, actions| {
+                if actions.is_empty() {
+                    menu
+                } else {
+                    actions
+                        .iter()
+                        .filter(|action| {
+                            if action
+                                .as_task()
+                                .map(|task| matches!(task.task_type(), task::TaskType::Debug(_)))
+                                .unwrap_or(false)
+                            {
+                                cx.has_flag::<Debugger>()
+                            } else {
+                                true
+                            }
+                        })
+                        .enumerate()
+                        .fold(menu, |menu, (ix, action)| {
+                            menu.action(
+                                action.label(),
+                                Box::new(ConfirmCodeAction {
+                                    item_ix: Some(ix),
+                                    deployed_from_mouse_context_menu: true,
+                                }),
+                            )
+                        })
+                        .separator()
+                }
+            })
+            .when(evaluate_selection && has_selections, |builder| {
+                builder
+                    .action("Evaluate Selection", Box::new(DebuggerEvaluateSelectedText))
+                    .separator()
+            })
+            .action("Go to Definition", Box::new(GoToDefinition))
+            .action("Go to Declaration", Box::new(GoToDeclaration))
+            .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+            .action("Go to Implementation", Box::new(GoToImplementation))
+            .action("Find All References", Box::new(FindAllReferences))
+            .separator()
+            .action("Rename Symbol", Box::new(Rename))
+            .action("Format Buffer", Box::new(Format))
+            .when(has_selections, |cx| {
+                cx.action("Format Selections", Box::new(FormatSelections))
+            })
+            .separator()
+            .action("Cut", Box::new(Cut))
+            .action("Copy", Box::new(Copy))
+            .action("Copy and trim", Box::new(CopyAndTrim))
+            .action("Paste", Box::new(Paste))
+            .separator()
+            .map(|builder| {
+                let reveal_in_finder_label = if cfg!(target_os = "macos") {
+                    "Reveal in Finder"
+                } else {
+                    "Reveal in File Manager"
+                };
+                const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
+                if has_reveal_target {
+                    builder
+                        .action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                        .action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
+                } else {
+                    builder
+                        .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                        .disabled_action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
+                }
+            })
+            .map(|builder| {
+                const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
+                if has_git_repo {
+                    builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
+                } else {
+                    builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
+                }
+            });
+        match focus {
+            Some(focus) => menu.context(focus),
+            None => menu,
+        }
+    })
 }
 
 fn set_context_menu(
