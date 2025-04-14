@@ -1551,7 +1551,7 @@ impl EditorElement {
             minimap_thumb_height,
             minimap_content_height,
             minimap_line_height,
-            -scroll_percentage * (minimap_content_height - minimap_height).max(Pixels::ZERO),
+            -minimap_scroll_top * minimap_line_height,
             scroll_position,
             MINIMAP_AXIS,
         );
