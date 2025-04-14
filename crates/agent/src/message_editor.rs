@@ -56,7 +56,7 @@ pub struct MessageEditor {
     _subscriptions: Vec<Subscription>,
 }
 
-const MAX_EDITOR_LINES: usize = 3;
+const MAX_EDITOR_LINES: usize = 8;
 
 impl MessageEditor {
     pub fn new(
