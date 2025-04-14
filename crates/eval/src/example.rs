@@ -128,12 +128,16 @@ impl Example {
         let worktree_path = self.worktree_path();
 
         if worktree_path.is_dir() {
+            println!("{}> Resetting existing worktree", self.name());
+
             // TODO: consider including "-x" to remove ignored files. The downside of this is that
             // it will also remove build artifacts, and so prevent incremental reuse there.
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
             run_git(&worktree_path, &["checkout", &self.base.revision]).await?;
         } else {
+            println!("{}> Creating worktree", self.name());
+
             let worktree_path_string = worktree_path.to_string_lossy().to_string();
 
             run_git(
@@ -182,15 +186,6 @@ impl Example {
 
         let name = self.name();
 
-        {
-            let mut log_file = this.log_file.lock().unwrap();
-
-            writeln!(&mut log_file, "👤 USER:").log_err();
-            writeln!(&mut log_file, "{}", self.prompt).log_err();
-            writeln!(&mut log_file, "🤖 ASSISTANT:").log_err();
-            log_file.flush().log_err();
-        }
-
         cx.spawn(async move |cx| {
             let worktree = worktree.await?;
 
@@ -234,13 +229,19 @@ impl Example {
 
             // TODO: remove this once the diagnostics tool waits for new diagnostics
             cx.background_executor().timer(Duration::new(5, 0)).await;
-            println!("{}> Waiting for LSP diagnostics", name);
-            wait_for_lsp_diagnostics(lsp_store.clone(), name.clone(), cx).await?;
-            println!("{}> Done waiting for LSP diagnostics", name);
+            wait_for_lang_server(lsp_store.clone(), name.clone(), cx).await?;
 
             let thread_store = thread_store.await;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
+
+            {
+                let mut log_file = this.log_file.lock().unwrap();
+                writeln!(&mut log_file, "👤 USER:").log_err();
+                writeln!(&mut log_file, "{}", this.prompt).log_err();
+                writeln!(&mut log_file, "🤖 ASSISTANT:").log_err();
+                log_file.flush().log_err();
+            }
 
             let (tx, rx) = oneshot::channel();
             let mut tx = Some(tx);
@@ -318,7 +319,7 @@ impl Example {
 
             rx.await??;
 
-            wait_for_lsp_diagnostics(lsp_store, name.clone(), cx).await?;
+            wait_for_lang_server(lsp_store, name.clone(), cx).await?;
 
             let repository_diff = this.repository_diff().await?;
             let diagnostics = cx
@@ -394,44 +395,55 @@ impl Example {
     }
 }
 
-fn wait_for_lsp_diagnostics(
+fn wait_for_lang_server(
     lsp_store: Entity<LspStore>,
     name: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
     if cx
-        .update(|cx| !has_pending_diagnostics(lsp_store.clone(), cx))
+        .update(|cx| !has_pending_lang_server_work(lsp_store.clone(), cx))
         .unwrap()
     {
         return Task::ready(anyhow::Ok(()));
     }
 
+    println!("{}> ⏵ Waiting for language server", name);
+
     let (mut tx, mut rx) = mpsc::channel(1);
 
-    let subscription = cx.subscribe(&lsp_store, move |lsp_store, event, cx| {
-        match event {
-            project::LspStoreEvent::LanguageServerUpdate {
-                message:
-                    client::proto::update_language_server::Variant::WorkProgress(LspWorkProgress {
-                        message: Some(message),
+    let subscription =
+        cx.subscribe(&lsp_store, {
+            let name = name.clone();
+            move |lsp_store, event, cx| {
+                match event {
+                    project::LspStoreEvent::LanguageServerUpdate {
+                        message:
+                            client::proto::update_language_server::Variant::WorkProgress(
+                                LspWorkProgress {
+                                    message: Some(message),
+                                    ..
+                                },
+                            ),
                         ..
-                    }),
-                ..
-            } => println!("{name}> {message}"),
-            _ => {}
-        }
+                    } => println!("{name}> ⟲ {message}"),
+                    _ => {}
+                }
 
-        if !has_pending_diagnostics(lsp_store, cx) {
-            tx.try_send(()).ok();
-        }
-    });
+                if !has_pending_lang_server_work(lsp_store, cx) {
+                    tx.try_send(()).ok();
+                }
+            }
+        });
 
     cx.spawn(async move |cx| {
         let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
         let result = futures::select! {
-            _ = rx.next() => anyhow::Ok(()),
+            _ = rx.next() => {
+                println!("{}> ⚑ Language server idle", name);
+                anyhow::Ok(())
+            },
             _ = timeout.fuse() => {
-                Err(anyhow!("LSP diagnostics wait timed out after 5 minutes"))
+                Err(anyhow!("LSP wait timed out after 5 minutes"))
             }
         };
         drop(subscription);
@@ -439,7 +451,7 @@ fn wait_for_lsp_diagnostics(
     })
 }
 
-fn has_pending_diagnostics(lsp_store: Entity<LspStore>, cx: &App) -> bool {
+fn has_pending_lang_server_work(lsp_store: Entity<LspStore>, cx: &App) -> bool {
     lsp_store
         .read(cx)
         .language_server_statuses()
@@ -522,40 +534,6 @@ pub fn repo_path_for_url(repo_url: &str) -> PathBuf {
         .join(repo_name)
 }
 
-#[cfg(test)]
-#[test]
-fn test_parse_judge_output() {
-    let response = r#"
-        <analysis>The model did a good job but there were still compilations errors.</analysis>
-        <score>3</score>
-    "#
-    .unindent();
-
-    let output = parse_judge_output(&response).unwrap();
-    assert_eq!(
-        output.analysis,
-        "The model did a good job but there were still compilations errors."
-    );
-    assert_eq!(output.score, 3);
-
-    let response = r#"
-        Text around ignored
-
-        <analysis>
-            Failed to compile:
-            - Error 1
-            - Error 2
-        </analysis>
-
-        <score>1</score>
-    "#
-    .unindent();
-
-    let output = parse_judge_output(&response).unwrap();
-    assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
-    assert_eq!(output.score, 1);
-}
-
 pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
     let output = new_smol_command("git")
         .current_dir(repo_path)
@@ -603,5 +581,41 @@ pub async fn send_language_model_request(
         Err(err) => Err(anyhow!(
             "Failed to get response from language model. Error was: {err}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_parse_judge_output() {
+        let response = r#"
+            <analysis>The model did a good job but there were still compilations errors.</analysis>
+            <score>3</score>
+        "#
+        .unindent();
+
+        let output = parse_judge_output(&response).unwrap();
+        assert_eq!(
+            output.analysis,
+            "The model did a good job but there were still compilations errors."
+        );
+        assert_eq!(output.score, 3);
+
+        let response = r#"
+            Text around ignored
+
+            <analysis>
+                Failed to compile:
+                - Error 1
+                - Error 2
+            </analysis>
+
+            <score>1</score>
+        "#
+        .unindent();
+
+        let output = parse_judge_output(&response).unwrap();
+        assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
+        assert_eq!(output.score, 1);
     }
 }

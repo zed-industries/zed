@@ -1,7 +1,7 @@
 mod example;
 
 use assistant_settings::AssistantSettings;
-use client::{Client, UserStore};
+use client::{Client, ProxySettings, UserStore};
 pub(crate) use example::*;
 
 use ::fs::RealFs;
@@ -9,7 +9,9 @@ use anyhow::{Result, anyhow};
 use clap::Parser;
 use extension::ExtensionHostProxy;
 use futures::future;
+use gpui::http_client::{Uri, read_proxy_from_env};
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task};
+use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
@@ -17,6 +19,7 @@ use language_model::{
 use node_runtime::NodeRuntime;
 use project::Project;
 use prompt_store::PromptBuilder;
+use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
 use std::collections::HashSet;
@@ -99,6 +102,8 @@ fn main() {
                 let repo_url = example.base.url.clone();
                 if repo_urls.insert(repo_url.clone()) {
                     let repo_path = repo_path_for_url(&repo_url);
+                    println!("Cloning {}", repo_url);
+
                     if !repo_path.join(".git").is_dir() {
                         let git_task = cx.spawn(async move |_cx| {
                             std::fs::create_dir_all(&repo_path)?;
@@ -230,6 +235,27 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         .unwrap();
     cx.set_global(settings_store);
     client::init_settings(cx);
+
+    // Set User-Agent so we can download language servers from GitHub
+    let user_agent = format!(
+        "Zed/{} ({}; {})",
+        AppVersion::global(cx),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
+    let proxy_url = proxy_str
+        .as_ref()
+        .and_then(|input| input.parse::<Uri>().ok())
+        .or_else(read_proxy_from_env);
+    let http = {
+        let _guard = Tokio::handle(cx).enter();
+
+        ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
+            .expect("could not start HTTP client")
+    };
+    cx.set_http_client(Arc::new(http));
+
     Project::init_settings(cx);
 
     let client = Client::production(cx);
@@ -241,13 +267,14 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         cx.background_executor().clone(),
     ));
 
-    let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+    let mut languages = LanguageRegistry::new(cx.background_executor().clone());
+    languages.set_language_server_download_dir(paths::languages_dir().clone());
+    let languages = Arc::new(languages);
 
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
 
     extension::init(cx);
 
-    // todo! actually configure node runtime?
     let node_runtime = NodeRuntime::unavailable();
     let extension_host_proxy = ExtensionHostProxy::global(cx);
 
