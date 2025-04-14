@@ -9,6 +9,12 @@ pub struct VSCodeSettings {
 }
 
 impl VSCodeSettings {
+    pub fn from_str(content: &str) -> Result<Self> {
+        Ok(Self {
+            content: serde_json::from_str(content)?,
+        })
+    }
+
     pub async fn load_user_settings(fs: Arc<dyn Fs>) -> Result<Self> {
         let content = fs.load(paths::vscode_settings_file()).await?;
         Ok(Self {
@@ -17,8 +23,8 @@ impl VSCodeSettings {
     }
 
     pub fn read_value(&self, setting: &str) -> Option<&Value> {
-        if let value @ Some(_) = self.content.get(setting) {
-            return value;
+        if let Some(value) = self.content.get(setting) {
+            return Some(value);
         }
         // TODO: check if it's in [platform] settings for current platform
         // TODO: deal with language specific settings
@@ -26,14 +32,44 @@ impl VSCodeSettings {
     }
 
     pub fn bool_setting(&self, key: &str, setting: &mut Option<bool>) {
-        if let s @ Some(_) = self.content.get(key).and_then(Value::as_bool) {
-            *setting = s
+        if let Some(s) = self.content.get(key).and_then(Value::as_bool) {
+            *setting = Some(s)
         }
     }
 
-    pub fn numeric_setting(&self, key: &str, setting: &mut Option<f64>) {
-        if let s @ Some(_) = self.content.get(key).and_then(Value::as_f64) {
-            *setting = s
+    pub fn i32_setting(&self, key: &str, setting: &mut Option<i32>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_i64) {
+            *setting = Some(s as i32)
+        }
+    }
+
+    pub fn i64_setting(&self, key: &str, setting: &mut Option<i64>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_i64) {
+            *setting = Some(s)
+        }
+    }
+
+    pub fn u32_setting(&self, key: &str, setting: &mut Option<u32>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_u64) {
+            *setting = Some(s as u32)
+        }
+    }
+
+    pub fn u64_setting(&self, key: &str, setting: &mut Option<u64>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_u64) {
+            *setting = Some(s)
+        }
+    }
+
+    pub fn f32_setting(&self, key: &str, setting: &mut Option<f32>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
+            *setting = Some(s as f32)
+        }
+    }
+
+    pub fn f64_setting(&self, key: &str, setting: &mut Option<f64>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
+            *setting = Some(s)
         }
     }
 }
