@@ -89,7 +89,7 @@ impl Render for RunningState {
 pub(crate) struct SubView {
     inner: AnyView,
     pane_focus_handle: FocusHandle,
-    tab_name: SharedString,
+    kind: DebuggerPaneItem,
     show_indicator: Box<dyn Fn(&App) -> bool>,
 }
 
@@ -97,20 +97,16 @@ impl SubView {
     pub(crate) fn new(
         pane_focus_handle: FocusHandle,
         view: AnyView,
-        tab_name: SharedString,
+        kind: DebuggerPaneItem,
         show_indicator: Option<Box<dyn Fn(&App) -> bool>>,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|_| Self {
-            tab_name,
+            kind,
             inner: view,
             pane_focus_handle,
             show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
         })
-    }
-
-    pub(crate) fn view_kind(&self) -> Option<DebuggerPaneItem> {
-        DebuggerPaneItem::from_str(&self.tab_name)
     }
 }
 impl Focusable for SubView {
@@ -125,7 +121,7 @@ impl Item for SubView {
     /// This is used to serialize debugger pane layouts
     /// A SharedString gets converted to a enum and back during serialization/deserialization.
     fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(self.tab_name.clone())
+        Some(self.kind.to_shared_string())
     }
 
     fn tab_content(
@@ -134,7 +130,7 @@ impl Item for SubView {
         _: &Window,
         cx: &App,
     ) -> AnyElement {
-        let label = Label::new(self.tab_name.clone())
+        let label = Label::new(self.kind.to_shared_string())
             .size(ui::LabelSize::Small)
             .color(params.text_color())
             .line_height_style(ui::LineHeightStyle::UiLabel);
@@ -425,7 +421,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     this.focus_handle(cx),
                     stack_frame_list.clone().into(),
-                    DebuggerPaneItem::Frames.to_shared_string(),
+                    DebuggerPaneItem::Frames,
                     None,
                     cx,
                 )),
@@ -440,7 +436,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     breakpoints.focus_handle(cx),
                     breakpoints.into(),
-                    DebuggerPaneItem::BreakpointList.to_shared_string(),
+                    DebuggerPaneItem::BreakpointList,
                     None,
                     cx,
                 )),
@@ -458,7 +454,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     variable_list.focus_handle(cx),
                     variable_list.clone().into(),
-                    DebuggerPaneItem::Variables.to_shared_string(),
+                    DebuggerPaneItem::Variables,
                     None,
                     cx,
                 )),
@@ -472,7 +468,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     this.focus_handle(cx),
                     module_list.clone().into(),
-                    DebuggerPaneItem::Modules.to_shared_string(),
+                    DebuggerPaneItem::Modules,
                     None,
                     cx,
                 )),
@@ -491,7 +487,7 @@ impl RunningState {
                 Box::new(SubView::new(
                     this.focus_handle(cx),
                     console.clone().into(),
-                    DebuggerPaneItem::Console.to_shared_string(),
+                    DebuggerPaneItem::Console,
                     Some(Box::new(move |cx| {
                         weak_console
                             .read_with(cx, |console, cx| console.show_indicator(cx))

@@ -11,7 +11,7 @@ use crate::session::running::{
     module_list::ModuleList, stack_frame_list::StackFrameList, variable_list::VariableList,
 };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub(crate) enum DebuggerPaneItem {
     Console,
     Variables,
@@ -116,14 +116,14 @@ fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> Serialized
         .items()
         .filter_map(|item| {
             item.act_as::<SubView>(cx)
-                .and_then(|view| view.read(cx).view_kind())
+                .map(|view| view.read(cx).view_kind())
         })
         .collect::<Vec<_>>();
 
     let active_item = pane
         .active_item()
         .and_then(|item| item.act_as::<SubView>(cx))
-        .and_then(|view| view.read(cx).view_kind());
+        .map(|view| view.read(cx).view_kind());
 
     SerializedPane {
         active,
@@ -212,28 +212,28 @@ pub(crate) fn deserialize_pane_group(
                     DebuggerPaneItem::Frames => Box::new(SubView::new(
                         pane.focus_handle(cx),
                         stack_frame_list.clone().into(),
-                        DebuggerPaneItem::Frames.to_shared_string(),
+                        DebuggerPaneItem::Frames,
                         None,
                         cx,
                     )),
                     DebuggerPaneItem::Variables => Box::new(SubView::new(
                         variable_list.focus_handle(cx),
                         variable_list.clone().into(),
-                        DebuggerPaneItem::Variables.to_shared_string(),
+                        DebuggerPaneItem::Variables,
                         None,
                         cx,
                     )),
                     DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
                         breakpoint_list.focus_handle(cx),
                         breakpoint_list.clone().into(),
-                        DebuggerPaneItem::BreakpointList.to_shared_string(),
+                        DebuggerPaneItem::BreakpointList,
                         None,
                         cx,
                     )),
                     DebuggerPaneItem::Modules => Box::new(SubView::new(
                         pane.focus_handle(cx),
                         module_list.clone().into(),
-                        DebuggerPaneItem::Modules.to_shared_string(),
+                        DebuggerPaneItem::Modules,
                         None,
                         cx,
                     )),
@@ -241,7 +241,7 @@ pub(crate) fn deserialize_pane_group(
                     DebuggerPaneItem::Console => Box::new(SubView::new(
                         pane.focus_handle(cx),
                         console.clone().into(),
-                        DebuggerPaneItem::Console.to_shared_string(),
+                        DebuggerPaneItem::Console,
                         Some(Box::new({
                             let console = console.clone().downgrade();
                             move |cx| {
