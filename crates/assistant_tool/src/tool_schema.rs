@@ -12,10 +12,7 @@ pub fn adapt_schema_to_format(
 ) -> Result<()> {
     match format {
         LanguageModelToolSchemaFormat::JsonSchema => Ok(()),
-        LanguageModelToolSchemaFormat::JsonSchemaSubset => {
-            adapt_to_json_schema_subset(json);
-            Ok(())
-        }
+        LanguageModelToolSchemaFormat::JsonSchemaSubset => adapt_to_json_schema_subset(json),
     }
 }
 
@@ -91,7 +88,7 @@ mod tests {
             "default": null
         });
 
-        adapt_to_json_schema_subset(&mut json);
+        adapt_to_json_schema_subset(&mut json).unwrap();
 
         assert_eq!(
             json,
@@ -109,7 +106,7 @@ mod tests {
             "description": "A test field without type"
         });
 
-        adapt_to_json_schema_subset(&mut json);
+        adapt_to_json_schema_subset(&mut json).unwrap();
 
         assert_eq!(
             json,
@@ -128,7 +125,7 @@ mod tests {
             "format": "uint32"
         });
 
-        adapt_to_json_schema_subset(&mut json);
+        adapt_to_json_schema_subset(&mut json).unwrap();
 
         assert_eq!(
             json,
@@ -149,7 +146,7 @@ mod tests {
             ]
         });
 
-        adapt_to_json_schema_subset(&mut json);
+        adapt_to_json_schema_subset(&mut json).unwrap();
 
         assert_eq!(
             json,
@@ -178,7 +175,7 @@ mod tests {
             }
         });
 
-        adapt_to_json_schema_subset(&mut json);
+        adapt_to_json_schema_subset(&mut json).unwrap();
 
         assert_eq!(
             json,
@@ -194,5 +191,44 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn test_transform_fails_if_unsupported_keys_exist() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "$ref": "#/definitions/User",
+            }
+        });
+
+        assert!(adapt_to_json_schema_subset(&mut json).is_err());
+
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "if": "...",
+            }
+        });
+
+        assert!(adapt_to_json_schema_subset(&mut json).is_err());
+
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "then": "...",
+            }
+        });
+
+        assert!(adapt_to_json_schema_subset(&mut json).is_err());
+
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "else": "...",
+            }
+        });
+
+        assert!(adapt_to_json_schema_subset(&mut json).is_err());
     }
 }
