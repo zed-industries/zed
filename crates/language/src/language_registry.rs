@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     borrow::{Borrow, Cow},
-    cell::OnceCell,
+    cell::LazyCell,
     ffi::OsStr,
     ops::Not,
     path::{Path, PathBuf},
@@ -699,7 +699,13 @@ impl LanguageRegistry {
             .iter()
             .filter_map(|suffix| suffix.map(globset::Candidate::new))
             .collect::<SmallVec<[_; 3]>>();
-        let first_line_content = OnceCell::new();
+        let content = LazyCell::new(|| {
+            content.map(|content| {
+                let end = content.clip_point(Point::new(0, 256), Bias::Left);
+                let end = content.point_to_offset(end);
+                content.chunks_in_range(0..end).collect::<String>()
+            })
+        });
         self.find_matching_language(move |language_name, config, current_best_match| {
             let path_matches_default_suffix = || {
                 config
@@ -717,22 +723,11 @@ impl LanguageRegistry {
                     })
             };
             let content_matches = || {
-                config
-                    .first_line_pattern
-                    .as_ref()
-                    .and_then(|pattern| {
-                        first_line_content
-                            .get_or_init(|| {
-                                content.map(|content| {
-                                    let end = content.clip_point(Point::new(0, 256), Bias::Left);
-                                    let end = content.point_to_offset(end);
-                                    content.chunks_in_range(0..end).collect::<String>()
-                                })
-                            })
-                            .as_ref()
-                            .map(|text| (pattern, text))
-                    })
-                    .map_or(false, |(pattern, text)| pattern.is_match(&text))
+                config.first_line_pattern.as_ref().map_or(false, |pattern| {
+                    content
+                        .as_ref()
+                        .is_some_and(|content| pattern.is_match(content))
+                })
             };
 
             // Only return a match for the given file if we have a better match than
