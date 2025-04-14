@@ -1318,11 +1318,15 @@
       }
     },
     "LaTeX": {
-      "format_on_save": "on",
-      "formatter": "language_server",
       "language_servers": ["texlab", "..."],
+      "formatter": {
+        "external": {
+          "command": "latexindent"
+        }
+      },
       "prettier": {
-        "allowed": false
+        "allowed": true,
+        "plugins": ["prettier-plugin-latex"]
       }
     },
     "Markdown": {
