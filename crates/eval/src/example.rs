@@ -407,7 +407,6 @@ fn wait_for_lang_server(
         return Task::ready(anyhow::Ok(()));
     }
 
-<<<<<<< HEAD
     println!("{}> ⏵ Waiting for language server", name);
 
     let (mut tx, mut rx) = mpsc::channel(1);
@@ -437,48 +436,7 @@ fn wait_for_lang_server(
         });
 
     cx.spawn(async move |cx| {
-        cx.background_executor().timer(Duration::new(3, 0)).await;
-
-        if cx
-            .update(|cx| {
-                let statuses: Vec<_> = lsp_store.read(cx).language_server_statuses().collect();
-                statuses.is_empty() || !has_pending_diagnostics(lsp_store.clone(), cx)
-            })
-            .unwrap()
-        {
-            println!(
-                "{}> No active language servers or pending diagnostics, proceeding",
-                name
-            );
-            return Ok(());
-        }
-
-        let (mut tx, mut rx) = mpsc::channel(1);
-
-        let name_for_subscription = name.clone();
-
-        let subscription =
-            cx.subscribe(&lsp_store, move |lsp_store, event, cx| {
-                match event {
-                    project::LspStoreEvent::LanguageServerUpdate {
-                        message:
-                            client::proto::update_language_server::Variant::WorkProgress(
-                                LspWorkProgress {
-                                    message: Some(message),
-                                    ..
-                                },
-                            ),
-                        ..
-                    } => println!("{name_for_subscription}> {message}"),
-                    _ => {}
-                }
-
-                if !has_pending_diagnostics(lsp_store, cx) {
-                    tx.try_send(()).ok();
-                }
-            });
-
-        let timeout = cx.background_executor().timer(Duration::new(60, 0));
+        let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
         let result = futures::select! {
             _ = rx.next() => {
                 println!("{}> ⚑ Language server idle", name);
@@ -493,15 +451,10 @@ fn wait_for_lang_server(
     })
 }
 
-fn has_pending_diagnostics(lsp_store: Entity<LspStore>, cx: &App) -> bool {
-    let statuses: Vec<_> = lsp_store.read(cx).language_server_statuses().collect();
-
-    if statuses.is_empty() {
-        return false;
-    }
-
-    statuses
-        .into_iter()
+fn has_pending_lang_server_work(lsp_store: Entity<LspStore>, cx: &App) -> bool {
+    lsp_store
+        .read(cx)
+        .language_server_statuses()
         .all(|(_, status)| !status.pending_work.is_empty())
 }
 
