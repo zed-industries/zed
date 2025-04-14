@@ -17,3 +17,4 @@ default = []
 [dependencies]
 log.workspace = true
 workspace-hack.workspace = true
+anyhow.workspace = true

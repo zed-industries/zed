@@ -37,9 +37,9 @@ pub enum AnthropicModelMode {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[default]
     #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
     Claude3_5Sonnet,
+    #[default]
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
     Claude3_7Sonnet,
     #[serde(

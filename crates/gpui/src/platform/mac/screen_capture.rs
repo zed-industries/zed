@@ -37,9 +37,6 @@ pub struct MacScreenCaptureStream {
     sc_stream_output: id,
 }
 
-#[link(name = "ScreenCaptureKit", kind = "framework")]
-unsafe extern "C" {}
-
 static mut DELEGATE_CLASS: *const Class = ptr::null();
 static mut OUTPUT_CLASS: *const Class = ptr::null();
 const FRAME_CALLBACK_IVAR: &str = "frame_callback";

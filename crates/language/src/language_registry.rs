@@ -8,7 +8,7 @@ use crate::{
     with_parser,
 };
 use anyhow::{Context as _, Result, anyhow};
-use collections::{HashMap, HashSet, hash_map};
+use collections::{FxHashMap, HashMap, HashSet, hash_map};
 
 use futures::{
     Future,
@@ -21,8 +21,10 @@ use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::{
     borrow::{Borrow, Cow},
+    cell::LazyCell,
     ffi::OsStr,
     ops::Not,
     path::{Path, PathBuf},
@@ -674,7 +676,7 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&HashMap<Arc<str>, GlobSet>>,
+        user_file_types: Option<&FxHashMap<Arc<str>, GlobSet>>,
     ) -> Option<AvailableLanguage> {
         let filename = path.file_name().and_then(|name| name.to_str());
         // `Path.extension()` returns None for files with a leading '.'
@@ -682,32 +684,42 @@ impl LanguageRegistry {
         // as we want `.zshrc` to result in extension being `Some("zshrc")`
         let extension = filename.and_then(|filename| filename.split('.').next_back());
         let path_suffixes = [extension, filename, path.to_str()];
+        let path_suffixes_candidates = path_suffixes
+            .iter()
+            .filter_map(|suffix| suffix.map(globset::Candidate::new))
+            .collect::<SmallVec<[_; 3]>>();
         let empty = GlobSet::empty();
-
+        let content = LazyCell::new(|| {
+            content.map(|content| {
+                let end = content.clip_point(Point::new(0, 256), Bias::Left);
+                let end = content.point_to_offset(end);
+                content.chunks_in_range(0..end).collect::<String>()
+            })
+        });
         self.find_matching_language(move |language_name, config| {
-            let path_matches_default_suffix = config
-                .path_suffixes
-                .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
-            let custom_suffixes = user_file_types
-                .and_then(|types| types.get(language_name.as_ref()))
-                .unwrap_or(&empty);
-            let path_matches_custom_suffix = path_suffixes
-                .iter()
-                .map(|suffix| suffix.unwrap_or(""))
-                .any(|suffix| custom_suffixes.is_match(suffix));
-            let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
-                false,
-                |(content, pattern)| {
-                    let end = content.clip_point(Point::new(0, 256), Bias::Left);
-                    let end = content.point_to_offset(end);
-                    let text = content.chunks_in_range(0..end).collect::<String>();
-                    pattern.is_match(&text)
-                },
-            );
-            if path_matches_custom_suffix {
+            let path_matches_default_suffix = || {
+                config
+                    .path_suffixes
+                    .iter()
+                    .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
+            };
+            let path_matches_custom_suffix = || {
+                let custom_suffixes = user_file_types
+                    .and_then(|types| types.get(language_name.as_ref()))
+                    .unwrap_or(&empty);
+                path_suffixes_candidates
+                    .iter()
+                    .any(|suffix| custom_suffixes.is_match_candidate(suffix))
+            };
+            let content_matches = || {
+                content
+                    .as_ref()
+                    .zip(config.first_line_pattern.as_ref())
+                    .map_or(false, |(text, pattern)| pattern.is_match(&text))
+            };
+            if path_matches_custom_suffix() {
                 2
-            } else if path_matches_default_suffix || content_matches {
+            } else if path_matches_default_suffix() || content_matches() {
                 1
             } else {
                 0

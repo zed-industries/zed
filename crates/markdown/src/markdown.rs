@@ -18,6 +18,7 @@ use gpui::{
     TextStyleRefinement, actions, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
+use parser::CodeBlockMetadata;
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
 use sum_tree::TreeMap;
@@ -88,12 +89,30 @@ struct Options {
 }
 
 pub enum CodeBlockRenderer {
-    Default { copy_button: bool },
-    Custom { render: CodeBlockRenderFn },
+    Default {
+        copy_button: bool,
+    },
+    Custom {
+        render: CodeBlockRenderFn,
+        /// A function that can modify the parent container after the code block
+        /// content has been appended as a child element.
+        transform: Option<CodeBlockTransformFn>,
+    },
 }
 
-pub type CodeBlockRenderFn =
-    Arc<dyn Fn(usize, &CodeBlockKind, &ParsedMarkdown, Range<usize>, &mut Window, &App) -> Div>;
+pub type CodeBlockRenderFn = Arc<
+    dyn Fn(
+        &CodeBlockKind,
+        &ParsedMarkdown,
+        Range<usize>,
+        CodeBlockMetadata,
+        &mut Window,
+        &App,
+    ) -> Div,
+>;
+
+pub type CodeBlockTransformFn =
+    Arc<dyn Fn(AnyDiv, Range<usize>, CodeBlockMetadata, &mut Window, &App) -> AnyDiv>;
 
 actions!(markdown, [Copy, CopyAsMarkdown]);
 
@@ -594,7 +613,9 @@ impl Element for MarkdownElement {
             0
         };
 
-        for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
+        let mut current_code_block_metadata = None;
+
+        for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
@@ -632,7 +653,7 @@ impl Element for MarkdownElement {
                                 markdown_end,
                             );
                         }
-                        MarkdownTag::CodeBlock(kind) => {
+                        MarkdownTag::CodeBlock { kind, metadata } => {
                             let language = match kind {
                                 CodeBlockKind::Fenced => None,
                                 CodeBlockKind::FencedLang(language) => {
@@ -644,6 +665,8 @@ impl Element for MarkdownElement {
                                     .cloned(),
                                 _ => None,
                             };
+
+                            current_code_block_metadata = Some(metadata.clone());
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
 
@@ -676,12 +699,12 @@ impl Element for MarkdownElement {
                                     builder.push_code_block(language);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
-                                (CodeBlockRenderer::Custom { render }, _) => {
+                                (CodeBlockRenderer::Custom { render, .. }, _) => {
                                     let parent_container = render(
-                                        index,
                                         kind,
                                         &parsed_markdown,
                                         range.clone(),
+                                        metadata.clone(),
                                         window,
                                         cx,
                                     );
@@ -695,9 +718,12 @@ impl Element for MarkdownElement {
                                             if self.style.code_block_overflow_x_scroll {
                                                 code_block.style().restrict_scroll_to_axis =
                                                     Some(true);
-                                                code_block.flex().overflow_x_scroll()
+                                                code_block
+                                                    .flex()
+                                                    .overflow_x_scroll()
+                                                    .overflow_y_hidden()
                                             } else {
-                                                code_block.w_full()
+                                                code_block.w_full().overflow_hidden()
                                             }
                                         });
 
@@ -846,15 +872,37 @@ impl Element for MarkdownElement {
                             builder.pop_text_style();
                         }
 
+                        let metadata = current_code_block_metadata.take();
+
+                        if let CodeBlockRenderer::Custom {
+                            transform: Some(transform),
+                            ..
+                        } = &self.code_block_renderer
+                        {
+                            builder.modify_current_div(|el| {
+                                transform(
+                                    el,
+                                    range.clone(),
+                                    metadata.clone().unwrap_or_default(),
+                                    window,
+                                    cx,
+                                )
+                            });
+                        }
+
                         if matches!(
                             &self.code_block_renderer,
                             CodeBlockRenderer::Default { copy_button: true }
                         ) {
                             builder.flush_text();
                             builder.modify_current_div(|el| {
-                                let code =
-                                    without_fences(parsed_markdown.source()[range.clone()].trim())
-                                        .to_string();
+                                let content_range = parser::extract_code_block_content_range(
+                                    parsed_markdown.source()[range.clone()].trim(),
+                                );
+                                let content_range = content_range.start + range.start
+                                    ..content_range.end + range.start;
+
+                                let code = parsed_markdown.source()[content_range].to_string();
                                 let codeblock = render_copy_code_block_button(
                                     range.end,
                                     code,
@@ -1049,7 +1097,7 @@ impl IntoElement for MarkdownElement {
     }
 }
 
-enum AnyDiv {
+pub enum AnyDiv {
     Div(Div),
     Stateful(Stateful<Div>),
 }
@@ -1491,45 +1539,5 @@ impl RenderedText {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
-    }
-}
-
-/// Some markdown blocks are indented, and others have e.g. ```rust … ``` around them.
-/// If this block is fenced with backticks, strip them off (and the language name).
-/// We use this when copying code blocks to the clipboard.
-pub fn without_fences(mut markdown: &str) -> &str {
-    if let Some(opening_backticks) = markdown.find("```") {
-        markdown = &markdown[opening_backticks..];
-
-        // Trim off the next newline. This also trims off a language name if it's there.
-        if let Some(newline) = markdown.find('\n') {
-            markdown = &markdown[newline + 1..];
-        }
-    };
-
-    if let Some(closing_backticks) = markdown.rfind("```") {
-        markdown = &markdown[..closing_backticks];
-    };
-
-    markdown
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_without_fences() {
-        let input = "```rust\nlet x = 5;\n```";
-        assert_eq!(without_fences(input), "let x = 5;\n");
-
-        let input = "   ```\nno language\n```   ";
-        assert_eq!(without_fences(input), "no language\n");
-
-        let input = "plain text";
-        assert_eq!(without_fences(input), "plain text");
-
-        let input = "```python\nprint('hello')\nprint('world')\n```";
-        assert_eq!(without_fences(input), "print('hello')\nprint('world')\n");
     }
 }

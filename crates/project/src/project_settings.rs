@@ -25,7 +25,7 @@ use std::{
     time::Duration,
 };
 use task::{TaskTemplates, VsCodeTaskFile};
-use util::ResultExt;
+use util::{ResultExt, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
@@ -278,12 +278,28 @@ pub struct BinarySettings {
     pub ignore_system_version: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
     pub initialization_options: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
+    /// If the server supports sending tasks over LSP extensions,
+    /// this setting can be used to enable or disable them in Zed.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enable_lsp_tasks: bool,
+}
+
+impl Default for LspSettings {
+    fn default() -> Self {
+        Self {
+            binary: None,
+            initialization_options: None,
+            settings: None,
+            enable_lsp_tasks: true,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]

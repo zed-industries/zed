@@ -1,4 +1,4 @@
-use crate::{Keep, Reject, Thread, ThreadEvent};
+use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
@@ -843,7 +843,7 @@ impl ToolbarItemView for AgentDiffToolbar {
 }
 
 impl Render for AgentDiffToolbar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_diff = match self.agent_diff(cx) {
             Some(ad) => ad,
             None => return div(),
@@ -855,6 +855,8 @@ impl Render for AgentDiffToolbar {
             return div();
         }
 
+        let focus_handle = agent_diff.focus_handle(cx);
+
         h_group_xl()
             .my_neg_1()
             .items_center()
@@ -864,15 +866,25 @@ impl Render for AgentDiffToolbar {
             .child(
                 h_group_sm()
                     .child(
-                        Button::new("reject-all", "Reject All").on_click(cx.listener(
-                            |this, _, window, cx| {
-                                this.dispatch_action(&crate::RejectAll, window, cx)
-                            },
-                        )),
+                        Button::new("reject-all", "Reject All")
+                            .key_binding({
+                                KeyBinding::for_action_in(&RejectAll, &focus_handle, window, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.)))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&RejectAll, window, cx)
+                            })),
                     )
-                    .child(Button::new("keep-all", "Keep All").on_click(cx.listener(
-                        |this, _, window, cx| this.dispatch_action(&crate::KeepAll, window, cx),
-                    ))),
+                    .child(
+                        Button::new("keep-all", "Keep All")
+                            .key_binding({
+                                KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.)))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&KeepAll, window, cx)
+                            })),
+                    ),
             )
     }
 }
@@ -921,15 +933,16 @@ mod tests {
             })
             .unwrap();
 
-        let thread_store = cx.update(|cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
-        });
+        let thread_store = cx
+            .update(|cx| {
+                ThreadStore::load(
+                    project.clone(),
+                    Arc::default(),
+                    Arc::new(PromptBuilder::new(None).unwrap()),
+                    cx,
+                )
+            })
+            .await;
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 

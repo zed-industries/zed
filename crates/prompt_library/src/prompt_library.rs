@@ -657,7 +657,7 @@ impl PromptLibrary {
                         .iter()
                         .position(|mat| mat.id == prompt_id)
                     {
-                        picker.set_selected_index(ix, true, window, cx);
+                        picker.set_selected_index(ix, None, true, window, cx);
                     }
                 }
             } else {

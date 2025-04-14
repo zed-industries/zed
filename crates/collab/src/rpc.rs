@@ -318,6 +318,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtOpenDocs>)
+            .add_request_handler(forward_mutating_project_request::<proto::LspExtRunnables>)
             .add_request_handler(
                 forward_read_only_project_request::<proto::LspExtSwitchSourceHeader>,
             )
