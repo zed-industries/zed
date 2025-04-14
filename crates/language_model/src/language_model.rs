@@ -4,6 +4,7 @@ mod registry;
 mod request;
 mod role;
 mod telemetry;
+mod tool_schema;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
@@ -30,6 +31,7 @@ pub use crate::registry::*;
 pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
+pub use crate::tool_schema::*;
 
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
 

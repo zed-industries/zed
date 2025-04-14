@@ -56,7 +56,7 @@ impl Tool for ListDirectoryTool {
         IconName::Folder
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<ListDirectoryToolInput>(format)
     }
 
