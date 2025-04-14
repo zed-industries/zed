@@ -245,7 +245,7 @@ fn conflicts_updated(
         let editor_handle = editor_handle.clone();
         blocks.push(BlockProperties {
             placement: BlockPlacement::Above(anchor),
-            height: 1,
+            height: Some(1),
             style: BlockStyle::Fixed,
             render: Arc::new({
                 let conflict = conflict.clone();
