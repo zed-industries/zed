@@ -102,6 +102,8 @@ fn main() {
                 let repo_url = example.base.url.clone();
                 if repo_urls.insert(repo_url.clone()) {
                     let repo_path = repo_path_for_url(&repo_url);
+                    println!("Cloning {}", repo_url);
+
                     if !repo_path.join(".git").is_dir() {
                         let git_task = cx.spawn(async move |_cx| {
                             std::fs::create_dir_all(&repo_path)?;
