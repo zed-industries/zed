@@ -31,6 +31,10 @@ impl VSCodeSettings {
         None
     }
 
+    pub fn read_string(&self, setting: &str) -> Option<&str> {
+        self.content.get(setting).and_then(|v| v.as_str())
+    }
+
     pub fn bool_setting(&self, key: &str, setting: &mut Option<bool>) {
         if let Some(s) = self.content.get(key).and_then(Value::as_bool) {
             *setting = Some(s)
@@ -72,6 +76,13 @@ impl VSCodeSettings {
             *setting = Some(s)
         }
     }
+
+    pub fn enum_setting<T>(&self, key: &str, setting: &mut Option<T>, f: impl FnOnce(&str) -> Option<T>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_str).and_then(f) {
+            *setting = Some(s)
+        }
+    }
+
 }
 
 // fn read_vscode_settings(content: &str) -> Result<BTreeMap<String, String>> {

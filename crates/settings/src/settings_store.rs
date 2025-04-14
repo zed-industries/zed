@@ -1787,9 +1787,10 @@ mod tests {
     #[gpui::test]
     fn test_vscode_import(cx: &mut App) {
         let mut store = SettingsStore::new(cx);
-        // store.register_setting::<MultiKeySettings>(cx);
         store.register_setting::<UserSettings>(cx);
-        // store.register_setting::<LanguageSettings>(cx);
+        store.register_setting::<JournalSettings>(cx);
+        store.register_setting::<LanguageSettings>(cx);
+        store.register_setting::<MultiKeySettings>(cx);
 
         // create settings that werent present
         check_vscode_import(
@@ -1851,6 +1852,92 @@ mod tests {
                 }
             }
             "#
+            .unindent(),
+            cx,
+        );
+
+        // custom enum
+        check_vscode_import(
+            &mut store,
+            r#"{
+                "journal": {
+                "hour_format": "hour12"
+                }
+            }
+            "#
+            .unindent(),
+            r#"{ "time_format": "24" }"#.to_owned(),
+            r#"{
+                "journal": {
+                "hour_format": "hour24"
+                }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // Multiple keys for one setting
+        check_vscode_import(
+            &mut store,
+            r#"{
+                "key1": "value"
+            }
+            "#
+            .unindent(),
+            r#"{
+                "key_1_first": "hello",
+                "key_1_second": "world"
+            }"#
+            .to_owned(),
+            r#"{
+                "key1": "hello world"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // Merging lists together entries added and updated
+        check_vscode_import(
+            &mut store,
+            r#"{
+                "languages": {
+                    "JSON": {
+                        "language_setting_1": true
+                    },
+                    "Rust": {
+                        "language_setting_2": true
+                    }
+                }
+            }"#
+            .unindent(),
+            r#"{
+                "vscode_languages": [
+                    {
+                        "name": "JavaScript",
+                        "language_setting_1": true
+                    },
+                    {
+                        "name": "Rust",
+                        "language_setting_2": false
+                    }
+                ]
+            }"#
+            .to_owned(),
+            r#"{
+                "languages": {
+                    "JavaScript": {
+                        "language_setting_1": true
+                    },
+                    "JSON": {
+                        "language_setting_1": true
+                    },
+                    "Rust": {
+                        "language_setting_2": false
+                    }
+                }
+            }"#
             .unindent(),
             cx,
         );
@@ -1945,6 +2032,15 @@ mod tests {
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
             sources.json_merge()
         }
+
+        fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent) {
+            let first_value = vscode.read_string("key_1_first");
+            let second_value = vscode.read_string("key_1_second");
+
+            if let Some((first, second)) = first_value.zip(second_value) {
+                old.key1 = Some(format!("{} {}", first, second));
+            }
+        }
     }
 
     #[derive(Debug, Deserialize)]
@@ -1976,7 +2072,11 @@ mod tests {
         }
 
         fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent) {
-            // vscode.get_str("");
+            vscode.enum_setting("time_format", &mut old.hour_format, |s| match s {
+                "12" => Some(HourFormat::Hour12),
+                "24" => Some(HourFormat::Hour24),
+                _ => None,
+            });
         }
     }
 
@@ -1999,6 +2099,29 @@ mod tests {
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
             sources.json_merge()
+        }
+
+        fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent) {
+            old.languages.extend(
+                vscode
+                .read_value("vscode_languages")
+                .and_then(|value| value.as_array())
+                .map(|languages| {
+                    languages
+                        .iter()
+                        .filter_map(|value| value.as_object())
+                        .filter_map(|item| {
+                            let mut rest = item.clone();
+                            let name = rest.remove("name")?.as_str()?.to_string();
+                            let entry = serde_json::from_value::<LanguageSettingEntry>(
+                                serde_json::Value::Object(rest),
+                            ).ok()?;
+
+                            Some((name, entry))
+                        })
+                })
+                .into_iter()
+                .flatten());
         }
     }
 }
