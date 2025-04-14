@@ -164,7 +164,6 @@ impl ConflictSet {
         cx: &mut Context<Self>,
     ) {
         self.snapshot = snapshot;
-        log::debug!("emit update to conflict set");
         cx.emit(update);
     }
 

@@ -117,8 +117,20 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
                 _subscription: subscription,
             }
         });
+
     let conflict_set = buffer_conflicts.conflict_set.clone();
-    excerpt_for_buffer_updated(editor, conflict_set, cx);
+    let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
+    let addon_conflicts_len = buffer_conflicts.block_ids.len();
+    conflicts_updated(
+        editor,
+        conflict_set,
+        &ConflictSetUpdate {
+            buffer_range: None,
+            old_range: 0..addon_conflicts_len,
+            new_range: 0..conflicts_len,
+        },
+        cx,
+    );
 }
 
 fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mut Context<Editor>) {

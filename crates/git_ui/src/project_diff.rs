@@ -416,11 +416,9 @@ impl ProjectDiff {
             .unwrap_or_default();
         let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
 
-        dbg!(">>>>>>>>>>>>>>>>>>>>>>>>>>>");
         let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
-            .map(|range| dbg!(range.to_point(&snapshot)))
+            .map(|range| range.to_point(&snapshot))
             .collect::<Vec<_>>();
-        dbg!("<<<<<<<<<<<<<<<<<<<<<<<<<<<");
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
