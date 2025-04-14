@@ -1,7 +1,6 @@
 // Disable command line from opening on release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod logger;
 mod reliability;
 mod zed;
 
@@ -28,7 +27,6 @@ use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
-use logger::{init_logger, init_stdout_logger};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
@@ -195,11 +193,15 @@ fn main() {
         return;
     }
 
-    zlog::init_from_env();
+    zlog::init();
     if stdout_is_a_pty() {
-        init_stdout_logger();
+        zlog::init_output_stdout();
     } else {
-        init_logger();
+        let result = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file()));
+        if let Err(err) = result {
+            eprintln!("Could not open log file: {}... Defaulting to stdout", err);
+            zlog::init_output_stdout();
+        };
     }
 
     log::info!("========== starting zed ==========");

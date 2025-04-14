@@ -18206,7 +18206,6 @@ dependencies = [
  "settings",
  "settings_ui",
  "shellexpand 2.1.2",
- "simplelog",
  "smol",
  "snippet_provider",
  "snippets_ui",
@@ -18555,7 +18554,9 @@ name = "zlog"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "log",
+ "tempfile",
  "workspace-hack",
 ]
 
