@@ -5,7 +5,7 @@ use project::{Project, debugger::session::Session};
 use serde::{Deserialize, Serialize};
 use ui::{App, SharedString};
 use util::ResultExt;
-use workspace::{Member, Pane, PaneAxis, PaneGroup, Workspace};
+use workspace::{Member, Pane, PaneAxis, Workspace};
 
 use crate::session::running::{
     self, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
@@ -48,19 +48,14 @@ pub(crate) enum SerializedPaneGroup {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SerializedPane {
-    pub active: bool,
     pub children: Vec<DebuggerPaneItem>,
     pub active_item: Option<DebuggerPaneItem>,
 }
 
 pub(crate) async fn serialize_pane_group(
-    adapter_name: String,
-    pane_group: &PaneGroup,
-    active_pane: &Entity<Pane>,
-    cx: &mut App,
+    adapter_name: SharedString,
+    pane_group: SerializedPaneGroup,
 ) -> anyhow::Result<()> {
-    let pane_group = build_serialized_pane_group(&pane_group.root, active_pane, cx);
-
     if let Ok(serialized_pane_group) = serde_json::to_string(&pane_group) {
         KEY_VALUE_STORE
             .write_kvp(
@@ -75,9 +70,8 @@ pub(crate) async fn serialize_pane_group(
     }
 }
 
-fn build_serialized_pane_group(
+pub(crate) fn build_serialized_pane_group(
     pane_group: &Member,
-    active_pane: &Entity<Pane>,
     cx: &mut App,
 ) -> SerializedPaneGroup {
     match pane_group {
@@ -90,17 +84,15 @@ fn build_serialized_pane_group(
             axis: SerializedAxis(*axis),
             children: members
                 .iter()
-                .map(|member| build_serialized_pane_group(member, active_pane, cx))
+                .map(|member| build_serialized_pane_group(member, cx))
                 .collect::<Vec<_>>(),
             flexes: Some(flexes.lock().clone()),
         },
-        Member::Pane(pane_handle) => {
-            SerializedPaneGroup::Pane(serialize_pane(pane_handle, pane_handle == active_pane, cx))
-        }
+        Member::Pane(pane_handle) => SerializedPaneGroup::Pane(serialize_pane(pane_handle, cx)),
     }
 }
 
-fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> SerializedPane {
+fn serialize_pane(pane: &Entity<Pane>, cx: &mut App) -> SerializedPane {
     let pane = pane.read(cx);
     let children = pane
         .items()
@@ -116,7 +108,6 @@ fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> Serialized
         .map(|view| view.read(cx).view_kind());
 
     SerializedPane {
-        active,
         children,
         active_item,
     }
@@ -196,7 +187,7 @@ pub(crate) fn deserialize_pane_group(
             let pane = running::new_debugger_pane(workspace.clone(), project.clone(), window, cx);
             subscriptions.insert(
                 pane.entity_id(),
-                cx.subscribe(&pane, RunningState::handle_pane_event),
+                cx.subscribe_in(&pane, window, RunningState::handle_pane_event),
             );
 
             let sub_views: Vec<_> = serialized_pane

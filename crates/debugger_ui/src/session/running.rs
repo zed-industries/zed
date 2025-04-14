@@ -7,17 +7,16 @@ pub mod variable_list;
 
 use std::{any::Any, ops::ControlFlow, sync::Arc, time::Duration};
 
-use crate::persistence::{self, DebuggerPaneItem, SerializedPane, SerializedPaneGroup};
+use crate::persistence::{self, DebuggerPaneItem, SerializedPaneGroup};
 
 use super::DebugPanelItemEvent;
 use breakpoint_list::BreakpointList;
 use collections::HashMap;
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
-use futures::select;
 use gpui::{
     Action as _, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    NoAction, Subscription, WeakEntity,
+    NoAction, Subscription, Task, WeakEntity,
 };
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
@@ -54,6 +53,7 @@ pub struct RunningState {
     _console: Entity<Console>,
     panes: PaneGroup,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
+    _schedule_serialize: Option<Task<()>>,
 }
 
 impl Render for RunningState {
@@ -198,7 +198,7 @@ pub(crate) fn new_debugger_pane(
                             new_debugger_pane(workspace.clone(), project.clone(), window, cx);
                         let _previous_subscription = running.pane_close_subscriptions.insert(
                             new_pane.entity_id(),
-                            cx.subscribe(&new_pane, RunningState::handle_pane_event),
+                            cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
                         );
                         debug_assert!(_previous_subscription.is_none());
                         running
@@ -473,21 +473,57 @@ impl RunningState {
             _module_list: module_list,
             _console: console,
             pane_close_subscriptions,
+            _schedule_serialize: None,
+        }
+    }
+
+    fn serialize_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self._schedule_serialize.is_none() {
+            self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+
+                let Some((adapter_name, pane_group)) = this
+                    .update(cx, |this, cx| {
+                        let adapter_name = this.session.read(cx).adapter_name();
+                        (
+                            adapter_name,
+                            persistence::build_serialized_pane_group(&this.panes.root, cx),
+                        )
+                    })
+                    .ok()
+                else {
+                    return;
+                };
+
+                persistence::serialize_pane_group(adapter_name, pane_group)
+                    .await
+                    .log_err();
+
+                this.update(cx, |this, _| {
+                    this._schedule_serialize.take();
+                })
+                .ok();
+            }));
         }
     }
 
     pub(crate) fn handle_pane_event(
         this: &mut RunningState,
-        source_pane: Entity<Pane>,
+        source_pane: &Entity<Pane>,
         event: &Event,
+        window: &mut Window,
         cx: &mut Context<RunningState>,
     ) {
+        this.serialize_layout(window, cx);
         if let Event::Remove { .. } = event {
             let _did_find_pane = this.panes.remove(&source_pane).is_ok();
             debug_assert!(_did_find_pane);
             cx.notify();
         }
     }
+
     pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
@@ -853,7 +889,7 @@ impl RunningState {
                 .map(|entity| {
                     (
                         entity.entity_id(),
-                        cx.subscribe(entity, Self::handle_pane_event),
+                        cx.subscribe_in(entity, window, Self::handle_pane_event),
                     )
                 }),
         );
