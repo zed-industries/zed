@@ -223,9 +223,17 @@ pub fn deploy_context_menu(
                 Some(cx.spawn_in(window, async move |editor, cx| {
                     let code_action_result = code_actions_task.await;
                     if let Ok(editor_task) = editor.update_in(cx, |editor, window, cx| {
-                        let Some(_) = editor.mouse_context_menu.take() else {
+                        let Some(mouse_context_menu) = editor.mouse_context_menu.take() else {
                             return Task::ready(Ok::<_, anyhow::Error>(()));
                         };
+                        if mouse_context_menu
+                            .context_menu
+                            .focus_handle(cx)
+                            .contains_focused(window, cx)
+                        {
+                            window.focus(&editor.focus_handle(cx));
+                        }
+                        drop(mouse_context_menu);
                         let (state, code_action) =
                             if let Some((buffer, actions)) = code_action_result {
                                 (
@@ -239,7 +247,7 @@ pub fn deploy_context_menu(
                                 )
                             };
                         let menu = build_context_menu(
-                            Some(editor.focus_handle(cx)),
+                            window.focused(cx),
                             has_selections,
                             has_reveal_target,
                             has_git_repo,
@@ -287,53 +295,54 @@ fn build_context_menu(
     ui::ContextMenu::build(window, cx, |menu, _window, cx| {
         let menu = menu
             .on_blur_subscription(Subscription::new(|| {}))
-            .when_some(code_action_load_state, |menu, state| match state {
-                CodeActionLoadState::Loading => menu.disabled_action(
-                    "Loading code actions...",
-                    Box::new(ConfirmCodeAction {
-                        item_ix: None,
-                        from_mouse_context_menu: true,
-                    }),
-                ),
-                CodeActionLoadState::Loaded(actions) => {
-                    if actions.is_empty() {
-                        menu.disabled_action(
-                            "No code actions available",
-                            Box::new(ConfirmCodeAction {
-                                item_ix: None,
-                                from_mouse_context_menu: true,
-                            }),
-                        )
-                        .separator()
-                    } else {
-                        actions
-                            .iter()
-                            .filter(|action| {
-                                if action
-                                    .as_task()
-                                    .map(|task| {
-                                        matches!(task.task_type(), task::TaskType::Debug(_))
-                                    })
-                                    .unwrap_or(false)
-                                {
-                                    cx.has_flag::<Debugger>()
-                                } else {
-                                    true
-                                }
-                            })
-                            .enumerate()
-                            .fold(menu, |menu, (ix, action)| {
-                                menu.action(
-                                    action.label(),
-                                    Box::new(ConfirmCodeAction {
-                                        item_ix: Some(ix),
-                                        from_mouse_context_menu: true,
-                                    }),
-                                )
-                            })
-                            .separator()
+            .when_some(code_action_load_state, |menu, state| {
+                match state {
+                    CodeActionLoadState::Loading => menu.disabled_action(
+                        "Loading code actions...",
+                        Box::new(ConfirmCodeAction {
+                            item_ix: None,
+                            from_mouse_context_menu: true,
+                        }),
+                    ),
+                    CodeActionLoadState::Loaded(actions) => {
+                        if actions.is_empty() {
+                            menu.disabled_action(
+                                "No code actions available",
+                                Box::new(ConfirmCodeAction {
+                                    item_ix: None,
+                                    from_mouse_context_menu: true,
+                                }),
+                            )
+                        } else {
+                            actions
+                                .iter()
+                                .filter(|action| {
+                                    if action
+                                        .as_task()
+                                        .map(|task| {
+                                            matches!(task.task_type(), task::TaskType::Debug(_))
+                                        })
+                                        .unwrap_or(false)
+                                    {
+                                        cx.has_flag::<Debugger>()
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .enumerate()
+                                .fold(menu, |menu, (ix, action)| {
+                                    menu.action(
+                                        action.label(),
+                                        Box::new(ConfirmCodeAction {
+                                            item_ix: Some(ix),
+                                            from_mouse_context_menu: true,
+                                        }),
+                                    )
+                                })
+                        }
                     }
                 }
+                .separator()
             })
             .when(evaluate_selection && has_selections, |builder| {
                 builder
