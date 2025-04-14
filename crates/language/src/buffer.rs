@@ -3259,8 +3259,6 @@ impl BufferSnapshot {
 
             // Descend to the first leaf that touches the start of the range,
             // and if the range is non-empty, extends beyond the start.
-
-            // TODO FIX this
             while cursor.goto_first_child() {
                 while cursor.node().end_byte() < range.start {
                     if !cursor.goto_next_sibling() {
