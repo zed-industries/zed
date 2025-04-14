@@ -17,7 +17,7 @@ fn schema_to_json(
     format: LanguageModelToolSchemaFormat,
 ) -> Result<serde_json::Value> {
     let mut value = serde_json::to_value(schema)?;
-    language_model::adapt_schema_to_format(&mut value, format)?;
+    assistant_tool::adapt_schema_to_format(&mut value, format)?;
     Ok(value)
 }
 

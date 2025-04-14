@@ -1,5 +1,6 @@
 mod action_log;
 mod tool_registry;
+mod tool_schema;
 mod tool_working_set;
 
 use std::fmt;
@@ -16,6 +17,7 @@ use project::Project;
 
 pub use crate::action_log::*;
 pub use crate::tool_registry::*;
+pub use crate::tool_schema::*;
 pub use crate::tool_working_set::*;
 
 pub fn init(cx: &mut App) {
