@@ -1617,7 +1617,7 @@ impl GitPanel {
                     Ok(None) => {}
                     Ok(Some(prior_commit)) => {
                         this.commit_editor.update(cx, |editor, cx| {
-                            editor.set_text(prior_commit.message.clone(), window, cx)
+                            editor.set_text(prior_commit.message, window, cx)
                         });
                     }
                     Err(e) => this.show_error_toast("reset", e, cx),
