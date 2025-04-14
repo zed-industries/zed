@@ -629,7 +629,7 @@ impl TitleBar {
         let workspace = self.workspace.upgrade().unwrap();
         let current_layout = workspace.update(cx, |workspace, _cx| workspace.bottom_dock_layout());
 
-        if button_shown == true {
+        if button_shown {
             PopoverMenu::new("layout-menu")
                 .trigger(
                     IconButton::new("toggle_layout", IconName::Layout)
