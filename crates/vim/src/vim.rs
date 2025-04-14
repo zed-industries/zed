@@ -1516,9 +1516,25 @@ impl Vim {
 
         let newest = editor.read(cx).selections.newest_anchor().clone();
         let is_multicursor = editor.read(cx).selections.count() > 1;
+
+        if VimSettings::get_global(cx).highlight_on_focus_duration > 0 {
+            if let Some(current_anchor) = &self.current_anchor {
+                let newest_point = newest
+                    .head()
+                    .to_point(&editor.read(cx).buffer().read(cx).snapshot(cx));
+                let prev_point = current_anchor
+                    .head()
+                    .to_point(&editor.read(cx).buffer().read(cx).snapshot(cx));
+
+                if newest_point.row.abs_diff(prev_point.row) > 20 {
+                    self.highlight_current_line(window, cx);
+                }
+            }
+        }
+
         if self.mode == Mode::Insert && self.current_tx.is_some() {
             if self.current_anchor.is_none() {
-                self.current_anchor = Some(newest);
+                self.current_anchor = Some(newest.clone());
             } else if self.current_anchor.as_ref().unwrap() != &newest {
                 if let Some(tx_id) = self.current_tx.take() {
                     self.update_editor(window, cx, |_, editor, _, cx| {
@@ -1538,6 +1554,7 @@ impl Vim {
         {
             self.switch_mode(Mode::Normal, true, window, cx);
         }
+        self.current_anchor = Some(newest);
     }
 
     fn input_ignored(&mut self, text: Arc<str>, window: &mut Window, cx: &mut Context<Self>) {
