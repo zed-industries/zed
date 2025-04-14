@@ -4882,6 +4882,7 @@ dependencies = [
  "chrono",
  "clap",
  "client",
+ "collections",
  "context_server",
  "dap",
  "env_logger 0.11.8",
