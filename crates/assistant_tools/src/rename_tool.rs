@@ -2,12 +2,14 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language::{self, Buffer, ToPointUtf16};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
+
+use crate::schema::json_schema_for;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RenameToolInput {
@@ -66,12 +68,8 @@ impl Tool for RenameTool {
         IconName::Pencil
     }
 
-    fn input_schema(
-        &self,
-        _format: language_model::LanguageModelToolSchemaFormat,
-    ) -> serde_json::Value {
-        let schema = schemars::schema_for!(RenameToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        json_schema_for::<RenameToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

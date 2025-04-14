@@ -1183,6 +1183,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "auto_update_helper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "simplelog",
+ "windows 0.61.1",
+ "winresource",
+ "workspace-hack",
+]
+
+[[package]]
 name = "auto_update_ui"
 version = "0.1.0"
 dependencies = [
@@ -4866,25 +4878,36 @@ dependencies = [
  "assistant_settings",
  "assistant_tool",
  "assistant_tools",
+ "async-watch",
+ "chrono",
+ "clap",
  "client",
  "context_server",
  "dap",
  "env_logger 0.11.8",
+ "extension",
  "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
+ "handlebars 4.5.0",
  "language",
+ "language_extension",
  "language_model",
  "language_models",
+ "languages",
  "node_runtime",
+ "paths",
  "project",
  "prompt_store",
  "release_channel",
  "reqwest_client",
  "serde",
  "settings",
+ "shellexpand 2.1.2",
  "toml 0.8.20",
+ "unindent",
+ "util",
  "workspace-hack",
 ]
 
@@ -7708,6 +7731,7 @@ dependencies = [
  "smol",
  "strum",
  "theme",
+ "thiserror 2.0.12",
  "tiktoken-rs",
  "tokio",
  "ui",
@@ -17766,6 +17790,8 @@ dependencies = [
  "wasmtime-cranelift",
  "wasmtime-environ",
  "winapi",
+ "windows-core 0.61.0",
+ "windows-numerics",
  "windows-sys 0.48.0",
  "windows-sys 0.52.0",
  "windows-sys 0.59.0",
@@ -18110,7 +18136,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.182.0"
+version = "0.183.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -18206,7 +18232,6 @@ dependencies = [
  "settings",
  "settings_ui",
  "shellexpand 2.1.2",
- "simplelog",
  "smol",
  "snippet_provider",
  "snippets_ui",
@@ -18555,7 +18580,9 @@ name = "zlog"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "log",
+ "tempfile",
  "workspace-hack",
 ]
 

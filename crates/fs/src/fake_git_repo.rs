@@ -5,8 +5,8 @@ use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint,
-        PushOptions, Remote, RepoPath, ResetMode,
+        AskPassDelegate, Branch, CommitDetails, CommitOptions, GitRepository,
+        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -365,6 +365,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
+        _options: CommitOptions,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()

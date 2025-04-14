@@ -10,7 +10,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_global::<SettingsStore>(|cx| {
         let zlog_settings = ZlogSettings::get_global(cx);
-        zlog::scope_map::refresh_from_settings(&zlog_settings.scopes);
+        zlog::filter::refresh_from_settings(&zlog_settings.scopes);
     })
     .detach();
 }
