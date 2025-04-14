@@ -1321,7 +1321,8 @@
       "language_servers": ["texlab", "..."],
       "formatter": {
         "external": {
-          "command": "latexindent"
+          "command": "latexindent",
+          "arguments": ["--local"]
         }
       },
       "prettier": {
