@@ -1820,15 +1820,18 @@ impl MultiBuffer {
             }
         }
 
-        excerpt_ids.extend(to_insert.iter().map(|(id, _)| id));
+        excerpt_ids.extend(to_insert.iter().map(|(id, _)| dbg!(id)));
         self.insert_excerpts_with_ids_after(insert_after, buffer, to_insert, cx);
         self.remove_excerpts(to_remove, cx);
         if excerpt_ids.is_empty() {
+            dbg!("remove", &path);
             self.excerpts_by_path.remove(&path);
         } else {
             for excerpt_id in &excerpt_ids {
+                dbg!("rev insert", &path, excerpt_id);
                 self.paths_by_excerpt.insert(*excerpt_id, path.clone());
             }
+            dbg!("insert", &path);
             self.excerpts_by_path.insert(path, excerpt_ids.clone());
         }
 

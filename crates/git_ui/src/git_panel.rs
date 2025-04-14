@@ -446,7 +446,7 @@ impl GitPanel {
                         .ok();
                 }
                 GitStoreEvent::RepositoryUpdated(_, _, _) => {}
-                GitStoreEvent::JobsUpdated => {}
+                GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
             },
         )
         .detach();

@@ -14,22 +14,24 @@ use editor::{
 use futures::StreamExt;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::FileStatus,
 };
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, Capability, LineEnding, OffsetRangeExt, Point, Rope, TextBuffer};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
+    Project, ProjectPath, WorktreeId,
+    git_store::{GitStore, GitStoreEvent, MergeDetails, RepositoryEvent},
 };
 use std::{
     any::{Any, TypeId},
     ops::Range,
+    path::Path,
+    sync::Arc,
 };
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
@@ -65,9 +67,73 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u32 = 0;
-const TRACKED_NAMESPACE: u32 = 1;
-const NEW_NAMESPACE: u32 = 2;
+/// Pseudo-file providing a multibuffer excerpt at the top of the project diff to describe the merge conflict situation.
+struct ConflictMetadataFile {
+    path: Arc<Path>,
+    merge_details: MergeDetails,
+    worktree_id: WorktreeId,
+}
+
+const MERGE_DETAILS_NAMESPACE: u32 = 0;
+const CONFLICT_NAMESPACE: u32 = 1;
+const TRACKED_NAMESPACE: u32 = 2;
+const NEW_NAMESPACE: u32 = 3;
+
+impl ConflictMetadataFile {
+    fn new(merge_details: MergeDetails, worktree_id: WorktreeId) -> Self {
+        Self {
+            path: Path::new(&format!(
+                "conflicted merge of {} and {}",
+                merge_details.head.sha, merge_details.merge_head.sha
+            ))
+            .into(),
+            merge_details,
+            worktree_id,
+        }
+    }
+
+    fn path_key(&self) -> PathKey {
+        PathKey::namespaced(MERGE_DETAILS_NAMESPACE, self.path.clone())
+    }
+
+    fn content(&self) -> Rope {
+        format!("oh no a merge conflict").into()
+    }
+}
+
+impl language::File for ConflictMetadataFile {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> language::DiskState {
+        language::DiskState::New
+    }
+
+    fn path(&self) -> &std::sync::Arc<Path> {
+        &self.path
+    }
+
+    fn full_path(&self, _cx: &App) -> std::path::PathBuf {
+        self.path.as_ref().into()
+    }
+
+    fn file_name<'a>(&'a self, _cx: &'a App) -> &'a std::ffi::OsStr {
+        self.path.file_name().unwrap()
+    }
+
+    fn worktree_id(&self, _cx: &App) -> project::WorktreeId {
+        self.worktree_id
+    }
+
+    fn to_proto(&self, _cx: &App) -> language::proto::File {
+        unimplemented!()
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
+}
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -158,7 +224,8 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, _window, _cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true) => {
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true)
+                | GitStoreEvent::ConflictsUpdated => {
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
@@ -468,17 +535,54 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
-            this.update(cx, |this, cx| {
-                let new_branch = this
-                    .git_store
-                    .read(cx)
-                    .active_repository()
-                    .and_then(|active_repository| active_repository.read(cx).branch.clone());
-                if new_branch != this.current_branch {
-                    this.current_branch = new_branch;
+            dbg!("");
+            let merge_details = this.update(cx, |this, cx| {
+                let git_store = this.git_store.read(cx);
+                let active_repository = git_store.active_repository()?;
+                if active_repository.read(cx).branch != this.current_branch {
+                    this.current_branch = active_repository.read(cx).branch.clone();
                     cx.notify();
                 }
+                active_repository.read(cx).merge_details.clone()
             })?;
+
+            dbg!(&merge_details);
+
+            if let Some(merge_details) = merge_details {
+                this.update(cx, |this, cx| {
+                    let Some(worktree_id) = this
+                        .project
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .map(|worktree| worktree.read(cx).id())
+                    else {
+                        return;
+                    };
+                    let file = Arc::new(ConflictMetadataFile::new(merge_details, worktree_id));
+                    let buffer = cx.new(|cx| {
+                        let buffer = TextBuffer::new_normalized(
+                            0,
+                            cx.entity_id().as_non_zero_u64().into(),
+                            LineEnding::default(),
+                            file.content(),
+                        );
+                        Buffer::build(buffer, Some(file.clone()), Capability::ReadOnly)
+                    });
+                    this.multibuffer.update(cx, |multibuffer, cx| {
+                        let max_point = buffer.read(cx).max_point();
+                        dbg!("excerpts");
+                        multibuffer.set_excerpts_for_path(
+                            file.path_key(),
+                            buffer,
+                            [Point::zero()..max_point],
+                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            cx,
+                        );
+                    });
+                })
+                .ok();
+            }
 
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
@@ -490,6 +594,12 @@ impl ProjectDiff {
                 }
             }
             this.update(cx, |this, cx| {
+                dbg!(
+                    this.multibuffer
+                        .read(cx)
+                        .excerpt_paths()
+                        .collect::<Vec<_>>()
+                );
                 this.pending_scroll.take();
                 cx.notify();
             })?;
@@ -1144,47 +1254,6 @@ impl RenderOnce for ProjectDiffEmptyState {
         )
     }
 }
-
-// .when(self.can_push_and_pull, |this| {
-//     let remote_button = crate::render_remote_button(
-//         "project-diff-remote-button",
-//         &branch,
-//         self.focus_handle.clone(),
-//         false,
-//     );
-
-//     match remote_button {
-//         Some(button) => {
-//             this.child(h_flex().justify_around().child(button))
-//         }
-//         None => this.child(
-//             h_flex()
-//                 .justify_around()
-//                 .child(Label::new("Remote up to date")),
-//         ),
-//     }
-// }),
-//
-// // .map(|this| {
-//     this.child(h_flex().justify_around().mt_1().child(
-//         Button::new("project-diff-close-button", "Close").when_some(
-//             self.focus_handle.clone(),
-//             |this, focus_handle| {
-//                 this.key_binding(KeyBinding::for_action_in(
-//                     &CloseActiveItem::default(),
-//                     &focus_handle,
-//                     window,
-//                     cx,
-//                 ))
-//                 .on_click(move |_, window, cx| {
-//                     window.focus(&focus_handle);
-//                     window
-//                         .dispatch_action(Box::new(CloseActiveItem::default()), cx);
-//                 })
-//             },
-//         ),
-//     ))
-// }),
 
 mod preview {
     use git::repository::{
