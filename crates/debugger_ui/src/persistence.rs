@@ -1,19 +1,14 @@
-use async_recursion::async_recursion;
-use collections::HashSet;
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AppContext, AsyncApp, Axis, Context, Entity, Focusable, WeakEntity, Window};
+use gpui::{Axis, Context, Entity, Focusable, WeakEntity, Window};
 use project::{Project, debugger::session::Session};
 use serde::{Deserialize, Serialize};
 use ui::{App, SharedString};
+use util::ResultExt;
 use workspace::{Member, Pane, PaneAxis, PaneGroup, Workspace};
 
 use crate::session::running::{
-    self, RunningState, SubView,
-    breakpoint_list::BreakpointList,
-    console::Console,
-    module_list::ModuleList,
-    stack_frame_list::{self, StackFrameList},
-    variable_list::VariableList,
+    self, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
+    module_list::ModuleList, stack_frame_list::StackFrameList, variable_list::VariableList,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,7 +74,7 @@ pub(crate) async fn serialize_pane_group(
     if let Ok(serialized_pane_group) = serde_json::to_string(&pane_group) {
         KEY_VALUE_STORE
             .write_kvp(
-                format!("debugger-pane-layout-{adapter_name}"),
+                format!("{}-{adapter_name}", db::kvp::DEBUGGER_PANEL_PREFIX),
                 serialized_pane_group,
             )
             .await
@@ -137,7 +132,23 @@ fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> Serialized
     }
 }
 
-fn deserialize_pane_group(
+pub(crate) async fn get_serialized_pane(
+    adapter_name: impl AsRef<str>,
+) -> Option<SerializedPaneGroup> {
+    let key = format!(
+        "{}-{}",
+        db::kvp::DEBUGGER_PANEL_PREFIX,
+        adapter_name.as_ref()
+    );
+
+    KEY_VALUE_STORE
+        .read_kvp(&key)
+        .log_err()
+        .flatten()
+        .and_then(|value| serde_json::from_str::<SerializedPaneGroup>(&value).ok())
+}
+
+pub(crate) fn deserialize_pane_group(
     serialized: &SerializedPaneGroup,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
