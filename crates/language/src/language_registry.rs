@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     borrow::{Borrow, Cow},
+    cell::LazyCell,
     ffi::OsStr,
     ops::Not,
     path::{Path, PathBuf},
@@ -688,6 +689,13 @@ impl LanguageRegistry {
             .filter_map(|suffix| suffix.map(globset::Candidate::new))
             .collect::<SmallVec<[_; 3]>>();
         let empty = GlobSet::empty();
+        let content = LazyCell::new(|| {
+            content.map(|content| {
+                let end = content.clip_point(Point::new(0, 256), Bias::Left);
+                let end = content.point_to_offset(end);
+                content.chunks_in_range(0..end).collect::<String>()
+            })
+        });
         self.find_matching_language(move |language_name, config| {
             let path_matches_default_suffix = || {
                 config
@@ -704,15 +712,10 @@ impl LanguageRegistry {
                     .any(|suffix| custom_suffixes.is_match_candidate(suffix))
             };
             let content_matches = || {
-                content.zip(config.first_line_pattern.as_ref()).map_or(
-                    false,
-                    |(content, pattern)| {
-                        let end = content.clip_point(Point::new(0, 256), Bias::Left);
-                        let end = content.point_to_offset(end);
-                        let text = content.chunks_in_range(0..end).collect::<String>();
-                        pattern.is_match(&text)
-                    },
-                )
+                content
+                    .as_ref()
+                    .zip(config.first_line_pattern.as_ref())
+                    .map_or(false, |(text, pattern)| pattern.is_match(&text))
             };
             if path_matches_custom_suffix() {
                 2
