@@ -1,7 +1,10 @@
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::{Range, RangeBounds},
+    sync::Arc,
+};
 
 use editor::{
-    Anchor, Editor, EditorSnapshot,
+    Anchor, Editor, EditorSnapshot, ToOffset,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle},
     hover_markdown_style,
     scroll::Autoscroll,
@@ -11,12 +14,15 @@ use language::{BufferId, DiagnosticEntry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement};
 use settings::Settings;
-use text::Point;
+use text::{AnchorRangeExt, Point};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, IntoElement, ParentElement, SharedString, Styled, Window, div, px,
+    ActiveTheme, AnyElement, App, Context, IntoElement, ParentElement, SharedString, Styled,
+    Window, div, px,
 };
 use util::maybe;
+
+use crate::ProjectDiagnosticsEditor;
 
 pub struct DiagnosticRenderer;
 
@@ -24,6 +30,7 @@ impl DiagnosticRenderer {
     pub fn diagnostic_blocks_for_group(
         diagnostic_group: Vec<DiagnosticEntry<Point>>,
         buffer_id: BufferId,
+        diagnostics_editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
         cx: &mut App,
     ) -> Vec<DiagnosticBlock> {
         let Some(primary_ix) = diagnostic_group
@@ -72,6 +79,7 @@ impl DiagnosticRenderer {
             initial_range: primary.range,
             severity: primary.diagnostic.severity,
             buffer_id,
+            diagnostics_editor: diagnostics_editor.clone(),
             markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
         }];
 
@@ -87,6 +95,7 @@ impl DiagnosticRenderer {
                 initial_range: entry.range,
                 severity: entry.diagnostic.severity,
                 buffer_id,
+                diagnostics_editor: diagnostics_editor.clone(),
                 markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
             });
         }
@@ -101,11 +110,14 @@ impl DiagnosticRenderer {
             markdown.push_str(&format!(
                 " ([back](file://#diagnostic-{group_id}-{primary_ix}))"
             ));
+            // problem: group-id changes...
+            //  - only an issue in diagnostics because caching
 
             results.push(DiagnosticBlock {
                 initial_range: entry.range,
                 severity: entry.diagnostic.severity,
                 buffer_id,
+                diagnostics_editor: diagnostics_editor.clone(),
                 markdown: cx.new(|cx| Markdown::new(markdown.into(), None, None, cx)),
             });
         }
@@ -123,7 +135,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
         editor: WeakEntity<Editor>,
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>> {
-        let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, cx);
+        let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, None, cx);
         blocks
             .into_iter()
             .map(|block| {
@@ -150,6 +162,7 @@ pub(crate) struct DiagnosticBlock {
     pub(crate) severity: DiagnosticSeverity,
     pub(crate) buffer_id: BufferId,
     pub(crate) markdown: Entity<Markdown>,
+    pub(crate) diagnostics_editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
 }
 
 impl DiagnosticBlock {
@@ -169,8 +182,9 @@ impl DiagnosticBlock {
         };
         let settings = ThemeSettings::get_global(cx);
         let editor_line_height = (settings.line_height() * settings.buffer_font_size(cx)).round();
-        let line_height = editor_line_height; // - px(2.);
+        let line_height = editor_line_height;
         let buffer_id = self.buffer_id;
+        let diagnostics_editor = self.diagnostics_editor.clone();
 
         div()
             .border_l_2()
@@ -183,7 +197,14 @@ impl DiagnosticBlock {
                 MarkdownElement::new(self.markdown.clone(), hover_markdown_style(bcx.window, cx))
                     .on_url_click({
                         move |link, window, cx| {
-                            Self::open_link(editor.clone(), link, window, buffer_id, cx)
+                            Self::open_link(
+                                editor.clone(),
+                                &diagnostics_editor,
+                                link,
+                                window,
+                                buffer_id,
+                                cx,
+                            )
                         }
                     }),
             )
@@ -192,6 +213,7 @@ impl DiagnosticBlock {
 
     pub fn open_link(
         editor: WeakEntity<Editor>,
+        diagnostics_editor: &Option<WeakEntity<ProjectDiagnosticsEditor>>,
         link: SharedString,
         window: &mut Window,
         buffer_id: BufferId,
@@ -199,27 +221,85 @@ impl DiagnosticBlock {
     ) {
         editor
             .update(cx, |editor, cx| {
-                let diagnostic = maybe!({
-                    let diagnostic = link.strip_prefix("file://#diagnostic-")?;
-                    let (group_id, ix) = diagnostic.split_once('-')?;
-
-                    let ds = editor
-                        .snapshot(window, cx)
-                        .buffer_snapshot
-                        .diagnostic_group(buffer_id, group_id.parse().ok()?)
-                        .collect::<Vec<_>>();
-
-                    ds.into_iter().nth(ix.parse().ok()?)
-                });
-                let Some(diagnostic) = diagnostic else {
+                let Some(diagnostic_link) = link.strip_prefix("file://#diagnostic-") else {
                     editor::hover_popover::open_markdown_url(link, window, cx);
                     return;
                 };
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_ranges([diagnostic.range.start..diagnostic.range.start]);
-                });
-                window.focus(&editor.focus_handle(cx));
+                let Some((group_id, ix)) = maybe!({
+                    let (group_id, ix) = diagnostic_link.split_once('-')?;
+                    let group_id: usize = group_id.parse().ok()?;
+                    let ix: usize = ix.parse().ok()?;
+                    Some((group_id, ix))
+                }) else {
+                    return;
+                };
+
+                if let Some(diagnostics_editor) = diagnostics_editor {
+                    if let Some(diagnostic) = diagnostics_editor
+                        .update(cx, |diagnostics, cx| {
+                            diagnostics
+                                .diagnostics
+                                .get(&buffer_id)
+                                .cloned()
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|d| d.diagnostic.group_id == group_id)
+                                .nth(ix)
+                        })
+                        .ok()
+                        .flatten()
+                    {
+                        let multibuffer = editor.buffer().read(cx);
+                        let Some(snapshot) = multibuffer
+                            .buffer(buffer_id)
+                            .map(|entity| entity.read(cx).snapshot())
+                        else {
+                            return;
+                        };
+
+                        for (excerpt_id, range) in multibuffer.excerpts_for_buffer(buffer_id, cx) {
+                            if range.context.overlaps(&diagnostic.range, &snapshot) {
+                                Self::jump_to(
+                                    editor,
+                                    Anchor::range_in_buffer(
+                                        excerpt_id,
+                                        buffer_id,
+                                        diagnostic.range,
+                                    ),
+                                    window,
+                                    cx,
+                                );
+                                return;
+                            }
+                        }
+                    }
+                } else {
+                    if let Some(diagnostic) = editor
+                        .snapshot(window, cx)
+                        .buffer_snapshot
+                        .diagnostic_group(buffer_id, group_id)
+                        .nth(ix)
+                    {
+                        Self::jump_to(editor, diagnostic.range, window, cx)
+                    }
+                };
             })
             .ok();
+    }
+
+    fn jump_to<T: ToOffset>(
+        editor: &mut Editor,
+        range: Range<T>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let snapshot = &editor.buffer().read(cx).snapshot(cx);
+        let range = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
+
+        editor.unfold_ranges(&[range.start..range.end], true, false, cx);
+        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.select_ranges([range.start..range.start]);
+        });
+        window.focus(&editor.focus_handle(cx));
     }
 }

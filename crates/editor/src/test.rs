@@ -5,13 +5,17 @@ use std::{rc::Rc, sync::LazyLock};
 
 use crate::{
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
-    display_map::{Block, CustomBlockId, DisplayMap, DisplayRow, DisplaySnapshot, ToDisplayPoint},
+    display_map::{
+        Block, BlockPlacement, CustomBlockId, DisplayMap, DisplayRow, DisplaySnapshot,
+        ToDisplayPoint,
+    },
 };
 use collections::HashMap;
 use gpui::{
     AppContext as _, Context, Entity, EntityId, Font, FontFeatures, FontStyle, FontWeight, Pixels,
     VisualTestContext, Window, font, size,
 };
+use multi_buffer::ToPoint;
 use project::Project;
 use ui::{App, BorrowAppContext, px};
 use util::test::{marked_text_offsets, marked_text_ranges};
@@ -160,7 +164,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
         size(px(3000.0), px(3000.0)),
         |_, _| editor.clone(),
     );
-    let (mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
+    let (snapshot, mut lines, blocks) = editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let text = editor.display_text(cx);
         let lines = text.lines().map(|s| s.to_string()).collect::<Vec<String>>();
@@ -168,11 +172,16 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
             .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
             .map(|(row, block)| (row, block.clone()))
             .collect::<Vec<_>>();
-        (lines, blocks)
+        (snapshot, lines, blocks)
     });
     for (row, block) in blocks {
         match block {
             Block::Custom(custom_block) => {
+                if let BlockPlacement::Near(x) = &custom_block.placement {
+                    if snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot)) {
+                        continue;
+                    }
+                };
                 let content = block_content_for_tests(&editor, custom_block.id, cx)
                     .expect("block content not found");
                 // 2: "related info 1 for diagnostic 0"

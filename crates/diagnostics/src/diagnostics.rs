@@ -54,7 +54,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(ProjectDiagnosticsEditor::register).detach();
 }
 
-struct ProjectDiagnosticsEditor {
+pub(crate) struct ProjectDiagnosticsEditor {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -416,6 +416,7 @@ impl ProjectDiagnosticsEditor {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
+                        Some(this.clone()),
                         cx,
                     )
                 })?;

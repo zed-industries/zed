@@ -188,13 +188,14 @@ impl BlockPlacement<Anchor> {
 
 pub struct CustomBlock {
     pub id: CustomBlockId,
-    placement: BlockPlacement<Anchor>,
+    pub placement: BlockPlacement<Anchor>,
     pub height: Option<u32>,
     style: BlockStyle,
     render: Arc<Mutex<RenderBlock>>,
     priority: usize,
 }
 
+#[derive(Clone)]
 pub struct BlockProperties<P> {
     pub placement: BlockPlacement<P>,
     // None if the block takes up no space

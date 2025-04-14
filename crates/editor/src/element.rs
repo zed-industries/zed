@@ -2643,12 +2643,15 @@ impl EditorElement {
         sticky_header_excerpt_id: Option<ExcerptId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (AnyElement, Size<Pixels>, DisplayRow, Pixels) {
+    ) -> Option<(AnyElement, Size<Pixels>, DisplayRow, Pixels)> {
         let mut x_position = None;
         let mut element = match block {
-            Block::Custom(block) => {
-                let block_start = block.start().to_point(&snapshot.buffer_snapshot);
-                let block_end = block.end().to_point(&snapshot.buffer_snapshot);
+            Block::Custom(custom) => {
+                let block_start = custom.start().to_point(&snapshot.buffer_snapshot);
+                let block_end = custom.end().to_point(&snapshot.buffer_snapshot);
+                if block.place_near() && snapshot.is_line_folded(MultiBufferRow(block_start.row)) {
+                    return None;
+                }
                 let align_to = block_start.to_display_point(snapshot);
                 let x_and_width = |layout: &LineWithInvisibles| {
                     Some((
@@ -2686,7 +2689,7 @@ impl EditorElement {
 
                 div()
                     .size_full()
-                    .child(block.render(&mut BlockContext {
+                    .child(custom.render(&mut BlockContext {
                         window,
                         app: cx,
                         anchor_x,
@@ -2813,7 +2816,7 @@ impl EditorElement {
             row_block_types.insert(row + i, is_block);
         }
 
-        (element, final_size, row, x_offset)
+        Some((element, final_size, row, x_offset))
     }
 
     fn render_buffer_header(
@@ -3046,7 +3049,7 @@ impl EditorElement {
                 focused_block = None;
             }
 
-            let (element, element_size, row, x_offset) = self.render_block(
+            if let Some((element, element_size, row, x_offset)) = self.render_block(
                 block,
                 AvailableSpace::MinContent,
                 block_id,
@@ -3069,19 +3072,19 @@ impl EditorElement {
                 sticky_header_excerpt_id,
                 window,
                 cx,
-            );
-
-            fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
-            blocks.push(BlockLayout {
-                id: block_id,
-                x_offset,
-                row: Some(row),
-                element,
-                available_space: size(AvailableSpace::MinContent, element_size.height.into()),
-                style: BlockStyle::Fixed,
-                overlaps_gutter: true,
-                is_buffer_header: block.is_buffer_header(),
-            });
+            ) {
+                fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
+                blocks.push(BlockLayout {
+                    id: block_id,
+                    x_offset,
+                    row: Some(row),
+                    element,
+                    available_space: size(AvailableSpace::MinContent, element_size.height.into()),
+                    style: BlockStyle::Fixed,
+                    overlaps_gutter: true,
+                    is_buffer_header: block.is_buffer_header(),
+                });
+            }
         }
 
         for (row, block) in non_fixed_blocks {
@@ -3103,7 +3106,7 @@ impl EditorElement {
                 focused_block = None;
             }
 
-            let (element, element_size, row, x_offset) = self.render_block(
+            if let Some((element, element_size, row, x_offset)) = self.render_block(
                 block,
                 width,
                 block_id,
@@ -3126,18 +3129,18 @@ impl EditorElement {
                 sticky_header_excerpt_id,
                 window,
                 cx,
-            );
-
-            blocks.push(BlockLayout {
-                id: block_id,
-                x_offset,
-                row: Some(row),
-                element,
-                available_space: size(width, element_size.height.into()),
-                style,
-                overlaps_gutter: !block.place_near(),
-                is_buffer_header: block.is_buffer_header(),
-            });
+            ) {
+                blocks.push(BlockLayout {
+                    id: block_id,
+                    x_offset,
+                    row: Some(row),
+                    element,
+                    available_space: size(width, element_size.height.into()),
+                    style,
+                    overlaps_gutter: !block.place_near(),
+                    is_buffer_header: block.is_buffer_header(),
+                });
+            }
         }
 
         if let Some(focused_block) = focused_block {
@@ -3157,7 +3160,7 @@ impl EditorElement {
                             BlockStyle::Sticky => AvailableSpace::Definite(hitbox.size.width),
                         };
 
-                        let (element, element_size, _, x_offset) = self.render_block(
+                        if let Some((element, element_size, _, x_offset)) = self.render_block(
                             &block,
                             width,
                             focused_block.id,
@@ -3180,18 +3183,18 @@ impl EditorElement {
                             sticky_header_excerpt_id,
                             window,
                             cx,
-                        );
-
-                        blocks.push(BlockLayout {
-                            id: block.id(),
-                            x_offset,
-                            row: None,
-                            element,
-                            available_space: size(width, element_size.height.into()),
-                            style,
-                            overlaps_gutter: true,
-                            is_buffer_header: block.is_buffer_header(),
-                        });
+                        ) {
+                            blocks.push(BlockLayout {
+                                id: block.id(),
+                                x_offset,
+                                row: None,
+                                element,
+                                available_space: size(width, element_size.height.into()),
+                                style,
+                                overlaps_gutter: true,
+                                is_buffer_header: block.is_buffer_header(),
+                            });
+                        }
                     }
                 }
             }

@@ -104,9 +104,9 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview,
-    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
-    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    CursorShape, DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText,
+    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
+    TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -1095,8 +1095,7 @@ struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
     group_id: usize,
-    blocks: HashMap<CustomBlockId, Diagnostic>,
-    is_valid: bool,
+    blocks: HashSet<CustomBlockId>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -14493,23 +14492,8 @@ impl Editor {
                         && entry.diagnostic.message == active_diagnostics.primary_message
                 });
 
-            if is_valid != active_diagnostics.is_valid {
-                active_diagnostics.is_valid = is_valid;
-                if is_valid {
-                    // let mut new_styles = HashMap::default();
-                    // for (block_id, diagnostic) in &active_diagnostics.blocks {
-                    //     new_styles.insert(
-                    //         *block_id,
-                    //         diagnostic_block_renderer(diagnostic.clone(), None, true),
-                    //     );
-                    // }
-                    // self.display_map.update(cx, |display_map, _cx| {
-                    //     display_map.replace_blocks(new_styles);
-                    // });
-                    // todo!()
-                } else {
-                    self.dismiss_diagnostics(cx);
-                }
+            if !is_valid {
+                self.dismiss_diagnostics(cx);
             }
         }
     }
@@ -14536,14 +14520,6 @@ impl Editor {
         let diagnostic_group = buffer
             .diagnostic_group(buffer_id, group_id)
             .filter_map(|entry| {
-                let start = entry.range.start;
-                let end = entry.range.end;
-                // todo!() don't filter out here...
-                if snapshot.is_line_folded(MultiBufferRow(start.row))
-                    && (start.row == end.row || snapshot.is_line_folded(MultiBufferRow(end.row)))
-                {
-                    return None;
-                }
                 if entry.diagnostic.is_primary {
                     primary_range = Some(entry.range.clone());
                     primary_message = Some(entry.diagnostic.message.clone());
@@ -14567,11 +14543,7 @@ impl Editor {
         );
 
         let blocks = self.display_map.update(cx, |display_map, cx| {
-            display_map
-                .insert_blocks(blocks, cx)
-                .into_iter()
-                .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
-                .collect()
+            display_map.insert_blocks(blocks, cx).into_iter().collect()
         });
         self.active_diagnostics = Some(ActiveDiagnosticGroup {
             primary_range: buffer.anchor_before(primary_range.start)
@@ -14579,7 +14551,6 @@ impl Editor {
             primary_message,
             group_id,
             blocks,
-            is_valid: true,
         });
         cx.notify();
     }
@@ -14587,7 +14558,7 @@ impl Editor {
     fn dismiss_diagnostics(&mut self, cx: &mut Context<Self>) {
         if let Some(active_diagnostic_group) = self.active_diagnostics.take() {
             self.display_map.update(cx, |display_map, cx| {
-                display_map.remove_blocks(active_diagnostic_group.blocks.into_keys().collect(), cx);
+                display_map.remove_blocks(active_diagnostic_group.blocks, cx);
             });
             cx.notify();
         }
