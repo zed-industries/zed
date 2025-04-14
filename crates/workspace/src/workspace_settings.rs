@@ -10,10 +10,10 @@ use settings::{Settings, SettingsSources};
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
-    pub bottom_dock_layout: BottomDockLayout,
     pub pane_split_direction_horizontal: PaneSplitDirectionHorizontal,
     pub pane_split_direction_vertical: PaneSplitDirectionVertical,
     pub centered_layout: CenteredLayoutSettings,
+    pub layout: Layout,
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
@@ -72,6 +72,19 @@ pub struct ActivePanelModifiers {
     pub inactive_opacity: Option<f32>,
 }
 
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct Layout {
+    /// Whether to show the button for layouts in the title bar
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Layout mode for the bottom dock
+    ///
+    /// Default: contained
+    pub bottom_dock: Option<BottomDockLayout>,
+}
+
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BottomDockLayout {
@@ -124,10 +137,8 @@ pub enum RestoreOnStartupBehavior {
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
-    /// Layout mode for the bottom dock
-    ///
-    /// Default: contained
-    pub bottom_dock_layout: Option<BottomDockLayout>,
+    // We now use the Layout struct instead of this field
+    // pub bottom_dock_layout: Option<BottomDockLayout>,
     /// Direction to split horizontally.
     ///
     /// Default: "up"
@@ -138,6 +149,8 @@ pub struct WorkspaceSettingsContent {
     pub pane_split_direction_vertical: Option<PaneSplitDirectionVertical>,
     /// Centered layout related settings.
     pub centered_layout: Option<CenteredLayoutSettings>,
+    /// Workspace layout settings.
+    pub layout: Option<Layout>,
     /// Whether or not to prompt the user to confirm before closing the application.
     ///
     /// Default: false

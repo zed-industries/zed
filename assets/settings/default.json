@@ -80,8 +80,6 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0
   },
-  // Layout mode of the bottom dock. Defaults to "contained"
-  "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -94,6 +92,13 @@
     // The relative width of the right padding of the central pane from the
     // workspace when the centered layout is used.
     "right_padding": 0.2
+  },
+  // Workspace layout settings
+  "layout": {
+    // Whether to hide or show the layout menu button. Defaults to true
+    "button": true,
+    // Layout mode of the bottom dock. Defaults to "contained"
+    "bottom_dock": "contained"
   },
   // All settings related to the image viewer.
   "image_viewer": {
@@ -626,14 +631,14 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-7-sonnet-latest"
+      "model": "claude-3-5-sonnet-latest"
     },
     // The model to use when applying edits from the assistant.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-7-sonnet-latest"
+      "model": "claude-3-5-sonnet-latest"
     },
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,

@@ -1,5 +1,4 @@
 pub mod dock;
-pub mod history_manager;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -44,7 +43,6 @@ use gpui::{
     WindowHandle, WindowId, WindowOptions, action_as, actions, canvas, impl_action_as,
     impl_actions, point, relative, size, transparent_black,
 };
-pub use history_manager::*;
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
@@ -104,7 +102,8 @@ use ui::prelude::*;
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, Layout, RestoreOnStartupBehavior, TabBarSettings,
+    WorkspaceSettings,
 };
 
 use crate::notifications::NotificationId;
@@ -389,7 +388,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     component::init();
     theme_preview::init(cx);
     toast_layer::init(cx);
-    history_manager::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
@@ -905,9 +903,6 @@ impl Workspace {
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
-                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-                    // So we need to update the history.
-                    this.update_history(cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1051,7 +1046,8 @@ impl Workspace {
         let modal_layer = cx.new(|_| ModalLayer::new());
         let toast_layer = cx.new(|_| ToastLayer::new());
 
-        let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
+        let ws = WorkspaceSettings::get_global(cx);
+        let bottom_dock_layout = ws.layout.bottom_dock.unwrap_or_default();
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
@@ -1340,10 +1336,7 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(cx, |workspace, window, cx| {
-                    window.activate_window();
-                    workspace.update_history(cx);
-                })
+                .update(cx, |_, window, _| window.activate_window())
                 .log_err();
             Ok((window, opened_items))
         })
@@ -1373,7 +1366,7 @@ impl Workspace {
     ) {
         let fs = self.project().read(cx).fs();
         settings::update_settings_file::<WorkspaceSettings>(fs.clone(), cx, move |content, _cx| {
-            content.bottom_dock_layout = Some(layout);
+            content.layout.get_or_insert(Layout::default()).bottom_dock = Some(layout);
         });
 
         self.bottom_dock_layout = layout;
@@ -4716,7 +4709,19 @@ impl Workspace {
             }
         }
 
-        if let Some(location) = self.serialize_workspace_location(cx) {
+        let location = if let Some(ssh_project) = &self.serialized_ssh_project {
+            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
+        } else if let Some(local_paths) = self.local_paths(cx) {
+            if !local_paths.is_empty() {
+                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(location) = location {
             let breakpoints = self.project.update(cx, |project, cx| {
                 project.breakpoint_store().read(cx).all_breakpoints(cx)
             });
@@ -4736,40 +4741,11 @@ impl Workspace {
                 breakpoints,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
-
             return window.spawn(cx, async move |_| {
-                persistence::DB.save_workspace(serialized_workspace).await;
+                persistence::DB.save_workspace(serialized_workspace).await
             });
         }
         Task::ready(())
-    }
-
-    fn serialize_workspace_location(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
-        if let Some(ssh_project) = &self.serialized_ssh_project {
-            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
-        } else if let Some(local_paths) = self.local_paths(cx) {
-            if !local_paths.is_empty() {
-                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    fn update_history(&self, cx: &mut App) {
-        let Some(id) = self.database_id() else {
-            return;
-        };
-        let Some(location) = self.serialize_workspace_location(cx) else {
-            return;
-        };
-        if let Some(manager) = HistoryManager::global(cx) {
-            manager.update(cx, |this, cx| {
-                this.update_history(id, HistoryManagerEntry::new(id, &location), cx);
-            });
-        }
     }
 
     async fn serialize_items(
@@ -6640,7 +6616,6 @@ async fn open_ssh_project_inner(
             let mut workspace =
                 Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
             workspace.set_serialized_ssh_project(serialized_ssh_project);
-            workspace.update_history(cx);
             workspace
         });
     })?;
