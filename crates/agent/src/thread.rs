@@ -261,13 +261,14 @@ pub struct Thread {
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
-    exceeded_tokens: Option<ExceededTokens>,
+    exceeded_window_error: Option<ExceededWindowError>,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
 }
 
-struct ExceededTokens {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExceededWindowError {
     /// Model used when last message exceeded context window
     model_id: LanguageModelId,
     /// Token count including last message
@@ -310,7 +311,7 @@ impl Thread {
                     .shared()
             },
             cumulative_token_usage: TokenUsage::default(),
-            exceeded_tokens: None,
+            exceeded_window_error: None,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -377,7 +378,7 @@ impl Thread {
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
-            exceeded_tokens: None,
+            exceeded_window_error: None,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -828,7 +829,7 @@ impl Thread {
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage.clone(),
                 detailed_summary_state: this.detailed_summary_state.clone(),
-                // todo! serde
+                exceeded_window_error: this.exceeded_window_error.clone(),
             })
         })
     }
@@ -1148,7 +1149,7 @@ impl Thread {
                                     LanguageModelKnownError::ContextWindowLimitExceeded {
                                         tokens,
                                     } => {
-                                        thread.exceeded_tokens = Some(ExceededTokens {
+                                        thread.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
                                             token_count: *tokens,
                                         });
@@ -1810,10 +1811,6 @@ impl Thread {
         &self.project
     }
 
-    pub fn cumulative_token_usage(&self) -> TokenUsage {
-        self.cumulative_token_usage.clone()
-    }
-
     pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
         if !cx.has_flag::<feature_flags::ThreadAutoCapture>() {
             return;
@@ -1866,10 +1863,10 @@ impl Thread {
 
         let max = model.model.max_token_count();
 
-        if let Some(exceeded_tokens) = &self.exceeded_tokens {
-            if model.model.id() == exceeded_tokens.model_id {
+        if let Some(exceeded_error) = &self.exceeded_window_error {
+            if model.model.id() == exceeded_error.model_id {
                 return TotalTokenUsage {
-                    total: exceeded_tokens.token_count,
+                    total: exceeded_error.token_count,
                     max,
                     ratio: TokenUsageRatio::Exceeded,
                 };

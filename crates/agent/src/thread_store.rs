@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
 
-use crate::thread::{DetailedSummaryState, MessageId, ProjectSnapshot, Thread, ThreadId};
+use crate::thread::{DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId};
 
 const RULES_FILE_NAMES: [&'static str; 6] = [
     ".rules",
@@ -491,6 +491,8 @@ pub struct SerializedThread {
     pub cumulative_token_usage: TokenUsage,
     #[serde(default)]
     pub detailed_summary_state: DetailedSummaryState,
+    #[serde(default)]
+    pub exceeded_window_error: Option<ExceededWindowError>,
 }
 
 impl SerializedThread {
@@ -577,6 +579,7 @@ impl LegacySerializedThread {
             initial_project_snapshot: self.initial_project_snapshot,
             cumulative_token_usage: TokenUsage::default(),
             detailed_summary_state: DetailedSummaryState::default(),
+            exceeded_window_error: None,
         }
     }
 }
