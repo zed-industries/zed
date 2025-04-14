@@ -848,7 +848,7 @@ impl Vim {
             EditorEvent::Edited { .. } => self.push_to_change_list(window, cx),
             EditorEvent::FocusedIn => {
                 self.sync_vim_settings(window, cx);
-                if VimSettings::get_global(cx).highlight_on_jump > 0 {
+                if VimSettings::get_global(cx).highlight_on_jump_duration > 0 {
                     self.highlight_current_line(window, cx);
                 }
             }
@@ -1169,7 +1169,7 @@ impl Vim {
             }
         }
 
-        if VimSettings::get_global(cx).highlight_on_jump > 0 {
+        if VimSettings::get_global(cx).highlight_on_jump_duration > 0 {
             self.highlight_current_line(window, cx);
         }
 
@@ -1213,7 +1213,7 @@ impl Vim {
                 cx,
             );
 
-            let highlight_duration = VimSettings::get_global(cx).highlight_on_jump;
+            let highlight_duration = VimSettings::get_global(cx).highlight_on_jump_duration;
 
             cx.spawn(async move |this, cx| {
                 cx.background_executor()
@@ -1517,7 +1517,7 @@ impl Vim {
         let newest = editor.read(cx).selections.newest_anchor().clone();
         let is_multicursor = editor.read(cx).selections.count() > 1;
 
-        if VimSettings::get_global(cx).highlight_on_jump > 0 {
+        if VimSettings::get_global(cx).highlight_on_jump_duration > 0 {
             if let Some(current_anchor) = &self.current_anchor {
                 let newest_point = newest
                     .head()
@@ -1762,7 +1762,7 @@ struct VimSettings {
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
-    pub highlight_on_jump: u64,
+    pub highlight_on_jump_duration: u64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1774,7 +1774,7 @@ struct VimSettingsContent {
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
-    pub highlight_on_jump: Option<u64>,
+    pub highlight_on_jump_duration: Option<u64>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1833,8 +1833,8 @@ impl Settings for VimSettings {
             highlight_on_yank_duration: settings
                 .highlight_on_yank_duration
                 .ok_or_else(Self::missing_default)?,
-            highlight_on_jump: settings
-                .highlight_on_jump
+            highlight_on_jump_duration: settings
+                .highlight_on_jump_duration
                 .ok_or_else(Self::missing_default)?,
         })
     }
