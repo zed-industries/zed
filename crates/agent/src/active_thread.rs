@@ -1666,11 +1666,9 @@ impl ActiveThread {
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
-                .ml_2()
+                .ml_2p5()
                 .pl_2()
                 .pr_4()
-                .border_l_1()
-                .border_color(cx.theme().colors().border_variant)
                 .children(message_content)
                 .when(has_tool_uses, |parent| {
                     parent.children(
