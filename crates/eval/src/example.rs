@@ -182,15 +182,6 @@ impl Example {
 
         let name = self.name();
 
-        {
-            let mut log_file = this.log_file.lock().unwrap();
-
-            writeln!(&mut log_file, "👤 USER:").log_err();
-            writeln!(&mut log_file, "{}", self.prompt).log_err();
-            writeln!(&mut log_file, "🤖 ASSISTANT:").log_err();
-            log_file.flush().log_err();
-        }
-
         cx.spawn(async move |cx| {
             let worktree = worktree.await?;
 
@@ -241,6 +232,14 @@ impl Example {
             let thread_store = thread_store.await;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
+
+            {
+                let mut log_file = this.log_file.lock().unwrap();
+                writeln!(&mut log_file, "👤 USER:").log_err();
+                writeln!(&mut log_file, "{}", this.prompt).log_err();
+                writeln!(&mut log_file, "🤖 ASSISTANT:").log_err();
+                log_file.flush().log_err();
+            }
 
             let (tx, rx) = oneshot::channel();
             let mut tx = Some(tx);
