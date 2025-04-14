@@ -107,7 +107,7 @@ impl Model {
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
             "gpt-4.1" => Ok(Self::FourPointOne),
             "gpt-4.1-mini" => Ok(Self::FourPointOneMini),
-            "gpt-4.1-nano" => Ok(Self::FourPointOneMiniNano),
+            "gpt-4.1-nano" => Ok(Self::FourPointOneNano),
             "o1" => Ok(Self::O1),
             "o1-preview" => Ok(Self::O1Preview),
             "o1-mini" => Ok(Self::O1Mini),
