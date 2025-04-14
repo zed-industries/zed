@@ -46,19 +46,14 @@ pub struct ExampleBase {
 
 #[derive(Clone, Debug)]
 pub struct Example {
-    /// Path to the example's directory
-    pub path: PathBuf,
-
-    /// Contents of the base.toml file
+    pub name: String,
+    /// Content of `base.toml`
     pub base: ExampleBase,
-
-    /// Content of the prompt.md file
+    /// Content of `prompt.md`
     pub prompt: String,
-
-    /// Content of the criteria.md file
+    /// Content of `criteria.md`
     pub criteria: String,
-
-    /// Log file to output results
+    /// Markdown log file to append to
     pub log_file: Arc<Mutex<File>>,
 }
 
@@ -85,20 +80,20 @@ pub struct JudgeOutput {
 impl Example {
     /// Load an example from a directory containing base.toml, prompt.md, and criteria.md
     pub fn load_from_directory(dir_path: &Path, run_dir: &Path) -> Result<Self> {
+        let name = dir_path.file_name().unwrap().to_string_lossy().to_string();
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
         let criteria_path = dir_path.join("criteria.md");
 
-        let log_file = Arc::new(Mutex::new(
-            File::create(run_dir.join(format!(
-                "{}.md",
-                dir_path.file_name().unwrap().to_str().unwrap()
-            )))
-            .unwrap(),
+        let log_file_path = run_dir.join(format!(
+            "{}.md",
+            dir_path.file_name().unwrap().to_str().unwrap()
         ));
+        let log_file = Arc::new(Mutex::new(File::create(&log_file_path).unwrap()));
+        println!("{}> Logging to {:?}", name, log_file_path);
 
         Ok(Example {
-            path: dir_path.to_path_buf(),
+            name,
             base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
             criteria: fs::read_to_string(criteria_path.clone())?,
@@ -106,16 +101,12 @@ impl Example {
         })
     }
 
-    pub fn name(&self) -> String {
-        self.path.file_name().unwrap().to_string_lossy().to_string()
-    }
-
     pub fn worktree_path(&self) -> PathBuf {
         Path::new(WORKTREES_DIR)
             .canonicalize()
             .context(format!("No such directory {WORKTREES_DIR}"))
             .unwrap()
-            .join(self.name())
+            .join(&self.name)
     }
 
     /// Set up the example by checking out the specified Git revision
@@ -133,7 +124,7 @@ impl Example {
         let worktree_path = self.worktree_path();
 
         if worktree_path.is_dir() {
-            println!("{}> Resetting existing worktree", self.name());
+            println!("{}> Resetting existing worktree", self.name);
 
             // TODO: consider including "-x" to remove ignored files. The downside of this is that
             // it will also remove build artifacts, and so prevent incremental reuse there.
@@ -141,7 +132,7 @@ impl Example {
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
             run_git(&worktree_path, &["checkout", &self.base.revision]).await?;
         } else {
-            println!("{}> Creating worktree", self.name());
+            println!("{}> Creating worktree", self.name);
 
             let worktree_path_string = worktree_path.to_string_lossy().to_string();
 
@@ -187,8 +178,6 @@ impl Example {
         let thread_store =
             ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
         let this = self.clone();
-
-        let name = self.name();
 
         cx.spawn(async move |cx| {
             let worktree = worktree.await?;
@@ -239,7 +228,7 @@ impl Example {
 
                 // TODO: remove this once the diagnostics tool waits for new diagnostics
                 cx.background_executor().timer(Duration::new(5, 0)).await;
-                wait_for_lang_server(&lsp_store, name.clone(), cx).await?;
+                wait_for_lang_server(&lsp_store, this.name.clone(), cx).await?;
 
                 lsp_store.update(cx, |lsp_store, cx| {
                     lsp_open_handle.update(cx, |buffer, cx| {
@@ -288,7 +277,7 @@ impl Example {
 
             let _subscription = cx.subscribe(&thread, {
                 let log_file = this.log_file.clone();
-                let name = name.clone();
+                let name = this.name.clone();
                 move |thread, event: &ThreadEvent, cx| {
                     let mut log_file = log_file.lock().unwrap();
 
@@ -360,7 +349,7 @@ impl Example {
             rx.await??;
 
             if let Some((_, lsp_store)) = lsp_open_handle_and_store.as_ref() {
-                wait_for_lang_server(lsp_store, name.clone(), cx).await?;
+                wait_for_lang_server(lsp_store, this.name.clone(), cx).await?;
             }
 
             let repository_diff = this.repository_diff().await?;

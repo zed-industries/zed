@@ -6,6 +6,7 @@ use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
 use dap::client::SessionId;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
+use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, proto::serialize_anchor as serialize_text_anchor};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -289,9 +290,16 @@ impl BreakpointStore {
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if breakpoint.1.message.is_some() {
-                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
-                        &breakpoint.0 != other_pos && other.message.is_none()
-                    })
+                    if let Some(position) = breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
+                        .map(|res| res.0)
+                    {
+                        breakpoint_set.breakpoints.remove(position);
+                    } else {
+                        log::error!("Failed to find position of breakpoint to delete")
+                    }
                 }
             }
             BreakpointEditAction::EditHitCondition(hit_condition) => {
@@ -316,9 +324,16 @@ impl BreakpointStore {
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if breakpoint.1.hit_condition.is_some() {
-                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
-                        &breakpoint.0 != other_pos && other.hit_condition.is_none()
-                    })
+                    if let Some(position) = breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
+                        .map(|res| res.0)
+                    {
+                        breakpoint_set.breakpoints.remove(position);
+                    } else {
+                        log::error!("Failed to find position of breakpoint to delete")
+                    }
                 }
             }
             BreakpointEditAction::EditCondition(condition) => {
@@ -343,9 +358,16 @@ impl BreakpointStore {
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if breakpoint.1.condition.is_some() {
-                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
-                        &breakpoint.0 != other_pos && other.condition.is_none()
-                    })
+                    if let Some(position) = breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
+                        .map(|res| res.0)
+                    {
+                        breakpoint_set.breakpoints.remove(position);
+                    } else {
+                        log::error!("Failed to find position of breakpoint to delete")
+                    }
                 }
             }
         }

@@ -8,13 +8,11 @@ struct HelloWorld {}
 impl Render for HelloWorld {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .font_family(".SystemUIFont")
             .bg(gpui::white())
             .flex()
             .flex_col()
             .gap_2()
             .p_4()
-            .gap_4()
             .size_full()
             .child(div().child("Text left"))
             .child(div().text_center().child("Text center"))
@@ -72,24 +70,6 @@ impl Render for HelloWorld {
                             .text_right()
                             .child("100%"),
                     ),
-            )
-            .child(
-                div()
-                    .id("Text Link")
-                    .text_color(gpui::blue())
-                    .cursor_pointer()
-                    .active(|this| {
-                        this.text_color(gpui::white())
-                            .bg(gpui::blue())
-                            .text_decoration_1()
-                            .text_decoration_wavy()
-                    })
-                    .hover(|this| {
-                        this.text_color(gpui::rgb(0x973717))
-                            .bg(gpui::yellow())
-                            .text_decoration_1()
-                    })
-                    .child("Text with hover, active styles"),
             )
     }
 }

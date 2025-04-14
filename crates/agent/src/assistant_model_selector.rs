@@ -80,17 +80,16 @@ impl AssistantModelSelector {
 
 impl Render for AssistantModelSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let model_registry = LanguageModelRegistry::read_global(cx);
+        let focus_handle = self.focus_handle.clone();
 
+        let model_registry = LanguageModelRegistry::read_global(cx);
         let model = match self.model_type {
             ModelType::Default => model_registry.default_model(),
             ModelType::InlineAssistant => model_registry.inline_assistant_model(),
         };
-
-        let focus_handle = self.focus_handle.clone();
-        let model_name = match model {
-            Some(model) => model.model.name().0,
-            _ => SharedString::from("No model selected"),
+        let (model_name, model_icon) = match model {
+            Some(model) => (model.model.name().0, Some(model.provider.icon())),
+            _ => (SharedString::from("No model selected"), None),
         };
 
         LanguageModelSelectorPopoverMenu::new(
@@ -100,10 +99,16 @@ impl Render for AssistantModelSelector {
                 .child(
                     h_flex()
                         .gap_0p5()
+                        .children(
+                            model_icon.map(|icon| {
+                                Icon::new(icon).color(Color::Muted).size(IconSize::Small)
+                            }),
+                        )
                         .child(
                             Label::new(model_name)
                                 .size(LabelSize::Small)
-                                .color(Color::Muted),
+                                .color(Color::Muted)
+                                .ml_1(),
                         )
                         .child(
                             Icon::new(IconName::ChevronDown)

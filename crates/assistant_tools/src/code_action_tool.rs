@@ -2,13 +2,15 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language::{self, Anchor, Buffer, ToPointUtf16};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{self, LspAction, Project};
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{ops::Range, sync::Arc};
 use ui::IconName;
+
+use crate::schema::json_schema_for;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CodeActionToolInput {
@@ -95,12 +97,8 @@ impl Tool for CodeActionTool {
         IconName::Wand
     }
 
-    fn input_schema(
-        &self,
-        _format: language_model::LanguageModelToolSchemaFormat,
-    ) -> serde_json::Value {
-        let schema = schemars::schema_for!(CodeActionToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        json_schema_for::<CodeActionToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

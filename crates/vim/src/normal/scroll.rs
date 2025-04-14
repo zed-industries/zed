@@ -55,6 +55,7 @@ impl Vim {
         by: fn(c: Option<f32>) -> ScrollAmount,
     ) {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
+        Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             scroll_editor(editor, move_cursor, &amount, window, cx)
         });
