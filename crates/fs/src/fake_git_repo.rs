@@ -5,8 +5,8 @@ use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint,
-        PushOptions, Remote, RepoPath, ResetMode,
+        AskPassDelegate, Branch, CommitDetails, CommitOptions, GitRepository,
+        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -21,11 +21,12 @@ pub struct FakeGitRepository {
     pub(crate) fs: Arc<FakeFs>,
     pub(crate) executor: BackgroundExecutor,
     pub(crate) dot_git_path: PathBuf,
+    pub(crate) repository_dir_path: PathBuf,
+    pub(crate) common_dir_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
-    pub path: PathBuf,
     pub event_emitter: smol::channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
@@ -37,9 +38,8 @@ pub struct FakeGitRepositoryState {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(path: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(event_emitter: smol::channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
-            path,
             event_emitter,
             head_contents: Default::default(),
             index_contents: Default::default(),
@@ -53,15 +53,6 @@ impl FakeGitRepositoryState {
 }
 
 impl FakeGitRepository {
-    fn with_state<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce(&mut FakeGitRepositoryState) -> T,
-    {
-        self.fs
-            .with_git_state(&self.dot_git_path, false, f)
-            .unwrap()
-    }
-
     fn with_state_async<F, T>(&self, write: bool, f: F) -> BoxFuture<'static, Result<T>>
     where
         F: 'static + Send + FnOnce(&mut FakeGitRepositoryState) -> Result<T>,
@@ -172,11 +163,11 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn path(&self) -> PathBuf {
-        self.with_state(|state| state.path.clone())
+        self.repository_dir_path.clone()
     }
 
     fn main_repository_path(&self) -> PathBuf {
-        self.path()
+        self.common_dir_path.clone()
     }
 
     fn merge_message(&self) -> BoxFuture<Option<String>> {
@@ -207,8 +198,9 @@ impl GitRepository for FakeGitRepository {
             .files()
             .iter()
             .filter_map(|path| {
+                // TODO better simulate git status output in the case of submodules and worktrees
                 let repo_path = path.strip_prefix(workdir_path).ok()?;
-                let mut is_ignored = false;
+                let mut is_ignored = repo_path.starts_with(".git");
                 for ignore in &ignores {
                     match ignore.matched_path_or_any_parents(path, false) {
                         ignore::Match::None => {}
@@ -373,6 +365,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
+        _options: CommitOptions,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()

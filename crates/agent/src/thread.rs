@@ -2,6 +2,7 @@ use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
@@ -14,10 +15,11 @@ use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    PaymentRequiredError, Role, StopReason, TokenUsage,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
+    Role, StopReason, TokenUsage,
 };
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
@@ -227,7 +229,7 @@ pub struct TotalTokenUsage {
     pub ratio: TokenUsageRatio,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum TokenUsageRatio {
     #[default]
     Normal,
@@ -259,8 +261,18 @@ pub struct Thread {
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
+    exceeded_window_error: Option<ExceededWindowError>,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
+    last_auto_capture_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExceededWindowError {
+    /// Model used when last message exceeded context window
+    model_id: LanguageModelId,
+    /// Token count including last message
+    token_count: usize,
 }
 
 impl Thread {
@@ -299,8 +311,10 @@ impl Thread {
                     .shared()
             },
             cumulative_token_usage: TokenUsage::default(),
+            exceeded_window_error: None,
             feedback: None,
             message_feedback: HashMap::default(),
+            last_auto_capture_at: None,
         }
     }
 
@@ -364,8 +378,10 @@ impl Thread {
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
+            exceeded_window_error: None,
             feedback: None,
             message_feedback: HashMap::default(),
+            last_auto_capture_at: None,
         }
     }
 
@@ -813,6 +829,7 @@ impl Thread {
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage.clone(),
                 detailed_summary_state: this.detailed_summary_state.clone(),
+                exceeded_window_error: this.exceeded_window_error.clone(),
             })
         })
     }
@@ -1125,6 +1142,20 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::MaxMonthlySpendReached,
                                 ));
+                            } else if let Some(known_error) =
+                                error.downcast_ref::<LanguageModelKnownError>()
+                            {
+                                match known_error {
+                                    LanguageModelKnownError::ContextWindowLimitExceeded {
+                                        tokens,
+                                    } => {
+                                        thread.exceeded_window_error = Some(ExceededWindowError {
+                                            model_id: model.id(),
+                                            token_count: *tokens,
+                                        });
+                                        cx.notify();
+                                    }
+                                }
                             } else {
                                 let error_message = error
                                     .chain()
@@ -1780,64 +1811,45 @@ impl Thread {
         &self.project
     }
 
-    pub fn cumulative_token_usage(&self) -> TokenUsage {
-        self.cumulative_token_usage.clone()
-    }
-
-    pub fn auto_capture_telemetry(&self, cx: &mut Context<Self>) {
-        static mut LAST_CAPTURE: Option<std::time::Instant> = None;
-        let now = std::time::Instant::now();
-        let should_check = unsafe {
-            if let Some(last) = LAST_CAPTURE {
-                if now.duration_since(last).as_secs() < 10 {
-                    return;
-                }
-            }
-            LAST_CAPTURE = Some(now);
-            true
-        };
-
-        if !should_check {
+    pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
+        if !cx.has_flag::<feature_flags::ThreadAutoCapture>() {
             return;
         }
 
-        let feature_flag_enabled = cx.has_flag::<feature_flags::ThreadAutoCapture>();
-
-        if cfg!(debug_assertions) {
-            if !feature_flag_enabled {
+        let now = Instant::now();
+        if let Some(last) = self.last_auto_capture_at {
+            if now.duration_since(last).as_secs() < 10 {
                 return;
             }
         }
 
-        let thread_id = self.id().clone();
+        self.last_auto_capture_at = Some(now);
 
-        let github_handle = self
+        let thread_id = self.id().clone();
+        let github_login = self
             .project
             .read(cx)
             .user_store()
             .read(cx)
             .current_user()
             .map(|user| user.github_login.clone());
-
         let client = self.project.read(cx).client().clone();
+        let serialize_task = self.serialize(cx);
 
-        let serialized_thread = self.serialize(cx);
-
-        cx.foreground_executor()
+        cx.background_executor()
             .spawn(async move {
-                if let Ok(serialized_thread) = serialized_thread.await {
-                    let thread_data = serde_json::to_value(serialized_thread)
-                        .unwrap_or_else(|_| serde_json::Value::Null);
+                if let Ok(serialized_thread) = serialize_task.await {
+                    if let Ok(thread_data) = serde_json::to_value(serialized_thread) {
+                        telemetry::event!(
+                            "Agent Thread Auto-Captured",
+                            thread_id = thread_id.to_string(),
+                            thread_data = thread_data,
+                            auto_capture_reason = "tracked_user",
+                            github_login = github_login
+                        );
 
-                    telemetry::event!(
-                        "Agent Thread AutoCaptured",
-                        thread_id = thread_id.to_string(),
-                        thread_data = thread_data,
-                        auto_capture_reason = "tracked_user",
-                        github_handle = github_handle
-                    );
-
-                    client.telemetry().flush_events();
+                        client.telemetry().flush_events();
+                    }
                 }
             })
             .detach();
@@ -1850,6 +1862,16 @@ impl Thread {
         };
 
         let max = model.model.max_token_count();
+
+        if let Some(exceeded_error) = &self.exceeded_window_error {
+            if model.model.id() == exceeded_error.model_id {
+                return TotalTokenUsage {
+                    total: exceeded_error.token_count,
+                    max,
+                    ratio: TokenUsageRatio::Exceeded,
+                };
+            }
+        }
 
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")

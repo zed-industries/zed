@@ -2070,6 +2070,20 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
+
+    let (scan1_complete, scan2_complete) = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx);
+        let worktree1 = worktrees.next().unwrap();
+        let worktree2 = worktrees.next().unwrap();
+        (
+            worktree1.read(cx).as_local().unwrap().scan_complete(),
+            worktree2.read(cx).as_local().unwrap().scan_complete(),
+        )
+    });
+    scan1_complete.await;
+    scan2_complete.await;
+    cx.run_until_parked();
+
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();

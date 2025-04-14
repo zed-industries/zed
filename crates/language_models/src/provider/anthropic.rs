@@ -13,8 +13,9 @@ use gpui::{
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, MessageContent, RateLimiter, Role,
+    LanguageModelKnownError, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, MessageContent,
+    RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -192,6 +193,16 @@ impl AnthropicLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: anthropic::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(AnthropicModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }) as Arc<dyn LanguageModel>
+    }
 }
 
 impl LanguageModelProviderState for AnthropicLanguageModelProvider {
@@ -224,6 +235,16 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
         }))
+    }
+
+    fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        [
+            anthropic::Model::Claude3_7Sonnet,
+            anthropic::Model::Claude3_7SonnetThinking,
+        ]
+        .into_iter()
+        .map(|model| self.create_language_model(model))
+        .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -266,15 +287,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(AnthropicModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    state: self.state.clone(),
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -442,7 +455,12 @@ impl LanguageModel for AnthropicModel {
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
+            let response = request
+                .await
+                .map_err(|err| match err.downcast::<AnthropicError>() {
+                    Ok(anthropic_err) => anthropic_err_to_anyhow(anthropic_err),
+                    Err(err) => anyhow!(err),
+                })?;
             Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -734,7 +752,7 @@ pub fn map_to_language_model_completion_events(
                         _ => {}
                     },
                     Err(err) => {
-                        return Some((vec![Err(anyhow!(err))], state));
+                        return Some((vec![Err(anthropic_err_to_anyhow(err))], state));
                     }
                 }
             }
@@ -743,6 +761,16 @@ pub fn map_to_language_model_completion_events(
         },
     )
     .flat_map(futures::stream::iter)
+}
+
+pub fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {
+    if let AnthropicError::ApiError(api_err) = &err {
+        if let Some(tokens) = api_err.match_window_exceeded() {
+            return anyhow!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens });
+        }
+    }
+
+    anyhow!(err)
 }
 
 /// Updates usage data by preferring counts from `new`.

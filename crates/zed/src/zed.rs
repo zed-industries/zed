@@ -26,9 +26,9 @@ use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
-    Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal,
-    SharedString, Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions,
-    actions, point, px,
+    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
+    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, point,
+    px,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -1386,7 +1386,12 @@ fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
     load_default_keymap(cx);
     cx.bind_keys(user_key_bindings);
     cx.set_menus(app_menus());
-    cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
+    // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
+    #[cfg(not(target_os = "windows"))]
+    cx.set_dock_menu(vec![gpui::MenuItem::action(
+        "New Window",
+        workspace::NewWindow,
+    )]);
 }
 
 pub fn load_default_keymap(cx: &mut App) {

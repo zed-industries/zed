@@ -396,14 +396,26 @@ pub enum SelectMode {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
-    SingleLine { auto_width: bool },
-    AutoHeight { max_lines: usize },
-    Full,
+    SingleLine {
+        auto_width: bool,
+    },
+    AutoHeight {
+        max_lines: usize,
+    },
+    Full {
+        /// When set to `true`, the editor will scale its UI elements with the buffer font size.
+        scale_ui_elements_with_buffer_font_size: bool,
+        /// When set to `true`, the editor will render a background for the active line.
+        show_active_line_background: bool,
+    },
 }
 
 impl EditorMode {
     pub fn full() -> Self {
-        Self::Full
+        Self::Full {
+            scale_ui_elements_with_buffer_font_size: true,
+            show_active_line_background: true,
+        }
     }
 
     pub fn is_full(&self) -> bool {
@@ -1681,6 +1693,7 @@ impl Editor {
         self.mouse_context_menu = Some(MouseContextMenu::new(
             crate::mouse_context_menu::MenuPosition::PinnedToScreen(position),
             context_menu,
+            None,
             window,
             cx,
         ));
@@ -4661,61 +4674,69 @@ impl Editor {
             snippet = None;
             new_text = completion.new_text.clone();
         };
-        let selections = self.selections.all::<usize>(cx);
 
         let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);
         let buffer = buffer_handle.read(cx);
-        let old_text = buffer
-            .text_for_range(replace_range.clone())
-            .collect::<String>();
-
-        let newest_selection = self.selections.newest_anchor();
-        if newest_selection.start.buffer_id != Some(buffer_handle.read(cx).remote_id()) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let replace_range_multibuffer = {
+            let excerpt = snapshot
+                .excerpt_containing(self.selections.newest_anchor().range())
+                .unwrap();
+            let multibuffer_anchor = snapshot
+                .anchor_in_excerpt(excerpt.id(), buffer.anchor_before(replace_range.start))
+                .unwrap()
+                ..snapshot
+                    .anchor_in_excerpt(excerpt.id(), buffer.anchor_before(replace_range.end))
+                    .unwrap();
+            multibuffer_anchor.start.to_offset(&snapshot)
+                ..multibuffer_anchor.end.to_offset(&snapshot)
+        };
+        let newest_anchor = self.selections.newest_anchor();
+        if newest_anchor.head().buffer_id != Some(buffer.remote_id()) {
             return None;
         }
 
-        let lookbehind = newest_selection
+        let old_text = buffer
+            .text_for_range(replace_range.clone())
+            .collect::<String>();
+        let lookbehind = newest_anchor
             .start
             .text_anchor
             .to_offset(buffer)
             .saturating_sub(replace_range.start);
         let lookahead = replace_range
             .end
-            .saturating_sub(newest_selection.end.text_anchor.to_offset(buffer));
-        let mut common_prefix_len = 0;
-        for (a, b) in old_text.chars().zip(new_text.chars()) {
-            if a == b {
-                common_prefix_len += a.len_utf8();
-            } else {
-                break;
-            }
-        }
+            .saturating_sub(newest_anchor.end.text_anchor.to_offset(buffer));
+        let prefix = &old_text[..old_text.len() - lookahead];
+        let suffix = &old_text[lookbehind..];
 
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let mut range_to_replace: Option<Range<usize>> = None;
-        let mut ranges = Vec::new();
+        let selections = self.selections.all::<usize>(cx);
+        let mut edits = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
+
         for selection in &selections {
-            if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
-                let start = selection.start.saturating_sub(lookbehind);
-                let end = selection.end + lookahead;
-                if selection.id == newest_selection.id {
-                    range_to_replace = Some(start + common_prefix_len..end);
-                }
-                ranges.push(start + common_prefix_len..end);
+            let edit = if selection.id == newest_anchor.id {
+                (replace_range_multibuffer.clone(), new_text.as_str())
             } else {
-                common_prefix_len = 0;
-                ranges.clear();
-                ranges.extend(selections.iter().map(|s| {
-                    if s.id == newest_selection.id {
-                        range_to_replace = Some(replace_range.clone());
-                        replace_range.clone()
-                    } else {
-                        s.start..s.end
+                let mut range = selection.range();
+                let mut text = new_text.as_str();
+
+                // if prefix is present, don't duplicate it
+                if snapshot.contains_str_at(range.start.saturating_sub(lookbehind), prefix) {
+                    text = &new_text[lookbehind..];
+
+                    // if suffix is also present, mimic the newest cursor and replace it
+                    if selection.id != newest_anchor.id
+                        && snapshot.contains_str_at(range.end, suffix)
+                    {
+                        range.end += lookahead;
                     }
-                }));
-                break;
-            }
+                }
+                (range, text)
+            };
+
+            edits.push(edit);
+
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.head());
                 let end_anchor = snapshot.anchor_after(selection.tail());
@@ -4723,45 +4744,30 @@ impl Editor {
                     .linked_editing_ranges_for(start_anchor.text_anchor..end_anchor.text_anchor, cx)
                 {
                     for (buffer, edits) in ranges {
-                        linked_edits.entry(buffer.clone()).or_default().extend(
-                            edits
-                                .into_iter()
-                                .map(|range| (range, new_text[common_prefix_len..].to_owned())),
-                        );
+                        linked_edits
+                            .entry(buffer.clone())
+                            .or_default()
+                            .extend(edits.into_iter().map(|range| (range, new_text.to_owned())));
                     }
                 }
             }
         }
-        let text = &new_text[common_prefix_len..];
 
-        let utf16_range_to_replace = range_to_replace.map(|range| {
-            let newest_selection = self.selections.newest::<OffsetUtf16>(cx).range();
-            let selection_start_utf16 = newest_selection.start.0 as isize;
-
-            range.start.to_offset_utf16(&snapshot).0 as isize - selection_start_utf16
-                ..range.end.to_offset_utf16(&snapshot).0 as isize - selection_start_utf16
-        });
         cx.emit(EditorEvent::InputHandled {
-            utf16_range_to_replace,
-            text: text.into(),
+            utf16_range_to_replace: None,
+            text: new_text.clone().into(),
         });
 
         self.transact(window, cx, |this, window, cx| {
             if let Some(mut snippet) = snippet {
-                snippet.text = text.to_string();
-                for tabstop in snippet
-                    .tabstops
-                    .iter_mut()
-                    .flat_map(|tabstop| tabstop.ranges.iter_mut())
-                {
-                    tabstop.start -= common_prefix_len as isize;
-                    tabstop.end -= common_prefix_len as isize;
-                }
-
+                snippet.text = new_text.to_string();
+                let ranges = edits
+                    .iter()
+                    .map(|(range, _)| range.clone())
+                    .collect::<Vec<_>>();
                 this.insert_snippet(&ranges, snippet, window, cx).log_err();
             } else {
                 this.buffer.update(cx, |buffer, cx| {
-                    let edits = ranges.iter().map(|range| (range.clone(), text));
                     let auto_indent = if completion.insert_text_mode == Some(InsertTextMode::AS_IS)
                     {
                         None
@@ -4821,6 +4827,89 @@ impl Editor {
         }))
     }
 
+    fn prepare_code_actions_task(
+        &mut self,
+        action: &ToggleCodeActions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<(Entity<Buffer>, CodeActionContents)>> {
+        let snapshot = self.snapshot(window, cx);
+        let multibuffer_point = action
+            .deployed_from_indicator
+            .map(|row| DisplayPoint::new(row, 0).to_point(&snapshot))
+            .unwrap_or_else(|| self.selections.newest::<Point>(cx).head());
+
+        let Some((buffer, buffer_row)) = snapshot
+            .buffer_snapshot
+            .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
+            .and_then(|(buffer_snapshot, range)| {
+                self.buffer
+                    .read(cx)
+                    .buffer(buffer_snapshot.remote_id())
+                    .map(|buffer| (buffer, range.start.row))
+            })
+        else {
+            return Task::ready(None);
+        };
+
+        let (_, code_actions) = self
+            .available_code_actions
+            .clone()
+            .and_then(|(location, code_actions)| {
+                let snapshot = location.buffer.read(cx).snapshot();
+                let point_range = location.range.to_point(&snapshot);
+                let point_range = point_range.start.row..=point_range.end.row;
+                if point_range.contains(&buffer_row) {
+                    Some((location, code_actions))
+                } else {
+                    None
+                }
+            })
+            .unzip();
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let tasks = self
+            .tasks
+            .get(&(buffer_id, buffer_row))
+            .map(|t| Arc::new(t.to_owned()));
+
+        if tasks.is_none() && code_actions.is_none() {
+            return Task::ready(None);
+        }
+
+        self.completion_tasks.clear();
+        self.discard_inline_completion(false, cx);
+
+        let task_context = tasks
+            .as_ref()
+            .zip(self.project.clone())
+            .map(|(tasks, project)| {
+                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
+            });
+
+        cx.spawn_in(window, async move |_, _| {
+            let task_context = match task_context {
+                Some(task_context) => task_context.await,
+                None => None,
+            };
+            let resolved_tasks = tasks.zip(task_context).map(|(tasks, task_context)| {
+                Rc::new(ResolvedTasks {
+                    templates: tasks.resolve(&task_context).collect(),
+                    position: snapshot
+                        .buffer_snapshot
+                        .anchor_before(Point::new(multibuffer_point.row, tasks.column)),
+                })
+            });
+            Some((
+                buffer,
+                CodeActionContents {
+                    actions: code_actions,
+                    tasks: resolved_tasks,
+                },
+            ))
+        })
+    }
+
     pub fn toggle_code_actions(
         &mut self,
         action: &ToggleCodeActions,
@@ -4841,113 +4930,58 @@ impl Editor {
             }
         }
         drop(context_menu);
-        let snapshot = self.snapshot(window, cx);
+
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         let action = action.clone();
+
         cx.spawn_in(window, async move |editor, cx| {
             while let Some(prev_task) = task {
                 prev_task.await.log_err();
                 task = editor.update(cx, |this, _| this.code_actions_task.take())?;
             }
 
-            let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
-                if editor.focus_handle.is_focused(window) {
-                    let multibuffer_point = action
-                        .deployed_from_indicator
-                        .map(|row| DisplayPoint::new(row, 0).to_point(&snapshot))
-                        .unwrap_or_else(|| editor.selections.newest::<Point>(cx).head());
-                    let (buffer, buffer_row) = snapshot
-                        .buffer_snapshot
-                        .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
-                        .and_then(|(buffer_snapshot, range)| {
-                            editor
-                                .buffer
-                                .read(cx)
-                                .buffer(buffer_snapshot.remote_id())
-                                .map(|buffer| (buffer, range.start.row))
-                        })?;
-                    let (_, code_actions) = editor
-                        .available_code_actions
-                        .clone()
-                        .and_then(|(location, code_actions)| {
-                            let snapshot = location.buffer.read(cx).snapshot();
-                            let point_range = location.range.to_point(&snapshot);
-                            let point_range = point_range.start.row..=point_range.end.row;
-                            if point_range.contains(&buffer_row) {
-                                Some((location, code_actions))
-                            } else {
-                                None
-                            }
-                        })
-                        .unzip();
-                    let buffer_id = buffer.read(cx).remote_id();
-                    let tasks = editor
-                        .tasks
-                        .get(&(buffer_id, buffer_row))
-                        .map(|t| Arc::new(t.to_owned()));
-                    if tasks.is_none() && code_actions.is_none() {
-                        return None;
-                    }
-
-                    editor.completion_tasks.clear();
-                    editor.discard_inline_completion(false, cx);
-                    let task_context =
-                        tasks
-                            .as_ref()
-                            .zip(editor.project.clone())
-                            .map(|(tasks, project)| {
-                                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
-                            });
-
-                    let debugger_flag = cx.has_flag::<Debugger>();
-
-                    Some(cx.spawn_in(window, async move |editor, cx| {
-                        let task_context = match task_context {
-                            Some(task_context) => task_context.await,
-                            None => None,
-                        };
-                        let resolved_tasks =
-                            tasks.zip(task_context).map(|(tasks, task_context)| {
-                                Rc::new(ResolvedTasks {
-                                    templates: tasks.resolve(&task_context).collect(),
-                                    position: snapshot.buffer_snapshot.anchor_before(Point::new(
-                                        multibuffer_point.row,
-                                        tasks.column,
-                                    )),
-                                })
-                            });
-                        let spawn_straight_away = resolved_tasks.as_ref().map_or(false, |tasks| {
-                            tasks
-                                .templates
-                                .iter()
-                                .filter(|task| {
-                                    if matches!(task.1.task_type(), task::TaskType::Debug(_)) {
-                                        debugger_flag
-                                    } else {
-                                        true
-                                    }
-                                })
-                                .count()
-                                == 1
-                        }) && code_actions
-                            .as_ref()
-                            .map_or(true, |actions| actions.is_empty());
+            let context_menu_task = editor.update_in(cx, |editor, window, cx| {
+                if !editor.focus_handle.is_focused(window) {
+                    return Some(Task::ready(Ok(())));
+                }
+                let debugger_flag = cx.has_flag::<Debugger>();
+                let code_actions_task = editor.prepare_code_actions_task(&action, window, cx);
+                Some(cx.spawn_in(window, async move |editor, cx| {
+                    if let Some((buffer, code_action_contents)) = code_actions_task.await {
+                        let spawn_straight_away =
+                            code_action_contents.tasks.as_ref().map_or(false, |tasks| {
+                                tasks
+                                    .templates
+                                    .iter()
+                                    .filter(|task| {
+                                        if matches!(task.1.task_type(), task::TaskType::Debug(_)) {
+                                            debugger_flag
+                                        } else {
+                                            true
+                                        }
+                                    })
+                                    .count()
+                                    == 1
+                            }) && code_action_contents
+                                .actions
+                                .as_ref()
+                                .map_or(true, |actions| actions.is_empty());
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
-                                    actions: CodeActionContents {
-                                        tasks: resolved_tasks,
-                                        actions: code_actions,
-                                    },
+                                    actions: code_action_contents,
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
                                     deployed_from_indicator,
                                 }));
                             if spawn_straight_away {
                                 if let Some(task) = editor.confirm_code_action(
-                                    &ConfirmCodeAction { item_ix: Some(0) },
+                                    &ConfirmCodeAction {
+                                        item_ix: Some(0),
+                                        from_mouse_context_menu: false,
+                                    },
                                     window,
                                     cx,
                                 ) {
@@ -4962,12 +4996,12 @@ impl Editor {
                         } else {
                             Ok(())
                         }
-                    }))
-                } else {
-                    Some(Task::ready(Ok(())))
-                }
+                    } else {
+                        Ok(())
+                    }
+                }))
             })?;
-            if let Some(task) = spawned_test_task {
+            if let Some(task) = context_menu_task {
                 task.await?;
             }
 
@@ -4984,17 +5018,27 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
-        let actions_menu =
-            if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
-                menu
+        let (action, buffer) = if action.from_mouse_context_menu {
+            if let Some(menu) = self.mouse_context_menu.take() {
+                let code_action = menu.code_action?;
+                let index = action.item_ix?;
+                let action = code_action.actions.get(index)?;
+                (action, code_action.buffer)
             } else {
                 return None;
-            };
+            }
+        } else {
+            if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
+                let action_ix = action.item_ix.unwrap_or(menu.selected_item);
+                let action = menu.actions.get(action_ix)?;
+                let buffer = menu.buffer;
+                (action, buffer)
+            } else {
+                return None;
+            }
+        };
 
-        let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
-        let action = actions_menu.actions.get(action_ix)?;
         let title = action.label();
-        let buffer = actions_menu.buffer;
         let workspace = self.workspace()?;
 
         match action {
@@ -8791,6 +8835,7 @@ impl Editor {
             self,
             source,
             clicked_point,
+            None,
             context_menu,
             window,
             cx,
@@ -8842,15 +8887,6 @@ impl Editor {
         });
     }
 
-    fn breakpoint_at_cursor_head(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<(Anchor, Breakpoint)> {
-        let cursor_position: Point = self.selections.newest(cx).head();
-        self.breakpoint_at_row(cursor_position.row, window, cx)
-    }
-
     pub(crate) fn breakpoint_at_row(
         &self,
         row: u32,
@@ -8860,6 +8896,15 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let breakpoint_position = snapshot.buffer_snapshot.anchor_before(Point::new(row, 0));
 
+        self.breakpoint_at_anchor(breakpoint_position, &snapshot, cx)
+    }
+
+    pub(crate) fn breakpoint_at_anchor(
+        &self,
+        breakpoint_position: Anchor,
+        snapshot: &EditorSnapshot,
+        cx: &mut Context<Self>,
+    ) -> Option<(Anchor, Breakpoint)> {
         let project = self.project.clone()?;
 
         let buffer_id = breakpoint_position.buffer_id.or_else(|| {
@@ -8917,29 +8962,57 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (anchor, bp) = self
-            .breakpoint_at_cursor_head(window, cx)
-            .unwrap_or_else(|| {
-                let cursor_position: Point = self.selections.newest(cx).head();
-
-                let breakpoint_position = self
-                    .snapshot(window, cx)
-                    .display_snapshot
-                    .buffer_snapshot
-                    .anchor_after(Point::new(cursor_position.row, 0));
-
-                (
-                    breakpoint_position,
-                    Breakpoint {
-                        message: None,
-                        state: BreakpointState::Enabled,
-                        condition: None,
-                        hit_condition: None,
-                    },
-                )
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            let breakpoint = breakpoint.unwrap_or_else(|| Breakpoint {
+                message: None,
+                state: BreakpointState::Enabled,
+                condition: None,
+                hit_condition: None,
             });
 
-        self.add_edit_breakpoint_block(anchor, &bp, BreakpointPromptEditAction::Log, window, cx);
+            self.add_edit_breakpoint_block(
+                anchor,
+                &breakpoint,
+                BreakpointPromptEditAction::Log,
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn breakpoints_at_cursors(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<(Anchor, Option<Breakpoint>)> {
+        let snapshot = self.snapshot(window, cx);
+        let cursors = self
+            .selections
+            .disjoint_anchors()
+            .into_iter()
+            .map(|selection| {
+                let cursor_position: Point = selection.head().to_point(&snapshot.buffer_snapshot);
+
+                let breakpoint_position = self
+                    .breakpoint_at_row(cursor_position.row, window, cx)
+                    .map(|bp| bp.0)
+                    .unwrap_or_else(|| {
+                        snapshot
+                            .display_snapshot
+                            .buffer_snapshot
+                            .anchor_after(Point::new(cursor_position.row, 0))
+                    });
+
+                let breakpoint = self
+                    .breakpoint_at_anchor(breakpoint_position, &snapshot, cx)
+                    .map(|(anchor, breakpoint)| (anchor, Some(breakpoint)));
+
+                breakpoint.unwrap_or_else(|| (breakpoint_position, None))
+            })
+            // There might be multiple cursors on the same line; all of them should have the same anchors though as their breakpoints positions, which makes it possible to sort and dedup the list.
+            .collect::<HashMap<Anchor, _>>();
+
+        cursors.into_iter().collect()
     }
 
     pub fn enable_breakpoint(
@@ -8948,15 +9021,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            if breakpoint.is_disabled() {
-                self.edit_breakpoint_at_anchor(
-                    anchor,
-                    breakpoint,
-                    BreakpointEditAction::InvertState,
-                    cx,
-                );
-            }
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_disabled()) else {
+                continue;
+            };
+            self.edit_breakpoint_at_anchor(
+                anchor,
+                breakpoint,
+                BreakpointEditAction::InvertState,
+                cx,
+            );
         }
     }
 
@@ -8966,15 +9040,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            if breakpoint.is_enabled() {
-                self.edit_breakpoint_at_anchor(
-                    anchor,
-                    breakpoint,
-                    BreakpointEditAction::InvertState,
-                    cx,
-                );
-            }
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            let Some(breakpoint) = breakpoint.filter(|breakpoint| breakpoint.is_enabled()) else {
+                continue;
+            };
+            self.edit_breakpoint_at_anchor(
+                anchor,
+                breakpoint,
+                BreakpointEditAction::InvertState,
+                cx,
+            );
         }
     }
 
@@ -8984,25 +9059,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let edit_action = BreakpointEditAction::Toggle;
-
-        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            self.edit_breakpoint_at_anchor(anchor, breakpoint, edit_action, cx);
-        } else {
-            let cursor_position: Point = self.selections.newest(cx).head();
-
-            let breakpoint_position = self
-                .snapshot(window, cx)
-                .display_snapshot
-                .buffer_snapshot
-                .anchor_after(Point::new(cursor_position.row, 0));
-
-            self.edit_breakpoint_at_anchor(
-                breakpoint_position,
-                Breakpoint::new_standard(),
-                edit_action,
-                cx,
-            );
+        for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
+            if let Some(breakpoint) = breakpoint {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    breakpoint,
+                    BreakpointEditAction::Toggle,
+                    cx,
+                );
+            } else {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    Breakpoint::new_standard(),
+                    BreakpointEditAction::Toggle,
+                    cx,
+                );
+            }
         }
     }
 
@@ -11983,6 +12055,54 @@ impl Editor {
                 });
                 self.select_previous(action, window, cx)?;
             }
+        }
+        Ok(())
+    }
+
+    pub fn find_next_match(
+        &mut self,
+        _: &FindNextMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let selections = self.selections.disjoint_anchors();
+        match selections.first() {
+            Some(first) if selections.len() >= 2 => {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select_ranges([first.range()]);
+                });
+            }
+            _ => self.select_next(
+                &SelectNext {
+                    replace_newest: true,
+                },
+                window,
+                cx,
+            )?,
+        }
+        Ok(())
+    }
+
+    pub fn find_previous_match(
+        &mut self,
+        _: &FindPreviousMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let selections = self.selections.disjoint_anchors();
+        match selections.last() {
+            Some(last) if selections.len() >= 2 => {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select_ranges([last.range()]);
+                });
+            }
+            _ => self.select_previous(
+                &SelectPrevious {
+                    replace_newest: true,
+                },
+                window,
+                cx,
+            )?,
         }
         Ok(())
     }
@@ -18766,143 +18886,158 @@ fn snippet_completions(
     buffer_position: text::Anchor,
     cx: &mut App,
 ) -> Task<Result<Vec<Completion>>> {
-    let language = buffer.read(cx).language_at(buffer_position);
-    let language_name = language.as_ref().map(|language| language.lsp_id());
+    let languages = buffer.read(cx).languages_at(buffer_position);
     let snippet_store = project.snippets().read(cx);
-    let snippets = snippet_store.snippets_for(language_name, cx);
 
-    if snippets.is_empty() {
+    let scopes: Vec<_> = languages
+        .iter()
+        .filter_map(|language| {
+            let language_name = language.lsp_id();
+            let snippets = snippet_store.snippets_for(Some(language_name), cx);
+
+            if snippets.is_empty() {
+                None
+            } else {
+                Some((language.default_scope(), snippets))
+            }
+        })
+        .collect();
+
+    if scopes.is_empty() {
         return Task::ready(Ok(vec![]));
     }
+
     let snapshot = buffer.read(cx).text_snapshot();
     let chars: String = snapshot
         .reversed_chars_for_range(text::Anchor::MIN..buffer_position)
         .collect();
-
-    let scope = language.map(|language| language.default_scope());
     let executor = cx.background_executor().clone();
 
     cx.background_spawn(async move {
-        let classifier = CharClassifier::new(scope).for_completion(true);
-        let mut last_word = chars
-            .chars()
-            .take_while(|c| classifier.is_word(*c))
-            .collect::<String>();
-        last_word = last_word.chars().rev().collect();
+        let mut all_results: Vec<Completion> = Vec::new();
+        for (scope, snippets) in scopes.into_iter() {
+            let classifier = CharClassifier::new(Some(scope)).for_completion(true);
+            let mut last_word = chars
+                .chars()
+                .take_while(|c| classifier.is_word(*c))
+                .collect::<String>();
+            last_word = last_word.chars().rev().collect();
 
-        if last_word.is_empty() {
-            return Ok(vec![]);
-        }
+            if last_word.is_empty() {
+                return Ok(vec![]);
+            }
 
-        let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
-        let to_lsp = |point: &text::Anchor| {
-            let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
-            point_to_lsp(end)
-        };
-        let lsp_end = to_lsp(&buffer_position);
+            let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
+            let to_lsp = |point: &text::Anchor| {
+                let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
+                point_to_lsp(end)
+            };
+            let lsp_end = to_lsp(&buffer_position);
 
-        let candidates = snippets
-            .iter()
-            .enumerate()
-            .flat_map(|(ix, snippet)| {
-                snippet
-                    .prefix
-                    .iter()
-                    .map(move |prefix| StringMatchCandidate::new(ix, &prefix))
-            })
-            .collect::<Vec<StringMatchCandidate>>();
-
-        let mut matches = fuzzy::match_strings(
-            &candidates,
-            &last_word,
-            last_word.chars().any(|c| c.is_uppercase()),
-            100,
-            &Default::default(),
-            executor,
-        )
-        .await;
-
-        // Remove all candidates where the query's start does not match the start of any word in the candidate
-        if let Some(query_start) = last_word.chars().next() {
-            matches.retain(|string_match| {
-                split_words(&string_match.string).any(|word| {
-                    // Check that the first codepoint of the word as lowercase matches the first
-                    // codepoint of the query as lowercase
-                    word.chars()
-                        .flat_map(|codepoint| codepoint.to_lowercase())
-                        .zip(query_start.to_lowercase())
-                        .all(|(word_cp, query_cp)| word_cp == query_cp)
+            let candidates = snippets
+                .iter()
+                .enumerate()
+                .flat_map(|(ix, snippet)| {
+                    snippet
+                        .prefix
+                        .iter()
+                        .map(move |prefix| StringMatchCandidate::new(ix, &prefix))
                 })
-            });
-        }
+                .collect::<Vec<StringMatchCandidate>>();
 
-        let matched_strings = matches
-            .into_iter()
-            .map(|m| m.string)
-            .collect::<HashSet<_>>();
+            let mut matches = fuzzy::match_strings(
+                &candidates,
+                &last_word,
+                last_word.chars().any(|c| c.is_uppercase()),
+                100,
+                &Default::default(),
+                executor.clone(),
+            )
+            .await;
 
-        let result: Vec<Completion> = snippets
-            .into_iter()
-            .filter_map(|snippet| {
-                let matching_prefix = snippet
-                    .prefix
-                    .iter()
-                    .find(|prefix| matched_strings.contains(*prefix))?;
-                let start = as_offset - last_word.len();
-                let start = snapshot.anchor_before(start);
-                let range = start..buffer_position;
-                let lsp_start = to_lsp(&start);
-                let lsp_range = lsp::Range {
-                    start: lsp_start,
-                    end: lsp_end,
-                };
-                Some(Completion {
-                    replace_range: range,
-                    new_text: snippet.body.clone(),
-                    source: CompletionSource::Lsp {
-                        insert_range: None,
-                        server_id: LanguageServerId(usize::MAX),
-                        resolved: true,
-                        lsp_completion: Box::new(lsp::CompletionItem {
-                            label: snippet.prefix.first().unwrap().clone(),
-                            kind: Some(CompletionItemKind::SNIPPET),
-                            label_details: snippet.description.as_ref().map(|description| {
-                                lsp::CompletionItemLabelDetails {
-                                    detail: Some(description.clone()),
-                                    description: None,
-                                }
+            // Remove all candidates where the query's start does not match the start of any word in the candidate
+            if let Some(query_start) = last_word.chars().next() {
+                matches.retain(|string_match| {
+                    split_words(&string_match.string).any(|word| {
+                        // Check that the first codepoint of the word as lowercase matches the first
+                        // codepoint of the query as lowercase
+                        word.chars()
+                            .flat_map(|codepoint| codepoint.to_lowercase())
+                            .zip(query_start.to_lowercase())
+                            .all(|(word_cp, query_cp)| word_cp == query_cp)
+                    })
+                });
+            }
+
+            let matched_strings = matches
+                .into_iter()
+                .map(|m| m.string)
+                .collect::<HashSet<_>>();
+
+            let mut result: Vec<Completion> = snippets
+                .iter()
+                .filter_map(|snippet| {
+                    let matching_prefix = snippet
+                        .prefix
+                        .iter()
+                        .find(|prefix| matched_strings.contains(*prefix))?;
+                    let start = as_offset - last_word.len();
+                    let start = snapshot.anchor_before(start);
+                    let range = start..buffer_position;
+                    let lsp_start = to_lsp(&start);
+                    let lsp_range = lsp::Range {
+                        start: lsp_start,
+                        end: lsp_end,
+                    };
+                    Some(Completion {
+                        replace_range: range,
+                        new_text: snippet.body.clone(),
+                        source: CompletionSource::Lsp {
+                            insert_range: None,
+                            server_id: LanguageServerId(usize::MAX),
+                            resolved: true,
+                            lsp_completion: Box::new(lsp::CompletionItem {
+                                label: snippet.prefix.first().unwrap().clone(),
+                                kind: Some(CompletionItemKind::SNIPPET),
+                                label_details: snippet.description.as_ref().map(|description| {
+                                    lsp::CompletionItemLabelDetails {
+                                        detail: Some(description.clone()),
+                                        description: None,
+                                    }
+                                }),
+                                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                                text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                    lsp::InsertReplaceEdit {
+                                        new_text: snippet.body.clone(),
+                                        insert: lsp_range,
+                                        replace: lsp_range,
+                                    },
+                                )),
+                                filter_text: Some(snippet.body.clone()),
+                                sort_text: Some(char::MAX.to_string()),
+                                ..lsp::CompletionItem::default()
                             }),
-                            insert_text_format: Some(InsertTextFormat::SNIPPET),
-                            text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                lsp::InsertReplaceEdit {
-                                    new_text: snippet.body.clone(),
-                                    insert: lsp_range,
-                                    replace: lsp_range,
-                                },
-                            )),
-                            filter_text: Some(snippet.body.clone()),
-                            sort_text: Some(char::MAX.to_string()),
-                            ..lsp::CompletionItem::default()
+                            lsp_defaults: None,
+                        },
+                        label: CodeLabel {
+                            text: matching_prefix.clone(),
+                            runs: Vec::new(),
+                            filter_range: 0..matching_prefix.len(),
+                        },
+                        icon_path: None,
+                        documentation: snippet.description.clone().map(|description| {
+                            CompletionDocumentation::SingleLine(description.into())
                         }),
-                        lsp_defaults: None,
-                    },
-                    label: CodeLabel {
-                        text: matching_prefix.clone(),
-                        runs: Vec::new(),
-                        filter_range: 0..matching_prefix.len(),
-                    },
-                    icon_path: None,
-                    documentation: snippet
-                        .description
-                        .clone()
-                        .map(|description| CompletionDocumentation::SingleLine(description.into())),
-                    insert_text_mode: None,
-                    confirm: None,
+                        insert_text_mode: None,
+                        confirm: None,
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
-        Ok(result)
+            all_results.append(&mut result);
+        }
+
+        Ok(all_results)
     })
 }
 
