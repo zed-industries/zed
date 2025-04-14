@@ -610,21 +610,20 @@ fn confirm_completion_callback(
     editor: Entity<Editor>,
     add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
-    Arc::new(move |_, window, cx| {
+    Arc::new(move |_, _, cx| {
         add_context_fn(cx);
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
         let editor = editor.clone();
-        window.defer(cx, move |window, cx| {
-            crate::context_picker::insert_crease_for_mention(
+        cx.defer(move |cx| {
+            crate::context_picker::insert_fold_for_mention(
                 excerpt_id,
                 start,
                 content_len,
                 crease_text,
                 crease_icon_path,
                 editor,
-                window,
                 cx,
             );
         });
@@ -694,6 +693,7 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use editor::AnchorRangeExt;
     use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
     use project::{Project, ProjectPath};
     use serde_json::json;
@@ -874,7 +874,7 @@ mod tests {
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
             let editor = cx.new(|cx| {
                 Editor::new(
-                    editor::EditorMode::Full,
+                    editor::EditorMode::full(),
                     multi_buffer::MultiBuffer::build_simple("", cx),
                     None,
                     window,
@@ -967,7 +967,7 @@ mod tests {
             assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt)",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
@@ -978,7 +978,7 @@ mod tests {
             assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt) ",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
@@ -992,7 +992,7 @@ mod tests {
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
@@ -1006,7 +1006,7 @@ mod tests {
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
@@ -1024,7 +1024,7 @@ mod tests {
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
                     Point::new(0, 44)..Point::new(0, 79)
@@ -1041,7 +1041,7 @@ mod tests {
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
                     Point::new(0, 44)..Point::new(0, 79)
@@ -1062,7 +1062,7 @@ mod tests {
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
                     Point::new(0, 44)..Point::new(0, 79),
@@ -1072,15 +1072,13 @@ mod tests {
         });
     }
 
-    fn crease_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
+    fn fold_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         editor.display_map.update(cx, |display_map, cx| {
             display_map
                 .snapshot(cx)
-                .crease_snapshot
-                .crease_items_with_offsets(&snapshot)
-                .into_iter()
-                .map(|(_, range)| range)
+                .folds_in_range(0..snapshot.len())
+                .map(|fold| fold.range.to_point(&snapshot))
                 .collect()
         })
     }

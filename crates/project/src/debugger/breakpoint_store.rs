@@ -6,13 +6,14 @@ use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
 use dap::client::SessionId;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
+use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, proto::serialize_anchor as serialize_text_anchor};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
 use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
-use text::PointUtf16;
+use text::{Point, PointUtf16};
 
 use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
 
@@ -289,9 +290,16 @@ impl BreakpointStore {
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if breakpoint.1.message.is_some() {
-                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
-                        &breakpoint.0 != other_pos && other.message.is_none()
-                    })
+                    if let Some(position) = breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
+                        .map(|res| res.0)
+                    {
+                        breakpoint_set.breakpoints.remove(position);
+                    } else {
+                        log::error!("Failed to find position of breakpoint to delete")
+                    }
                 }
             }
             BreakpointEditAction::EditHitCondition(hit_condition) => {
@@ -316,9 +324,16 @@ impl BreakpointStore {
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if breakpoint.1.hit_condition.is_some() {
-                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
-                        &breakpoint.0 != other_pos && other.hit_condition.is_none()
-                    })
+                    if let Some(position) = breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
+                        .map(|res| res.0)
+                    {
+                        breakpoint_set.breakpoints.remove(position);
+                    } else {
+                        log::error!("Failed to find position of breakpoint to delete")
+                    }
                 }
             }
             BreakpointEditAction::EditCondition(condition) => {
@@ -343,9 +358,16 @@ impl BreakpointStore {
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if breakpoint.1.condition.is_some() {
-                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
-                        &breakpoint.0 != other_pos && other.condition.is_none()
-                    })
+                    if let Some(position) = breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
+                        .map(|res| res.0)
+                    {
+                        breakpoint_set.breakpoints.remove(position);
+                    } else {
+                        log::error!("Failed to find position of breakpoint to delete")
+                    }
                 }
             }
         }
@@ -462,6 +484,23 @@ impl BreakpointStore {
         self.active_stack_frame = Some(position);
         cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
         cx.notify();
+    }
+
+    pub fn breakpoint_at_row(
+        &self,
+        path: &Path,
+        row: u32,
+        cx: &App,
+    ) -> Option<(Entity<Buffer>, (text::Anchor, Breakpoint))> {
+        self.breakpoints.get(path).and_then(|breakpoints| {
+            let snapshot = breakpoints.buffer.read(cx).text_snapshot();
+
+            breakpoints
+                .breakpoints
+                .iter()
+                .find(|(anchor, _)| anchor.summary::<Point>(&snapshot).row == row)
+                .map(|breakpoint| (breakpoints.buffer.clone(), breakpoint.clone()))
+        })
     }
 
     pub fn breakpoints_from_path(&self, path: &Arc<Path>, cx: &App) -> Vec<SourceBreakpoint> {

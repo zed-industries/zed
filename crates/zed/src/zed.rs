@@ -14,7 +14,7 @@ pub use app_menus::*;
 use assets::Assets;
 use assistant_context_editor::AssistantPanelDelegate;
 use breadcrumbs::Breadcrumbs;
-use client::{ZED_URL_SCHEME, zed_urls};
+use client::zed_urls;
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
 use debugger_ui::debugger_panel::DebugPanel;
@@ -25,10 +25,10 @@ use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, DismissEvent, Element,
-    Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
-    ReadGlobal, SharedString, Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind,
-    WindowOptions, actions, point, px,
+    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
+    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
+    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, point,
+    px,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -56,7 +56,7 @@ use std::any::TypeId;
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
-use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
+use std::{borrow::Cow, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{PopoverMenuHandle, prelude::*};
@@ -676,7 +676,7 @@ fn register_actions(
         .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
-                register_zed_scheme(&cx).await?;
+                install_cli::register_zed_scheme(&cx).await?;
                 workspace.update_in(cx, |workspace, _, cx| {
                     struct RegisterZedScheme;
 
@@ -980,42 +980,7 @@ fn install_cli(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    const LINUX_PROMPT_DETAIL: &str = "If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else.";
-
-    cx.spawn_in(window, async move |workspace, cx| {
-        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            let prompt = cx.prompt(
-                PromptLevel::Warning,
-                "CLI should already be installed",
-                Some(LINUX_PROMPT_DETAIL),
-                &["Ok"],
-            );
-            cx.background_spawn(prompt).detach();
-            return Ok(());
-        }
-        let path = install_cli::install_cli(cx.deref())
-            .await
-            .context("error creating CLI symlink")?;
-
-        workspace.update_in(cx, |workspace, _, cx| {
-            struct InstalledZedCli;
-
-            workspace.show_toast(
-                Toast::new(
-                    NotificationId::unique::<InstalledZedCli>(),
-                    format!(
-                        "Installed `zed` to {}. You can launch {} from your terminal.",
-                        path.to_string_lossy(),
-                        ReleaseChannel::global(cx).display_name()
-                    ),
-                ),
-                cx,
-            )
-        })?;
-        register_zed_scheme(&cx).await.log_err();
-        Ok(())
-    })
-    .detach_and_prompt_err("Error installing zed cli", window, cx, |_, _, _| None);
+    install_cli::install_cli(window, cx);
 }
 
 static WAITING_QUIT_CONFIRMATION: AtomicBool = AtomicBool::new(false);
@@ -1421,7 +1386,12 @@ fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
     load_default_keymap(cx);
     cx.bind_keys(user_key_bindings);
     cx.set_menus(app_menus());
-    cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
+    // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
+    #[cfg(not(target_os = "windows"))]
+    cx.set_dock_menu(vec![gpui::MenuItem::action(
+        "New Window",
+        workspace::NewWindow,
+    )]);
 }
 
 pub fn load_default_keymap(cx: &mut App) {
@@ -1739,11 +1709,6 @@ fn open_settings_file(
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
-}
-
-async fn register_zed_scheme(cx: &AsyncApp) -> anyhow::Result<()> {
-    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
-        .await
 }
 
 #[cfg(test)]

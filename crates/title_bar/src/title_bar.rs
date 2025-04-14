@@ -36,7 +36,7 @@ use ui::{
     IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
 };
 use util::ResultExt;
-use workspace::{Workspace, notifications::NotifyResultExt};
+use workspace::{BottomDockLayout, Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
@@ -210,6 +210,7 @@ impl Render for TitleBar {
                             .pr_1()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .children(self.render_call_controls(window, cx))
+                            .child(self.render_bottom_dock_layout_menu(cx))
                             .map(|el| {
                                 let status = self.client.status();
                                 let status = &*status.borrow();
@@ -620,6 +621,101 @@ impl TitleBar {
             }
             _ => None,
         }
+    }
+
+    pub fn render_bottom_dock_layout_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace = self.workspace.upgrade().unwrap();
+        let current_layout = workspace.update(cx, |workspace, _cx| workspace.bottom_dock_layout());
+
+        PopoverMenu::new("layout-menu")
+            .trigger(
+                IconButton::new("toggle_layout", IconName::Layout)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Toggle Layout Menu")),
+            )
+            .anchor(gpui::Corner::TopRight)
+            .menu(move |window, cx| {
+                ContextMenu::build(window, cx, {
+                    let workspace = workspace.clone();
+                    move |menu, _, _| {
+                        menu.label("Bottom Dock")
+                            .separator()
+                            .toggleable_entry(
+                                "Contained",
+                                current_layout == BottomDockLayout::Contained,
+                                ui::IconPosition::End,
+                                None,
+                                {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.set_bottom_dock_layout(
+                                                BottomDockLayout::Contained,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                },
+                            )
+                            .toggleable_entry(
+                                "Full",
+                                current_layout == BottomDockLayout::Full,
+                                ui::IconPosition::End,
+                                None,
+                                {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.set_bottom_dock_layout(
+                                                BottomDockLayout::Full,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                },
+                            )
+                            .toggleable_entry(
+                                "Left Aligned",
+                                current_layout == BottomDockLayout::LeftAligned,
+                                ui::IconPosition::End,
+                                None,
+                                {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.set_bottom_dock_layout(
+                                                BottomDockLayout::LeftAligned,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                },
+                            )
+                            .toggleable_entry(
+                                "Right Aligned",
+                                current_layout == BottomDockLayout::RightAligned,
+                                ui::IconPosition::End,
+                                None,
+                                {
+                                    let workspace = workspace.clone();
+                                    move |window, cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace.set_bottom_dock_layout(
+                                                BottomDockLayout::RightAligned,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                },
+                            )
+                    }
+                })
+                .into()
+            })
     }
 
     pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {

@@ -46,10 +46,11 @@ pub use agent_diff::{AgentDiff, AgentDiffToolbar};
 actions!(
     agent,
     [
-        NewPromptEditor,
+        NewTextThread,
         ToggleContextPicker,
         ToggleProfileSelector,
         RemoveAllContext,
+        ExpandMessageEditor,
         OpenHistory,
         AddContextServer,
         RemoveSelectedThread,
