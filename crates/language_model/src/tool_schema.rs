@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::LanguageModelToolSchemaFormat;
 
-/// Transforms a JSON schema representation to be compatible with the specified format.
+/// Tries to adapt a JSON schema representation to be compatible with the specified format.
 ///
 /// If the json cannot be made compatible with the specified format, an error is returned.
 pub fn adapt_schema_to_format(
