@@ -7699,6 +7699,7 @@ dependencies = [
  "smol",
  "strum",
  "theme",
+ "thiserror 2.0.12",
  "tiktoken-rs",
  "tokio",
  "ui",
