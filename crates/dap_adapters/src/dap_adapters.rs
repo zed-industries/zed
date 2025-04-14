@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use codelldb::CodeLldbDebugAdapter;
 use dap::{
-    DapRegistry,
+    DapRegistry, DebugRequestType,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
@@ -25,7 +25,7 @@ use lldb::LldbDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use serde_json::{Value, json};
-use task::{DebugAdapterConfig, TCPHost};
+use task::TCPHost;
 
 pub fn init(registry: Arc<DapRegistry>) {
     registry.add_adapter(Arc::from(CodeLldbDebugAdapter::default()));
@@ -50,4 +50,17 @@ pub(crate) async fn configure_tcp_connection(
     };
 
     Ok((host, port, timeout))
+}
+
+trait ToDap {
+    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest;
+}
+
+impl ToDap for DebugRequestType {
+    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest {
+        match self {
+            Self::Launch(_) => dap::StartDebuggingRequestArgumentsRequest::Launch,
+            Self::Attach(_) => dap::StartDebuggingRequestArgumentsRequest::Attach,
+        }
+    }
 }

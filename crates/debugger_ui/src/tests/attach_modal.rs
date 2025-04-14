@@ -26,18 +26,23 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Attach(AttachConfig {
+    let session = debugger::test::start_debug_session_with(
+        &project,
+        cx,
+        DebugTaskDefinition {
+            adapter: "fake-adapter".to_string(),
+            request: dap::DebugRequestType::Attach(AttachConfig {
                 process_id: Some(10),
             }),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+            label: "label".to_string(),
+            initialize_args: None,
+            tcp_connection: None,
+            locator: None,
+            stop_on_entry: None,
+        },
+        |_| {},
+    )
+    .await;
 
     cx.run_until_parked();
 

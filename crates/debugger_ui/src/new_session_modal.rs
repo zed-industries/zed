@@ -145,7 +145,7 @@ impl NewSessionModal {
                 {
                     this.start_debug_session(debug_config, cx)
                 } else {
-                    this.start_debug_session(config.into(), cx)
+                    this.start_debug_session(config, cx)
                 }
             })?;
             let spawn_result = task.await;

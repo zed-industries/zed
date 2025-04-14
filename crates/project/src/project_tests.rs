@@ -39,7 +39,7 @@ use std::{env, mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, t
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
-    TryFutureExt as _, assert_set_eq, path,
+    TryFutureExt as _, assert_set_eq, maybe, path,
     paths::PathMatcher,
     separator,
     test::{TempTree, marked_text_offsets},
