@@ -1,4 +1,4 @@
-use crate::{HighlightStyles, InlayId};
+use crate::{HighlightStyles, InlayId, display_map::ToDisplayPoint};
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{
@@ -36,7 +36,7 @@ enum Transform {
 
 #[derive(Debug, Clone)]
 pub struct Inlay {
-    pub(crate) id: InlayId,
+    pub id: InlayId,
     pub position: Anchor,
     pub text: text::Rope,
 }
@@ -418,6 +418,7 @@ impl InlayMap {
         mut buffer_edits: Vec<text::Edit<usize>>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
+        dbg!(&buffer_edits);
 
         if buffer_edits.is_empty()
             && snapshot.buffer.trailing_excerpt_update_count()
@@ -428,6 +429,7 @@ impl InlayMap {
                 new: buffer_snapshot.len()..buffer_snapshot.len(),
             });
         }
+        dbg!(&buffer_edits);
 
         if buffer_edits.is_empty() {
             if snapshot.buffer.edit_count() != buffer_snapshot.edit_count()
@@ -470,6 +472,7 @@ impl InlayMap {
                     buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
                 );
                 let new_start = InlayOffset(new_transforms.summary().output.len);
+                // dbg!(&self.inlays);
 
                 let start_ix = match self.inlays.binary_search_by(|probe| {
                     probe
@@ -482,6 +485,7 @@ impl InlayMap {
                 };
 
                 for inlay in &self.inlays[start_ix..] {
+                    dbg!(&inlay.position);
                     let buffer_offset = inlay.position.to_offset(&buffer_snapshot);
                     if buffer_offset > buffer_edit.new.end {
                         break;
@@ -489,6 +493,7 @@ impl InlayMap {
 
                     let prefix_start = new_transforms.summary().input.len;
                     let prefix_end = buffer_offset;
+                    // dbg!(&prefix_start, &prefix_end, inlay);
                     push_isomorphic(
                         &mut new_transforms,
                         buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
@@ -567,14 +572,14 @@ impl InlayMap {
             }
 
             let offset = inlay_to_insert.position.to_offset(&snapshot.buffer);
-            match self.inlays.binary_search_by(|probe| {
+            match dbg!(self.inlays.binary_search_by(|probe| {
                 probe
                     .position
                     .cmp(&inlay_to_insert.position, &snapshot.buffer)
                     .then(std::cmp::Ordering::Less)
-            }) {
+            })) {
                 Ok(ix) | Err(ix) => {
-                    self.inlays.insert(ix, inlay_to_insert);
+                    self.inlays.insert(ix, dbg!(inlay_to_insert));
                 }
             }
 

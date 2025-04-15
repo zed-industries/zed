@@ -91,7 +91,7 @@ pub struct DisplayMap {
     buffer: Entity<MultiBuffer>,
     buffer_subscription: BufferSubscription,
     /// Decides where the [`Inlay`]s should be displayed.
-    inlay_map: InlayMap,
+    pub inlay_map: InlayMap,
     /// Decides where the fold indicators should be and tracks parts of a source file that are currently folded.
     fold_map: FoldMap,
     /// Keeps track of hard tabs in a buffer.

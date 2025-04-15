@@ -1759,6 +1759,7 @@ impl MultiBuffer {
                                 .end
                                 .to_point(&buffer_snapshot);
                             if existing_end <= last.context.end {
+                                dbg!("replacing {} {}", existing_id, new_id);
                                 self.snapshot
                                     .borrow_mut()
                                     .replaced_excerpts
@@ -1801,6 +1802,7 @@ impl MultiBuffer {
                 let existing_id = existing_iter.next().unwrap();
                 if let Some((new_id, last)) = to_insert.last() {
                     if existing_end <= last.context.end {
+                        dbg!("replacing {} {}", existing_id, new_id);
                         self.snapshot
                             .borrow_mut()
                             .replaced_excerpts
@@ -1828,6 +1830,7 @@ impl MultiBuffer {
             } else {
                 let existing_id = existing_iter.next().unwrap();
                 let new_id = next_excerpt_id();
+                dbg!("replacing {} {}", existing_id, new_id);
                 self.snapshot
                     .borrow_mut()
                     .replaced_excerpts
