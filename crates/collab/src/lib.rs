@@ -182,6 +182,7 @@ pub struct Config {
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
     pub stripe_api_key: Option<String>,
+    pub stripe_zed_pro_price_id: Option<String>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
     pub user_backfiller_github_access_token: Option<Arc<str>>,
 }
@@ -237,6 +238,7 @@ impl Config {
             migrations_path: None,
             seed_path: None,
             stripe_api_key: None,
+            stripe_zed_pro_price_id: None,
             supermaven_admin_api_key: None,
             user_backfiller_github_access_token: None,
             kinesis_region: None,
@@ -322,9 +324,12 @@ impl AppState {
             llm_db,
             livekit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            stripe_billing: stripe_client
-                .clone()
-                .map(|stripe_client| Arc::new(StripeBilling::new(stripe_client))),
+            stripe_billing: stripe_client.clone().map(|stripe_client| {
+                Arc::new(StripeBilling::new(
+                    stripe_client,
+                    config.stripe_zed_pro_price_id.clone(),
+                ))
+            }),
             stripe_client,
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
