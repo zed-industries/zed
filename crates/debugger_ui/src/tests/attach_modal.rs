@@ -89,7 +89,15 @@ async fn test_show_attach_modal_and_select_process(
     let project = Project::test(fs, ["/project".as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    // Set up handlers for sessions spawned via modal.
+    let _initialize_subscription =
+        project::debugger::test::intercept_debug_sessions(cx, |client| {
+            client.on_request::<dap::requests::Attach, _>(move |_, args| {
+                assert_eq!(json!({"request": "attach", "process_id": 1}), args.raw);
 
+                Ok(())
+            });
+        });
     let attach_modal = workspace
         .update(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
