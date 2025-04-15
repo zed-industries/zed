@@ -67,7 +67,7 @@ pub enum LanguageModelCompletionEvent {
 }
 
 /// Indicates the format used to define the input schema for a language model tool.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum LanguageModelToolSchemaFormat {
     /// A JSON schema, see https://json-schema.org
     JsonSchema,
