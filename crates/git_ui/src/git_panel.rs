@@ -407,6 +407,16 @@ impl GitPanel {
         })
         .detach();
 
+        let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+            if is_sort_by_path != was_sort_by_path {
+                this.update_visible_entries(cx);
+            }
+            was_sort_by_path = is_sort_by_path
+        })
+        .detach();
+
         // just to let us render a placeholder editor.
         // Once the active git repo is set, this buffer will be replaced.
         let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
@@ -598,7 +608,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
+    pub fn entry_by_path(&self, path: &RepoPath, cx: &App) -> Option<usize> {
         fn binary_search<F>(mut low: usize, mut high: usize, is_target: F) -> Option<usize>
         where
             F: Fn(usize) -> std::cmp::Ordering,
@@ -612,6 +622,18 @@ impl GitPanel {
                 }
             }
             None
+        }
+        if GitPanelSettings::get_global(cx).sort_by_path {
+            if let Some(ix) = binary_search(0, self.entries.len(), |ix| {
+                self.entries[ix]
+                    .status_entry()
+                    .unwrap()
+                    .repo_path
+                    .cmp(&path)
+            }) {
+                return Some(ix);
+            }
+            return None;
         }
         if self.conflicted_count > 0 {
             let conflicted_start = 1;
@@ -684,7 +706,7 @@ impl GitPanel {
         let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path, cx) else {
             return;
         };
-        let Some(ix) = self.entry_by_path(&repo_path) else {
+        let Some(ix) = self.entry_by_path(&repo_path, cx) else {
             return;
         };
         self.selected_entry = Some(ix);
@@ -2322,6 +2344,8 @@ impl GitPanel {
         self.tracked_staged_count = 0;
         self.entry_count = 0;
 
+        let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
         let mut conflict_entries = Vec::new();
@@ -2381,7 +2405,9 @@ impl GitPanel {
                 None => max_width_item = Some((entry.repo_path.clone(), width_estimate)),
             }
 
-            if is_conflict {
+            if sort_by_path {
+                changed_entries.push(entry);
+            } else if is_conflict {
                 conflict_entries.push(entry);
             } else if is_new {
                 new_entries.push(entry);
@@ -2436,9 +2462,11 @@ impl GitPanel {
         }
 
         if changed_entries.len() > 0 {
-            self.entries.push(GitListEntry::Header(GitHeaderEntry {
-                header: Section::Tracked,
-            }));
+            if !sort_by_path {
+                self.entries.push(GitListEntry::Header(GitHeaderEntry {
+                    header: Section::Tracked,
+                }));
+            }
             self.entries.extend(
                 changed_entries
                     .into_iter()
@@ -3459,7 +3487,7 @@ impl GitPanel {
         let repo = self.active_repository.as_ref()?.read(cx);
         let project_path = (file.worktree_id(cx), file.path()).into();
         let repo_path = repo.project_path_to_repo_path(&project_path, cx)?;
-        let ix = self.entry_by_path(&repo_path)?;
+        let ix = self.entry_by_path(&repo_path, cx)?;
         let entry = self.entries.get(ix)?;
 
         let entry_staging = self.entry_staging(entry.status_entry()?);
@@ -3819,7 +3847,7 @@ impl GitPanel {
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
         let entry_staging = self.entry_staging(entry);
-        let mut is_staged: ToggleState = self.entry_staging(entry).as_bool().into();
+        let is_staged: ToggleState = self.entry_staging(entry).as_bool().into();
 
         let handle = cx.weak_entity();
 

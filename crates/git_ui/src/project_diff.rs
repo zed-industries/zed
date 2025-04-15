@@ -1,5 +1,6 @@
 use crate::{
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
+    git_panel_settings::GitPanelSettings,
     remote_button::{render_publish_button, render_push_button},
 };
 use anyhow::Result;
@@ -26,6 +27,7 @@ use project::{
     Project, ProjectPath,
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
+use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
@@ -160,6 +162,16 @@ impl ProjectDiff {
                 _ => {}
             },
         );
+
+        let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+            if is_sort_by_path != was_sort_by_path {
+                *this.update_needed.borrow_mut() = ();
+            }
+            was_sort_by_path = is_sort_by_path
+        })
+        .detach();
 
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {
@@ -346,7 +358,9 @@ impl ProjectDiff {
                 else {
                     continue;
                 };
-                let namespace = if repo.has_conflict(&entry.repo_path) {
+                let namespace = if GitPanelSettings::get_global(cx).sort_by_path {
+                    TRACKED_NAMESPACE
+                } else if repo.has_conflict(&entry.repo_path) {
                     CONFLICT_NAMESPACE
                 } else if entry.status.is_created() {
                     NEW_NAMESPACE

@@ -588,6 +588,12 @@
     // Default: main
     "fallback_branch_name": "main",
 
+    // Whether to sort entries in the panel by path
+    // or by status (the default).
+    //
+    // Default: false
+    "sort_by_path": false,
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
