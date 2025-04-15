@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
@@ -116,6 +116,7 @@ impl Tool for CopyPathTool {
                     err
                 )),
             }
-        }).into()
+        })
+        .into()
     }
 }

@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{Context as _, anyhow, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -63,6 +63,7 @@ impl Tool for OpenTool {
             open::that(&input.path_or_url).context("Failed to open URL or file path")?;
 
             Ok(format!("Successfully opened {}", input.path_or_url))
-        }).into()
+        })
+        .into()
     }
 }

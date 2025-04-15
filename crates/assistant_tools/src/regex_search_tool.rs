@@ -201,7 +201,6 @@ impl Tool for RegexSearchTool {
             } else {
                 Ok(format!("Found {matches_found} matches:\n{output}"))
             }
-        });
-        output.into()
+        }).into()
     }
 }

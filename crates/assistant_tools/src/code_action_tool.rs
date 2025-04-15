@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language::{self, Anchor, Buffer, ToPointUtf16};

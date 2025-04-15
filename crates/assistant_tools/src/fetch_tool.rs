@@ -158,13 +158,15 @@ impl Tool for FetchTool {
             async move { Self::build_message(http_client, &url).await }
         });
 
-        cx.foreground_executor().spawn(async move {
-            let text = text.await?;
-            if text.trim().is_empty() {
-                bail!("no textual content found");
-            }
+        cx.foreground_executor()
+            .spawn(async move {
+                let text = text.await?;
+                if text.trim().is_empty() {
+                    bail!("no textual content found");
+                }
 
-            Ok(text)
-        }).into()
+                Ok(text)
+            })
+            .into()
     }
 }

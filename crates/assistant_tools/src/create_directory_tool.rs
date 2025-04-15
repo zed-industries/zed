@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
@@ -75,7 +75,9 @@ impl Tool for CreateDirectoryTool {
         };
         let project_path = match project.read(cx).find_project_path(&input.path, cx) {
             Some(project_path) => project_path,
-            None => return Task::ready(Err(anyhow!("Path to create was outside the project"))).into(),
+            None => {
+                return Task::ready(Err(anyhow!("Path to create was outside the project"))).into();
+            }
         };
         let destination_path: Arc<str> = input.path.as_str().into();
 
@@ -88,6 +90,7 @@ impl Tool for CreateDirectoryTool {
                 .map_err(|err| anyhow!("Unable to create directory {destination_path}: {err}"))?;
 
             Ok(format!("Created directory {destination_path}"))
-        }).into()
+        })
+        .into()
     }
 }

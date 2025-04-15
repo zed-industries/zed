@@ -149,7 +149,8 @@ impl Tool for CodeSymbolsTool {
         cx.spawn(async move |cx| match input.path {
             Some(path) => file_outline(project, path, action_log, regex, input.offset, cx).await,
             None => project_symbols(project, regex, input.offset, cx).await,
-        }).into()
+        })
+        .into()
     }
 }
 

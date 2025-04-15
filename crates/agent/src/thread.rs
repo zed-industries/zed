@@ -1412,10 +1412,7 @@ impl Thread {
         let tool_name: Arc<str> = tool.name().into();
 
         let tool_result = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
-            ToolResult {
-                output: Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))),
-                card: None,
-            }
+            Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))).into()
         } else {
             tool.run(
                 input,
