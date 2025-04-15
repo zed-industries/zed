@@ -296,7 +296,7 @@ impl BreakpointStore {
                         .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
                         .map(|res| res.0)
                     {
-                        breakpoint_set.breakpoints.swap_remove(position);
+                        breakpoint_set.breakpoints.remove(position);
                     } else {
                         log::error!("Failed to find position of breakpoint to delete")
                     }
@@ -330,7 +330,7 @@ impl BreakpointStore {
                         .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
                         .map(|res| res.0)
                     {
-                        breakpoint_set.breakpoints.swap_remove(position);
+                        breakpoint_set.breakpoints.remove(position);
                     } else {
                         log::error!("Failed to find position of breakpoint to delete")
                     }
@@ -364,7 +364,7 @@ impl BreakpointStore {
                         .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
                         .map(|res| res.0)
                     {
-                        breakpoint_set.breakpoints.swap_remove(position);
+                        breakpoint_set.breakpoints.remove(position);
                     } else {
                         log::error!("Failed to find position of breakpoint to delete")
                     }
