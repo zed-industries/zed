@@ -199,7 +199,7 @@ fn main() {
 
             future::join_all(clone_tasks).await;
 
-            for example in examples.iter() {
+            for example in examples.iter_mut() {
                 example.setup().await?;
             }
 
