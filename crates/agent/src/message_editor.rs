@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::tool_compatibility::IncompatibleToolsState;
+use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::MoveUp;
@@ -366,10 +366,18 @@ impl MessageEditor {
             .default_model()
             .map(|default| default.model.clone());
 
-        let has_incompatible_tools = model.as_ref().map_or(false, |model| {
-            self.incompatible_tools_state
-                .update(cx, |state, cx| state.has_incompatible_tools(model, cx))
-        });
+        let incompatible_tools = model
+            .as_ref()
+            .map(|model| {
+                self.incompatible_tools_state.update(cx, |state, cx| {
+                    state
+                        .incompatible_tools(model, cx)
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
 
         let is_editor_expanded = self.editor_is_expanded;
         let expand_icon = if is_editor_expanded {
@@ -478,26 +486,23 @@ impl MessageEditor {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .when(has_incompatible_tools, |this| {
+                                    .when(!incompatible_tools.is_empty(), |this| {
                                         this.child(
-                                            div()
-                                                .id("tools-incompatible-warning")
-                                                .child(
-                                                    Icon::new(IconName::Warning)
-                                                        .color(Color::Warning)
-                                                        .size(IconSize::Small),
-                                                )
-                                                .tooltip({
-                                                    const MESSAGE: &'static str = "Some tools are not compatible with this model, these tools will be excluded from the conversation.";
-
-                                                    let incompatible_tool_names = model.as_ref().map(|model| {
-                                                        self.incompatible_tools_state.update(cx, |state, cx| state.incompatible_tools(model, cx).iter().map(|tool| tool.name()).collect::<Vec<_>>())
-                                                    }).unwrap_or_default();
-                                                    let title: SharedString = format!("{}\nIncompatible tools:\n - {}", MESSAGE, incompatible_tool_names.join("\n- ")).into();
-                                                    move |_, cx| {
-                                                        Tooltip::simple(title.clone(), cx)
-                                                    }
-                                                }),
+                                            IconButton::new(
+                                                "tools-incompatible-warning",
+                                                IconName::Warning,
+                                            )
+                                            .icon_color(Color::Warning)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                move |_, cx| {
+                                                    cx.new(|_| IncompatibleToolsTooltip {
+                                                        incompatible_tools: incompatible_tools
+                                                            .clone(),
+                                                    })
+                                                    .into()
+                                                }
+                                            }),
                                         )
                                     })
                                     .child(self.model_selector.clone())
