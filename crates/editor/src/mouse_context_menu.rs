@@ -295,55 +295,6 @@ fn build_context_menu(
     ui::ContextMenu::build(window, cx, |menu, _window, cx| {
         let menu = menu
             .on_blur_subscription(Subscription::new(|| {}))
-            .when_some(code_action_load_state, |menu, state| {
-                match state {
-                    CodeActionLoadState::Loading => menu.disabled_action(
-                        "Loading code actions...",
-                        Box::new(ConfirmCodeAction {
-                            item_ix: None,
-                            from_mouse_context_menu: true,
-                        }),
-                    ),
-                    CodeActionLoadState::Loaded(actions) => {
-                        if actions.is_empty() {
-                            menu.disabled_action(
-                                "No code actions available",
-                                Box::new(ConfirmCodeAction {
-                                    item_ix: None,
-                                    from_mouse_context_menu: true,
-                                }),
-                            )
-                        } else {
-                            actions
-                                .iter()
-                                .filter(|action| {
-                                    if action
-                                        .as_task()
-                                        .map(|task| {
-                                            matches!(task.task_type(), task::TaskType::Debug(_))
-                                        })
-                                        .unwrap_or(false)
-                                    {
-                                        cx.has_flag::<Debugger>()
-                                    } else {
-                                        true
-                                    }
-                                })
-                                .enumerate()
-                                .fold(menu, |menu, (ix, action)| {
-                                    menu.action(
-                                        action.label(),
-                                        Box::new(ConfirmCodeAction {
-                                            item_ix: Some(ix),
-                                            from_mouse_context_menu: true,
-                                        }),
-                                    )
-                                })
-                        }
-                    }
-                }
-                .separator()
-            })
             .when(evaluate_selection && has_selections, |builder| {
                 builder
                     .action("Evaluate Selection", Box::new(DebuggerEvaluateSelectedText))
@@ -390,6 +341,54 @@ fn build_context_menu(
                 } else {
                     builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
                 }
+            })
+            .when_some(code_action_load_state, |menu, state| {
+                menu.separator().map(|menu| match state {
+                    CodeActionLoadState::Loading => menu.disabled_action(
+                        "Loading code actions...",
+                        Box::new(ConfirmCodeAction {
+                            item_ix: None,
+                            from_mouse_context_menu: true,
+                        }),
+                    ),
+                    CodeActionLoadState::Loaded(actions) => {
+                        if actions.is_empty() {
+                            menu.disabled_action(
+                                "No code actions available",
+                                Box::new(ConfirmCodeAction {
+                                    item_ix: None,
+                                    from_mouse_context_menu: true,
+                                }),
+                            )
+                        } else {
+                            actions
+                                .iter()
+                                .filter(|action| {
+                                    if action
+                                        .as_task()
+                                        .map(|task| {
+                                            matches!(task.task_type(), task::TaskType::Debug(_))
+                                        })
+                                        .unwrap_or(false)
+                                    {
+                                        cx.has_flag::<Debugger>()
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .enumerate()
+                                .fold(menu, |menu, (ix, action)| {
+                                    menu.action(
+                                        action.label(),
+                                        Box::new(ConfirmCodeAction {
+                                            item_ix: Some(ix),
+                                            from_mouse_context_menu: true,
+                                        }),
+                                    )
+                                })
+                        }
+                    }
+                })
             });
         match focus {
             Some(focus) => menu.context(focus),
