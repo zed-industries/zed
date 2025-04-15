@@ -40,7 +40,13 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
             locator: None,
             stop_on_entry: None,
         },
-        |_| {},
+        |client| {
+            client.on_request::<dap::requests::Attach, _>(move |_, args| {
+                assert_eq!(json!({"request": "attach", "process_id": 10}), args.raw);
+
+                Ok(())
+            });
+        },
     )
     .await;
 
