@@ -82,12 +82,10 @@ fn main() {
             .unwrap_or_else(|_| "unknown-installation-id".to_string());
         let session_id = uuid::Uuid::new_v4().to_string();
 
-        // Start telemetry using the client from app_state
         app_state
             .client
             .telemetry()
             .start(Some(system_id), Some(installation_id), session_id, cx);
-        // === End Telemetry IDs initialization ===
 
         let model = find_model("claude-3-7-sonnet-latest", cx).unwrap();
 
