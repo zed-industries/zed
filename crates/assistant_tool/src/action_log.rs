@@ -423,9 +423,7 @@ impl ActionLog {
                             ..new_range.end.to_point(buffer).row;
 
                         let mut revert = false;
-                        println!("Edit: {:?}", edit);
                         while let Some(buffer_row_range) = buffer_row_ranges.peek() {
-                            println!("  Buffer Row Range {:?}", buffer_row_range,);
                             if buffer_row_range.end < new_row_range.start {
                                 buffer_row_ranges.next();
                             } else if buffer_row_range.start > new_row_range.end {
