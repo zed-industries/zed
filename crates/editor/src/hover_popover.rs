@@ -1,6 +1,6 @@
 use crate::{
-    Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
-    Hover,
+    ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
+    EditorSnapshot, Hover,
     display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::{Autoscroll, ScrollAmount},
@@ -276,6 +276,12 @@ fn show_hover(
     }
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+    let all_diagnostics_active = editor.active_diagnostics == ActiveDiagnostic::All;
+    let active_group_id = if let ActiveDiagnostic::Group(group) = &editor.active_diagnostics {
+        Some(group.group_id)
+    } else {
+        None
+    };
 
     let task = cx.spawn_in(window, async move |this, cx| {
         async move {
@@ -302,11 +308,16 @@ fn show_hover(
             }
 
             let offset = anchor.to_offset(&snapshot.buffer_snapshot);
-            let local_diagnostic = snapshot
-                .buffer_snapshot
-                .diagnostics_in_range::<usize>(offset..offset)
-                // Find the entry with the most specific range
-                .min_by_key(|entry| entry.range.len());
+            let local_diagnostic = if all_diagnostics_active {
+                None
+            } else {
+                snapshot
+                    .buffer_snapshot
+                    .diagnostics_in_range::<usize>(offset..offset)
+                    .filter(|diagnostic| Some(diagnostic.diagnostic.group_id) != active_group_id)
+                    // Find the entry with the most specific range
+                    .min_by_key(|entry| entry.range.len())
+            };
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
