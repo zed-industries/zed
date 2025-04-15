@@ -557,6 +557,7 @@ impl TestServer {
                 migrations_path: None,
                 seed_path: None,
                 stripe_api_key: None,
+                stripe_zed_pro_price_id: None,
                 supermaven_admin_api_key: None,
                 user_backfiller_github_access_token: None,
                 kinesis_region: None,

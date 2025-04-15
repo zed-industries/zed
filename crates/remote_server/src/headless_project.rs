@@ -72,7 +72,7 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
-            debug_adapters,
+            debug_adapters: _debug_adapters,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut Context<Self>,
@@ -112,11 +112,9 @@ impl HeadlessProject {
                 node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
-                debug_adapters.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 breakpoint_store.clone(),
-                worktree_store.clone(),
                 cx,
             )
         });

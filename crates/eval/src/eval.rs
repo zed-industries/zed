@@ -26,6 +26,7 @@ use settings::{Settings, SettingsStore};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::usize;
 use util::ResultExt as _;
 
 pub const RUNS_DIR: &str = "./crates/eval/runs";
@@ -97,8 +98,27 @@ fn main() {
             std::fs::create_dir_all(&run_dir)?;
 
             let mut examples = Vec::new();
-            for example_path in example_paths {
-                let example = Example::load_from_directory(&example_path, &run_dir)?;
+
+            const COLORS: [&str; 12] = [
+                "\x1b[31m", // Red
+                "\x1b[32m", // Green
+                "\x1b[33m", // Yellow
+                "\x1b[34m", // Blue
+                "\x1b[35m", // Magenta
+                "\x1b[36m", // Cyan
+                "\x1b[91m", // Bright Red
+                "\x1b[92m", // Bright Green
+                "\x1b[93m", // Bright Yellow
+                "\x1b[94m", // Bright Blue
+                "\x1b[95m", // Bright Magenta
+                "\x1b[96m", // Bright Cyan
+            ];
+
+            let mut max_name_width = 0;
+            let mut skipped = Vec::new();
+
+            for example_path in &example_paths {
+                let example = Example::load_from_directory(example_path, &run_dir)?;
 
                 if !example
                     .base
@@ -106,25 +126,49 @@ fn main() {
                     .as_ref()
                     .map_or(false, |lang| languages.contains(lang))
                 {
-                    println!("Skipping {}", example.name);
+                    skipped.push(example.name);
                     continue;
                 }
 
-                println!("{}> Logging to {:?}", example.name, example.log_file_path);
+                let name_len = example.name.len();
+                if name_len > max_name_width {
+                    max_name_width = example.name.len();
+                }
 
                 examples.push(example);
             }
-            let mut repo_urls = HashSet::new();
 
+            println!("Skipped examples: {}\n", skipped.join(", "));
+
+            if examples.is_empty() {
+                eprintln!("Filter matched no examples");
+                return cx.update(|cx| cx.quit());
+            }
+
+            let mut repo_urls = HashSet::new();
             let mut clone_tasks = Vec::new();
 
-            for example in examples.iter() {
+            for (i, example) in examples.iter_mut().enumerate() {
+                let color = COLORS[i % COLORS.len()].to_string();
+                example.set_log_prefix_style(&color, max_name_width);
+
+                println!(
+                    "{}Logging to: {}",
+                    example.log_prefix,
+                    example.output_file_path.display()
+                );
+
                 let repo_url = example.base.url.clone();
                 if repo_urls.insert(repo_url.clone()) {
                     let repo_path = repo_path_for_url(&repo_url);
 
                     if !repo_path.join(".git").is_dir() {
-                        println!("Cloning: {}", repo_url);
+                        println!(
+                            "{:<width$}  < {}",
+                            "↓ Cloning",
+                            repo_url,
+                            width = max_name_width
+                        );
 
                         let git_task = cx.spawn(async move |_cx| {
                             std::fs::create_dir_all(&repo_path)?;
@@ -134,7 +178,12 @@ fn main() {
 
                         clone_tasks.push(git_task);
                     } else {
-                        println!("Already cloned: {}", repo_url);
+                        println!(
+                            "{:<width$}  < {}",
+                            "✔︎ Already cloned",
+                            repo_url,
+                            width = max_name_width
+                        );
 
                         let actual_origin =
                             run_git(&repo_path, &["remote", "get-url", "origin"]).await?;
@@ -177,23 +226,27 @@ fn main() {
             let mut judge_scores = Vec::new();
 
             for (result, example) in results {
-                println!("📜 {:<30}: {:?}", example.name, example.log_file_path);
                 match result {
                     Err(err) => {
-                        println!("💥 {:<30}: {:?}", example.name, err);
+                        println!("💥 {}{:?}", example.log_prefix, err);
                     }
                     Ok(judge_output) => {
                         const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
 
                         println!(
-                            "{} {:<30}: {}",
+                            "{} {}{}",
                             SCORES[judge_output.score.min(5) as usize],
-                            example.name,
+                            example.log_prefix,
                             judge_output.score,
                         );
                         judge_scores.push(judge_output.score);
                     }
                 }
+                println!(
+                    "{}    > {}",
+                    " ".repeat(max_name_width),
+                    example.output_file_path.display()
+                );
             }
 
             let score_count = judge_scores.len();
