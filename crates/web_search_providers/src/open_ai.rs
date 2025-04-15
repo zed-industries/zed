@@ -40,9 +40,9 @@ impl WebSearchProvider for OpenAiWebSearchProvider {
             let response_json = perform_web_search(client, &input, &api_key).await?;
             let parsed_response: OpenAiWebSearchResponse =
                 serde_json::from_str(&response_json).context("Failed to parse OpenAI response")?;
-            Ok(parsed_response
+            parsed_response
                 .try_into()
-                .context("Failed to convert OpenAI response")?)
+                .context("Failed to convert OpenAI response")
         })
     }
 }
@@ -95,7 +95,7 @@ impl TryInto<WebSearchResponse> for OpenAiWebSearchResponse {
     fn try_into(self) -> Result<WebSearchResponse> {
         for item in self.output {
             if let OutputItem::Message { content } = item {
-                for content_item in content {
+                if let Some(content_item) = content.into_iter().next() {
                     return Ok(match content_item {
                         MessageContent::OutputText { text, annotations } => WebSearchResponse {
                             summary: text.into(),

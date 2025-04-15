@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolResult, ToolWorkingSet};
+use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
 use feature_flags::{self, FeatureFlagAppExt};
@@ -624,6 +624,10 @@ impl Thread {
 
     pub fn tool_results_for_message(&self, id: MessageId) -> Vec<&LanguageModelToolResult> {
         self.tool_use.tool_results_for_message(id)
+    }
+
+    pub fn tool_result(&self, id: &LanguageModelToolUseId) -> Option<&LanguageModelToolResult> {
+        self.tool_use.tool_result(id)
     }
 
     pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {

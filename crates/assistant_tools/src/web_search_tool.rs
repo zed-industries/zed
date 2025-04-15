@@ -70,7 +70,7 @@ impl Tool for WebSearchTool {
 
         let search_task = provider
             .search(input.query, cx)
-            .map_err(|err| Arc::new(err))
+            .map_err(Arc::new)
             .shared();
         let output = cx.background_spawn({
             let search_task = search_task.clone();
