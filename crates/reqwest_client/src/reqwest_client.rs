@@ -48,8 +48,9 @@ impl ReqwestClient {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
         let mut client = Self::builder().default_headers(map);
+        let client_has_proxy;
 
-        let client_has_proxy = if let Some(proxy) = proxy.as_ref().and_then(|proxy_url| {
+        if let Some(proxy) = proxy.as_ref().and_then(|proxy_url| {
             reqwest::Proxy::all(proxy_url.clone())
                 .inspect_err(|e| {
                     log::error!(
@@ -61,9 +62,9 @@ impl ReqwestClient {
                 .ok()
         }) {
             client = client.proxy(proxy);
-            true
+            client_has_proxy = true;
         } else {
-            false
+            client_has_proxy = false;
         };
 
         let client = client
