@@ -305,71 +305,68 @@ impl AssistantConfiguration {
                                     ),
                             )
                             .child(
-                                Switch::new(
-                                    "context-server-switch",
-                                    if *context_server.is_starting.read() {
-                                        ToggleState::Indeterminate
-                                    } else {
-                                        is_running.into()
-                                    },
-                                )
-                                .on_click({
-                                    let context_server_manager =
-                                        self.context_server_manager.clone();
-                                    let context_server = context_server.clone();
-                                    move |state, _window, cx| {
-                                        // Check if server is already in a transitional state
-                                        let is_starting = *context_server.is_starting.read();
-                                        if is_starting {
-                                            // Do nothing if the server is already in the process of starting
-                                            return;
-                                        }
+                                Switch::new("context-server-switch", is_running.into())
+                                    .disabled(*context_server.is_starting.read())
+                                    .on_click({
+                                        let context_server_manager =
+                                            self.context_server_manager.clone();
+                                        let context_server = context_server.clone();
+                                        move |state, _window, cx| {
+                                            // Check if server is already in a transitional state
+                                            let is_starting = *context_server.is_starting.read();
+                                            if is_starting {
+                                                // Do nothing if the server is already in the process of starting
+                                                return;
+                                            }
 
-                                        match state {
-                                            ToggleState::Unselected
-                                            | ToggleState::Indeterminate => {
-                                                // Only stop if the server is actually running
-                                                if context_server.client().is_some() {
-                                                    context_server_manager.update(
-                                                        cx,
-                                                        |this, cx| {
-                                                            this.stop_server(
-                                                                context_server.clone(),
-                                                                cx,
-                                                            )
-                                                            .log_err();
-                                                        },
-                                                    );
+                                            match state {
+                                                ToggleState::Unselected
+                                                | ToggleState::Indeterminate => {
+                                                    // Only stop if the server is actually running
+                                                    if context_server.client().is_some() {
+                                                        context_server_manager.update(
+                                                            cx,
+                                                            |this, cx| {
+                                                                this.stop_server(
+                                                                    context_server.clone(),
+                                                                    cx,
+                                                                )
+                                                                .log_err();
+                                                            },
+                                                        );
+                                                    }
                                                 }
-                                            }
-                                            ToggleState::Selected => {
-                                                // Only start if the server isn't already running
-                                                if context_server.client().is_none() {
-                                                    cx.spawn({
-                                                        let context_server_manager =
-                                                            context_server_manager.clone();
-                                                        let context_server = context_server.clone();
-                                                        async move |cx| {
-                                                            if let Some(start_server_task) =
-                                                                context_server_manager
-                                                                    .update(cx, |this, cx| {
-                                                                        this.start_server(
-                                                                            context_server,
-                                                                            cx,
-                                                                        )
-                                                                    })
-                                                                    .log_err()
-                                                            {
-                                                                start_server_task.await.log_err();
+                                                ToggleState::Selected => {
+                                                    // Only start if the server isn't already running
+                                                    if context_server.client().is_none() {
+                                                        cx.spawn({
+                                                            let context_server_manager =
+                                                                context_server_manager.clone();
+                                                            let context_server =
+                                                                context_server.clone();
+                                                            async move |cx| {
+                                                                if let Some(start_server_task) =
+                                                                    context_server_manager
+                                                                        .update(cx, |this, cx| {
+                                                                            this.start_server(
+                                                                                context_server,
+                                                                                cx,
+                                                                            )
+                                                                        })
+                                                                        .log_err()
+                                                                {
+                                                                    start_server_task
+                                                                        .await
+                                                                        .log_err();
+                                                                }
                                                             }
-                                                        }
-                                                    })
-                                                    .detach();
+                                                        })
+                                                        .detach();
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
-                                }),
+                                    }),
                             ),
                     )
                     .map(|parent| {
