@@ -62,11 +62,14 @@ impl Database {
             billing_subscription::Entity::update(billing_subscription::ActiveModel {
                 id: ActiveValue::set(id),
                 billing_customer_id: params.billing_customer_id.clone(),
+                kind: params.kind.clone(),
                 stripe_subscription_id: params.stripe_subscription_id.clone(),
                 stripe_subscription_status: params.stripe_subscription_status.clone(),
                 stripe_cancel_at: params.stripe_cancel_at.clone(),
                 stripe_cancellation_reason: params.stripe_cancellation_reason.clone(),
-                ..Default::default()
+                stripe_current_period_start: params.stripe_current_period_start.clone(),
+                stripe_current_period_end: params.stripe_current_period_end.clone(),
+                created_at: ActiveValue::not_set(),
             })
             .exec(&*tx)
             .await?;

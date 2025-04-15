@@ -43,6 +43,10 @@ impl ActiveModelBehavior for ActiveModel {}
 pub enum SubscriptionKind {
     #[sea_orm(string_value = "zed_pro")]
     ZedPro,
+    #[sea_orm(string_value = "zed_pro_trial")]
+    ZedProTrial,
+    #[sea_orm(string_value = "zed_free")]
+    ZedFree,
 }
 
 /// The status of a Stripe subscription.
