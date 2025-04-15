@@ -62,6 +62,7 @@ pub struct CommitModal {
     restore_dock: RestoreDock,
     properties: ModalContainerProperties,
     branch_list_handle: PopoverMenuHandle<BranchList>,
+    commit_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 impl Focusable for CommitModal {
@@ -171,7 +172,9 @@ impl CommitModal {
         let focus_handle = commit_editor.focus_handle(cx);
 
         cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-            if !this.branch_list_handle.is_focused(window, cx) {
+            if !this.branch_list_handle.is_focused(window, cx)
+                && !this.commit_menu_handle.is_focused(window, cx)
+            {
                 cx.emit(DismissEvent);
             }
         })
@@ -185,6 +188,7 @@ impl CommitModal {
             restore_dock,
             properties,
             branch_list_handle: PopoverMenuHandle::default(),
+            commit_menu_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -246,6 +250,7 @@ impl CommitModal {
                         .action("Amend...", Amend.boxed_clone())
                 }))
             })
+            .with_handle(self.commit_menu_handle.clone())
             .anchor(Corner::TopRight)
     }
 
