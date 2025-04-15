@@ -1,7 +1,7 @@
 use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{
     Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
@@ -355,15 +355,23 @@ impl AgentDiff {
             self.update_selection(&diff_hunks_in_ranges, window, cx);
         }
 
+        let mut ranges_by_buffer = HashMap::default();
         for hunk in &diff_hunks_in_ranges {
             let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
             if let Some(buffer) = buffer {
-                self.thread
-                    .update(cx, |thread, cx| {
-                        thread.reject_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
-                    })
-                    .detach_and_log_err(cx);
+                ranges_by_buffer
+                    .entry(buffer.clone())
+                    .or_insert_with(Vec::new)
+                    .push(hunk.buffer_range.clone());
             }
+        }
+
+        for (buffer, ranges) in ranges_by_buffer {
+            self.thread
+                .update(cx, |thread, cx| {
+                    thread.reject_edits_in_ranges(buffer, ranges, cx)
+                })
+                .detach_and_log_err(cx);
         }
     }
 
