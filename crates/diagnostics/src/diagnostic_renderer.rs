@@ -14,8 +14,8 @@ use settings::Settings;
 use text::{AnchorRangeExt, Point};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, Context, IntoElement, ParentElement, SharedString, Styled,
-    Window, div, px,
+    ActiveTheme, AnyElement, App, Context, ElementId, IntoElement, ParentElement, SharedString,
+    Styled, Window, div, prelude::*, px,
 };
 use util::maybe;
 
@@ -168,14 +168,54 @@ impl DiagnosticBlock {
         let status_colors = bcx.app.theme().status();
         let max_width = px(600.);
 
+        // Define common alpha values for all diagnostic severity levels
+        let background_alpha = 0.10;
+        let bg_blend_alpha = 1.0;
+        let border_alpha = 0.24;
+
         let (background_color, border_color) = match self.severity {
-            DiagnosticSeverity::ERROR => (status_colors.error_background, status_colors.error),
-            DiagnosticSeverity::WARNING => {
-                (status_colors.warning_background, status_colors.warning)
-            }
-            DiagnosticSeverity::INFORMATION => (status_colors.info_background, status_colors.info),
-            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.info),
-            _ => (status_colors.ignored_background, status_colors.ignored),
+            DiagnosticSeverity::ERROR => (
+                cx.theme()
+                    .colors()
+                    .editor_background
+                    // for color reasons, we seem to need to reduce the reds a bit
+                    // to get consistent background colors
+                    .alpha(bg_blend_alpha - 0.02)
+                    .blend(status_colors.error.alpha(background_alpha)),
+                status_colors.error.opacity(border_alpha),
+            ),
+            DiagnosticSeverity::WARNING => (
+                cx.theme()
+                    .colors()
+                    .editor_background
+                    .alpha(bg_blend_alpha)
+                    .blend(status_colors.warning.alpha(background_alpha)),
+                status_colors.warning.opacity(border_alpha),
+            ),
+            DiagnosticSeverity::INFORMATION => (
+                cx.theme()
+                    .colors()
+                    .editor_background
+                    .alpha(bg_blend_alpha)
+                    .blend(status_colors.info.alpha(background_alpha)),
+                status_colors.info.opacity(border_alpha),
+            ),
+            DiagnosticSeverity::HINT => (
+                cx.theme()
+                    .colors()
+                    .editor_background
+                    .alpha(bg_blend_alpha)
+                    .blend(status_colors.hint.alpha(background_alpha)),
+                status_colors.info.opacity(border_alpha),
+            ),
+            _ => (
+                cx.theme()
+                    .colors()
+                    .editor_background
+                    .alpha(bg_blend_alpha)
+                    .blend(status_colors.ignored_background.alpha(background_alpha)),
+                status_colors.ignored.opacity(border_alpha),
+            ),
         };
         let settings = ThemeSettings::get_global(cx);
         let editor_line_height = (settings.line_height() * settings.buffer_font_size(cx)).round();
@@ -184,14 +224,29 @@ impl DiagnosticBlock {
         let diagnostics_editor = self.diagnostics_editor.clone();
 
         div()
-            .border_l_2()
-            .px_2()
+            .relative()
+            .ml(px(-9.0))
             .line_height(line_height)
             .bg(background_color)
-            .border_color(border_color)
             .max_w(max_width)
+            .font_buffer(cx)
             .child(
-                MarkdownElement::new(self.markdown.clone(), hover_markdown_style(bcx.window, cx))
+                // we have to overlay border so the y borders don't cause the
+                // block to reserve an extra line height
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .border_1()
+                    .border_color(border_color),
+            )
+            .child(
+                div().px_2().child(
+                    MarkdownElement::new(
+                        self.markdown.clone(),
+                        hover_markdown_style(bcx.window, cx),
+                    )
                     .on_url_click({
                         move |link, window, cx| {
                             Self::open_link(
@@ -204,6 +259,7 @@ impl DiagnosticBlock {
                             )
                         }
                     }),
+                ),
             )
             .into_any_element()
     }
