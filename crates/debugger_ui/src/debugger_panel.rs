@@ -1,6 +1,6 @@
 use crate::{
     ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, Pause, Restart, StepBack,
-    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
+    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
@@ -293,35 +293,49 @@ impl DebugPanel {
                     );
                 };
 
-                let Some(project) = self.project.upgrade() else {
-                    return log::error!("Debug Panel out lived it's weak reference to Project");
-                };
+                let adapter_name = session.read(cx).adapter_name();
 
-                if self
-                    .sessions
-                    .iter()
-                    .any(|item| item.read(cx).session_id(cx) == *session_id)
-                {
-                    // We already have an item for this session.
-                    return;
-                }
-                let session_item = DebugSession::running(
-                    project,
-                    self.workspace.clone(),
-                    session,
-                    cx.weak_entity(),
-                    window,
-                    cx,
-                );
+                let session_id = *session_id;
+                cx.spawn_in(window, async move |this, cx| {
+                    let serialized_layout =
+                        persistence::get_serialized_pane_layout(adapter_name).await;
 
-                if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
-                    // We might want to make this an event subscription and only notify when a new thread is selected
-                    // This is used to filter the command menu correctly
-                    cx.observe(&running, |_, _, cx| cx.notify()).detach();
-                }
+                    this.update_in(cx, |this, window, cx| {
+                        let Some(project) = this.project.upgrade() else {
+                            return log::error!(
+                                "Debug Panel out lived it's weak reference to Project"
+                            );
+                        };
 
-                self.sessions.push(session_item.clone());
-                self.activate_session(session_item, window, cx);
+                        if this
+                            .sessions
+                            .iter()
+                            .any(|item| item.read(cx).session_id(cx) == session_id)
+                        {
+                            // We already have an item for this session.
+                            return;
+                        }
+                        let session_item = DebugSession::running(
+                            project,
+                            this.workspace.clone(),
+                            session,
+                            cx.weak_entity(),
+                            serialized_layout,
+                            window,
+                            cx,
+                        );
+
+                        if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
+                            // We might want to make this an event subscription and only notify when a new thread is selected
+                            // This is used to filter the command menu correctly
+                            cx.observe(&running, |_, _, cx| cx.notify()).detach();
+                        }
+
+                        this.sessions.push(session_item.clone());
+                        this.activate_session(session_item, window, cx);
+                    })
+                })
+                .detach();
             }
             dap_store::DapStoreEvent::RunInTerminal {
                 title,
@@ -415,32 +429,58 @@ impl DebugPanel {
         })
     }
 
-    fn close_session(&mut self, entity_id: EntityId, cx: &mut Context<Self>) {
+    fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self
             .sessions
             .iter()
             .find(|other| entity_id == other.entity_id())
+            .cloned()
         else {
             return;
         };
 
-        session.update(cx, |session, cx| session.shutdown(cx));
+        let session_id = session.update(cx, |this, cx| this.session_id(cx));
+        let should_prompt = self
+            .project
+            .update(cx, |this, cx| {
+                let session = this.dap_store().read(cx).session_by_id(session_id);
+                session.map(|session| !session.read(cx).is_terminated())
+            })
+            .ok()
+            .flatten()
+            .unwrap_or_default();
 
-        self.sessions.retain(|other| entity_id != other.entity_id());
-
-        if let Some(active_session_id) = self
-            .active_session
-            .as_ref()
-            .map(|session| session.entity_id())
-        {
-            if active_session_id == entity_id {
-                self.active_session = self.sessions.first().cloned();
+        cx.spawn_in(window, async move |this, cx| {
+            if should_prompt {
+                let response = cx.prompt(
+                    gpui::PromptLevel::Warning,
+                    "This Debug Session is still running. Are you sure you want to terminate it?",
+                    None,
+                    &["Yes", "No"],
+                );
+                if response.await == Ok(1) {
+                    return;
+                }
             }
-        }
+            session.update(cx, |session, cx| session.shutdown(cx)).ok();
+            this.update(cx, |this, cx| {
+                this.sessions.retain(|other| entity_id != other.entity_id());
 
-        cx.notify();
+                if let Some(active_session_id) = this
+                    .active_session
+                    .as_ref()
+                    .map(|session| session.entity_id())
+                {
+                    if active_session_id == entity_id {
+                        this.active_session = this.sessions.first().cloned();
+                    }
+                }
+                cx.notify()
+            })
+            .ok();
+        })
+        .detach();
     }
-
     fn sessions_drop_down_menu(
         &self,
         active_session: &Entity<DebugSession>,
@@ -487,8 +527,11 @@ impl DebugPanel {
                                                     let weak = weak.clone();
                                                     move |_, window, cx| {
                                                         weak.update(cx, |panel, cx| {
-                                                            panel
-                                                                .close_session(weak_session_id, cx);
+                                                            panel.close_session(
+                                                                weak_session_id,
+                                                                window,
+                                                                cx,
+                                                            );
                                                         })
                                                         .ok();
                                                         context_menu

@@ -1538,6 +1538,8 @@ async fn test_variable_list_only_sends_requests_when_rendering(
         })
         .await;
 
+    cx.run_until_parked();
+
     let running_state = active_debug_session_panel(workspace, cx).update_in(cx, |item, _, _| {
         let state = item
             .mode()

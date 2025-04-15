@@ -100,7 +100,7 @@ async fn test_show_attach_modal_and_select_process(
                         },
                         Candidate {
                             pid: 3,
-                            name: "non-fake-binary-1".into(),
+                            name: "real-binary-1".into(),
                             command: vec![],
                         },
                         Candidate {
@@ -108,7 +108,9 @@ async fn test_show_attach_modal_and_select_process(
                             name: "fake-binary-2".into(),
                             command: vec![],
                         },
-                    ],
+                    ]
+                    .into_iter()
+                    .collect(),
                     true,
                     window,
                     cx,
@@ -123,15 +125,28 @@ async fn test_show_attach_modal_and_select_process(
 
     // assert we got the expected processes
     workspace
+        .update(cx, |_, window, cx| {
+            let names =
+                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
+            // Initially all processes are visible.
+            assert_eq!(3, names.len());
+            attach_modal.update(cx, |this, cx| {
+                this.picker.update(cx, |this, cx| {
+                    this.set_query("fakb", window, cx);
+                })
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+    // assert we got the expected processes
+    workspace
         .update(cx, |_, _, cx| {
             let names =
                 attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
-
-            // we filtered out all processes that are not starting with `fake-binary`
+            // Initially all processes are visible.
             assert_eq!(2, names.len());
         })
         .unwrap();
-
     // select the only existing process
     cx.dispatch_action(Confirm);
 

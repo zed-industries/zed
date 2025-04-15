@@ -44,8 +44,8 @@ use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
+    AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
+    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
 pub fn init(cx: &mut App) {
@@ -89,6 +89,16 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         let thread = panel.read(cx).thread.read(cx).thread().clone();
                         AgentDiff::deploy_in_workspace(thread, workspace, window, cx);
+                    }
+                })
+                .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.message_editor.update(cx, |editor, cx| {
+                                editor.expand_message_editor(&ExpandMessageEditor, window, cx);
+                            });
+                        });
                     }
                 });
         },
@@ -193,7 +203,7 @@ impl AssistantPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            let tools = Arc::new(ToolWorkingSet::default());
+            let tools = cx.new(|_| ToolWorkingSet::default())?;
             let thread_store = workspace
                 .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
@@ -559,6 +569,7 @@ impl AssistantPanel {
             ActiveView::Configuration | ActiveView::History => {
                 self.active_view =
                     ActiveView::thread(self.thread.read(cx).thread().clone(), window, cx);
+                self.message_editor.focus_handle(cx).focus(window);
                 cx.notify();
             }
             _ => {}
@@ -1088,20 +1099,30 @@ impl AssistantPanel {
                                             window,
                                             cx,
                                             |menu, _window, _cx| {
-                                                menu.action(
+                                                menu
+                                                    .when(!is_empty, |menu| {
+                                                        menu.action(
+                                                            "Start New From Summary",
+                                                            Box::new(NewThread {
+                                                                from_thread_id: Some(thread_id.clone()),
+                                                            }),
+                                                        ).separator()
+                                                    })
+                                                    .action(
                                                     "New Text Thread",
                                                     NewTextThread.boxed_clone(),
                                                 )
-                                                .when(!is_empty, |menu| {
-                                                    menu.action(
-                                                        "Continue in New Thread",
-                                                        Box::new(NewThread {
-                                                            from_thread_id: Some(thread_id.clone()),
-                                                        }),
-                                                    )
-                                                })
-                                                .separator()
                                                 .action("Settings", OpenConfiguration.boxed_clone())
+                                                .separator()
+                                                .action(
+                                                    "Install MCPs",
+                                                    zed_actions::Extensions {
+                                                        category_filter: Some(
+                                                            zed_actions::ExtensionCategoryFilter::ContextServers,
+                                                        ),
+                                                    }
+                                                    .boxed_clone(),
+                                                )
                                             },
                                         ))
                                     }),

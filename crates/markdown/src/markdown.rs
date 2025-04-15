@@ -32,6 +32,17 @@ use crate::parser::CodeBlockKind;
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 
+/// Defines custom style refinements for each heading level (H1-H6)
+#[derive(Clone, Default)]
+pub struct HeadingLevelStyles {
+    pub h1: Option<TextStyleRefinement>,
+    pub h2: Option<TextStyleRefinement>,
+    pub h3: Option<TextStyleRefinement>,
+    pub h4: Option<TextStyleRefinement>,
+    pub h5: Option<TextStyleRefinement>,
+    pub h6: Option<TextStyleRefinement>,
+}
+
 #[derive(Clone)]
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
@@ -46,6 +57,7 @@ pub struct MarkdownStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
+    pub heading_level_styles: Option<HeadingLevelStyles>,
     pub table_overflow_x_scroll: bool,
 }
 
@@ -64,6 +76,7 @@ impl Default for MarkdownStyle {
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
             heading: Default::default(),
+            heading_level_styles: None,
             table_overflow_x_scroll: false,
         }
     }
@@ -628,17 +641,19 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::Heading { level, .. } => {
                             let mut heading = div().mb_2();
-                            heading = match level {
-                                pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
-                                pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
-                                pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
-                                pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
-                                _ => heading,
-                            };
-                            heading.style().refine(&self.style.heading);
-                            builder.push_text_style(
-                                self.style.heading.text_style().clone().unwrap_or_default(),
+
+                            heading = apply_heading_style(
+                                heading,
+                                *level,
+                                self.style.heading_level_styles.as_ref(),
                             );
+
+                            heading.style().refine(&self.style.heading);
+
+                            let text_style =
+                                self.style.heading.text_style().clone().unwrap_or_default();
+
+                            builder.push_text_style(text_style);
                             builder.push_div(heading, range, markdown_end);
                         }
                         MarkdownTag::BlockQuote => {
@@ -1041,6 +1056,38 @@ impl Element for MarkdownElement {
         rendered_markdown.element.paint(window, cx);
         self.paint_selection(bounds, &rendered_markdown.text, window, cx);
     }
+}
+
+fn apply_heading_style(
+    mut heading: Div,
+    level: pulldown_cmark::HeadingLevel,
+    custom_styles: Option<&HeadingLevelStyles>,
+) -> Div {
+    heading = match level {
+        pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
+        pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
+        pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
+        pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
+        pulldown_cmark::HeadingLevel::H5 => heading.text_base(),
+        pulldown_cmark::HeadingLevel::H6 => heading.text_sm(),
+    };
+
+    if let Some(styles) = custom_styles {
+        let style_opt = match level {
+            pulldown_cmark::HeadingLevel::H1 => &styles.h1,
+            pulldown_cmark::HeadingLevel::H2 => &styles.h2,
+            pulldown_cmark::HeadingLevel::H3 => &styles.h3,
+            pulldown_cmark::HeadingLevel::H4 => &styles.h4,
+            pulldown_cmark::HeadingLevel::H5 => &styles.h5,
+            pulldown_cmark::HeadingLevel::H6 => &styles.h6,
+        };
+
+        if let Some(style) = style_opt {
+            heading.style().text = Some(style.clone());
+        }
+    }
+
+    heading
 }
 
 fn render_copy_code_block_button(

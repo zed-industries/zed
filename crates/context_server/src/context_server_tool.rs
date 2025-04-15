@@ -53,16 +53,18 @@ impl Tool for ContextServerTool {
         true
     }
 
-    fn input_schema(&self, _: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        match &self.tool.input_schema {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        let mut schema = self.tool.input_schema.clone();
+        assistant_tool::adapt_schema_to_format(&mut schema, format)?;
+        Ok(match schema {
             serde_json::Value::Null => {
                 serde_json::json!({ "type": "object", "properties": [] })
             }
             serde_json::Value::Object(map) if map.is_empty() => {
                 serde_json::json!({ "type": "object", "properties": [] })
             }
-            _ => self.tool.input_schema.clone(),
-        }
+            _ => schema,
+        })
     }
 
     fn ui_text(&self, _input: &serde_json::Value) -> String {

@@ -1373,6 +1373,25 @@ impl Buffer {
             .or_else(|| self.language.clone())
     }
 
+    /// Returns each [`Language`] for the active syntax layers at the given location.
+    pub fn languages_at<D: ToOffset>(&self, position: D) -> Vec<Arc<Language>> {
+        let offset = position.to_offset(self);
+        let mut languages: Vec<Arc<Language>> = self
+            .syntax_map
+            .lock()
+            .layers_for_range(offset..offset, &self.text, false)
+            .map(|info| info.language.clone())
+            .collect();
+
+        if languages.is_empty() {
+            if let Some(buffer_language) = self.language() {
+                languages.push(buffer_language.clone());
+            }
+        }
+
+        languages
+    }
+
     /// An integer version number that accounts for all updates besides
     /// the buffer's text itself (which is versioned via a version vector).
     pub fn non_text_state_update_count(&self) -> usize {

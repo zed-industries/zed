@@ -52,7 +52,7 @@ impl Tool for CreateFileTool {
         IconName::FileCreate
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<CreateFileToolInput>(format)
     }
 

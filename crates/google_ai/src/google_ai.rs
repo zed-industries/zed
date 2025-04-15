@@ -1,7 +1,7 @@
 mod supported_countries;
 
 use anyhow::{Result, anyhow, bail};
-use futures::{AsyncBufReadExt, AsyncReadExt, Stream, StreamExt, io::BufReader, stream::BoxStream};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 
@@ -454,25 +454,4 @@ impl std::fmt::Display for Model {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.id())
     }
-}
-
-pub fn extract_text_from_events(
-    events: impl Stream<Item = Result<GenerateContentResponse>>,
-) -> impl Stream<Item = Result<String>> {
-    events.filter_map(|event| async move {
-        match event {
-            Ok(event) => event.candidates.and_then(|candidates| {
-                candidates.into_iter().next().and_then(|candidate| {
-                    candidate.content.parts.into_iter().next().and_then(|part| {
-                        if let Part::TextPart(TextPart { text }) = part {
-                            Some(Ok(text))
-                        } else {
-                            None
-                        }
-                    })
-                })
-            }),
-            Err(error) => Some(Err(error)),
-        }
-    })
 }
