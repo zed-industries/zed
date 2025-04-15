@@ -687,6 +687,9 @@ impl BlockMap {
                         rows_before_block = position.0 - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
+                        if position.0 + 1 < new_transforms.summary().input_rows {
+                            continue;
+                        }
                         rows_before_block = (position.0 + 1) - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Replace(range) => {
