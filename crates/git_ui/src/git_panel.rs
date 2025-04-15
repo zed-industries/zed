@@ -1434,6 +1434,25 @@ impl GitPanel {
         }
     }
 
+    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .commit_editor
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            if !self.amend_pending {
+                self.set_amend_pending(true, cx);
+                self.load_last_commit_message_if_empty(cx);
+            } else {
+                telemetry::event!("Git Amended", source = "Git Panel");
+                self.set_amend_pending(false, cx);
+                self.commit_changes(CommitOptions { amend: true }, window, cx);
+            }
+        } else {
+            cx.propagate();
+        }
+    }
+
     pub fn load_last_commit_message_if_empty(&mut self, cx: &mut Context<Self>) {
         if !self.commit_editor.read(cx).is_empty(cx) {
             return;
@@ -1467,30 +1486,9 @@ impl GitPanel {
         .detach();
     }
 
-    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
-        if self
-            .commit_editor
-            .focus_handle(cx)
-            .contains_focused(window, cx)
-        {
-            if !self.amend_pending {
-                self.amend_pending = true;
-                cx.notify();
-                self.load_last_commit_message_if_empty(cx);
-            } else {
-                telemetry::event!("Git Amended", source = "Git Panel");
-                self.amend_pending = false;
-                self.commit_changes(CommitOptions { amend: true }, window, cx);
-            }
-        } else {
-            cx.propagate();
-        }
-    }
-
     fn cancel(&mut self, _: &git::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         if self.amend_pending {
-            self.amend_pending = false;
-            cx.notify();
+            self.set_amend_pending(false, cx);
         }
     }
 
@@ -2816,7 +2814,7 @@ impl GitPanel {
                         .when_some(keybinding_target.clone(), |el, keybinding_target| {
                             el.context(keybinding_target.clone())
                         })
-                        .action("Amend...", Amend.boxed_clone())
+                        .action("Amend", Amend.boxed_clone())
                 }))
             })
             .anchor(Corner::TopRight)
@@ -3082,11 +3080,29 @@ impl GitPanel {
                                                             }
                                                         })
                                                         .disabled(!can_commit || self.modal_open)
-                                                        .on_click(move |_, window, cx| {
-                                                            window.dispatch_action(
-                                                                Box::new(git::Amend),
-                                                                cx,
-                                                            );
+                                                        .on_click({
+                                                            let git_panel = git_panel.downgrade();
+                                                            move |_, window, cx| {
+                                                                telemetry::event!(
+                                                                    "Git Amended",
+                                                                    source = "Git Panel"
+                                                                );
+                                                                git_panel
+                                                                    .update(cx, |git_panel, cx| {
+                                                                        git_panel
+                                                                            .set_amend_pending(
+                                                                                false, cx,
+                                                                            );
+                                                                        git_panel.commit_changes(
+                                                                            CommitOptions {
+                                                                                amend: true,
+                                                                            },
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                    })
+                                                                    .ok();
+                                                            }
                                                         }),
                                                 )
                                         }
@@ -3110,6 +3126,10 @@ impl GitPanel {
                                                 .on_click({
                                                     let git_panel = git_panel.downgrade();
                                                     move |_, window, cx| {
+                                                        telemetry::event!(
+                                                            "Git Committed",
+                                                            source = "Git Panel"
+                                                        );
                                                         git_panel
                                                             .update(cx, |git_panel, cx| {
                                                                 git_panel.commit_changes(
@@ -3170,11 +3190,25 @@ impl GitPanel {
                                                             }
                                                         })
                                                         .disabled(!can_commit || self.modal_open)
-                                                        .on_click(move |_, window, cx| {
-                                                            window.dispatch_action(
-                                                                Box::new(git::Commit),
-                                                                cx,
-                                                            );
+                                                        .on_click({
+                                                            let git_panel = git_panel.downgrade();
+                                                            move |_, window, cx| {
+                                                                telemetry::event!(
+                                                                    "Git Committed",
+                                                                    source = "Git Panel"
+                                                                );
+                                                                git_panel
+                                                                    .update(cx, |git_panel, cx| {
+                                                                        git_panel.commit_changes(
+                                                                            CommitOptions {
+                                                                                amend: false,
+                                                                            },
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                    })
+                                                                    .ok();
+                                                            }
                                                         }),
                                                 )
                                             },
@@ -3234,8 +3268,10 @@ impl GitPanel {
             .px(px(8.))
             .border_color(cx.theme().colors().border)
             .child(
-                Label::new("Your changes will modify your most recent commit. If you want to make these changes as a new commit, you can cancel the amend operation.")
-                    .size(LabelSize::Small),
+                Label::new(
+                    "This will update your most recent commit. Cancel to make a new one instead.",
+                )
+                .size(LabelSize::Small),
             )
     }
 
