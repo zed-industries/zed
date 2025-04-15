@@ -82,7 +82,7 @@ impl ContextServer {
             }
         }
 
-        impl<'a> Drop for StartingGuard<'a> {
+        impl Drop for StartingGuard<'_> {
             fn drop(&mut self) {
                 *self.flag.write() = false;
             }
