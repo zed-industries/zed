@@ -3821,10 +3821,6 @@ impl GitPanel {
         let entry_staging = self.entry_staging(entry);
         let mut is_staged: ToggleState = self.entry_staging(entry).as_bool().into();
 
-        if !self.has_staged_changes() && !self.has_conflicts() && !entry.status.is_created() {
-            is_staged = ToggleState::Selected;
-        }
-
         let handle = cx.weak_entity();
 
         let selected_bg_alpha = 0.08;
@@ -3921,11 +3917,6 @@ impl GitPanel {
                         Checkbox::new(checkbox_id, is_staged)
                             .disabled(!has_write_access)
                             .fill()
-                            .placeholder(
-                                !self.has_staged_changes()
-                                    && !self.has_conflicts()
-                                    && !entry.status.is_created(),
-                            )
                             .elevation(ElevationIndex::Surface)
                             .on_click({
                                 let entry = entry.clone();
