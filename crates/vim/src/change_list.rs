@@ -1,9 +1,9 @@
 use editor::{
-    display_map::ToDisplayPoint, movement, scroll::Autoscroll, Anchor, Bias, Direction, Editor,
+    Anchor, Bias, Direction, Editor, display_map::ToDisplayPoint, movement, scroll::Autoscroll,
 };
-use gpui::{actions, Context, Window};
+use gpui::{Context, Window, actions};
 
-use crate::{state::Mode, Vim};
+use crate::{Vim, state::Mode};
 
 actions!(vim, [ChangeListOlder, ChangeListNewer]);
 
@@ -24,6 +24,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         if self.change_list.is_empty() {
             return;
         }

@@ -4,9 +4,9 @@ mod tab_switcher_tests;
 use collections::HashMap;
 use editor::items::entry_git_aware_label_color;
 use gpui::{
-    actions, impl_actions, rems, Action, AnyElement, App, Context, DismissEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseUpEvent, ParentElement, Render, Styled, Task, WeakEntity, Window,
+    Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Render,
+    Styled, Task, WeakEntity, Window, actions, impl_actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -14,12 +14,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
+use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{
-    item::{ItemHandle, ItemSettings, TabContentParams},
-    pane::{render_item_indicator, tab_details, Event as PaneEvent},
     ModalView, Pane, SaveIntent, Workspace,
+    item::{ItemHandle, ItemSettings, TabContentParams},
+    pane::{Event as PaneEvent, render_item_indicator, tab_details},
 };
 
 const PANEL_WIDTH_REMS: f32 = 28.;
@@ -450,7 +450,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 IconButton::new("close_tab", IconName::Close)
                     .icon_size(IconSize::Small)
                     .icon_color(indicator_color)
-                    .tooltip(Tooltip::text("Close"))
+                    .tooltip(Tooltip::for_action_title("Close", &CloseSelectedItem))
                     .on_click(cx.listener(move |picker, _, window, cx| {
                         cx.stop_propagation();
                         picker.delegate.close_item_at(ix, window, cx);

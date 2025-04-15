@@ -3,18 +3,18 @@ use std::sync::Arc;
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{prelude::*, App, Entity, Hsla, Task, TextStyleRefinement};
+use gpui::{App, Entity, Hsla, Task, TextStyleRefinement, prelude::*};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape};
+use ui::{IconButtonShape, prelude::*};
 use util::ResultExt;
 
 use crate::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
-    outputs::{plain::TerminalOutput, user_error::ErrorView, Output},
+    outputs::{Output, plain::TerminalOutput, user_error::ErrorView},
 };
 
 #[derive(Copy, Clone, PartialEq, PartialOrd)]

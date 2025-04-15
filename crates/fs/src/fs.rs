@@ -4,10 +4,11 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
 use gpui::App;
+use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use std::borrow::Cow;
@@ -20,7 +21,7 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
 use async_tar::Archive;
-use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
+use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,7 @@ use text::LineEnding;
 #[cfg(any(test, feature = "test-support"))]
 mod fake_git_repo;
 #[cfg(any(test, feature = "test-support"))]
-use collections::{btree_map, BTreeMap};
+use collections::{BTreeMap, btree_map};
 #[cfg(any(test, feature = "test-support"))]
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
@@ -240,9 +241,9 @@ impl From<MTime> for proto::Timestamp {
     }
 }
 
-#[derive(Default)]
 pub struct RealFs {
     git_binary_path: Option<PathBuf>,
+    executor: BackgroundExecutor,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -294,8 +295,11 @@ impl FileHandle for std::fs::File {
 pub struct RealWatcher {}
 
 impl RealFs {
-    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
-        Self { git_binary_path }
+    pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
+        Self {
+            git_binary_path,
+            executor,
+        }
     }
 }
 
@@ -426,7 +430,7 @@ impl Fs for RealFs {
 
         unsafe {
             unsafe fn ns_string(string: &str) -> id {
-                NSString::alloc(nil).init_str(string).autorelease()
+                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
             }
 
             let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
@@ -449,7 +453,12 @@ impl Fs for RealFs {
         let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
             Ok(_) => Ok(()),
-            Err(err) => Err(anyhow::Error::new(err)),
+            Err(err) => {
+                log::error!("Failed to trash file: {}", err);
+                // Trashing files can fail if you don't have a trashing dbus service configured.
+                // In that case, delete the file directly instead.
+                return self.remove_file(path, RemoveOptions::default()).await;
+            }
         }
     }
 
@@ -457,8 +466,8 @@ impl Fs for RealFs {
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         use util::paths::SanitizedPath;
         use windows::{
-            core::HSTRING,
             Storage::{StorageDeleteOption, StorageFile},
+            core::HSTRING,
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
@@ -483,8 +492,8 @@ impl Fs for RealFs {
     async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         use util::paths::SanitizedPath;
         use windows::{
-            core::HSTRING,
             Storage::{StorageDeleteOption, StorageFolder},
+            core::HSTRING,
         };
 
         // todo(windows)
@@ -582,7 +591,7 @@ impl Fs for RealFs {
                     (io::ErrorKind::NotFound, _) => Ok(None),
                     (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
                     _ => Err(anyhow::Error::new(err)),
-                }
+                };
             }
         };
 
@@ -701,7 +710,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use parking_lot::Mutex;
-        use util::{paths::SanitizedPath, ResultExt as _};
+        use util::{ResultExt as _, paths::SanitizedPath};
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -754,6 +763,7 @@ impl Fs for RealFs {
         Some(Arc::new(RealGitRepository::new(
             dotgit_path,
             self.git_binary_path.clone(),
+            self.executor.clone(),
         )?))
     }
 
@@ -841,7 +851,7 @@ impl Watcher for RealWatcher {
 pub struct FakeFs {
     this: std::sync::Weak<Self>,
     // Use an unfair lock to ensure tests are deterministic.
-    state: Mutex<FakeFsState>,
+    state: Arc<Mutex<FakeFsState>>,
     executor: gpui::BackgroundExecutor,
 }
 
@@ -851,7 +861,7 @@ struct FakeFsState {
     next_inode: u64,
     next_mtime: SystemTime,
     git_event_tx: smol::channel::Sender<PathBuf>,
-    event_txs: Vec<smol::channel::Sender<Vec<PathEvent>>>,
+    event_txs: Vec<(PathBuf, smol::channel::Sender<Vec<PathEvent>>)>,
     events_paused: bool,
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
@@ -868,6 +878,8 @@ enum FakeFsEntry {
         mtime: MTime,
         len: u64,
         content: Vec<u8>,
+        // The path to the repository state directory, if this is a gitfile.
+        git_dir_path: Option<PathBuf>,
     },
     Dir {
         inode: u64,
@@ -1003,7 +1015,7 @@ impl FakeFsState {
     fn flush_events(&mut self, mut count: usize) {
         count = count.min(self.buffered_events.len());
         let events = self.buffered_events.drain(0..count).collect::<Vec<_>>();
-        self.event_txs.retain(|tx| {
+        self.event_txs.retain(|(_, tx)| {
             let _ = tx.try_send(events.clone());
             !tx.is_closed()
         });
@@ -1026,7 +1038,7 @@ impl FakeFs {
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
             executor: executor.clone(),
-            state: Mutex::new(FakeFsState {
+            state: Arc::new(Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
                     mtime: MTime(UNIX_EPOCH),
@@ -1044,7 +1056,7 @@ impl FakeFs {
                 metadata_call_count: 0,
                 moves: Default::default(),
                 home_dir: None,
-            }),
+            })),
         });
 
         executor.spawn({
@@ -1087,6 +1099,7 @@ impl FakeFs {
                             mtime: new_mtime,
                             content: Vec::new(),
                             len: 0,
+                            git_dir_path: None,
                         })));
                     }
                     btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut().lock() {
@@ -1102,7 +1115,7 @@ impl FakeFs {
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
-        self.write_file_internal(path, content).unwrap()
+        self.write_file_internal(path, content, true).unwrap()
     }
 
     pub async fn insert_symlink(&self, path: impl AsRef<Path>, target: PathBuf) {
@@ -1124,30 +1137,51 @@ impl FakeFs {
         state.emit_event([(path, None)]);
     }
 
-    fn write_file_internal(&self, path: impl AsRef<Path>, content: Vec<u8>) -> Result<()> {
+    fn write_file_internal(
+        &self,
+        path: impl AsRef<Path>,
+        new_content: Vec<u8>,
+        recreate_inode: bool,
+    ) -> Result<()> {
         let mut state = self.state.lock();
-        let file = Arc::new(Mutex::new(FakeFsEntry::File {
-            inode: state.get_and_increment_inode(),
-            mtime: state.get_and_increment_mtime(),
-            len: content.len() as u64,
-            content,
-        }));
+        let new_inode = state.get_and_increment_inode();
+        let new_mtime = state.get_and_increment_mtime();
+        let new_len = new_content.len() as u64;
         let mut kind = None;
-        state.write_path(path.as_ref(), {
-            let kind = &mut kind;
-            move |entry| {
-                match entry {
-                    btree_map::Entry::Vacant(e) => {
-                        *kind = Some(PathEventKind::Created);
-                        e.insert(file);
-                    }
-                    btree_map::Entry::Occupied(mut e) => {
-                        *kind = Some(PathEventKind::Changed);
-                        *e.get_mut() = file;
+        state.write_path(path.as_ref(), |entry| {
+            match entry {
+                btree_map::Entry::Vacant(e) => {
+                    kind = Some(PathEventKind::Created);
+                    e.insert(Arc::new(Mutex::new(FakeFsEntry::File {
+                        inode: new_inode,
+                        mtime: new_mtime,
+                        len: new_len,
+                        content: new_content,
+                        git_dir_path: None,
+                    })));
+                }
+                btree_map::Entry::Occupied(mut e) => {
+                    kind = Some(PathEventKind::Changed);
+                    if let FakeFsEntry::File {
+                        inode,
+                        mtime,
+                        len,
+                        content,
+                        ..
+                    } = &mut *e.get_mut().lock()
+                    {
+                        *mtime = new_mtime;
+                        *content = new_content;
+                        *len = new_len;
+                        if recreate_inode {
+                            *inode = new_inode;
+                        }
+                    } else {
+                        anyhow::bail!("not a file")
                     }
                 }
-                Ok(())
             }
+            Ok(())
         })?;
         state.emit_event([(path.as_ref(), kind)]);
         Ok(())
@@ -1174,6 +1208,11 @@ impl FakeFs {
 
     pub fn pause_events(&self) {
         self.state.lock().events_paused = true;
+    }
+
+    pub fn unpause_events_and_flush(&self) {
+        self.state.lock().events_paused = false;
+        self.flush_events(usize::MAX);
     }
 
     pub fn buffered_event_count(&self) -> usize {
@@ -1243,33 +1282,88 @@ impl FakeFs {
         .boxed()
     }
 
-    pub fn with_git_state<T, F>(&self, dot_git: &Path, emit_git_event: bool, f: F) -> T
+    pub fn with_git_state_and_paths<T, F>(
+        &self,
+        dot_git: &Path,
+        emit_git_event: bool,
+        f: F,
+    ) -> Result<T>
     where
-        F: FnOnce(&mut FakeGitRepositoryState) -> T,
+        F: FnOnce(&mut FakeGitRepositoryState, &Path, &Path) -> T,
     {
         let mut state = self.state.lock();
-        let entry = state.read_path(dot_git).unwrap();
+        let entry = state.read_path(dot_git).context("open .git")?;
         let mut entry = entry.lock();
 
         if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
             let repo_state = git_repo_state.get_or_insert_with(|| {
+                log::debug!("insert git state for {dot_git:?}");
                 Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    dot_git.to_path_buf(),
                     state.git_event_tx.clone(),
                 )))
             });
             let mut repo_state = repo_state.lock();
 
-            let result = f(&mut repo_state);
+            let result = f(&mut repo_state, dot_git, dot_git);
 
             if emit_git_event {
                 state.emit_event([(dot_git, None)]);
             }
 
-            result
+            Ok(result)
+        } else if let FakeFsEntry::File {
+            content,
+            git_dir_path,
+            ..
+        } = &mut *entry
+        {
+            let path = match git_dir_path {
+                Some(path) => path,
+                None => {
+                    let path = std::str::from_utf8(content)
+                        .ok()
+                        .and_then(|content| content.strip_prefix("gitdir:"))
+                        .ok_or_else(|| anyhow!("not a valid gitfile"))?
+                        .trim();
+                    git_dir_path.insert(normalize_path(&dot_git.parent().unwrap().join(path)))
+                }
+            }
+            .clone();
+            drop(entry);
+            let Some((git_dir_entry, canonical_path)) = state.try_read_path(&path, true) else {
+                anyhow::bail!("pointed-to git dir {path:?} not found")
+            };
+            let FakeFsEntry::Dir { git_repo_state, .. } = &mut *git_dir_entry.lock() else {
+                anyhow::bail!("gitfile points to a non-directory")
+            };
+            let common_dir = canonical_path
+                .ancestors()
+                .find(|ancestor| ancestor.ends_with(".git"))
+                .ok_or_else(|| anyhow!("repository dir not contained in any .git"))?;
+            let repo_state = git_repo_state.get_or_insert_with(|| {
+                Arc::new(Mutex::new(FakeGitRepositoryState::new(
+                    state.git_event_tx.clone(),
+                )))
+            });
+            let mut repo_state = repo_state.lock();
+
+            let result = f(&mut repo_state, &canonical_path, common_dir);
+
+            if emit_git_event {
+                state.emit_event([(canonical_path, None)]);
+            }
+
+            Ok(result)
         } else {
-            panic!("not a directory");
+            Err(anyhow!("not a valid git repository"))
         }
+    }
+
+    pub fn with_git_state<T, F>(&self, dot_git: &Path, emit_git_event: bool, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut FakeGitRepositoryState) -> T,
+    {
+        self.with_git_state_and_paths(dot_git, emit_git_event, |state, _, _| f(state))
     }
 
     pub fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
@@ -1278,6 +1372,7 @@ impl FakeFs {
             state.branches.extend(branch.clone());
             state.current_branch_name = branch
         })
+        .unwrap();
     }
 
     pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {
@@ -1291,6 +1386,7 @@ impl FakeFs {
                 .branches
                 .extend(branches.iter().map(ToString::to_string));
         })
+        .unwrap();
     }
 
     pub fn set_unmerged_paths_for_repo(
@@ -1305,7 +1401,8 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), *content)),
             );
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(RepoPath, String)]) {
@@ -1316,7 +1413,8 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_head_for_repo(&self, dot_git: &Path, head_state: &[(RepoPath, String)]) {
@@ -1327,7 +1425,8 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_git_content_for_repo(
@@ -1351,7 +1450,8 @@ impl FakeFs {
                     )
                 },
             ));
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_head_and_index_for_repo(
@@ -1366,14 +1466,16 @@ impl FakeFs {
             state
                 .index_contents
                 .extend(contents_by_path.iter().cloned());
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(RepoPath, git::blame::Blame)>) {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
             state.blames.extend(blames);
-        });
+        })
+        .unwrap();
     }
 
     /// Put the given git repository into a state with the given status,
@@ -1455,13 +1557,14 @@ impl FakeFs {
                     state.head_contents.insert(repo_path.clone(), content);
                 }
             }
-        });
+        }).unwrap();
     }
 
     pub fn set_error_message_for_index_write(&self, dot_git: &Path, message: Option<String>) {
         self.with_git_state(dot_git, true, |state| {
             state.simulated_index_write_error_message = message;
-        });
+        })
+        .unwrap();
     }
 
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
@@ -1565,6 +1668,15 @@ impl FakeFs {
         self.state.lock().read_dir_call_count
     }
 
+    pub fn watched_paths(&self) -> Vec<PathBuf> {
+        let state = self.state.lock();
+        state
+            .event_txs
+            .iter()
+            .filter_map(|(path, tx)| Some(path.clone()).filter(|_| !tx.is_closed()))
+            .collect()
+    }
+
     /// How many `metadata` calls have been issued.
     pub fn metadata_call_count(&self) -> usize {
         self.state.lock().metadata_call_count
@@ -1610,11 +1722,25 @@ impl FakeFsEntry {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-struct FakeWatcher {}
+struct FakeWatcher {
+    tx: smol::channel::Sender<Vec<PathEvent>>,
+    original_path: PathBuf,
+    fs_state: Arc<Mutex<FakeFsState>>,
+    prefixes: Mutex<Vec<PathBuf>>,
+}
 
 #[cfg(any(test, feature = "test-support"))]
 impl Watcher for FakeWatcher {
-    fn add(&self, _: &Path) -> Result<()> {
+    fn add(&self, path: &Path) -> Result<()> {
+        if path.starts_with(&self.original_path) {
+            return Ok(());
+        }
+        self.fs_state
+            .try_lock()
+            .unwrap()
+            .event_txs
+            .push((path.to_owned(), self.tx.clone()));
+        self.prefixes.lock().push(path.to_owned());
         Ok(())
     }
 
@@ -1692,6 +1818,7 @@ impl Fs for FakeFs {
             mtime,
             len: 0,
             content: Vec::new(),
+            git_dir_path: None,
         }));
         let mut kind = Some(PathEventKind::Created);
         state.write_path(path, |entry| {
@@ -1741,7 +1868,7 @@ impl Fs for FakeFs {
     ) -> Result<()> {
         let mut bytes = Vec::new();
         content.read_to_end(&mut bytes).await?;
-        self.write_file_internal(path, bytes)?;
+        self.write_file_internal(path, bytes, true)?;
         Ok(())
     }
 
@@ -1758,7 +1885,7 @@ impl Fs for FakeFs {
                 let mut bytes = Vec::new();
                 entry.read_to_end(&mut bytes).await?;
                 self.create_dir(path.parent().unwrap()).await?;
-                self.write_file_internal(&path, bytes)?;
+                self.write_file_internal(&path, bytes, true)?;
             }
         }
         Ok(())
@@ -1848,6 +1975,7 @@ impl Fs for FakeFs {
                     mtime,
                     len: content.len() as u64,
                     content,
+                    git_dir_path: None,
                 })))
                 .clone(),
             )),
@@ -1952,7 +2080,7 @@ impl Fs for FakeFs {
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path.as_path());
-        self.write_file_internal(path, data.into_bytes())?;
+        self.write_file_internal(path, data.into_bytes(), true)?;
         Ok(())
     }
 
@@ -1963,7 +2091,7 @@ impl Fs for FakeFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        self.write_file_internal(path, content.into_bytes())?;
+        self.write_file_internal(path, content.into_bytes(), false)?;
         Ok(())
     }
 
@@ -2083,43 +2211,55 @@ impl Fs for FakeFs {
     ) {
         self.simulate_random_delay().await;
         let (tx, rx) = smol::channel::unbounded();
-        self.state.lock().event_txs.push(tx);
         let path = path.to_path_buf();
+        self.state.lock().event_txs.push((path.clone(), tx.clone()));
         let executor = self.executor.clone();
+        let watcher = Arc::new(FakeWatcher {
+            tx,
+            original_path: path.to_owned(),
+            fs_state: self.state.clone(),
+            prefixes: Mutex::new(vec![path.to_owned()]),
+        });
         (
-            Box::pin(futures::StreamExt::filter(rx, move |events| {
-                let result = events
-                    .iter()
-                    .any(|evt_path| evt_path.path.starts_with(&path));
-                let executor = executor.clone();
-                async move {
-                    executor.simulate_random_delay().await;
-                    result
+            Box::pin(futures::StreamExt::filter(rx, {
+                let watcher = watcher.clone();
+                move |events| {
+                    let result = events.iter().any(|evt_path| {
+                        let result = watcher
+                            .prefixes
+                            .lock()
+                            .iter()
+                            .any(|prefix| evt_path.path.starts_with(prefix));
+                        result
+                    });
+                    let executor = executor.clone();
+                    async move {
+                        executor.simulate_random_delay().await;
+                        result
+                    }
                 }
             })),
-            Arc::new(FakeWatcher {}),
+            watcher,
         )
     }
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
-        let state = self.state.lock();
-        let entry = state.read_path(abs_dot_git).unwrap();
-        let mut entry = entry.lock();
-        if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
-            git_repo_state.get_or_insert_with(|| {
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    abs_dot_git.to_path_buf(),
-                    state.git_event_tx.clone(),
-                )))
-            });
-            Some(Arc::new(fake_git_repo::FakeGitRepository {
-                fs: self.this.upgrade().unwrap(),
-                executor: self.executor.clone(),
-                dot_git_path: abs_dot_git.to_path_buf(),
-            }))
-        } else {
-            None
-        }
+        use util::ResultExt as _;
+
+        self.with_git_state_and_paths(
+            abs_dot_git,
+            false,
+            |_, repository_dir_path, common_dir_path| {
+                Arc::new(fake_git_repo::FakeGitRepository {
+                    fs: self.this.upgrade().unwrap(),
+                    executor: self.executor.clone(),
+                    dot_git_path: abs_dot_git.to_path_buf(),
+                    repository_dir_path: repository_dir_path.to_owned(),
+                    common_dir_path: common_dir_path.to_owned(),
+                }) as _
+            },
+        )
+        .log_err()
     }
 
     fn git_init(
@@ -2276,7 +2416,7 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
     use windows::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+            BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle,
         },
     };
 

@@ -1,20 +1,17 @@
 use std::ffi::OsStr;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use gpui::AsyncApp;
-use task::DebugAdapterConfig;
+use task::{DebugAdapterConfig, DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
-pub(crate) struct GdbDebugAdapter {}
+#[derive(Default)]
+pub(crate) struct GdbDebugAdapter;
 
 impl GdbDebugAdapter {
-    const ADAPTER_NAME: &'static str = "gdb";
-
-    pub(crate) fn new() -> Self {
-        GdbDebugAdapter {}
-    }
+    const ADAPTER_NAME: &'static str = "GDB";
 }
 
 #[async_trait(?Send)]
@@ -26,7 +23,7 @@ impl DebugAdapter for GdbDebugAdapter {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        _: &DebugAdapterConfig,
         user_installed_path: Option<std::path::PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -34,7 +31,6 @@ impl DebugAdapter for GdbDebugAdapter {
             .filter(|p| p.exists())
             .and_then(|p| p.to_str().map(|s| s.to_string()));
 
-        /* GDB implements DAP natively so just need to  */
         let gdb_path = delegate
             .which(OsStr::new("gdb"))
             .and_then(|p| p.to_str().map(|s| s.to_string()))
@@ -50,7 +46,7 @@ impl DebugAdapter for GdbDebugAdapter {
             command: gdb_path,
             arguments: Some(vec!["-i=dap".into()]),
             envs: None,
-            cwd: config.cwd.clone(),
+            cwd: None,
             connection: None,
         })
     }
@@ -77,7 +73,38 @@ impl DebugAdapter for GdbDebugAdapter {
         unimplemented!("GDB cannot be installed by Zed (yet)")
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({"program": config.program, "cwd": config.cwd})
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        let mut args = json!({
+            "request": match config.request {
+                DebugRequestType::Launch(_) => "launch",
+                DebugRequestType::Attach(_) => "attach",
+            },
+        });
+
+        let map = args.as_object_mut().unwrap();
+        match &config.request {
+            DebugRequestType::Attach(attach) => {
+                map.insert("pid".into(), attach.process_id.into());
+            }
+
+            DebugRequestType::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
+
+                if let Some(stop_on_entry) = config.stop_on_entry {
+                    map.insert(
+                        "stopAtBeginningOfMainSubprogram".into(),
+                        stop_on_entry.into(),
+                    );
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        }
+        args
     }
 }

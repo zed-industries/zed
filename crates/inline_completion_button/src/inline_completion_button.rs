@@ -2,38 +2,36 @@ use anyhow::Result;
 use client::UserStore;
 use copilot::{Copilot, Status};
 use editor::{
+    Editor,
     actions::{ShowEditPrediction, ToggleEditPrediction},
     scroll::Autoscroll,
-    Editor,
 };
-use feature_flags::{
-    FeatureFlagAppExt, PredictEditsFeatureFlag, PredictEditsRateCompletionsFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
 use fs::Fs;
 use gpui::{
-    actions, div, pulsating_between, Action, Animation, AnimationExt, App, AsyncWindowContext,
-    Corner, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Render, Subscription,
-    WeakEntity,
+    Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, Entity, FocusHandle,
+    Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
+    pulsating_between,
 };
 use indoc::indoc;
 use language::{
-    language_settings::{self, all_language_settings, AllLanguageSettings, EditPredictionProvider},
     EditPredictionsMode, File, Language,
+    language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
 use regex::Regex;
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    prelude::*, Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, Indicator,
-    PopoverMenu, PopoverMenuHandle, Tooltip,
+    Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, Indicator, PopoverMenu,
+    PopoverMenuHandle, Tooltip, prelude::*,
 };
 use workspace::{
-    create_and_open_local_file, item::ItemHandle, notifications::NotificationId, StatusItemView,
-    Toast, Workspace,
+    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
+    notifications::NotificationId,
 };
 use zed_actions::OpenBrowser;
 use zeta::RateCompletions;
@@ -232,10 +230,6 @@ impl Render for InlineCompletionButton {
             }
 
             EditPredictionProvider::Zed => {
-                if !cx.has_flag::<PredictEditsFeatureFlag>() {
-                    return div();
-                }
-
                 let enabled = self.editor_enabled.unwrap_or(true);
 
                 let zeta_icon = if enabled {
@@ -258,7 +252,7 @@ impl Render for InlineCompletionButton {
                     return div().child(
                         IconButton::new("zed-predict-pending-button", zeta_icon)
                             .shape(IconButtonShape::Square)
-                            .indicator(Indicator::dot().color(Color::Error))
+                            .indicator(Indicator::dot().color(Color::Muted))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
                             .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
@@ -463,38 +457,42 @@ impl InlineCompletionButton {
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx)
         });
 
-        menu = menu.separator().header("Display Modes");
+        let provider = settings.edit_predictions.provider;
         let current_mode = settings.edit_predictions_mode();
         let subtle_mode = matches!(current_mode, EditPredictionsMode::Subtle);
         let eager_mode = matches!(current_mode, EditPredictionsMode::Eager);
 
-        menu = menu.item(
-            ContextMenuEntry::new("Eager")
-                .toggleable(IconPosition::Start, eager_mode)
-                .documentation_aside(move |_| {
-                    Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
-                })
-                .handler({
-                    let fs = fs.clone();
-                    move |_, cx| {
-                        toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Eager, cx)
-                    }
-                }),
-        );
-
-        menu = menu.item(
-            ContextMenuEntry::new("Subtle")
-                .toggleable(IconPosition::Start, subtle_mode)
-                .documentation_aside(move |_| {
-                    Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
-                })
-                .handler({
-                    let fs = fs.clone();
-                    move |_, cx| {
-                        toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Subtle, cx)
-                    }
-                }),
-        );
+        if matches!(provider, EditPredictionProvider::Zed) {
+            menu = menu
+                .separator()
+                .header("Display Modes")
+                .item(
+                    ContextMenuEntry::new("Eager")
+                        .toggleable(IconPosition::Start, eager_mode)
+                        .documentation_aside(move |_| {
+                            Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
+                        })
+                        .handler({
+                            let fs = fs.clone();
+                            move |_, cx| {
+                                toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Eager, cx)
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Subtle")
+                        .toggleable(IconPosition::Start, subtle_mode)
+                        .documentation_aside(move |_| {
+                            Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
+                        })
+                        .handler({
+                            let fs = fs.clone();
+                            move |_, cx| {
+                                toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Subtle, cx)
+                            }
+                        }),
+                );
+        }
 
         menu = menu.separator().header("Privacy Settings");
         if let Some(provider) = &self.edit_prediction_provider {

@@ -2,17 +2,17 @@ use anyhow::{Context as _, Result};
 use channel::{ChannelChat, ChannelStore, MessageParams};
 use client::{UserId, UserStore};
 use collections::HashSet;
-use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
+use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AsyncApp, AsyncWindowContext, Context, Entity, Focusable, FontStyle, FontWeight,
     HighlightStyle, IntoElement, Render, Task, TextStyle, WeakEntity, Window,
 };
 use language::{
-    language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
-    ToOffset,
+    Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, ToOffset,
+    language_settings::SoftWrap,
 };
-use project::{search::SearchQuery, Completion, CompletionSource};
+use project::{Completion, CompletionSource, search::SearchQuery};
 use settings::Settings;
 use std::{
     cell::RefCell,
@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, TextSize};
+use ui::{TextSize, prelude::*};
 
 use crate::panel_settings::MessageEditorSettings;
 
@@ -31,6 +31,7 @@ const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 static MENTIONS_SEARCH: LazyLock<SearchQuery> = LazyLock::new(|| {
     SearchQuery::regex(
         "@[-_\\w]+",
+        false,
         false,
         false,
         false,
@@ -56,6 +57,7 @@ struct MessageEditorCompletionProvider(WeakEntity<MessageEditor>);
 impl CompletionProvider for MessageEditorCompletionProvider {
     fn completions(
         &self,
+        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _: editor::CompletionContext,
@@ -308,11 +310,13 @@ impl MessageEditor {
             .map(|mat| {
                 let (new_text, label) = completion_fn(&mat);
                 Completion {
-                    old_range: range.clone(),
+                    replace_range: range.clone(),
                     new_text,
                     label,
+                    icon_path: None,
                     confirm: None,
                     documentation: None,
+                    insert_text_mode: None,
                     source: CompletionSource::Custom,
                 }
             })

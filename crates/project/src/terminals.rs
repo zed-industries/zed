@@ -1,4 +1,4 @@
-use crate::Project;
+use crate::{Project, ProjectPath};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEntity};
@@ -15,8 +15,8 @@ use std::{
 };
 use task::{Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
-    terminal_settings::{self, TerminalSettings, VenvSettings},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
+    terminal_settings::{self, TerminalSettings, VenvSettings},
 };
 use util::ResultExt;
 
@@ -40,7 +40,7 @@ pub enum TerminalKind {
         command: Option<String>,
         args: Vec<String>,
         envs: HashMap<String, String>,
-        cwd: PathBuf,
+        cwd: Option<Arc<Path>>,
         title: Option<String>,
     },
 }
@@ -101,7 +101,7 @@ impl Project {
                     self.active_project_directory(cx)
                 }
             }
-            TerminalKind::Debug { cwd, .. } => Some(Arc::from(cwd.as_path())),
+            TerminalKind::Debug { cwd, .. } => cwd.clone(),
         };
 
         let mut settings_location = None;
@@ -205,7 +205,7 @@ impl Project {
                     this.active_project_directory(cx)
                 }
             }
-            TerminalKind::Debug { cwd, .. } => Some(Arc::from(cwd.as_path())),
+            TerminalKind::Debug { cwd, .. } => cwd.clone(),
         };
         let ssh_details = this.ssh_details(cx);
 
@@ -407,14 +407,17 @@ impl Project {
         cx: &Context<Project>,
     ) -> Task<Option<PathBuf>> {
         cx.spawn(async move |this, cx| {
-            if let Some((worktree, _)) = this
+            if let Some((worktree, relative_path)) = this
                 .update(cx, |this, cx| this.find_worktree(&abs_path, cx))
                 .ok()?
             {
                 let toolchain = this
                     .update(cx, |this, cx| {
                         this.active_toolchain(
-                            worktree.read(cx).id(),
+                            ProjectPath {
+                                worktree_id: worktree.read(cx).id(),
+                                path: relative_path.into(),
+                            },
                             LanguageName::new("Python"),
                             cx,
                         )

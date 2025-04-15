@@ -1,20 +1,21 @@
-use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
+use crate::ui::InstructionListItem;
 use anthropic::{AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, Usage};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, MessageContent, RateLimiter, Role,
+    LanguageModelKnownError, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, MessageContent,
+    RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -25,8 +26,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, List, Tooltip};
-use util::{maybe, ResultExt};
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use util::{ResultExt, maybe};
 
 const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: &str = "Anthropic";
@@ -192,6 +193,16 @@ impl AnthropicLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: anthropic::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(AnthropicModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }) as Arc<dyn LanguageModel>
+    }
 }
 
 impl LanguageModelProviderState for AnthropicLanguageModelProvider {
@@ -224,6 +235,16 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
         }))
+    }
+
+    fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        [
+            anthropic::Model::Claude3_7Sonnet,
+            anthropic::Model::Claude3_7SonnetThinking,
+        ]
+        .into_iter()
+        .map(|model| self.create_language_model(model))
+        .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -266,15 +287,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(AnthropicModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    state: self.state.clone(),
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -400,6 +413,10 @@ impl LanguageModel for AnthropicModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("anthropic/{}", self.model.id())
     }
@@ -438,7 +455,12 @@ impl LanguageModel for AnthropicModel {
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
+            let response = request
+                .await
+                .map_err(|err| match err.downcast::<AnthropicError>() {
+                    Ok(anthropic_err) => anthropic_err_to_anyhow(anthropic_err),
+                    Err(err) => anyhow!(err),
+                })?;
             Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -452,44 +474,6 @@ impl LanguageModel for AnthropicModel {
                 should_speculate: config.should_speculate,
                 min_total_token: config.min_total_token,
             })
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        input_schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let mut request = into_anthropic(
-            request,
-            self.model.tool_model_id().into(),
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-            self.model.mode(),
-        );
-        request.tool_choice = Some(anthropic::ToolChoice::Tool {
-            name: tool_name.clone(),
-        });
-        request.tools = vec![anthropic::Tool {
-            name: tool_name.clone(),
-            description: tool_description,
-            input_schema,
-        }];
-
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                Ok(anthropic::extract_tool_args_from_events(
-                    tool_name,
-                    Box::pin(response.map_err(|e| anyhow!(e))),
-                )
-                .await?
-                .boxed())
-            })
-            .boxed()
     }
 }
 
@@ -586,7 +570,11 @@ pub fn into_anthropic(
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: Some(system_message),
+        system: if system_message.is_empty() {
+            None
+        } else {
+            Some(anthropic::StringOrContents::String(system_message))
+        },
         thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
             Some(anthropic::Thinking::Enabled { budget_tokens })
         } else {
@@ -764,7 +752,7 @@ pub fn map_to_language_model_completion_events(
                         _ => {}
                     },
                     Err(err) => {
-                        return Some((vec![Err(anyhow!(err))], state));
+                        return Some((vec![Err(anthropic_err_to_anyhow(err))], state));
                     }
                 }
             }
@@ -773,6 +761,16 @@ pub fn map_to_language_model_completion_events(
         },
     )
     .flat_map(futures::stream::iter)
+}
+
+pub fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {
+    if let AnthropicError::ApiError(api_err) = &err {
+        if let Some(tokens) = api_err.match_window_exceeded() {
+            return anyhow!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens });
+        }
+    }
+
+    anyhow!(err)
 }
 
 /// Updates usage data by preferring counts from `new`.

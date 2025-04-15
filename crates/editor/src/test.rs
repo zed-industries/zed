@@ -1,17 +1,18 @@
 pub mod editor_lsp_test_context;
 pub mod editor_test_context;
 
-use std::sync::LazyLock;
-
+pub use crate::rust_analyzer_ext::expand_macro_recursively;
 use crate::{
-    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
+    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
 };
 use gpui::{
-    font, AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels,
-    Window,
+    AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels, Window,
+    font,
 };
+use pretty_assertions::assert_eq;
 use project::Project;
+use std::sync::LazyLock;
 use util::test::{marked_text_offsets, marked_text_ranges};
 
 #[cfg(test)]
@@ -94,8 +95,12 @@ pub fn assert_text_with_selections(
     cx: &mut Context<Editor>,
 ) {
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
-    assert_eq!(editor.text(cx), unmarked_text);
-    assert_eq!(editor.selections.ranges(cx), text_ranges);
+    assert_eq!(editor.text(cx), unmarked_text, "text doesn't match");
+    assert_eq!(
+        editor.selections.ranges(cx),
+        text_ranges,
+        "selections don't match",
+    );
 }
 
 // RA thinks this is dead code even though it is used in a whole lot of tests
@@ -106,7 +111,7 @@ pub(crate) fn build_editor(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, None, window, cx)
+    Editor::new(EditorMode::full(), buffer, None, window, cx)
 }
 
 pub(crate) fn build_editor_with_project(
@@ -115,5 +120,5 @@ pub(crate) fn build_editor_with_project(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    Editor::new(EditorMode::Full, buffer, Some(project), window, cx)
+    Editor::new(EditorMode::full(), buffer, Some(project), window, cx)
 }

@@ -5,13 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use decorated_icon::*;
-use gpui::{img, svg, AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation};
+use gpui::{AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation, img, svg};
 pub use icon_decoration::*;
-use serde::{Deserialize, Serialize};
-use strum::{EnumIter, EnumString, IntoStaticStr};
-use ui_macros::DerivePathStr;
+pub use icons::*;
 
-use crate::{prelude::*, Indicator};
+use crate::{Indicator, prelude::*};
 
 #[derive(IntoElement)]
 pub enum AnyIcon {
@@ -107,250 +105,6 @@ impl IconSize {
     }
 }
 
-#[derive(
-    Debug,
-    PartialEq,
-    Eq,
-    Copy,
-    Clone,
-    EnumIter,
-    EnumString,
-    IntoStaticStr,
-    Serialize,
-    Deserialize,
-    DerivePathStr,
-)]
-#[strum(serialize_all = "snake_case")]
-#[path_str(prefix = "icons", suffix = ".svg")]
-pub enum IconName {
-    Ai,
-    AiAnthropic,
-    AiBedrock,
-    AiAnthropicHosted,
-    AiDeepSeek,
-    AiEdit,
-    AiGoogle,
-    AiLmStudio,
-    AiMistral,
-    AiOllama,
-    AiOpenAi,
-    AiZed,
-    ArrowCircle,
-    ArrowDown,
-    ArrowDownFromLine,
-    ArrowLeft,
-    ArrowRight,
-    ArrowUp,
-    ArrowUpFromLine,
-    ArrowUpRight,
-    ArrowUpRightAlt,
-    AtSign,
-    AudioOff,
-    AudioOn,
-    Backspace,
-    Bell,
-    BellDot,
-    BellOff,
-    BellRing,
-    Blocks,
-    Bolt,
-    Book,
-    BookCopy,
-    BookPlus,
-    Brain,
-    CaseSensitive,
-    Check,
-    ChevronDown,
-    /// This chevron indicates a popover menu.
-    ChevronDownSmall,
-    ChevronLeft,
-    ChevronRight,
-    ChevronUp,
-    ChevronUpDown,
-    Circle,
-    Close,
-    Code,
-    Command,
-    Context,
-    Control,
-    Copilot,
-    CopilotDisabled,
-    CopilotError,
-    CopilotInit,
-    Copy,
-    CountdownTimer,
-    CursorIBeam,
-    Dash,
-    DebugBreakpoint,
-    DebugIgnoreBreakpoints,
-    DebugPause,
-    DebugContinue,
-    DebugStepOver,
-    DebugStepInto,
-    DebugStepOut,
-    DebugStepBack,
-    DebugRestart,
-    Debug,
-    DebugStop,
-    DebugDisconnect,
-    DebugLogBreakpoint,
-    DatabaseZap,
-    Delete,
-    Diff,
-    Disconnected,
-    Download,
-    Ellipsis,
-    EllipsisVertical,
-    Envelope,
-    Eraser,
-    Escape,
-    ExpandVertical,
-    Exit,
-    ExternalLink,
-    ExpandUp,
-    ExpandDown,
-    Eye,
-    File,
-    FileCode,
-    FileDoc,
-    FileDiff,
-    FileGeneric,
-    FileGit,
-    FileLock,
-    FileRust,
-    FileSearch,
-    FileText,
-    FileToml,
-    FileTree,
-    Filter,
-    Folder,
-    FolderOpen,
-    FolderX,
-    Font,
-    FontSize,
-    FontWeight,
-    GenericClose,
-    GenericMaximize,
-    GenericMinimize,
-    GenericRestore,
-    Github,
-    Globe,
-    GitBranch,
-    GitBranchSmall,
-    Hash,
-    HistoryRerun,
-    Indicator,
-    Info,
-    InlayHint,
-    Keyboard,
-    Library,
-    LineHeight,
-    Link,
-    ListTree,
-    ListX,
-    LockOutlined,
-    MagnifyingGlass,
-    MailOpen,
-    Maximize,
-    Menu,
-    MessageBubbles,
-    MessageCircle,
-    Cloud,
-    Mic,
-    MicMute,
-    Microscope,
-    Minimize,
-    Option,
-    PageDown,
-    PageUp,
-    PanelLeft,
-    PanelRight,
-    Pencil,
-    Person,
-    PersonCircle,
-    PhoneIncoming,
-    Pin,
-    Play,
-    Plus,
-    PocketKnife,
-    Public,
-    PullRequest,
-    Quote,
-    RefreshTitle,
-    Regex,
-    ReplNeutral,
-    Replace,
-    ReplaceAll,
-    ReplaceNext,
-    ReplyArrowRight,
-    Rerun,
-    Return,
-    Reveal,
-    RotateCcw,
-    RotateCw,
-    Route,
-    Save,
-    Screen,
-    SearchCode,
-    SearchSelection,
-    SelectAll,
-    Server,
-    Settings,
-    SettingsAlt,
-    Shift,
-    Slash,
-    SlashSquare,
-    Sliders,
-    SlidersVertical,
-    Snip,
-    Space,
-    Sparkle,
-    SparkleAlt,
-    SparkleFilled,
-    Spinner,
-    Split,
-    SquareDot,
-    SquareMinus,
-    SquarePlus,
-    Star,
-    StarFilled,
-    Stop,
-    Strikethrough,
-    Supermaven,
-    SupermavenDisabled,
-    SupermavenError,
-    SupermavenInit,
-    SwatchBook,
-    Tab,
-    Terminal,
-    TextSnippet,
-    ThumbsUp,
-    ThumbsDown,
-    Trash,
-    TrashAlt,
-    Triangle,
-    TriangleRight,
-    Undo,
-    Unpin,
-    Update,
-    UserGroup,
-    Visible,
-    Wand,
-    Warning,
-    WholeWord,
-    X,
-    XCircle,
-    ZedAssistant,
-    ZedAssistant2,
-    ZedAssistantFilled,
-    ZedPredict,
-    ZedPredictUp,
-    ZedPredictDown,
-    ZedPredictDisabled,
-    ZedPredictError,
-    ZedXCopilot,
-}
-
 impl From<IconName> for Icon {
     fn from(icon: IconName) -> Self {
         Icon::new(icon)
@@ -374,7 +128,7 @@ enum IconSource {
 impl IconSource {
     fn from_path(path: impl Into<SharedString>) -> Self {
         let path = path.into();
-        if path.starts_with("icons/file_icons") {
+        if path.starts_with("icons/") {
             Self::Svg(path)
         } else {
             Self::Image(Arc::from(PathBuf::from(path.as_ref())))
@@ -382,7 +136,7 @@ impl IconSource {
     }
 }
 
-#[derive(IntoElement, IntoComponent)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct Icon {
     source: IconSource,
     color: Color,
@@ -511,43 +265,54 @@ impl RenderOnce for IconWithIndicator {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
-impl ComponentPreview for Icon {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        v_flex()
-            .gap_6()
-            .children(vec![
-                example_group_with_title(
-                    "Sizes",
-                    vec![
-                        single_example("Default", Icon::new(IconName::Star).into_any_element()),
-                        single_example(
-                            "Small",
-                            Icon::new(IconName::Star)
-                                .size(IconSize::Small)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Large",
-                            Icon::new(IconName::Star)
-                                .size(IconSize::XLarge)
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-                example_group_with_title(
-                    "Colors",
-                    vec![
-                        single_example("Default", Icon::new(IconName::Bell).into_any_element()),
-                        single_example(
-                            "Custom Color",
-                            Icon::new(IconName::Bell)
-                                .color(Color::Error)
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-            ])
-            .into_any_element()
+impl Component for Icon {
+    fn scope() -> ComponentScope {
+        ComponentScope::Images
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A versatile icon component that supports SVG and image-based icons with customizable size, color, and transformations.",
+        )
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Sizes",
+                        vec![
+                            single_example("Default", Icon::new(IconName::Star).into_any_element()),
+                            single_example(
+                                "Small",
+                                Icon::new(IconName::Star)
+                                    .size(IconSize::Small)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Large",
+                                Icon::new(IconName::Star)
+                                    .size(IconSize::XLarge)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Colors",
+                        vec![
+                            single_example("Default", Icon::new(IconName::Bell).into_any_element()),
+                            single_example(
+                                "Custom Color",
+                                Icon::new(IconName::Bell)
+                                    .color(Color::Error)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

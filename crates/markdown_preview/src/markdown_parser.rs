@@ -100,6 +100,7 @@ impl<'a> MarkdownParser<'a> {
             // Represent an inline code block
             | Event::Code(_)
             | Event::Html(_)
+            | Event::InlineHtml(_)
             | Event::FootnoteReference(_)
             | Event::Start(Tag::Link { .. })
             | Event::Start(Tag::Emphasis)
@@ -717,6 +718,9 @@ impl<'a> MarkdownParser<'a> {
                 }
             }
         }
+
+        code = code.strip_suffix('\n').unwrap_or(&code).to_string();
+
         let highlights = if let Some(language) = &language {
             if let Some(registry) = &self.language_registry {
                 let rope: language::Rope = code.as_str().into();
@@ -734,7 +738,7 @@ impl<'a> MarkdownParser<'a> {
 
         ParsedMarkdownCodeBlock {
             source_range,
-            contents: code.trim().to_string().into(),
+            contents: code.into(),
             language,
             highlights,
         }
@@ -747,12 +751,12 @@ mod tests {
 
     use super::*;
 
+    use ParsedMarkdownListItemType::*;
     use gpui::BackgroundExecutor;
     use language::{
-        tree_sitter_rust, HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
+        HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry, tree_sitter_rust,
     };
     use pretty_assertions::assert_eq;
-    use ParsedMarkdownListItemType::*;
 
     async fn parse(input: &str) -> ParsedMarkdown {
         parse_markdown(input, None, None).await

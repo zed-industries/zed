@@ -1,44 +1,47 @@
+use crate::Assistant;
 use crate::assistant_configuration::{ConfigurationView, ConfigurationViewEvent};
 use crate::{
-    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, InlineAssistant, NewChat,
+    DeployHistory, InlineAssistant, NewChat, terminal_inline_assistant::TerminalInlineAssistant,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    make_lsp_adapter_delegate, AssistantContext, AssistantPanelDelegate, ContextEditor,
-    ContextEditorToolbarItem, ContextEditorToolbarItemEvent, ContextHistory, ContextId,
-    ContextStore, ContextStoreEvent, InsertDraggedFiles, SlashCommandCompletionProvider,
-    DEFAULT_TAB_TITLE,
+    AssistantContext, AssistantPanelDelegate, ContextEditor, ContextEditorToolbarItem,
+    ContextEditorToolbarItemEvent, ContextHistory, ContextId, ContextStore, ContextStoreEvent,
+    DEFAULT_TAB_TITLE, InsertDraggedFiles, SlashCommandCompletionProvider,
+    make_lsp_adapter_delegate,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
-use client::{proto, Client, Status};
+use client::{Client, Status, proto};
 use editor::{Editor, EditorEvent};
 use fs::Fs;
 use gpui::{
-    prelude::*, Action, App, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, ParentElement, Pixels, Render, Styled,
-    Subscription, Task, UpdateGlobal, WeakEntity,
+    Action, App, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task,
+    UpdateGlobal, WeakEntity, prelude::*,
 };
 use language::LanguageRegistry;
 use language_model::{
-    AuthenticateError, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+    AuthenticateError, ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
-use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
-use search::{buffer_search::DivRegistrar, BufferSearchBar};
-use settings::{update_settings_file, Settings};
+use search::{BufferSearchBar, buffer_search::DivRegistrar};
+use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
-use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
-use util::{maybe, ResultExt};
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
+use util::{ResultExt, maybe};
 use workspace::DraggedTab;
 use workspace::{
+    DraggedSelection, Pane, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    pane, DraggedSelection, Pane, ShowConfiguration, ToggleZoom, Workspace,
+    pane,
 };
-use zed_actions::assistant::{DeployPromptLibrary, InlineAssist, ToggleFocus};
+use zed_actions::assistant::{InlineAssist, OpenPromptLibrary, ShowConfiguration, ToggleFocus};
 
 pub fn init(cx: &mut App) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
@@ -51,15 +54,22 @@ pub fn init(cx: &mut App) {
                 .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context)
-                .register_action(AssistantPanel::restart_context_servers);
+                .register_action(AssistantPanel::restart_context_servers)
+                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
+                        });
+                    }
+                });
         },
     )
     .detach();
 
     cx.observe_new(
         |terminal_panel: &mut TerminalPanel, _, cx: &mut Context<TerminalPanel>| {
-            let settings = AssistantSettings::get_global(cx);
-            terminal_panel.set_assistant_enabled(settings.enabled, cx);
+            terminal_panel.set_assistant_enabled(Assistant::enabled(cx), cx);
         },
     )
     .detach();
@@ -259,7 +269,7 @@ impl AssistantPanel {
                                     menu.context(focus_handle.clone())
                                         .action("New Chat", Box::new(NewChat))
                                         .action("History", Box::new(DeployHistory))
-                                        .action("Prompt Library", Box::new(DeployPromptLibrary))
+                                        .action("Prompt Library", Box::new(OpenPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
                                         .action(zoom_label, Box::new(ToggleZoom))
                                 }))
@@ -297,8 +307,10 @@ impl AssistantPanel {
                 &LanguageModelRegistry::global(cx),
                 window,
                 |this, _, event: &language_model::Event, window, cx| match event {
-                    language_model::Event::ActiveModelChanged
-                    | language_model::Event::EditorModelChanged => {
+                    language_model::Event::DefaultModelChanged
+                    | language_model::Event::InlineAssistantModelChanged
+                    | language_model::Event::CommitMessageModelChanged
+                    | language_model::Event::ThreadSummaryModelChanged => {
                         this.completion_provider_changed(window, cx);
                     }
                     language_model::Event::ProviderStateChanged => {
@@ -342,12 +354,12 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled {
-            return;
+        if workspace
+            .panel::<Self>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx))
+        {
+            workspace.toggle_panel_focus::<Self>(window, cx);
         }
-
-        workspace.toggle_panel_focus::<Self>(window, cx);
     }
 
     fn watch_client_status(
@@ -467,12 +479,12 @@ impl AssistantPanel {
     }
 
     fn update_zed_ai_notice_visibility(&mut self, client_status: Status, cx: &mut Context<Self>) {
-        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let model = LanguageModelRegistry::read_global(cx).default_model();
 
         // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
         // the provider, we want to show a nudge to sign in.
         let show_zed_ai_notice = client_status.is_signed_out()
-            && active_provider.map_or(true, |provider| provider.id().0 == ZED_CLOUD_PROVIDER_ID);
+            && model.map_or(true, |model| model.provider.id().0 == ZED_CLOUD_PROVIDER_ID);
 
         self.show_zed_ai_notice = show_zed_ai_notice;
         cx.notify();
@@ -540,8 +552,8 @@ impl AssistantPanel {
         }
 
         let Some(new_provider_id) = LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map(|p| p.id())
+            .default_model()
+            .map(|default| default.provider.id())
         else {
             return;
         };
@@ -567,7 +579,9 @@ impl AssistantPanel {
             return;
         }
 
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+        let Some(ConfiguredModel { provider, .. }) =
+            LanguageModelRegistry::read_global(cx).default_model()
+        else {
             return;
         };
 
@@ -595,12 +609,10 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled {
-            return;
-        }
-
-        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel) = workspace
+            .panel::<AssistantPanel>(cx)
+            .filter(|panel| panel.read(cx).enabled(cx))
+        else {
             return;
         };
 
@@ -977,8 +989,8 @@ impl AssistantPanel {
                 |this, _, event: &ConfigurationViewEvent, window, cx| match event {
                     ConfigurationViewEvent::NewProviderContextEditor(provider) => {
                         if LanguageModelRegistry::read_global(cx)
-                            .active_provider()
-                            .map_or(true, |p| p.id() != provider.id())
+                            .default_model()
+                            .map_or(true, |default| default.provider.id() != provider.id())
                         {
                             if let Some(model) = provider.default_model(cx) {
                                 update_settings_file::<AssistantSettings>(
@@ -1028,7 +1040,7 @@ impl AssistantPanel {
 
     fn deploy_prompt_library(
         &mut self,
-        _: &DeployPromptLibrary,
+        _: &OpenPromptLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1156,8 +1168,8 @@ impl AssistantPanel {
 
     fn is_authenticated(&mut self, cx: &mut Context<Self>) -> bool {
         LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map_or(false, |provider| provider.is_authenticated(cx))
+            .default_model()
+            .map_or(false, |default| default.provider.is_authenticated(cx))
     }
 
     fn authenticate(
@@ -1165,8 +1177,8 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<(), AuthenticateError>>> {
         LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map_or(None, |provider| Some(provider.authenticate(cx)))
+            .default_model()
+            .map_or(None, |default| Some(default.provider.authenticate(cx)))
     }
 
     fn restart_context_servers(
@@ -1298,12 +1310,8 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled || !settings.button {
-            return None;
-        }
-
-        Some(IconName::ZedAssistant)
+        (self.enabled(cx) && AssistantSettings::get_global(cx).button)
+            .then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {
@@ -1316,6 +1324,10 @@ impl Panel for AssistantPanel {
 
     fn activation_priority(&self) -> u32 {
         4
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        Assistant::enabled(cx)
     }
 }
 

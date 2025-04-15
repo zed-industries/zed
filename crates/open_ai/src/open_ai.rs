@@ -1,10 +1,10 @@
 mod supported_countries;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use futures::{
+    AsyncBufReadExt, AsyncReadExt, StreamExt,
     io::BufReader,
     stream::{self, BoxStream},
-    AsyncBufReadExt, AsyncReadExt, Stream, StreamExt,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,6 @@ use serde_json::Value;
 use std::{
     convert::TryFrom,
     future::{self, Future},
-    pin::Pin,
 };
 use strum::EnumIter;
 
@@ -72,6 +71,12 @@ pub enum Model {
     FourOmni,
     #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini")]
     FourOmniMini,
+    #[serde(rename = "gpt-4.1", alias = "gpt-4.1")]
+    FourPointOne,
+    #[serde(rename = "gpt-4.1-mini", alias = "gpt-4.1-mini")]
+    FourPointOneMini,
+    #[serde(rename = "gpt-4.1-nano", alias = "gpt-4.1-nano")]
+    FourPointOneNano,
     #[serde(rename = "o1", alias = "o1")]
     O1,
     #[serde(rename = "o1-preview", alias = "o1-preview")]
@@ -100,6 +105,9 @@ impl Model {
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
+            "gpt-4.1" => Ok(Self::FourPointOne),
+            "gpt-4.1-mini" => Ok(Self::FourPointOneMini),
+            "gpt-4.1-nano" => Ok(Self::FourPointOneNano),
             "o1" => Ok(Self::O1),
             "o1-preview" => Ok(Self::O1Preview),
             "o1-mini" => Ok(Self::O1Mini),
@@ -115,6 +123,9 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::FourPointOne => "gpt-4.1",
+            Self::FourPointOneMini => "gpt-4.1-mini",
+            Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
@@ -130,6 +141,9 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::FourPointOne => "gpt-4.1",
+            Self::FourPointOneMini => "gpt-4.1-mini",
+            Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
@@ -147,6 +161,9 @@ impl Model {
             Self::FourTurbo => 128_000,
             Self::FourOmni => 128_000,
             Self::FourOmniMini => 128_000,
+            Self::FourPointOne => 1_047_576,
+            Self::FourPointOneMini => 1_047_576,
+            Self::FourPointOneNano => 1_047_576,
             Self::O1 => 200_000,
             Self::O1Preview => 128_000,
             Self::O1Mini => 128_000,
@@ -163,6 +180,26 @@ impl Model {
             _ => None,
         }
     }
+
+    /// Returns whether the given model supports the `parallel_tool_calls` parameter.
+    ///
+    /// If the model does not support the parameter, do not pass it up, or the API will return an error.
+    pub fn supports_parallel_tool_calls(&self) -> bool {
+        match self {
+            Self::ThreePointFiveTurbo
+            | Self::Four
+            | Self::FourTurbo
+            | Self::FourOmni
+            | Self::FourOmniMini
+            | Self::FourPointOne
+            | Self::FourPointOneMini
+            | Self::FourPointOneNano
+            | Self::O1
+            | Self::O1Preview
+            | Self::O1Mini => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -177,6 +214,9 @@ pub struct Request {
     pub temperature: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
+    /// Whether to enable parallel function calling during tool use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
@@ -618,66 +658,4 @@ pub fn embed<'a>(
             ))
         }
     }
-}
-
-pub async fn extract_tool_args_from_events(
-    tool_name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-) -> Result<impl Send + Stream<Item = Result<String>>> {
-    let mut tool_use_index = None;
-    let mut first_chunk = None;
-    while let Some(event) = events.next().await {
-        let call = event?.choices.into_iter().find_map(|choice| {
-            choice.delta.tool_calls?.into_iter().find_map(|call| {
-                if call.function.as_ref()?.name.as_deref()? == tool_name {
-                    Some(call)
-                } else {
-                    None
-                }
-            })
-        });
-        if let Some(call) = call {
-            tool_use_index = Some(call.index);
-            first_chunk = call.function.and_then(|func| func.arguments);
-            break;
-        }
-    }
-
-    let Some(tool_use_index) = tool_use_index else {
-        return Err(anyhow!("tool not used"));
-    };
-
-    Ok(events.filter_map(move |event| {
-        let result = match event {
-            Err(error) => Some(Err(error)),
-            Ok(ResponseStreamEvent { choices, .. }) => choices.into_iter().find_map(|choice| {
-                choice.delta.tool_calls?.into_iter().find_map(|call| {
-                    if call.index == tool_use_index {
-                        let func = call.function?;
-                        let mut arguments = func.arguments?;
-                        if let Some(mut first_chunk) = first_chunk.take() {
-                            first_chunk.push_str(&arguments);
-                            arguments = first_chunk
-                        }
-                        Some(Ok(arguments))
-                    } else {
-                        None
-                    }
-                })
-            }),
-        };
-
-        async move { result }
-    }))
-}
-
-pub fn extract_text_from_events(
-    response: impl Stream<Item = Result<ResponseStreamEvent>>,
-) -> impl Stream<Item = Result<String>> {
-    response.filter_map(|response| async move {
-        match response {
-            Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
-            Err(error) => Some(Err(error)),
-        }
-    })
 }

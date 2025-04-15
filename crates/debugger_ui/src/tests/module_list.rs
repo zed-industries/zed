@@ -1,18 +1,18 @@
 use crate::{
     debugger_panel::DebugPanel,
-    session::ThreadItem,
     tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
+    StoppedEvent,
     requests::{Modules, StackTrace, Threads},
-    DebugRequestType, StoppedEvent,
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use std::sync::{
-    atomic::{AtomicBool, AtomicI32, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicI32, Ordering},
 };
+use task::LaunchConfig;
 
 #[gpui::test]
 async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -30,15 +30,13 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(
-                DebugRequestType::Launch,
-                None,
-                Some(dap::Capabilities {
-                    supports_modules_request: Some(true),
-                    ..Default::default()
-                }),
-            ),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            Some(dap::Capabilities {
+                supports_modules_request: Some(true),
+                ..Default::default()
+            }),
+            false,
             cx,
         )
     });
@@ -140,13 +138,8 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
                 .clone()
         });
 
-    assert!(
-        !called_modules.load(std::sync::atomic::Ordering::SeqCst),
-        "Request Modules shouldn't be called before it's needed"
-    );
-
-    running_state.update(cx, |state, cx| {
-        state.set_thread_item(ThreadItem::Modules, cx);
+    running_state.update_in(cx, |this, window, cx| {
+        this.activate_modules_list(window, cx);
         cx.refresh_windows();
     });
 
@@ -158,9 +151,6 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     );
 
     active_debug_session_panel(workspace, cx).update(cx, |_, cx| {
-        running_state.update(cx, |state, cx| {
-            state.set_thread_item(ThreadItem::Modules, cx)
-        });
         let actual_modules = running_state.update(cx, |state, cx| {
             state.module_list().update(cx, |list, cx| list.modules(cx))
         });

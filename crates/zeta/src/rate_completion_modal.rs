@@ -1,9 +1,9 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
-use gpui::{actions, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable};
+use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
 use std::time::Duration;
-use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
+use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -498,10 +498,12 @@ impl RateCompletionModal {
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.thumbs_down_active(
-                                                &ThumbsDownActiveCompletion,
-                                                window, cx,
-                                            );
+                                            if this.active_completion.is_some() {
+                                                this.thumbs_down_active(
+                                                    &ThumbsDownActiveCompletion,
+                                                    window, cx,
+                                                );
+                                            }
                                         })),
                                 )
                                 .child(
@@ -517,7 +519,9 @@ impl RateCompletionModal {
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
+                                            if this.active_completion.is_some() {
+                                                this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
+                                            }
                                         })),
                                 ),
                         ),

@@ -1,12 +1,12 @@
 use crate::{
-    parse_wasm_extension_version, ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry,
+    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
 };
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use convert_case::{Case, Casing as _};
-use futures::io::BufReader;
 use futures::AsyncReadExt;
+use futures::io::BufReader;
+use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{
@@ -26,21 +26,29 @@ use wit_component::ComponentEncoder;
 /// Once Rust 1.78 is released, there will be a `wasm32-wasip2` target available, so we will
 /// not need the adapter anymore.
 const RUST_TARGET: &str = "wasm32-wasip1";
-const WASI_ADAPTER_URL: &str =
-    "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
+const WASI_ADAPTER_URL: &str = "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
 
 /// Compiling Tree-sitter parsers from C to WASM requires Clang 17, and a WASM build of libc
 /// and clang's runtime library. The `wasi-sdk` provides these binaries.
 ///
 /// Once Clang 17 and its wasm target are available via system package managers, we won't need
 /// to download this.
-const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-21/";
-const WASI_SDK_ASSET_NAME: Option<&str> = if cfg!(target_os = "macos") {
-    Some("wasi-sdk-21.0-macos.tar.gz")
-} else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-    Some("wasi-sdk-21.0-linux.tar.gz")
-} else if cfg!(target_os = "windows") {
-    Some("wasi-sdk-21.0.m-mingw.tar.gz")
+const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/";
+const WASI_SDK_ASSET_NAME: Option<&str> = if cfg!(all(target_os = "macos", target_arch = "x86_64"))
+{
+    Some("wasi-sdk-25.0-x86_64-macos.tar.gz")
+} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    Some("wasi-sdk-25.0-arm64-macos.tar.gz")
+} else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    Some("wasi-sdk-25.0-x86_64-linux.tar.gz")
+} else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+    Some("wasi-sdk-25.0-arm64-linux.tar.gz")
+} else if cfg!(all(target_os = "freebsd", target_arch = "x86_64")) {
+    Some("wasi-sdk-25.0-x86_64-linux.tar.gz")
+} else if cfg!(all(target_os = "freebsd", target_arch = "aarch64")) {
+    Some("wasi-sdk-25.0-arm64-linux.tar.gz")
+} else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+    Some("wasi-sdk-25.0-x86_64-windows.tar.gz")
 } else {
     None
 };
@@ -98,9 +106,11 @@ impl ExtensionBuilder {
         }
 
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
-            let snake_cased_grammar_name = grammar_name.to_case(Case::Snake);
+            let snake_cased_grammar_name = grammar_name.to_snake_case();
             if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
-                bail!("grammar name '{grammar_name}' must be written in snake_case: {snake_cased_grammar_name}");
+                bail!(
+                    "grammar name '{grammar_name}' must be written in snake_case: {snake_cased_grammar_name}"
+                );
             }
 
             log::info!(

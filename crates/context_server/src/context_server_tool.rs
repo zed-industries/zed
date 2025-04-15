@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use gpui::{App, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use icons::IconName;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 
 use crate::manager::ContextServerManager;
@@ -38,26 +39,32 @@ impl Tool for ContextServerTool {
         self.tool.description.clone().unwrap_or_default()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::Cog
+    }
+
     fn source(&self) -> ToolSource {
         ToolSource::ContextServer {
             id: self.server_id.clone().into(),
         }
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         true
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        match &self.tool.input_schema {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        let mut schema = self.tool.input_schema.clone();
+        assistant_tool::adapt_schema_to_format(&mut schema, format)?;
+        Ok(match schema {
             serde_json::Value::Null => {
                 serde_json::json!({ "type": "object", "properties": [] })
             }
             serde_json::Value::Object(map) if map.is_empty() => {
                 serde_json::json!({ "type": "object", "properties": [] })
             }
-            _ => self.tool.input_schema.clone(),
-        }
+            _ => schema,
+        })
     }
 
     fn ui_text(&self, _input: &serde_json::Value) -> String {

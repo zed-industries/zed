@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, ops::Range, rc::Rc};
 
 use gpui::{
-    fill, point, size, AnyElement, App, Bounds, Entity, Hsla, Point, UniformListDecoration,
+    AnyElement, App, Bounds, Entity, Hsla, Point, UniformListDecoration, fill, point, size,
 };
 use smallvec::SmallVec;
 
@@ -49,8 +49,13 @@ pub fn indent_guides<V: Render>(
     entity: Entity<V>,
     indent_size: Pixels,
     colors: IndentGuideColors,
-    compute_indents_fn: impl Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> SmallVec<[usize; 64]>
-        + 'static,
+    compute_indents_fn: impl Fn(
+        &mut V,
+        Range<usize>,
+        &mut Window,
+        &mut Context<V>,
+    ) -> SmallVec<[usize; 64]>
+    + 'static,
 ) -> IndentGuides {
     let compute_indents_fn = Box::new(move |range, window: &mut Window, cx: &mut App| {
         entity.update(cx, |this, cx| compute_indents_fn(this, range, window, cx))
@@ -79,12 +84,12 @@ impl IndentGuides {
         mut self,
         entity: Entity<V>,
         render_fn: impl Fn(
-                &mut V,
-                RenderIndentGuideParams,
-                &mut Window,
-                &mut App,
-            ) -> SmallVec<[RenderedIndentGuide; 12]>
-            + 'static,
+            &mut V,
+            RenderIndentGuideParams,
+            &mut Window,
+            &mut App,
+        ) -> SmallVec<[RenderedIndentGuide; 12]>
+        + 'static,
     ) -> Self {
         let render_fn = move |params, window: &mut Window, cx: &mut App| {
             entity.update(cx, |this, cx| render_fn(this, params, window, cx))
@@ -172,10 +177,10 @@ mod uniform_list {
                     .map(|layout| RenderedIndentGuide {
                         bounds: Bounds::new(
                             point(
-                                px(layout.offset.x as f32) * self.indent_size,
-                                px(layout.offset.y as f32) * item_height,
+                                layout.offset.x * self.indent_size,
+                                layout.offset.y * item_height,
                             ),
-                            size(px(1.), px(layout.length as f32) * item_height),
+                            size(px(1.), layout.length * item_height),
                         ),
                         layout,
                         is_active: false,
@@ -311,7 +316,7 @@ mod uniform_list {
                     });
                     let mut hovered_hitbox_id = None;
                     for (i, hitbox) in hitboxes.iter().enumerate() {
-                        window.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
+                        window.set_cursor_style(gpui::CursorStyle::PointingHand, Some(hitbox));
                         let indent_guide = &self.indent_guides[i];
                         let fill_color = if hitbox.is_hovered(window) {
                             hovered_hitbox_id = Some(hitbox.id);

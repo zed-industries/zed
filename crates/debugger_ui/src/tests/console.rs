@@ -3,6 +3,7 @@ use dap::requests::StackTrace;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
+use task::LaunchConfig;
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -29,8 +30,10 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .unwrap();
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });
@@ -98,10 +101,6 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
                 .clone()
         });
 
-    running_state.update(cx, |state, cx| {
-        state.set_thread_item(session::ThreadItem::Console, cx);
-        cx.refresh_windows();
-    });
     cx.run_until_parked();
 
     // assert we have output from before the thread stopped
@@ -109,7 +108,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_session_panel = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, _| this.active_session())
                 .unwrap();
 
             assert_eq!(
@@ -148,8 +147,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .await;
 
     cx.run_until_parked();
-    running_state.update(cx, |state, cx| {
-        state.set_thread_item(session::ThreadItem::Console, cx);
+    running_state.update(cx, |_, cx| {
         cx.refresh_windows();
     });
     cx.run_until_parked();
@@ -159,7 +157,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_session_panel = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, _| this.active_session())
                 .unwrap();
 
             assert_eq!(

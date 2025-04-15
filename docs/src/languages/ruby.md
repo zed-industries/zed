@@ -158,6 +158,21 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
 }
 ```
 
+LSP `settings` and `initialization_options` can also be project-specific. For example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter for a particular project, add this to a `.zed/settings.json` inside your project repo:
+
+```json
+{
+  "lsp": {
+    "ruby-lsp": {
+      "initialization_options": {
+        "formatter": "standard",
+        "linters": ["standard"]
+      }
+    }
+  }
+}
+```
+
 By default, Ruby LSP does not use `bundle exec` to run in the context of the bundle. To enable that, you can use the `use_bundler` configuration option:
 
 ```json
@@ -277,14 +292,27 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 [
   {
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle exec rails",
+    "command": "bin/rails",
     "args": ["test", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
     "tags": ["ruby-test"]
   }
 ]
 ```
 
-Note: Plain minitest does not support running tests by line number.
+### Minitest
+
+Plain minitest does not support running tests by line number, only by name, so we need to use `$ZED_SYMBOL` instead:
+
+```json
+[
+  {
+    "label": "-Itest $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
+    "command": "bundle exec ruby",
+    "args": ["-Itest", "$ZED_RELATIVE_FILE", "-n /$ZED_SYMBOL/"],
+    "tags": ["ruby-test"]
+  }
+]
+```
 
 ### RSpec
 

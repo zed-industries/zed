@@ -2,7 +2,7 @@
 mod context_tests;
 
 use crate::patch::{AssistantEdit, AssistantPatch, AssistantPatchStatus};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
@@ -12,17 +12,17 @@ use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RemoveOptions};
-use futures::{future::Shared, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
     Task,
 };
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    report_assistant_event, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolUseId, MaxMonthlySpendReachedError,
-    MessageContent, PaymentRequiredError, Role, StopReason,
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
+    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
+    Role, StopReason, report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -31,7 +31,7 @@ use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
-    cmp::{max, Ordering},
+    cmp::{Ordering, max},
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -40,10 +40,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1272,7 +1272,7 @@ impl AssistantContext {
         // Assume it will be a Chat request, even though that takes fewer tokens (and risks going over the limit),
         // because otherwise you see in the UI that your empty message has a bunch of tokens already used.
         let request = self.to_completion_request(RequestType::Chat, cx);
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
         let debounce = self.token_count.is_some();
@@ -1284,10 +1284,12 @@ impl AssistantContext {
                         .await;
                 }
 
-                let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
+                let token_count = cx
+                    .update(|cx| model.model.count_tokens(request, cx))?
+                    .await?;
                 this.update(cx, |this, cx| {
                     this.token_count = Some(token_count);
-                    this.start_cache_warming(&model, cx);
+                    this.start_cache_warming(&model.model, cx);
                     cx.notify()
                 })
             }
@@ -2304,14 +2306,16 @@ impl AssistantContext {
         cx: &mut Context<Self>,
     ) -> Option<MessageAnchor> {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let provider = model_registry.active_provider()?;
-        let model = model_registry.active_model()?;
+        let model = model_registry.default_model()?;
         let last_message_id = self.get_last_valid_message_id(cx)?;
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             log::info!("completion provider has no credentials");
             return None;
         }
+
+        let model = model.model;
+
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
@@ -2494,7 +2498,7 @@ impl AssistantContext {
                         .language()
                         .map(|language| language.name());
                     report_assistant_event(
-                        AssistantEvent {
+                        AssistantEventData {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
@@ -2940,15 +2944,12 @@ impl AssistantContext {
     }
 
     pub fn summarize(&mut self, replace_old: bool, cx: &mut Context<Self>) {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-            return;
-        };
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
 
         if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
-            if !provider.is_authenticated(cx) {
+            if !model.provider.is_authenticated(cx) {
                 return;
             }
 
@@ -2964,7 +2965,7 @@ impl AssistantContext {
 
             self.pending_summary = cx.spawn(async move |this, cx| {
                 async move {
-                    let stream = model.stream_completion_text(request, &cx);
+                    let stream = model.model.stream_completion_text(request, &cx);
                     let mut messages = stream.await?;
 
                     let mut replaced = !replace_old;

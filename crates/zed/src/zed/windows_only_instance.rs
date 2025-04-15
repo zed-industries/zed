@@ -1,17 +1,16 @@
 use std::{sync::Arc, thread::JoinHandle};
 
 use anyhow::Context;
-use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
+use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use release_channel::app_identifier;
 use util::ResultExt;
 use windows::{
-    core::HSTRING,
     Win32::{
-        Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, GENERIC_WRITE, HANDLE},
+        Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_WRITE, GetLastError, HANDLE},
         Storage::FileSystem::{
-            CreateFileW, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE,
-            OPEN_EXISTING, PIPE_ACCESS_INBOUND,
+            CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING,
+            PIPE_ACCESS_INBOUND, ReadFile, WriteFile,
         },
         System::{
             Pipes::{
@@ -21,11 +20,12 @@ use windows::{
             Threading::CreateMutexW,
         },
     },
+    core::HSTRING,
 };
 
 use crate::{Args, OpenListener};
 
-pub fn check_single_instance(opener: OpenListener, args: &Args) -> bool {
+pub fn is_first_instance() -> bool {
     unsafe {
         CreateMutexW(
             None,
@@ -34,9 +34,11 @@ pub fn check_single_instance(opener: OpenListener, args: &Args) -> bool {
         )
         .expect("Unable to create instance mutex.")
     };
-    let first_instance = unsafe { GetLastError() } != ERROR_ALREADY_EXISTS;
+    unsafe { GetLastError() != ERROR_ALREADY_EXISTS }
+}
 
-    if first_instance {
+pub fn handle_single_instance(opener: OpenListener, args: &Args, is_first_instance: bool) -> bool {
+    if is_first_instance {
         // We are the first instance, listen for messages sent from other instances
         std::thread::spawn(move || with_pipe(|url| opener.open_urls(vec![url])));
     } else if !args.foreground {
@@ -44,7 +46,7 @@ pub fn check_single_instance(opener: OpenListener, args: &Args) -> bool {
         send_args_to_instance(args).log_err();
     }
 
-    first_instance
+    is_first_instance
 }
 
 fn with_pipe(f: impl Fn(String)) {
@@ -130,6 +132,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             wait: false,
             open_new_workspace: None,
             env: None,
+            user_data_dir: args.user_data_dir.clone(),
         }
     };
 

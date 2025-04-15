@@ -7,11 +7,13 @@ pub mod status;
 
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 pub use git2 as libgit;
 use gpui::action_with_deprecated_aliases;
 use gpui::actions;
+use gpui::impl_action_with_deprecated_aliases;
 pub use repository::WORK_DIRECTORY_REPO_PATH;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
@@ -48,13 +50,21 @@ actions!(
         Pull,
         Fetch,
         Commit,
+        Amend,
+        Cancel,
         ExpandCommitEditor,
         GenerateCommitMessage,
         Init,
     ]
 );
 
-action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+pub struct RestoreFile {
+    #[serde(default)]
+    pub skip_prompt: bool,
+}
+
+impl_action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);
 action_with_deprecated_aliases!(git, Restore, ["editor::RevertSelectedHunks"]);
 action_with_deprecated_aliases!(git, Blame, ["editor::ToggleGitBlame"]);
 

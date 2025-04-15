@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{div, prelude::*, App, ClipboardItem, Context, Entity, Task, Window};
+use gpui::{App, ClipboardItem, Context, Entity, Task, Window, div, prelude::*};
 use language::Buffer;
 use markdown_preview::{
     markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,

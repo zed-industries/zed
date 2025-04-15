@@ -16,11 +16,16 @@ default = []
 
 [dependencies]
 client.workspace = true
+collections.workspace = true
 component.workspace = true
 gpui.workspace = true
 languages.workspace = true
+notifications.workspace = true
 project.workspace = true
 ui.workspace = true
+ui_input.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true
-notifications.workspace = true
-collections.workspace = true
+db.workspace = true
+anyhow.workspace = true
+serde.workspace = true

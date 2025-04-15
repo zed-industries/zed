@@ -1,10 +1,10 @@
 use crate::Vim;
 use editor::{
+    DisplayPoint, Editor, EditorSettings,
     display_map::{DisplayRow, ToDisplayPoint},
     scroll::ScrollAmount,
-    DisplayPoint, Editor, EditorSettings,
 };
-use gpui::{actions, Context, Window};
+use gpui::{Context, Window, actions};
 use language::Bias;
 use settings::Settings;
 
@@ -55,6 +55,7 @@ impl Vim {
         by: fn(c: Option<f32>) -> ScrollAmount,
     ) {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
+        Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             scroll_editor(editor, move_cursor, &amount, window, cx)
         });
@@ -163,7 +164,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::{EditorSettings, ScrollBeyondLastLine};
-    use gpui::{point, px, size, AppContext as _};
+    use gpui::{AppContext as _, point, px, size};
     use indoc::indoc;
     use language::Point;
     use settings::SettingsStore;

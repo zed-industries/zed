@@ -1,9 +1,8 @@
 use crate::{
-    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, App, Bounds,
-    DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
-    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
-    TextOverflow, TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine,
-    WrappedLineLayout,
+    ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, SharedString, Size, TextOverflow, TextRun, TextStyle, TooltipId, WhiteSpace,
+    Window, WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::anyhow;
 use smallvec::SmallVec;
@@ -418,6 +417,15 @@ impl TextLayout {
         let mut line_origin = bounds.origin;
         let text_style = window.text_style();
         for line in &element_state.lines {
+            line.paint_background(
+                line_origin,
+                line_height,
+                text_style.text_align,
+                Some(bounds),
+                window,
+                cx,
+            )
+            .log_err();
             line.paint(
                 line_origin,
                 line_height,
@@ -700,7 +708,7 @@ impl Element for InteractiveText {
                             .iter()
                             .any(|range| range.contains(&ix))
                         {
-                            window.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
+                            window.set_cursor_style(crate::CursorStyle::PointingHand, Some(hitbox))
                         }
                     }
 

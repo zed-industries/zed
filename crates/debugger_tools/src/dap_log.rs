@@ -5,17 +5,17 @@ use dap::{
 };
 use editor::{Editor, EditorEvent};
 use futures::{
-    channel::mpsc::{unbounded, UnboundedSender},
     StreamExt,
+    channel::mpsc::{UnboundedSender, unbounded},
 };
 use gpui::{
-    actions, div, App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window,
+    App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use project::{
+    Project,
     debugger::{dap_store, session::Session},
     search::SearchQuery,
-    Project,
 };
 use settings::Settings as _;
 use std::{
@@ -25,10 +25,10 @@ use std::{
 };
 use util::maybe;
 use workspace::{
+    ToolbarItemEvent, ToolbarItemView, Workspace,
     item::Item,
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    ui::{h_flex, Button, Clickable, ContextMenu, Label, LabelCommon, PopoverMenu},
-    ToolbarItemEvent, ToolbarItemView, Workspace,
+    ui::{Button, Clickable, ContextMenu, Label, LabelCommon, PopoverMenu, h_flex},
 };
 
 struct DapLogView {
@@ -550,11 +550,11 @@ impl DapLogView {
         });
         let editor_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &EditorEvent, cx: &mut Context<'_, DapLogView>| cx.emit(event.clone()),
+            |_, _, event: &EditorEvent, cx: &mut Context<DapLogView>| cx.emit(event.clone()),
         );
         let search_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &SearchEvent, cx: &mut Context<'_, DapLogView>| cx.emit(event.clone()),
+            |_, _, event: &SearchEvent, cx: &mut Context<DapLogView>| cx.emit(event.clone()),
         );
         (editor, vec![editor_subscription, search_subscription])
     }
