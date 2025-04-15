@@ -480,7 +480,10 @@ impl ProjectDiagnosticsEditor {
                             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                                 s.select_anchor_ranges([range_to_select]);
                             })
-                        })
+                        });
+                        if this.focus_handle.is_focused(window) {
+                            this.editor.read(cx).focus_handle(cx).focus(window);
+                        }
                     }
                 }
 
