@@ -189,66 +189,67 @@ impl Tool for SearchTool {
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<SearchToolInput>(input.clone()) {
-            Ok(input) => {
-                // Don't show any pattern if not specified
-                let path_pattern = input.path.as_deref().map(MarkdownString::inline_code);
-                let case_info = if input.query_case_sensitive {
-                    " (case-sensitive)"
-                } else {
-                    ""
-                };
+        let todo = todo!(); // TODO render ui_text
+        // match serde_json::from_value::<SearchToolInput>(input.clone()) {
+        //     Ok(input) => {
+        //         // Don't show any pattern if not specified
+        //         let path_pattern = input.path.as_deref().map(MarkdownString::inline_code);
+        //         let case_info = if input.query_case_sensitive {
+        //             " (case-sensitive)"
+        //         } else {
+        //             ""
+        //         };
 
-                match input.output {
-                    Output::Paths => match path_pattern {
-                        Some(pattern) => format!("Find paths matching {}{}", pattern, case_info),
-                        None => format!("Find all paths{}", case_info),
-                    },
-                    Output::Text => {
-                        if let Some(search_regex) = &input.query {
-                            let search_pattern = MarkdownString::inline_code(search_regex);
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Search for {} in files matching {}{}",
-                                    search_pattern, pattern, case_info
-                                ),
-                                None => format!("Search for {}{}", search_pattern, case_info),
-                            }
-                        } else {
-                            match path_pattern {
-                                Some(pattern) => {
-                                    format!("Search in files matching {}{}", pattern, case_info)
-                                }
-                                None => format!("Search in all files{}", case_info),
-                            }
-                        }
-                    }
-                    Output::Symbols => {
-                        if let Some(search_regex) = &input.query {
-                            let search_pattern = MarkdownString::inline_code(search_regex);
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find symbols matching {} in files matching {}{}",
-                                    search_pattern, pattern, case_info
-                                ),
-                                None => {
-                                    format!("Find symbols matching {}{}", search_pattern, case_info)
-                                }
-                            }
-                        } else {
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find symbols in files matching {}{}",
-                                    pattern, case_info
-                                ),
-                                None => format!("Find all symbols{}", case_info),
-                            }
-                        }
-                    }
-                }
-            }
-            Err(_) => "Unified search".to_string(),
-        }
+        //         match input.output {
+        //             Output::Paths => match path_pattern {
+        //                 Some(pattern) => format!("Find paths matching {}{}", pattern, case_info),
+        //                 None => format!("Find all paths{}", case_info),
+        //             },
+        //             Output::Text => {
+        //                 if let Some(search_regex) = &input.query {
+        //                     let search_pattern = MarkdownString::inline_code(search_regex);
+        //                     match path_pattern {
+        //                         Some(pattern) => format!(
+        //                             "Search for {} in files matching {}{}",
+        //                             search_pattern, pattern, case_info
+        //                         ),
+        //                         None => format!("Search for {}{}", search_pattern, case_info),
+        //                     }
+        //                 } else {
+        //                     match path_pattern {
+        //                         Some(pattern) => {
+        //                             format!("Search in files matching {}{}", pattern, case_info)
+        //                         }
+        //                         None => format!("Search in all files{}", case_info),
+        //                     }
+        //                 }
+        //             }
+        //             Output::Symbols => {
+        //                 if let Some(search_regex) = &input.query {
+        //                     let search_pattern = MarkdownString::inline_code(search_regex);
+        //                     match path_pattern {
+        //                         Some(pattern) => format!(
+        //                             "Find symbols matching {} in files matching {}{}",
+        //                             search_pattern, pattern, case_info
+        //                         ),
+        //                         None => {
+        //                             format!("Find symbols matching {}{}", search_pattern, case_info)
+        //                         }
+        //                     }
+        //                 } else {
+        //                     match path_pattern {
+        //                         Some(pattern) => format!(
+        //                             "Find symbols in files matching {}{}",
+        //                             pattern, case_info
+        //                         ),
+        //                         None => format!("Find all symbols{}", case_info),
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     Err(_) => "Unified search".to_string(),
+        // }
     }
 
     fn run(
@@ -311,7 +312,7 @@ fn text_search(
     const MATCH_WHOLE_WORD: bool = false;
     const INCLUDE_IGNORED: bool = false;
     let files_to_exclude = PathMatcher::default();
-    let Ok(files_to_include) = PathMatcher::new(path_glob) else {
+    let Ok(files_to_include) = PathMatcher::new(path_glob.iter()) else {
         return Task::ready(Err(anyhow!(
             "Invalid path glob: {}",
             path_glob.unwrap_or_default()
@@ -332,16 +333,19 @@ fn text_search(
                 files_to_exclude.clone(),
                 None, // buffers
             )
-            .or_else(move |_| {
-                SearchQuery::text(
-                    &query_str,
-                    MATCH_WHOLE_WORD,
-                    case_sensitive,
-                    INCLUDE_IGNORED,
-                    files_to_include,
-                    files_to_exclude,
-                    None, // buffers
-                )
+            .or_else({
+                let query_str = &query_str;
+                move |_| {
+                    SearchQuery::text(
+                        query_str,
+                        MATCH_WHOLE_WORD,
+                        case_sensitive,
+                        INCLUDE_IGNORED,
+                        files_to_include,
+                        files_to_exclude,
+                        None, // buffers
+                    )
+                }
             }) else {
                 return Task::ready(Err(anyhow!("Invalid query regex: {query_str}")));
             };
@@ -349,427 +353,98 @@ fn text_search(
             let results = project.update(cx, |project, cx| project.search(query, cx));
 
             cx.spawn(async move|cx|  {
+                const CONTEXT_LINES: u32 = 2;
+
                 futures::pin_mut!(results);
 
-                let mut filtered_paths = Vec::new();
+                let mut output = String::new();
+                let start = start.unwrap_or(1);
+                let mut skips_remaining = start.saturating_sub(1);
+                let mut total_results_desired = end.map(|end| end.saturating_sub(start)).unwrap_or(u32::MAX);
+                let mut matches_found = 0;
+                let mut has_more_matches = false;
 
                 while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
-                    if !ranges.is_empty() {
-                        if let Some(path) = buffer.read_with(cx, |buffer, cx| {
-                            buffer
-                                .file()
-                                .map(|file| file.full_path(cx).to_string_lossy().to_string())
-                        })? {
-                            filtered_paths.push(path);
-                        }
+                    if ranges.is_empty() {
+                        continue;
                     }
-                }
 
-                if filtered_paths.is_empty() {
-                    return Ok(
-                        match path_glob {
-                            Some(path_glob) => {
-                              format!("No paths in the project had paths matching the glob {path_glob:?} and contents matching {query_str:?}")
-                            }
-                            None => {
-                              format!("No paths in the project had contents matching {query_str:?}")
+                    buffer.read_with(cx, |buffer, cx| -> Result<(), anyhow::Error> {
+                        if let Some(path) = buffer.file().map(|file| file.full_path(cx)) {
+                            let mut file_header_written = false;
+                            let mut ranges = ranges
+                                .into_iter()
+                                .map(|range| {
+                                    let mut point_range = range.to_point(buffer);
+                                    point_range.start.row =
+                                        point_range.start.row.saturating_sub(CONTEXT_LINES);
+                                    point_range.start.column = 0;
+                                    point_range.end.row = cmp::min(
+                                        buffer.max_point().row,
+                                        point_range.end.row + CONTEXT_LINES,
+                                    );
+                                    point_range.end.column = buffer.line_len(point_range.end.row);
+                                    point_range
+                                })
+                                .peekable();
+
+                            while let Some(mut range) = ranges.next() {
+                                if skips_remaining > 0 {
+                                    skips_remaining -= 1;
+                                    continue;
+                                }
+
+                                // We'd already found all the matches we were asked to find, and we just found one more.
+                                if matches_found >= total_results_desired {
+                                    has_more_matches = true;
+                                    return Ok(());
+                                }
+
+                                while let Some(next_range) = ranges.peek() {
+                                    if range.end.row >= next_range.start.row {
+                                        range.end = next_range.end;
+                                        ranges.next();
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                if !file_header_written {
+                                    writeln!(output, "\n## Matches in {}", path.display())?;
+                                    file_header_written = true;
+                                }
+
+                                let start_line = range.start.row + 1;
+                                let end_line = range.end.row + 1;
+                                writeln!(output, "\n### Lines {start_line}-{end_line}\n```")?;
+                                output.extend(buffer.text_for_range(range));
+                                output.push_str("\n```\n");
+
+                                matches_found += 1;
                             }
                         }
-                    );
+
+                        Ok(())
+                    })??;
                 }
 
-                // Sort to group entries in the same directory together
-                filtered_paths.sort();
-
-                let total_matches = filtered_paths.len();
-                let response = if total_matches > PATHS_RESULTS_PER_PAGE + input.offset as usize {
-                    let paginated_matches: Vec<_> = filtered_paths
-                        .into_iter()
-                        .skip(input.offset as usize)
-                        .take(PATHS_RESULTS_PER_PAGE)
-                        .collect();
-
-                    format!(
-                        "Found {} paths matching the content regex. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
-                        total_matches,
-                        input.offset + 1,
-                        input.offset as usize + paginated_matches.len(),
-                        paginated_matches.join("\n")
-                    )
+                if matches_found == 0 {
+                    Ok("No matches found".to_string())
+                } else if has_more_matches {
+                    Ok(format!(
+                        "Showing matches {}-{} (there were more matches found; adjust start and/or end to others):\n{output}",
+                        start,
+                        start + matches_found,
+                    ))
                 } else {
-                    let displayed_matches: Vec<_> = filtered_paths
-                        .into_iter()
-                        .skip(input.offset as usize)
-                        .collect();
-
-                    format!(
-                        "Found {} paths matching the content regex:\n\n{}",
-                        total_matches,
-                        displayed_matches.join("\n")
-                    )
-                };
-
-                Ok(response)
+                    Ok(format!("Found {matches_found} matches:\n{output}"))
+                }
             })
         }
         None => {
             let todo = todo!(); // TODO don't actually do a search, just filter all the paths.
         }
     }
-}
-
-fn output_paths(
-    input: SearchToolInput,
-    project: Entity<Project>,
-    cx: &mut App,
-) -> Task<Result<String>> {
-    // Clone the path_glob to avoid borrowing issues with the async closure
-    let path_glob_option = input.path.clone();
-    let query_option = input.query.clone();
-    let case_sensitive = input.query_case_sensitive;
-
-    // Create the path matcher based on the provided glob pattern or use a matcher that matches everything
-    let path_matcher = if let Some(glob) = path_glob_option.as_deref() {
-        match PathMatcher::new([glob]) {
-            Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob pattern: {}", err))),
-        }
-    } else {
-        // When no glob pattern is provided, match all files
-        match PathMatcher::new(["*"]) {
-            Ok(matcher) => matcher,
-            Err(err) => {
-                return Task::ready(Err(anyhow!(
-                    "Failed to create default path matcher: {}",
-                    err
-                )));
-            }
-        }
-    };
-
-    // If a query regex is provided, create a search query for filtering files by content
-    let results = if let Some(regex) = &query_option {
-        match SearchQuery::regex(
-            regex,
-            false,
-            case_sensitive,
-            false,
-            false,
-            path_matcher.clone(),
-            PathMatcher::default(),
-            None,
-        ) {
-            Ok(query) => Some(query),
-            Err(error) => return Task::ready(Err(error)),
-        }
-    } else {
-        None
-    };
-
-    let snapshots: Vec<Snapshot> = project
-        .read(cx)
-        .worktrees(cx)
-        .map(|worktree| worktree.read(cx).snapshot())
-        .collect();
-
-    // Create a copy of path_glob for use in the async closure
-    let path_glob_for_error = path_glob_option.clone();
-
-    // If we need to filter by content, use the search functionality
-    if let Some(query) = regex_query {}
-
-    // If no content regex, just filter by path glob as before
-    cx.background_executor().spawn(async move {
-        let mut matches = Vec::new();
-
-        for worktree in snapshots {
-            let root_name = worktree.root_name();
-
-            // Don't consider ignored entries
-            for entry in worktree.entries(false, 0) {
-                if path_matcher.is_match(&entry.path) {
-                    matches.push(
-                        PathBuf::from(root_name)
-                            .join(&entry.path)
-                            .to_string_lossy()
-                            .to_string(),
-                    );
-                }
-            }
-        }
-
-        if matches.is_empty() {
-            Ok(format!("No paths in the project matched the glob {:?}", path_glob_for_error))
-        } else {
-            // Sort to group entries in the same directory together
-            matches.sort();
-
-            let total_matches = matches.len();
-            let response = if total_matches > PATHS_RESULTS_PER_PAGE + input.offset as usize {
-                let paginated_matches: Vec<_> = matches
-                    .into_iter()
-                    .skip(input.offset as usize)
-                    .take(PATHS_RESULTS_PER_PAGE)
-                    .collect();
-
-                format!(
-                    "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
-                    total_matches,
-                    input.offset + 1,
-                    input.offset as usize + paginated_matches.len(),
-                    paginated_matches.join("\n")
-                )
-            } else {
-                let displayed_matches: Vec<_> = matches
-                    .into_iter()
-                    .skip(input.offset as usize)
-                    .collect();
-
-                format!(
-                    "Found {} total matches:\n\n{}",
-                    total_matches,
-                    displayed_matches.join("\n")
-                )
-            };
-
-            Ok(response)
-        }
-    })
-}
-
-fn output_text(
-    input: SearchToolInput,
-    project: Entity<Project>,
-    action_log: Entity<ActionLog>,
-    cx: &mut App,
-) -> Task<Result<String>> {
-    const CONTEXT_LINES: u32 = 2;
-    /// If the model requests to read a file whose size exceeds this, then
-    /// the tool will return an outline instead of the full file contents
-    const MAX_FILE_SIZE_TO_READ: usize = 16384;
-
-    // If no query is provided and path_glob points to a specific file, read the file contents
-    if input.query.is_none()
-        && input.path.as_ref().map_or(false, |glob| {
-            !glob.contains('*') && !glob.contains('?') && !glob.contains('[')
-        })
-    {
-        let file_path = input.path.unwrap();
-
-        return cx.spawn(async move |cx| {
-            let Some(project_path) = project.read_with(cx, |project, cx| {
-                project.find_project_path(&file_path, cx)
-            })? else {
-                return Err(anyhow!("Path {} not found in project", &file_path));
-            };
-
-            let buffer = project.update(cx, |project, cx| {
-                project.open_buffer(project_path, cx)
-            })?.await?;
-
-            // Check file size to see if it's too big
-            let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
-
-            if file_size <= MAX_FILE_SIZE_TO_READ {
-                // File is small enough, so return its contents
-                let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
-                Ok(format!("Contents of {}:\n\n```\n{}\n```", file_path, result))
-            } else {
-                // File is too big, so get its outline instead
-                let outline = render_file_outline(project, file_path.clone(), action_log.clone(), None, 0, cx).await?;
-
-                Ok(format!("The file '{}' was too big to read all at once. Here is an outline of its symbols:\n\n{}\n\nTry searching for specific content by providing a regex query.", file_path, outline))
-            }
-        });
-    }
-
-    let search_regex = match &input.query {
-        Some(regex) => regex.clone(),
-        None => {
-            return Task::ready(Err(anyhow!(
-                "Either provide a specific file path in path_glob or a regex query to search for text"
-            )));
-        }
-    };
-
-    // Create a query based on the path glob or use a matcher that matches everything
-    let path_matcher = if let Some(glob) = input.path.as_deref() {
-        match PathMatcher::new([glob]) {
-            Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob pattern: {}", err))),
-        }
-    } else {
-        // When no glob pattern is provided, match all files
-        match PathMatcher::new(["*"]) {
-            Ok(matcher) => matcher,
-            Err(err) => {
-                return Task::ready(Err(anyhow!(
-                    "Failed to create default path matcher: {}",
-                    err
-                )));
-            }
-        }
-    };
-
-    let query = match SearchQuery::regex(
-        dbg!(&search_regex),
-        false,
-        input.query_case_sensitive,
-        false,
-        false,
-        path_matcher,
-        PathMatcher::default(),
-        None,
-    ) {
-        Ok(query) => query,
-        Err(error) => return Task::ready(Err(error)),
-    };
-
-    let results = project.update(cx, |project, cx| project.search(query, cx));
-
-    cx.spawn(async move|cx|  {
-        futures::pin_mut!(results);
-
-        let mut output = String::new();
-        let mut skips_remaining = input.offset;
-        let mut matches_found = 0;
-        let mut has_more_matches = false;
-
-        while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
-            if ranges.is_empty() {
-                continue;
-            }
-
-            buffer.read_with(cx, |buffer, cx| -> Result<(), anyhow::Error> {
-                if let Some(path) = buffer.file().map(|file| file.full_path(cx)) {
-                    let mut file_header_written = false;
-                    let mut ranges = ranges
-                        .into_iter()
-                        .map(|range| {
-                            let mut point_range = range.to_point(buffer);
-                            point_range.start.row =
-                                point_range.start.row.saturating_sub(CONTEXT_LINES);
-                            point_range.start.column = 0;
-                            point_range.end.row = cmp::min(
-                                buffer.max_point().row,
-                                point_range.end.row + CONTEXT_LINES,
-                            );
-                            point_range.end.column = buffer.line_len(point_range.end.row);
-                            point_range
-                        })
-                        .peekable();
-
-                    while let Some(mut range) = ranges.next() {
-                        if skips_remaining > 0 {
-                            skips_remaining -= 1;
-                            continue;
-                        }
-
-                        // We'd already found a full page of matches, and we just found one more.
-                        if matches_found >= TEXT_RESULTS_PER_PAGE {
-                            has_more_matches = true;
-                            return Ok(());
-                        }
-
-                        while let Some(next_range) = ranges.peek() {
-                            if range.end.row >= next_range.start.row {
-                                range.end = next_range.end;
-                                ranges.next();
-                            } else {
-                                break;
-                            }
-                        }
-
-                        if !file_header_written {
-                            writeln!(output, "\n## Matches in {}", path.display())?;
-                            file_header_written = true;
-                        }
-
-                        let start_line = range.start.row + 1;
-                        let end_line = range.end.row + 1;
-                        writeln!(output, "\n### Lines {start_line}-{end_line}\n```")?;
-                        output.extend(buffer.text_for_range(range));
-                        output.push_str("\n```\n");
-
-                        matches_found += 1;
-                    }
-                }
-
-                Ok(())
-            })??;
-        }
-
-        if matches_found == 0 {
-            Ok("No matches found".to_string())
-        } else if has_more_matches {
-            Ok(format!(
-                "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
-                input.offset + 1,
-                input.offset + u32::try_from(matches_found).unwrap_or(0),
-                input.offset + u32::try_from(TEXT_RESULTS_PER_PAGE).unwrap_or(0),
-            ))
-        } else {
-            Ok(format!("Found {matches_found} matches:\n{output}"))
-        }
-    })
-}
-
-async fn render_file_outline(
-    project: Entity<Project>,
-    path: String,
-    action_log: Entity<ActionLog>,
-    query: Option<String>,
-    offset: u32,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<String> {
-    let buffer = {
-        let project_path = project.read_with(cx, |project, cx| {
-            project
-                .find_project_path(&path, cx)
-                .ok_or_else(|| anyhow!("Path {} not found in project", path))
-        })??;
-
-        project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-            .await?
-    };
-
-    action_log.update(cx, |action_log, cx| {
-        action_log.buffer_read(buffer.clone(), cx);
-    })?;
-
-    // Wait until the buffer has been fully parsed, so that we can read its outline
-    let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
-    while *parse_status.borrow() != ParseStatus::Idle {
-        parse_status.changed().await?;
-    }
-
-    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let Some(outline) = snapshot.outline(None) else {
-        return Err(anyhow!(
-            "No outline information available for file: {}",
-            path
-        ));
-    };
-
-    let mut output = String::new();
-    writeln!(&mut output, "# Symbols in {}\n", path).ok();
-
-    // Get buffer text for showing content at each symbol
-    let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text())?;
-
-    render_outline(
-        &mut output,
-        outline
-            .items
-            .into_iter()
-            .map(|item| item.to_point(&snapshot)),
-        query,
-        offset,
-        u32::MAX, // No symbol limit, just use line limit
-        Some((&buffer_text, path.clone())),
-        SYMBOLS_LINES_PER_PAGE,
-    )
 }
 
 async fn project_symbols(
