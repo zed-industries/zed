@@ -1,5 +1,6 @@
 use std::{path::Path, sync::Arc};
 
+use anyhow::Result;
 use dap::{DebugRequestType, client::DebugAdapterClient};
 use gpui::{App, AppContext, Entity, Subscription, Task};
 use task::DebugTaskDefinition;
@@ -32,13 +33,13 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     cx: &mut gpui::TestAppContext,
     config: DebugTaskDefinition,
     configure: T,
-) -> Task<Entity<Session>> {
+) -> Task<Result<Entity<Session>>> {
     let subscription = intercept_debug_sessions(cx, configure);
     let task = project.update(cx, |project, cx| project.start_debug_session(config, cx));
     cx.spawn(async move |_| {
         let result = task.await;
         drop(subscription);
-        result.unwrap()
+        result
     })
 }
 
@@ -46,7 +47,7 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     project: &Entity<Project>,
     cx: &mut gpui::TestAppContext,
     configure: T,
-) -> Task<Entity<Session>> {
+) -> Task<Result<Entity<Session>>> {
     start_debug_session_with(
         project,
         cx,
@@ -65,7 +66,6 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
 
 fn register_default_handlers(session: &Session, client: &Arc<DebugAdapterClient>, cx: &mut App) {
     client.on_request::<dap::requests::Initialize, _>(move |_, _| Ok(Default::default()));
-
     let paths = session
         .as_local()
         .unwrap()

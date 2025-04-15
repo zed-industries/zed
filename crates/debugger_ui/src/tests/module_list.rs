@@ -39,7 +39,8 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
             })
         });
     })
-    .await;
+    .await
+    .unwrap();
 
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 

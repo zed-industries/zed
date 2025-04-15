@@ -48,7 +48,8 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
             });
         },
     )
-    .await;
+    .await
+    .unwrap();
 
     cx.run_until_parked();
 
