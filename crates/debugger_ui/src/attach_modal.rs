@@ -228,10 +228,7 @@ impl PickerDelegate for AttachModalDelegate {
         let config = self.debug_config.clone();
         self.project
             .update(cx, |project, cx| {
-                #[cfg(any(test, feature = "test-support"))]
-                let ret = project.fake_debug_session(config.request, None, false, cx);
-                #[cfg(not(any(test, feature = "test-support")))]
-                let ret = project.start_debug_session(config.into(), cx);
+                let ret = project.start_debug_session(config, cx);
                 ret
             })
             .detach_and_log_err(cx);

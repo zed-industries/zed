@@ -96,7 +96,7 @@ use std::{
     sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
     time::Duration,
 };
-use task::{DebugAdapterConfig, SpawnInTerminal, TaskId};
+use task::{DebugTaskDefinition, SpawnInTerminal, TaskId};
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -858,7 +858,7 @@ pub struct Workspace {
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
-    debug_task_queue: HashMap<task::TaskId, DebugAdapterConfig>,
+    debug_task_queue: HashMap<task::TaskId, DebugTaskDefinition>,
 }
 
 impl EventEmitter<Event> for Workspace {}

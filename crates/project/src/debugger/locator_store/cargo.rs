@@ -1,12 +1,12 @@
 use super::DapLocator;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use dap::DebugAdapterConfig;
 use serde_json::{Value, json};
 use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
+use task::DebugTaskDefinition;
 use util::maybe;
 
 pub(super) struct CargoLocator;
@@ -38,11 +38,9 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
 }
 #[async_trait]
 impl DapLocator for CargoLocator {
-    async fn run_locator(&self, debug_config: &mut DebugAdapterConfig) -> Result<()> {
+    async fn run_locator(&self, debug_config: &mut DebugTaskDefinition) -> Result<()> {
         let Some(launch_config) = (match &mut debug_config.request {
-            task::DebugRequestDisposition::UserConfigured(task::DebugRequestType::Launch(
-                launch_config,
-            )) => Some(launch_config),
+            task::DebugRequestType::Launch(launch_config) => Some(launch_config),
             _ => None,
         }) else {
             return Err(anyhow!("Couldn't get launch config in locator"));
