@@ -403,9 +403,11 @@ impl ActionLog {
             }
             TrackedBufferStatus::Modified => {
                 buffer.update(cx, |buffer, cx| {
-                    let mut buffer_ranges = buffer_ranges
+                    let mut buffer_row_ranges = buffer_ranges
                         .into_iter()
-                        .map(|range| range.start.to_point(buffer)..range.end.to_point(buffer))
+                        .map(|range| {
+                            range.start.to_point(buffer).row..range.end.to_point(buffer).row
+                        })
                         .peekable();
 
                     let mut edits_to_revert = Vec::new();
@@ -418,13 +420,15 @@ impl ActionLog {
                                 tracked_buffer.snapshot.max_point(),
                             ));
                         let new_row_range = new_range.start.to_point(buffer).row
-                            ..new_range.end.to_point(buffer).row + 1;
+                            ..new_range.end.to_point(buffer).row;
 
                         let mut revert = false;
-                        while let Some(buffer_range) = buffer_ranges.peek() {
-                            if buffer_range.end.row < new_row_range.start {
-                                buffer_ranges.next();
-                            } else if buffer_range.start.row > new_row_range.end {
+                        println!("Edit: {:?}", edit);
+                        while let Some(buffer_row_range) = buffer_row_ranges.peek() {
+                            println!("  Buffer Row Range {:?}", buffer_row_range,);
+                            if buffer_row_range.end < new_row_range.start {
+                                buffer_row_ranges.next();
+                            } else if buffer_row_range.start > new_row_range.end {
                                 break;
                             } else {
                                 revert = true;
@@ -1124,6 +1128,41 @@ mod tests {
             });
             action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndE\nXYZf\nghi\njkl\nmnO"
+        );
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(3, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
+                    },
+                    HunkStatus {
+                        range: Point::new(5, 0)..Point::new(5, 3),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
+                    }
+                ],
+            )]
+        );
+
+        // If the rejected range doesn't overlap with any hunk, we ignore it.
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(4, 0)..Point::new(4, 0)],
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
