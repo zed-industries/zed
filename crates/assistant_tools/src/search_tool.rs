@@ -302,7 +302,7 @@ impl Tool for SearchTool {
 fn text_search(
     project: Entity<Project>,
     path_glob: Option<String>,
-    action_log: Entity<ActionLog>,
+    _action_log: Entity<ActionLog>,
     query: Option<String>,
     case_sensitive: bool,
     start: Option<u32>,
@@ -445,6 +445,8 @@ fn text_search(
             let todo = todo!(); // TODO don't actually do a search, just filter all the paths.
         }
     }
+
+
 }
 
 async fn project_symbols(
@@ -733,4 +735,524 @@ fn render_symbol_entries(
     *offset = lines_shown;
 
     entries_rendered
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use std::path::Path;
+    use serde_json::json;
+    use gpui::prelude::*;
+    use project::{FakeFs, Project};
+
+    #[gpui::test]
+    async fn test_text_search_basic(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        
+        // Set up the filesystem and project
+        let fs = FakeFs::new(cx.executor());
+        
+        // Insert files with test content
+        fs.insert_tree(
+            Path::new("/test"),
+            json!({
+                "file1.txt": "Hello World\nThis is a test file\nWith multiple lines\nHello again",
+                "file2.txt": "Another file\nNo matches here\nJust some text",
+                "dir/file3.txt": "Hello in a subdirectory\nMore test content\nHello at the end"
+            }),
+        ).await;
+        
+        let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        
+        // Search for "Hello" in all files
+        let result = cx.update(|cx| {
+            text_search(
+                project,
+                None, // no path glob filter
+                action_log,
+                Some("Hello".to_string()),
+                false, // case insensitive
+                None,  // start from first match
+                None,  // no limit on results
+                cx,
+            )
+        })
+        .await;
+        
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        
+        // Should find matches in file1.txt and dir/file3.txt
+        assert!(output.contains("file1.txt"));
+        assert!(output.contains("dir/file3.txt"));
+        assert!(!output.contains("file2.txt"));
+        assert!(output.contains("Hello World"));
+        assert!(output.contains("Hello again"));
+        assert!(output.contains("Hello in a subdirectory"));
+        assert!(output.contains("Hello at the end"));
+    }
+
+    #[gpui::test]
+    async fn test_text_search_case_sensitive(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        
+        // Set up the filesystem and project
+        let fs = FakeFs::new(cx.executor());
+        
+        // Insert a test file with different casing
+        fs.insert_tree(
+            Path::new("/test"),
+            json!({
+                "file1.txt": "Hello World\nhello lowercase\nHELLO UPPERCASE"
+            }),
+        ).await;
+        
+        let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        
+        // Search for "Hello" (case sensitive)
+        let result = cx.update(|cx| {
+            text_search(
+                project,
+                None, // no path glob filter
+                action_log,
+                Some("Hello".to_string()),
+                true, // case sensitive
+                None,  // start from first match
+                None,  // no limit on results
+                cx,
+            )
+        })
+        .await;
+        
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        
+        // Should only match "Hello World" not the lowercase or uppercase versions
+        assert!(output.contains("Hello World"));
+        assert!(!output.contains("hello lowercase"));
+        assert!(!output.contains("HELLO UPPERCASE"));
+    }
+
+    #[gpui::test]
+    async fn test_text_search_with_pagination(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        
+        // Set up the filesystem and project
+        let fs = FakeFs::new(cx.executor());
+        
+        // Insert a test file with numbered matches
+        fs.insert_tree(
+            Path::new("/test"),
+            json!({
+                "file1.txt": "Match 1\nNo match\nMatch 2\nNo match\nMatch 3"
+            }),
+        ).await;
+        
+        let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        
+        // Search with pagination - start at the second match
+        let result = cx.update(|cx| {
+            text_search(
+                project,
+                None, // no path glob filter
+                action_log,
+                Some("Match".to_string()),
+                false, // case insensitive
+                Some(2),  // start from second match
+                Some(2),  // limit to 2 results
+                cx,
+            )
+        })
+        .await;
+        
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        
+        // Should show matches 2-3 and mention more results being available
+        assert!(output.contains("Match 2"));
+        assert!(output.contains("Match 3"));
+        assert!(!output.contains("Match 1"));
+        assert!(output.contains("Showing matches 2-3"));
+    }
+
+    #[gpui::test]
+    async fn test_text_search_with_path_filter(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        
+        // Set up the filesystem and project
+        let fs = FakeFs::new(cx.executor());
+        
+        // Insert multiple files with different extensions
+        fs.insert_tree(
+            Path::new("/test"),
+            json!({
+                "file1.txt": "Test content in file1",
+                "file2.md": "Test content in file2",
+                "dir/file3.txt": "Test content in file3"
+            }),
+        ).await;
+        
+        let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        
+        // Search in .md files only
+        let result = cx.update(|cx| {
+            text_search(
+                project,
+                Some("**/*.md".to_string()), // only search in .md files
+                action_log,
+                Some("Test".to_string()),
+                false, // case insensitive
+                None,  // start from first match
+                None,  // no limit on results
+                cx,
+            )
+        })
+        .await;
+        
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        
+        // Should only find matches in file2.md
+        assert!(!output.contains("file1.txt"));
+        assert!(output.contains("file2.md"));
+        assert!(!output.contains("file3.txt"));
+    }
+    
+    // Test for the render_outline function
+    #[test]
+    fn test_render_outline() {
+        // Create a simple file content string
+        let file_content = "fn main() {\n    println!(\"Hello, world!\");\n}\n\nstruct User {\n    name: String,\n    age: u32,\n}";
+
+        // Create simple outline items for testing using regular Point type
+        // (not importing language::Range which is private)
+        let items = vec![
+            OutlineItem {
+                depth: 0,
+                text: "main".into(),
+                range: Point::new(0, 0)..Point::new(2, 1),
+                highlight_ranges: Vec::new(),
+                name_ranges: Vec::new(),
+                body_range: None,
+                annotation_range: None,
+            },
+            OutlineItem {
+                depth: 0,
+                text: "User".into(),
+                range: Point::new(4, 0)..Point::new(7, 1),
+                highlight_ranges: Vec::new(),
+                name_ranges: Vec::new(),
+                body_range: None,
+                annotation_range: None,
+            },
+        ];
+
+        let mut output = String::new();
+        let result = render_outline(
+            &mut output,
+            items,
+            None, // no query filter
+            0,    // no offset
+            10,   // show up to 10 results
+            Some((file_content, file_content.to_string())),
+            1000, // line limit
+        );
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        // Check that all expected content is in the output
+        assert!(output.contains("main"));
+        assert!(output.contains("User"));
+        assert!(output.contains("[L1-3]") || output.contains("[L1-"));
+        assert!(output.contains("[L5-8]") || output.contains("[L5-"));
+
+        // Check that the content is included
+        assert!(output.contains("println!(\"Hello, world!\");"));
+        assert!(output.contains("name: String,"));
+    }
+    
+    #[test]
+    fn test_render_outline_with_query_filter() {
+        // Create a simple file content string
+        let file_content = "fn main() {\n    println!(\"Hello, world!\");\n}\n\nstruct User {\n    name: String,\n    age: u32,\n}\n\nfn helper() {\n    // Helper function\n}";
+
+        // Create outline items for testing
+        let items = vec![
+            OutlineItem {
+                depth: 0,
+                text: "main".into(),
+                range: Point::new(0, 0)..Point::new(2, 1),
+                highlight_ranges: Vec::new(),
+                name_ranges: Vec::new(),
+                body_range: None,
+                annotation_range: None,
+            },
+            OutlineItem {
+                depth: 0,
+                text: "User".into(),
+                range: Point::new(4, 0)..Point::new(7, 1),
+                highlight_ranges: Vec::new(),
+                name_ranges: Vec::new(),
+                body_range: None,
+                annotation_range: None,
+            },
+            OutlineItem {
+                depth: 0,
+                text: "helper".into(),
+                range: Point::new(9, 0)..Point::new(11, 1),
+                highlight_ranges: Vec::new(),
+                name_ranges: Vec::new(),
+                body_range: None,
+                annotation_range: None,
+            },
+        ];
+
+        let mut output = String::new();
+        let result = render_outline(
+            &mut output,
+            items,
+            Some("main".to_string()), // filter by "main"
+            0,    // no offset
+            10,   // show up to 10 results
+            Some((file_content, file_content.to_string())),
+            1000, // line limit
+        );
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        // Should include "main" but not "User" or "helper"
+        assert!(output.contains("main"));
+        assert!(!output.contains("User"));
+        assert!(!output.contains("helper"));
+        assert!(output.contains("println!(\"Hello, world!\")"));
+        assert!(!output.contains("name: String,"));
+    }
+
+    #[test]
+    fn test_render_outline_with_pagination() {
+        // Create a simple file content string
+        let file_content = "fn first() {}\n\nfn second() {}\n\nfn third() {}";
+
+        // Create outline items for testing
+        let items = vec![
+            OutlineItem {
+                depth: 0,
+                text: "first".into(),
+                range: Point::new(0, 0)..Point::new(0, 13),
+                highlight_ranges: Vec::new(),
+                name_ranges: Vec::new(),
+                body_range: None,
+                annotation_range: None,
+            },
+            OutlineItem {
+                depth: 0,
+                text: "second".into(),
+                range: Point::new(2, 0)..Point::new(2, 14),
+                highlight_ranges: Vec::new(),
+                name_ranges: Vec::new(),
+                body_range: None,
+                annotation_range: None,
+            },
+            OutlineItem {
+                depth: 0,
+                text: "third".into(),
+                range: Point::new(4, 0)..Point::new(4, 13),
+                highlight_ranges: Vec::new(),
+                name_ranges: Vec::new(),
+                body_range: None,
+                annotation_range: None,
+            },
+        ];
+
+        // Test pagination with offset 1, showing only the second item
+        let mut output = String::new();
+        let result = render_outline(
+            &mut output,
+            items.clone(),
+            None,  // no query filter
+            1,     // offset = 1 (skip first item)
+            1,     // only show 1 result
+            Some((file_content, file_content.to_string())),
+            1000,  // line limit
+        );
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+
+        // Should only include "second", not "first" or "third"
+        assert!(!output.contains("first"));
+        assert!(output.contains("second"));
+        assert!(!output.contains("third"));
+        assert!(output.contains("Showing symbols 2-2"));
+    }
+
+    #[test]
+    fn test_render_symbol_entries() {
+        // Create a simple file content
+        let file_content = "fn test() {\n    let x = 1;\n    println!(\"x = {}\", x);\n}";
+        
+        // Create outline items
+        let items = vec![
+            OutlineItem {
+                depth: 0,
+                text: "test".into(),
+                range: Point::new(0, 0)..Point::new(3, 1),
+                highlight_ranges: Vec::new(),
+                name_ranges: Vec::new(),
+                body_range: None,
+                annotation_range: None,
+            },
+        ];
+        
+        let mut output = String::new();
+        let mut lines_shown = 0;
+        
+        // Call render_symbol_entries with the file content
+        let entries_rendered = render_symbol_entries(
+            &mut output,
+            items,
+            Some((file_content, file_content.to_string())),
+            100, // max lines per page
+            &mut lines_shown
+        );
+        
+        // Should render 1 entry
+        assert_eq!(entries_rendered, 1);
+        // Should show 4 lines of content
+        assert_eq!(lines_shown, 4);
+        // Output should contain the function name and code
+        assert!(output.contains("test"));
+        assert!(output.contains("let x = 1;"));
+        assert!(output.contains("println!"));
+    }
+
+    #[gpui::test]
+    async fn test_text_search_empty_query(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        
+        // Set up the filesystem and project
+        let fs = FakeFs::new(cx.executor());
+        
+        // Insert files with test content
+        fs.insert_tree(
+            Path::new("/test"),
+            json!({
+                "file1.txt": "This is test content"
+            }),
+        ).await;
+        
+        let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        
+        // Search with an empty query
+        let result = cx.update(|cx| {
+            text_search(
+                project,
+                Some("**/*.txt".to_string()), // filter to txt files
+                action_log,
+                Some("".to_string()), // empty query
+                false, // case insensitive
+                None,  // start from first match
+                None,  // no limit on results
+                cx,
+            )
+        })
+        .await;
+        
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        
+        // Should match everything in the file since query is empty
+        assert!(output.contains("file1.txt"));
+        assert!(output.contains("This is test content"));
+    }
+
+    #[gpui::test]
+    async fn test_text_search_no_matches(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        
+        // Set up the filesystem and project
+        let fs = FakeFs::new(cx.executor());
+        
+        // Insert files with test content
+        fs.insert_tree(
+            Path::new("/test"),
+            json!({
+                "file1.txt": "This is test content"
+            }),
+        ).await;
+        
+        let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        
+        // Search for a term that doesn't exist
+        let result = cx.update(|cx| {
+            text_search(
+                project,
+                None, // no path filter
+                action_log,
+                Some("NonExistentText".to_string()),
+                false, // case insensitive
+                None,  // start from first match
+                None,  // no limit on results
+                cx,
+            )
+        })
+        .await;
+        
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        
+        // Should indicate no matches were found
+        assert!(output.contains("No matches found"));
+    }
+
+    #[gpui::test]
+    async fn test_text_search_regex(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        
+        // Set up the filesystem and project
+        let fs = FakeFs::new(cx.executor());
+        
+        // Insert files with test content
+        fs.insert_tree(
+            Path::new("/test"),
+            json!({
+                "file1.txt": "User: John\nAge: 30\nEmail: john@example.com",
+                "file2.txt": "User: Jane\nAge: 25\nEmail: jane@example.com"
+            }),
+        ).await;
+        
+        let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        
+        // Search with regex to find email addresses
+        let result = cx.update(|cx| {
+            text_search(
+                project,
+                None, // no path filter
+                action_log,
+                Some("[a-z]+@[a-z]+\\.com".to_string()), // regex pattern for emails
+                false, // case insensitive
+                None,  // start from first match
+                None,  // no limit on results
+                cx,
+            )
+        })
+        .await;
+        
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        
+        // Should find both email addresses
+        assert!(output.contains("john@example.com"));
+        assert!(output.contains("jane@example.com"));
+    }
 }
