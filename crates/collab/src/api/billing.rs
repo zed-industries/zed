@@ -313,6 +313,10 @@ async fn create_billing_subscription(
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ManageSubscriptionIntent {
+    /// The user intends to manage their subscription.
+    ///
+    /// This will open the Stripe billing portal without putting the user in a specific flow.
+    ManageSubscription,
     /// The user intends to cancel their subscription.
     Cancel,
     /// The user intends to stop the cancellation of their subscription.
@@ -400,7 +404,8 @@ async fn manage_billing_subscription(
     }
 
     let flow = match body.intent {
-        ManageSubscriptionIntent::Cancel => CreateBillingPortalSessionFlowData {
+        ManageSubscriptionIntent::ManageSubscription => None,
+        ManageSubscriptionIntent::Cancel => Some(CreateBillingPortalSessionFlowData {
             type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
             after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
                 type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
@@ -416,12 +421,12 @@ async fn manage_billing_subscription(
                 },
             ),
             ..Default::default()
-        },
+        }),
         ManageSubscriptionIntent::StopCancellation => unreachable!(),
     };
 
     let mut params = CreateBillingPortalSession::new(customer_id);
-    params.flow_data = Some(flow);
+    params.flow_data = flow;
     let return_url = format!("{}/account", app.config.zed_dot_dev_url());
     params.return_url = Some(&return_url);
 
