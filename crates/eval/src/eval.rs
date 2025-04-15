@@ -1,8 +1,10 @@
 mod example;
+mod ids;
 
 use assistant_settings::AssistantSettings;
 use client::{Client, ProxySettings, UserStore};
 pub(crate) use example::*;
+use telemetry;
 
 use ::fs::RealFs;
 use anyhow::{Result, anyhow};
@@ -73,6 +75,20 @@ fn main() {
 
     app.run(move |cx| {
         let app_state = init(cx);
+
+        // === Telemetry IDs initialization ===
+        let system_id = ids::get_or_create_id(&ids::eval_system_id_path())
+            .unwrap_or_else(|_| "unknown-system-id".to_string());
+        let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path())
+            .unwrap_or_else(|_| "unknown-installation-id".to_string());
+        let session_id = uuid::Uuid::new_v4().to_string();
+
+        // Start telemetry using the client from app_state
+        app_state
+            .client
+            .telemetry()
+            .start(Some(system_id), Some(installation_id), session_id, cx);
+        // === End Telemetry IDs initialization ===
 
         let model = find_model("claude-3-7-sonnet-latest", cx).unwrap();
 
@@ -258,6 +274,9 @@ fn main() {
 
             std::thread::sleep(std::time::Duration::from_secs(2));
 
+            // Flush telemetry events before exiting
+            app_state.client.telemetry().flush_events();
+
             cx.update(|cx| cx.quit())
         })
         .detach_and_log_err(cx);
@@ -288,6 +307,7 @@ async fn run_example(
         cohort_id = cohort_id,
         example_name = example.name.clone(),
         score = judge_output.score,
+        analysis = judge_output.analysis,
         tool_use_counts = run_output.tool_use_counts,
         response_count = run_output.response_count,
         token_usage = run_output.token_usage,
@@ -299,11 +319,6 @@ async fn run_example(
     );
 
     app_state.client.telemetry().flush_events();
-
-    std::thread::sleep(std::time::Duration::from_secs(1));
-
-    println!("judge_output.score: {}", judge_output.score);
-    println!("judge_output: {}", judge_output.analysis);
 
     Ok(judge_output)
 }
