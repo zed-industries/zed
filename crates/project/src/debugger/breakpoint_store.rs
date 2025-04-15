@@ -538,7 +538,7 @@ impl BreakpointStore {
                         .map(|(position, breakpoint)| {
                             let position = snapshot.summary_for_anchor::<PointUtf16>(position).row;
                             SourceBreakpoint {
-                                row: u32::MAX,
+                                row: position,
                                 path: path.clone(),
                                 message: breakpoint.message.clone(),
                                 state: breakpoint.state,

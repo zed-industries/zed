@@ -9,7 +9,7 @@ use super::dap_command::{
     StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
     TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
-use super::dap_store::{DapAdapterDelegate, DapStore};
+use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::DebugAdapterBinary;
@@ -27,6 +27,7 @@ use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
     Task, WeakEntity,
 };
+use itertools::Itertools;
 use rpc::AnyProtoClient;
 use serde_json::{Value, json};
 use smol::stream::StreamExt;
@@ -212,8 +213,6 @@ impl LocalMode {
         parent_session: Option<Entity<Session>>,
         breakpoint_store: Entity<BreakpointStore>,
         worktree: WeakEntity<Worktree>,
-        config: DebugAdapterConfig,
-        delegate: DapAdapterDelegate,
         config: DebugTaskDefinition,
         binary: DebugAdapterBinary,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
@@ -248,6 +247,7 @@ impl LocalMode {
             let mut session = Self {
                 client,
                 breakpoint_store,
+                worktree,
                 tmp_breakpoint: None,
                 definition: config,
                 binary,
@@ -257,6 +257,10 @@ impl LocalMode {
 
             Ok(session)
         })
+    }
+
+    pub(crate) fn worktree(&self) -> &WeakEntity<Worktree> {
+        &self.worktree
     }
 
     fn unset_breakpoints_from_paths(&self, paths: &Vec<Arc<Path>>, cx: &mut App) -> Task<()> {
@@ -443,27 +447,38 @@ impl LocalMode {
             .unwrap_or_default();
         let configuration_sequence = cx.spawn({
             let this = self.clone();
+            let worktree = self.worktree().clone();
             async move |cx| {
                 initialized_rx.await?;
                 let errors_by_path = cx
                     .update(|cx| this.send_source_breakpoints(false, cx))?
                     .await;
 
-                dap_store.update(cx, |dap_store, cx| {
-                    let mut error_messages = text::Rope::new();
+                dap_store.update(cx, |_, cx| {
+                    let Some(worktree) = worktree.upgrade() else {
+                        return;
+                    };
 
-                    for (failed_path, error_msg) in errors_by_path {
-                        error_messages.push(&format!(
-                            "Failed to send breakpoints at path: {}, reason: {}",
-                            failed_path.to_string_lossy(),
-                            error_msg
-                        ));
+                    let mut error_list = errors_by_path
+                        .iter()
+                        .take(3)
+                        .map(|(failed_path, error)| {
+                            let failed_path = failed_path
+                                .strip_prefix(worktree.read(cx).abs_path())
+                                .unwrap_or(failed_path)
+                                .display();
+
+                            format!("* Path {failed_path}: {error}")
+                        })
+                        .join("\n");
+                    if errors_by_path.len() > 3 {
+                        error_list.push_str("\n...")
                     }
 
-                    if !error_messages.is_empty() {
-                        cx.emit(super::dap_store::DapStoreEvent::Notification(
-                            error_messages.to_string(),
-                        ));
+                    if !error_list.is_empty() {
+                        cx.emit(super::dap_store::DapStoreEvent::Notification(format!(
+                            "Failed to set breakpoints:\n{error_list}"
+                        )));
                     }
                 })?;
 

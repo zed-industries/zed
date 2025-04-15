@@ -21,7 +21,9 @@ use futures::{
     channel::{mpsc, oneshot},
     future::{Shared, join_all},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
@@ -336,6 +338,7 @@ impl DapStore {
         &mut self,
         binary: DebugAdapterBinary,
         mut config: DebugTaskDefinition,
+        worktree: WeakEntity<Worktree>,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> (SessionId, Task<Result<Entity<Session>>>) {
@@ -371,7 +374,7 @@ impl DapStore {
             let start_client_task = this.update(cx, |this, cx| {
                 Session::local(
                     this.breakpoint_store.clone(),
-                    worktree.downgrade(),
+                    worktree,
                     session_id,
                     parent_session,
                     binary,
@@ -403,6 +406,16 @@ impl DapStore {
             return Task::ready(Err(anyhow!("Session not found")));
         };
 
+        let Some(worktree) = parent_session
+            .read(cx)
+            .as_local()
+            .map(|local| local.worktree().clone())
+        else {
+            return Task::ready(Err(anyhow!(
+                "Cannot handle start debugging request from remote end"
+            )));
+        };
+
         let args = serde_json::from_value::<StartDebuggingRequestArguments>(
             request.arguments.unwrap_or_default(),
         )
@@ -412,7 +425,7 @@ impl DapStore {
         binary.request_args = args;
 
         let new_session_task = self
-            .new_session(binary, config, Some(parent_session.clone()), cx)
+            .new_session(binary, config, worktree, Some(parent_session.clone()), cx)
             .1;
 
         let request_seq = request.seq;
