@@ -547,7 +547,9 @@ async fn test_handle_start_debugging_reverse_request(
             }
         })
         .await;
-
+    // Set up handlers for sessions spawned with reverse request too.
+    let _reverse_request_subscription =
+        project::debugger::test::intercept_debug_sessions(cx, |_| {});
     client
         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
             configuration: json!({}),
@@ -642,7 +644,9 @@ async fn test_shutdown_children_when_parent_session_shutdown(
     });
 
     client.on_response::<StartDebugging, _>(move |_| {}).await;
-
+    // Set up handlers for sessions spawned with reverse request too.
+    let _reverse_request_subscription =
+        project::debugger::test::intercept_debug_sessions(cx, |_| {});
     // start first child session
     client
         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
@@ -739,7 +743,9 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
     let client = parent_session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_response::<StartDebugging, _>(move |_| {}).await;
-
+    // Set up handlers for sessions spawned with reverse request too.
+    let _reverse_request_subscription =
+        project::debugger::test::intercept_debug_sessions(cx, |_| {});
     // start first child session
     client
         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
