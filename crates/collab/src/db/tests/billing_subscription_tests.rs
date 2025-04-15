@@ -39,9 +39,12 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
 
         db.create_billing_subscription(&CreateBillingSubscriptionParams {
             billing_customer_id: customer.id,
+            kind: None,
             stripe_subscription_id: "sub_active_user".into(),
             stripe_subscription_status: StripeSubscriptionStatus::Active,
             stripe_cancellation_reason: None,
+            stripe_current_period_start: None,
+            stripe_current_period_end: None,
         })
         .await
         .unwrap();
@@ -74,9 +77,12 @@ async fn test_get_active_billing_subscriptions(db: &Arc<Database>) {
 
         db.create_billing_subscription(&CreateBillingSubscriptionParams {
             billing_customer_id: customer.id,
+            kind: None,
             stripe_subscription_id: "sub_past_due_user".into(),
             stripe_subscription_status: StripeSubscriptionStatus::PastDue,
             stripe_cancellation_reason: None,
+            stripe_current_period_start: None,
+            stripe_current_period_end: None,
         })
         .await
         .unwrap();

@@ -83,6 +83,9 @@ impl CloudModel {
                 | open_ai::Model::FourTurbo
                 | open_ai::Model::FourOmni
                 | open_ai::Model::FourOmniMini
+                | open_ai::Model::FourPointOne
+                | open_ai::Model::FourPointOneMini
+                | open_ai::Model::FourPointOneNano
                 | open_ai::Model::O1Mini
                 | open_ai::Model::O1Preview
                 | open_ai::Model::O1

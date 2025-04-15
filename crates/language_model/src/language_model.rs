@@ -67,7 +67,7 @@ pub enum LanguageModelCompletionEvent {
 }
 
 /// Indicates the format used to define the input schema for a language model tool.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum LanguageModelToolSchemaFormat {
     /// A JSON schema, see https://json-schema.org
     JsonSchema,
@@ -83,7 +83,7 @@ pub enum StopReason {
     ToolUse,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     #[serde(default, skip_serializing_if = "is_default")]
     pub input_tokens: u32,
@@ -278,6 +278,12 @@ pub trait LanguageModel: Send + Sync {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum LanguageModelKnownError {
+    #[error("Context window limit exceeded ({tokens})")]
+    ContextWindowLimitExceeded { tokens: usize },
+}
+
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
     fn name() -> String;
     fn description() -> String;
@@ -347,7 +353,7 @@ pub trait LanguageModelProviderState: 'static {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct LanguageModelId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]

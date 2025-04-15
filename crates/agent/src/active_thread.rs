@@ -12,18 +12,18 @@ use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, EditorElement, EditorStyle, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardItem,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Hsla, ListAlignment, ListState,
     MouseButton, PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription, Task,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
+    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role, StopReason};
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
-use markdown::{Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
+use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
 use project::ProjectItem as _;
 use rope::Point;
 use settings::{Settings as _, update_settings_file};
@@ -33,7 +33,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
-use ui::{Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip, prelude::*};
+use ui::{
+    Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, TextSize, Tooltip, prelude::*,
+};
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
@@ -64,8 +66,6 @@ pub struct ActiveThread {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     open_feedback_editors: HashMap<MessageId, Entity<Editor>>,
 }
-
-const MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK: usize = 5;
 
 struct RenderedMessage {
     language_registry: Arc<LanguageRegistry>,
@@ -175,11 +175,37 @@ fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     });
 
     MarkdownStyle {
-        base_text_style: text_style,
+        base_text_style: text_style.clone(),
         syntax: cx.theme().syntax().clone(),
         selection_background_color: cx.theme().players().local().selection,
         code_block_overflow_x_scroll: true,
         table_overflow_x_scroll: true,
+        heading_level_styles: Some(HeadingLevelStyles {
+            h1: Some(TextStyleRefinement {
+                font_size: Some(rems(1.15).into()),
+                ..Default::default()
+            }),
+            h2: Some(TextStyleRefinement {
+                font_size: Some(rems(1.1).into()),
+                ..Default::default()
+            }),
+            h3: Some(TextStyleRefinement {
+                font_size: Some(rems(1.05).into()),
+                ..Default::default()
+            }),
+            h4: Some(TextStyleRefinement {
+                font_size: Some(rems(1.).into()),
+                ..Default::default()
+            }),
+            h5: Some(TextStyleRefinement {
+                font_size: Some(rems(0.95).into()),
+                ..Default::default()
+            }),
+            h6: Some(TextStyleRefinement {
+                font_size: Some(rems(0.875).into()),
+                ..Default::default()
+            }),
+        }),
         code_block: StyleRefinement {
             padding: EdgesRefinement {
                 top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
@@ -290,6 +316,8 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
         ..Default::default()
     }
 }
+
+const MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK: usize = 10;
 
 fn render_markdown_code_block(
     message_id: MessageId,
@@ -577,7 +605,7 @@ fn render_markdown_code_block(
                 if is_expanded {
                     this.h_full()
                 } else {
-                    this.max_h_40()
+                    this.max_h_80()
                 }
             },
         )
@@ -1496,12 +1524,36 @@ impl ActiveThread {
                     .when(!message_is_empty, |parent| {
                         parent.child(
                             if let Some(edit_message_editor) = edit_message_editor.clone() {
+                                let settings = ThemeSettings::get_global(cx);
+                                let font_size = TextSize::Small.rems(cx);
+                                let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
+
+                                let text_style = TextStyle {
+                                    color: cx.theme().colors().text,
+                                    font_family: settings.buffer_font.family.clone(),
+                                    font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                                    font_features: settings.buffer_font.features.clone(),
+                                    font_size: font_size.into(),
+                                    line_height: line_height.into(),
+                                    ..Default::default()
+                                };
+
                                 div()
                                     .key_context("EditMessageEditor")
                                     .on_action(cx.listener(Self::cancel_editing_message))
                                     .on_action(cx.listener(Self::confirm_editing_message))
                                     .min_h_6()
-                                    .child(edit_message_editor)
+                                    .pt_1()
+                                    .child(EditorElement::new(
+                                        &edit_message_editor,
+                                        EditorStyle {
+                                            background: colors.editor_background,
+                                            local_player: cx.theme().players().local(),
+                                            text: text_style,
+                                            syntax: cx.theme().syntax().clone(),
+                                            ..Default::default()
+                                        },
+                                    ))
                                     .into_any()
                             } else {
                                 div()
@@ -1666,11 +1718,9 @@ impl ActiveThread {
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
-                .ml_2()
+                .ml_2p5()
                 .pl_2()
                 .pr_4()
-                .border_l_1()
-                .border_color(cx.theme().colors().border_variant)
                 .children(message_content)
                 .when(has_tool_uses, |parent| {
                     parent.children(

@@ -1,5 +1,6 @@
 mod action_log;
 mod tool_registry;
+mod tool_schema;
 mod tool_working_set;
 
 use std::fmt;
@@ -16,10 +17,24 @@ use project::Project;
 
 pub use crate::action_log::*;
 pub use crate::tool_registry::*;
+pub use crate::tool_schema::*;
 pub use crate::tool_working_set::*;
 
 pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
+}
+
+/// The result of running a tool
+pub struct ToolResult {
+    /// The asynchronous task that will eventually resolve to the tool's output
+    pub output: Task<Result<String>>,
+}
+
+impl From<Task<Result<String>>> for ToolResult {
+    /// Convert from a task to a ToolResult
+    fn from(output: Task<Result<String>>) -> Self {
+        Self { output }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
@@ -51,8 +66,8 @@ pub trait Tool: 'static + Send + Sync {
     fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool;
 
     /// Returns the JSON schema that describes the tool's input.
-    fn input_schema(&self, _: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        serde_json::Value::Object(serde_json::Map::default())
+    fn input_schema(&self, _: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        Ok(serde_json::Value::Object(serde_json::Map::default()))
     }
 
     /// Returns markdown to be displayed in the UI for this tool.
@@ -66,7 +81,7 @@ pub trait Tool: 'static + Send + Sync {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>>;
+    ) -> ToolResult;
 }
 
 impl Debug for dyn Tool {

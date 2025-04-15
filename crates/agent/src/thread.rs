@@ -15,10 +15,11 @@ use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    PaymentRequiredError, Role, StopReason, TokenUsage,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
+    Role, StopReason, TokenUsage,
 };
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
@@ -228,7 +229,7 @@ pub struct TotalTokenUsage {
     pub ratio: TokenUsageRatio,
 }
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum TokenUsageRatio {
     #[default]
     Normal,
@@ -253,22 +254,31 @@ pub struct Thread {
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
     prompt_builder: Arc<PromptBuilder>,
-    tools: Arc<ToolWorkingSet>,
+    tools: Entity<ToolWorkingSet>,
     tool_use: ToolUseState,
     action_log: Entity<ActionLog>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
+    exceeded_window_error: Option<ExceededWindowError>,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExceededWindowError {
+    /// Model used when last message exceeded context window
+    model_id: LanguageModelId,
+    /// Token count including last message
+    token_count: usize,
+}
+
 impl Thread {
     pub fn new(
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         system_prompt: SharedProjectContext,
         cx: &mut Context<Self>,
@@ -301,6 +311,7 @@ impl Thread {
                     .shared()
             },
             cumulative_token_usage: TokenUsage::default(),
+            exceeded_window_error: None,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -311,7 +322,7 @@ impl Thread {
         id: ThreadId,
         serialized: SerializedThread,
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         project_context: SharedProjectContext,
         cx: &mut Context<Self>,
@@ -367,6 +378,7 @@ impl Thread {
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             cumulative_token_usage: serialized.cumulative_token_usage,
+            exceeded_window_error: None,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -446,7 +458,7 @@ impl Thread {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
     }
 
-    pub fn tools(&self) -> &Arc<ToolWorkingSet> {
+    pub fn tools(&self) -> &Entity<ToolWorkingSet> {
         &self.tools
     }
 
@@ -815,8 +827,9 @@ impl Thread {
                     })
                     .collect(),
                 initial_project_snapshot,
-                cumulative_token_usage: this.cumulative_token_usage.clone(),
+                cumulative_token_usage: this.cumulative_token_usage,
                 detailed_summary_state: this.detailed_summary_state.clone(),
+                exceeded_window_error: this.exceeded_window_error.clone(),
             })
         })
     }
@@ -831,13 +844,21 @@ impl Thread {
         if model.supports_tools() {
             request.tools = {
                 let mut tools = Vec::new();
-                tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
-                    LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema: tool.input_schema(model.tool_input_format()),
-                    }
-                }));
+                tools.extend(
+                    self.tools()
+                        .read(cx)
+                        .enabled_tools(cx)
+                        .into_iter()
+                        .filter_map(|tool| {
+                            // Skip tools that cannot be supported
+                            let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
+                            Some(LanguageModelRequestTool {
+                                name: tool.name(),
+                                description: tool.description(),
+                                input_schema,
+                            })
+                        }),
+                );
 
                 tools
             };
@@ -996,7 +1017,7 @@ impl Thread {
         let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion(request, &cx);
             let initial_token_usage =
-                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage.clone());
+                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
@@ -1018,9 +1039,9 @@ impl Thread {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
-                                thread.cumulative_token_usage =
-                                    thread.cumulative_token_usage.clone() + token_usage.clone()
-                                        - current_token_usage.clone();
+                                thread.cumulative_token_usage = thread.cumulative_token_usage
+                                    + token_usage
+                                    - current_token_usage;
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
@@ -1129,6 +1150,20 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::MaxMonthlySpendReached,
                                 ));
+                            } else if let Some(known_error) =
+                                error.downcast_ref::<LanguageModelKnownError>()
+                            {
+                                match known_error {
+                                    LanguageModelKnownError::ContextWindowLimitExceeded {
+                                        tokens,
+                                    } => {
+                                        thread.exceeded_window_error = Some(ExceededWindowError {
+                                            model_id: model.id(),
+                                            token_count: *tokens,
+                                        });
+                                        cx.notify();
+                                    }
+                                }
                             } else {
                                 let error_message = error
                                     .chain()
@@ -1149,7 +1184,7 @@ impl Thread {
                     thread.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
-                        let usage = thread.cumulative_token_usage.clone() - initial_usage;
+                        let usage = thread.cumulative_token_usage - initial_usage;
 
                         telemetry::event!(
                             "Assistant Thread Completion",
@@ -1320,7 +1355,7 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for tool_use in pending_tool_uses.iter() {
-            if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+            if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
                 if tool.needs_confirmation(&tool_use.input, cx)
                     && !AssistantSettings::get_global(cx).always_allow_tool_actions
                 {
@@ -1372,8 +1407,8 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
-            Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
+        let tool_result = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
+            Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))).into()
         } else {
             tool.run(
                 input,
@@ -1386,7 +1421,7 @@ impl Thread {
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
-                let output = run_tool.await;
+                let output = tool_result.output.await;
 
                 thread
                     .update(cx, |thread, cx| {
@@ -1487,6 +1522,7 @@ impl Thread {
 
         let enabled_tool_names: Vec<String> = self
             .tools()
+            .read(cx)
             .enabled_tools(cx)
             .iter()
             .map(|tool| tool.name().to_string())
@@ -1765,14 +1801,14 @@ impl Thread {
             .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
-    pub fn reject_edits_in_range(
+    pub fn reject_edits_in_ranges(
         &mut self,
         buffer: Entity<language::Buffer>,
-        buffer_range: Range<language::Anchor>,
+        buffer_ranges: Vec<Range<language::Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.action_log.update(cx, |action_log, cx| {
-            action_log.reject_edits_in_range(buffer, buffer_range, cx)
+            action_log.reject_edits_in_ranges(buffer, buffer_ranges, cx)
         })
     }
 
@@ -1782,10 +1818,6 @@ impl Thread {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
-    }
-
-    pub fn cumulative_token_usage(&self) -> TokenUsage {
-        self.cumulative_token_usage.clone()
     }
 
     pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
@@ -1832,6 +1864,10 @@ impl Thread {
             .detach();
     }
 
+    pub fn cumulative_token_usage(&self) -> TokenUsage {
+        self.cumulative_token_usage
+    }
+
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(model) = model_registry.default_model() else {
@@ -1839,6 +1875,16 @@ impl Thread {
         };
 
         let max = model.model.max_token_count();
+
+        if let Some(exceeded_error) = &self.exceeded_window_error {
+            if model.model.id() == exceeded_error.model_id {
+                return TotalTokenUsage {
+                    total: exceeded_error.token_count,
+                    max,
+                    ratio: TokenUsageRatio::Exceeded,
+                };
+            }
+        }
 
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
@@ -2297,7 +2343,7 @@ fn main() {{
             .update(|_, cx| {
                 ThreadStore::load(
                     project.clone(),
-                    Arc::default(),
+                    cx.new(|_| ToolWorkingSet::default()),
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )
