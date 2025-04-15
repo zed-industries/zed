@@ -417,17 +417,19 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: Some(vec![google_ai::Tool {
-            function_declarations: request
-                .tools
-                .into_iter()
-                .map(|tool| FunctionDeclaration {
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.input_schema,
-                })
-                .collect(),
-        }]),
+        tools: (request.tools.len() > 0).then(|| {
+            vec![google_ai::Tool {
+                function_declarations: request
+                    .tools
+                    .into_iter()
+                    .map(|tool| FunctionDeclaration {
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: tool.input_schema,
+                    })
+                    .collect(),
+            }]
+        }),
         tool_config: None,
     }
 }
