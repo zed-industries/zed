@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{code_symbols_tool::file_outline, schema::json_schema_for};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use itertools::Itertools;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -103,10 +103,10 @@ impl Tool for ContentsTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<ContentsToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         // Sometimes models will return these even though we tell it to give a path and not a glob.
@@ -127,23 +127,23 @@ impl Tool for ContentsTool {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            return Task::ready(Ok(output));
+            return Task::ready(Ok(output)).into();
         }
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path {} not found in project", &input.path)));
+            return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
         };
 
         let Some(worktree) = project
             .read(cx)
             .worktree_for_id(project_path.worktree_id, cx)
         else {
-            return Task::ready(Err(anyhow!("Worktree not found")));
+            return Task::ready(Err(anyhow!("Worktree not found"))).into();
         };
         let worktree = worktree.read(cx);
 
         let Some(entry) = worktree.entry_for_path(&project_path.path) else {
-            return Task::ready(Err(anyhow!("Path not found: {}", input.path)));
+            return Task::ready(Err(anyhow!("Path not found: {}", input.path))).into();
         };
 
         // If it's a directory, list its contents
@@ -184,7 +184,7 @@ impl Tool for ContentsTool {
                 ).ok();
             }
 
-            Task::ready(Ok(output))
+            Task::ready(Ok(output)).into()
         } else {
             // It's a file, so read its contents
             let file_path = input.path.clone();
@@ -233,7 +233,7 @@ impl Tool for ContentsTool {
                         Ok(format!("This file was too big to read all at once. Here is an outline of its symbols:\n\n{outline}\n\nUsing the line numbers in this outline, you can call this tool again while specifying the start and end fields to see the implementations of symbols in the outline."))
                     }
                 }
-            })
+            }).into()
         }
     }
 }

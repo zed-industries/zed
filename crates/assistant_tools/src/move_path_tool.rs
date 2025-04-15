@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -90,10 +90,10 @@ impl Tool for MovePathTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<MovePathToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
         let rename_task = project.update(cx, |project, cx| {
             match project
@@ -105,12 +105,12 @@ impl Tool for MovePathTool {
                     None => Task::ready(Err(anyhow!(
                         "Destination path {} was outside the project.",
                         input.destination_path
-                    ))),
+                    ))).into(),
                 },
                 None => Task::ready(Err(anyhow!(
                     "Source path {} was not found in the project.",
                     input.source_path
-                ))),
+                ))).into(),
             }
         });
 
@@ -127,6 +127,6 @@ impl Tool for MovePathTool {
                     err
                 )),
             }
-        })
+        }).into()
     }
 }
