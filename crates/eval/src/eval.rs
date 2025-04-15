@@ -138,7 +138,7 @@ fn main() {
                 examples.push(example);
             }
 
-            println!("Skipped examples: {}", skipped.join(", "));
+            println!("Skipped examples: {}\n", skipped.join(", "));
 
             if examples.is_empty() {
                 eprintln!("Filter matched no examples");
