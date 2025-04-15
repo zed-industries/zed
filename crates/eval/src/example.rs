@@ -373,12 +373,8 @@ impl Example {
                             }
                             _ => {}
                         }
-<<<<<<< HEAD
-                        log_file.flush().log_err();
-=======
 
                         output_file.flush().log_err();
->>>>>>> main
                     }
                 }
             });

@@ -1,9 +1,5 @@
 use crate::schema::json_schema_for;
-<<<<<<< HEAD
-use anyhow::{anyhow, Result};
-=======
 use anyhow::{Result, anyhow};
->>>>>>> main
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolWorkingSet};
 use futures::future::join_all;
 use gpui::{App, AppContext, Entity, Task};
