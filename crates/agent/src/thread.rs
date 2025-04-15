@@ -1407,8 +1407,8 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let run_tool = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
-            Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
+        let tool_result = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
+            Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))).into()
         } else {
             tool.run(
                 input,
@@ -1421,7 +1421,7 @@ impl Thread {
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
-                let output = run_tool.await;
+                let output = tool_result.output.await;
 
                 thread
                     .update(cx, |thread, cx| {
@@ -1801,14 +1801,14 @@ impl Thread {
             .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
-    pub fn reject_edits_in_range(
+    pub fn reject_edits_in_ranges(
         &mut self,
         buffer: Entity<language::Buffer>,
-        buffer_range: Range<language::Anchor>,
+        buffer_ranges: Vec<Range<language::Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.action_log.update(cx, |action_log, cx| {
-            action_log.reject_edits_in_range(buffer, buffer_range, cx)
+            action_log.reject_edits_in_ranges(buffer, buffer_ranges, cx)
         })
     }
 

@@ -1,7 +1,6 @@
 use sqlez_macros::sql;
 
 use crate::{define_connection, query};
-pub static DEBUGGER_PANEL_PREFIX: &str = "debugger_panel_";
 
 define_connection!(pub static ref KEY_VALUE_STORE: KeyValueStore<()> =
     &[sql!(

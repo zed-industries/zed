@@ -21,7 +21,9 @@ use stripe::{
 use util::ResultExt;
 
 use crate::api::events::SnowflakeRow;
-use crate::db::billing_subscription::{StripeCancellationReason, StripeSubscriptionStatus};
+use crate::db::billing_subscription::{
+    StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
+};
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
 use crate::{AppState, Cents, Error, Result};
@@ -184,7 +186,10 @@ async fn list_billing_subscriptions(
             .into_iter()
             .map(|subscription| BillingSubscriptionJson {
                 id: subscription.id,
-                name: "Zed LLM Usage".to_string(),
+                name: match subscription.kind {
+                    Some(SubscriptionKind::ZedPro) => "Zed Pro".to_string(),
+                    None => "Zed LLM Usage".to_string(),
+                },
                 status: subscription.stripe_subscription_status,
                 cancel_at: subscription.stripe_cancel_at.map(|cancel_at| {
                     cancel_at
@@ -198,9 +203,16 @@ async fn list_billing_subscriptions(
     }))
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProductCode {
+    ZedPro,
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateBillingSubscriptionBody {
     github_user_id: i32,
+    product: Option<ProductCode>,
 }
 
 #[derive(Debug, Serialize)]
@@ -274,15 +286,30 @@ async fn create_billing_subscription(
         customer.id
     };
 
-    let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-7-sonnet")?;
-    let stripe_model = stripe_billing.register_model(default_model).await?;
-    let success_url = format!(
-        "{}/account?checkout_complete=1",
-        app.config.zed_dot_dev_url()
-    );
-    let checkout_session_url = stripe_billing
-        .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
-        .await?;
+    let checkout_session_url = match body.product {
+        Some(ProductCode::ZedPro) => {
+            let success_url = format!(
+                "{}/account?checkout_complete=1",
+                app.config.zed_dot_dev_url()
+            );
+            stripe_billing
+                .checkout_with_zed_pro(customer_id, &user.github_login, &success_url)
+                .await?
+        }
+        None => {
+            let default_model =
+                llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-7-sonnet")?;
+            let stripe_model = stripe_billing.register_model(default_model).await?;
+            let success_url = format!(
+                "{}/account?checkout_complete=1",
+                app.config.zed_dot_dev_url()
+            );
+            stripe_billing
+                .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
+                .await?
+        }
+    };
+
     Ok(Json(CreateBillingSubscriptionResponse {
         checkout_session_url,
     }))
@@ -291,6 +318,10 @@ async fn create_billing_subscription(
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ManageSubscriptionIntent {
+    /// The user intends to manage their subscription.
+    ///
+    /// This will open the Stripe billing portal without putting the user in a specific flow.
+    ManageSubscription,
     /// The user intends to cancel their subscription.
     Cancel,
     /// The user intends to stop the cancellation of their subscription.
@@ -378,7 +409,8 @@ async fn manage_billing_subscription(
     }
 
     let flow = match body.intent {
-        ManageSubscriptionIntent::Cancel => CreateBillingPortalSessionFlowData {
+        ManageSubscriptionIntent::ManageSubscription => None,
+        ManageSubscriptionIntent::Cancel => Some(CreateBillingPortalSessionFlowData {
             type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
             after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
                 type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
@@ -394,12 +426,12 @@ async fn manage_billing_subscription(
                 },
             ),
             ..Default::default()
-        },
+        }),
         ManageSubscriptionIntent::StopCancellation => unreachable!(),
     };
 
     let mut params = CreateBillingPortalSession::new(customer_id);
-    params.flow_data = Some(flow);
+    params.flow_data = flow;
     let return_url = format!("{}/account", app.config.zed_dot_dev_url());
     params.return_url = Some(&return_url);
 
@@ -664,6 +696,23 @@ async fn handle_customer_subscription_event(
 
     log::info!("handling Stripe {} event: {}", event.type_, event.id);
 
+    let subscription_kind =
+        if let Some(zed_pro_price_id) = app.config.stripe_zed_pro_price_id.as_deref() {
+            let has_zed_pro_price = subscription.items.data.iter().any(|item| {
+                item.price
+                    .as_ref()
+                    .map_or(false, |price| price.id.as_str() == zed_pro_price_id)
+            });
+
+            if has_zed_pro_price {
+                Some(SubscriptionKind::ZedPro)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
     let billing_customer =
         find_or_create_billing_customer(app, stripe_client, subscription.customer)
             .await?
@@ -700,6 +749,7 @@ async fn handle_customer_subscription_event(
                 existing_subscription.id,
                 &UpdateBillingSubscriptionParams {
                     billing_customer_id: ActiveValue::set(billing_customer.id),
+                    kind: ActiveValue::set(subscription_kind),
                     stripe_subscription_id: ActiveValue::set(subscription.id.to_string()),
                     stripe_subscription_status: ActiveValue::set(subscription.status.into()),
                     stripe_cancel_at: ActiveValue::set(
@@ -714,6 +764,12 @@ async fn handle_customer_subscription_event(
                             .and_then(|details| details.reason)
                             .map(|reason| reason.into()),
                     ),
+                    stripe_current_period_start: ActiveValue::set(Some(
+                        subscription.current_period_start,
+                    )),
+                    stripe_current_period_end: ActiveValue::set(Some(
+                        subscription.current_period_end,
+                    )),
                 },
             )
             .await?;
@@ -748,12 +804,15 @@ async fn handle_customer_subscription_event(
         app.db
             .create_billing_subscription(&CreateBillingSubscriptionParams {
                 billing_customer_id: billing_customer.id,
+                kind: subscription_kind,
                 stripe_subscription_id: subscription.id.to_string(),
                 stripe_subscription_status: subscription.status.into(),
                 stripe_cancellation_reason: subscription
                     .cancellation_details
                     .and_then(|details| details.reason)
                     .map(|reason| reason.into()),
+                stripe_current_period_start: Some(subscription.current_period_start),
+                stripe_current_period_end: Some(subscription.current_period_end),
             })
             .await?;
     }

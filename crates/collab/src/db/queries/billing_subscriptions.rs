@@ -1,22 +1,30 @@
-use crate::db::billing_subscription::{StripeCancellationReason, StripeSubscriptionStatus};
+use crate::db::billing_subscription::{
+    StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
+};
 
 use super::*;
 
 #[derive(Debug)]
 pub struct CreateBillingSubscriptionParams {
     pub billing_customer_id: BillingCustomerId,
+    pub kind: Option<SubscriptionKind>,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
     pub stripe_cancellation_reason: Option<StripeCancellationReason>,
+    pub stripe_current_period_start: Option<i64>,
+    pub stripe_current_period_end: Option<i64>,
 }
 
 #[derive(Debug, Default)]
 pub struct UpdateBillingSubscriptionParams {
     pub billing_customer_id: ActiveValue<BillingCustomerId>,
+    pub kind: ActiveValue<Option<SubscriptionKind>>,
     pub stripe_subscription_id: ActiveValue<String>,
     pub stripe_subscription_status: ActiveValue<StripeSubscriptionStatus>,
     pub stripe_cancel_at: ActiveValue<Option<DateTime>>,
     pub stripe_cancellation_reason: ActiveValue<Option<StripeCancellationReason>>,
+    pub stripe_current_period_start: ActiveValue<Option<i64>>,
+    pub stripe_current_period_end: ActiveValue<Option<i64>>,
 }
 
 impl Database {
@@ -28,9 +36,12 @@ impl Database {
         self.transaction(|tx| async move {
             billing_subscription::Entity::insert(billing_subscription::ActiveModel {
                 billing_customer_id: ActiveValue::set(params.billing_customer_id),
+                kind: ActiveValue::set(params.kind),
                 stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
                 stripe_subscription_status: ActiveValue::set(params.stripe_subscription_status),
                 stripe_cancellation_reason: ActiveValue::set(params.stripe_cancellation_reason),
+                stripe_current_period_start: ActiveValue::set(params.stripe_current_period_start),
+                stripe_current_period_end: ActiveValue::set(params.stripe_current_period_end),
                 ..Default::default()
             })
             .exec_without_returning(&*tx)

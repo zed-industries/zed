@@ -52,6 +52,8 @@ pub(crate) struct SerializedPane {
     pub active_item: Option<DebuggerPaneItem>,
 }
 
+const DEBUGGER_PANEL_PREFIX: &str = "debugger_panel_";
+
 pub(crate) async fn serialize_pane_layout(
     adapter_name: SharedString,
     pane_group: SerializedPaneLayout,
@@ -59,7 +61,7 @@ pub(crate) async fn serialize_pane_layout(
     if let Ok(serialized_pane_group) = serde_json::to_string(&pane_group) {
         KEY_VALUE_STORE
             .write_kvp(
-                format!("{}-{adapter_name}", db::kvp::DEBUGGER_PANEL_PREFIX),
+                format!("{DEBUGGER_PANEL_PREFIX}-{adapter_name}"),
                 serialized_pane_group,
             )
             .await
@@ -116,11 +118,7 @@ fn serialize_pane(pane: &Entity<Pane>, cx: &mut App) -> SerializedPane {
 pub(crate) async fn get_serialized_pane_layout(
     adapter_name: impl AsRef<str>,
 ) -> Option<SerializedPaneLayout> {
-    let key = format!(
-        "{}-{}",
-        db::kvp::DEBUGGER_PANEL_PREFIX,
-        adapter_name.as_ref()
-    );
+    let key = format!("{DEBUGGER_PANEL_PREFIX}-{}", adapter_name.as_ref());
 
     KEY_VALUE_STORE
         .read_kvp(&key)

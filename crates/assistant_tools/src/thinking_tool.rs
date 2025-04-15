@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -51,11 +51,12 @@ impl Tool for ThinkingTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         // This tool just "thinks out loud" and doesn't perform any actions.
         Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
             Ok(_input) => Ok("Finished thinking.".to_string()),
             Err(err) => Err(anyhow!(err)),
         })
+        .into()
     }
 }

@@ -271,7 +271,7 @@ impl CommitModal {
                         .when_some(keybinding_target.clone(), |el, keybinding_target| {
                             el.context(keybinding_target.clone())
                         })
-                        .action("Amend...", Amend.boxed_clone())
+                        .action("Amend", Amend.boxed_clone())
                 }))
             })
             .with_handle(self.commit_menu_handle.clone())
@@ -407,9 +407,18 @@ impl CommitModal {
                                     }
                                 })
                                 .disabled(!can_commit)
-                                .on_click(move |_, window, cx| {
-                                    window.dispatch_action(Box::new(git::Commit), cx);
-                                }),
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    telemetry::event!("Git Amended", source = "Git Modal");
+                                    this.git_panel.update(cx, |git_panel, cx| {
+                                        git_panel.set_amend_pending(false, cx);
+                                        git_panel.commit_changes(
+                                            CommitOptions { amend: true },
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                    cx.emit(DismissEvent);
+                                })),
                         )
                     })
                     .when(!is_amend_pending, |this| {
@@ -425,9 +434,17 @@ impl CommitModal {
                                         .child(Label::new(commit_label).size(LabelSize::Small))
                                         .mr_0p5(),
                                 )
-                                .on_click(move |_, window, cx| {
-                                    window.dispatch_action(Box::new(git::Commit), cx);
-                                })
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    telemetry::event!("Git Committed", source = "Git Modal");
+                                    this.git_panel.update(cx, |git_panel, cx| {
+                                        git_panel.commit_changes(
+                                            CommitOptions { amend: false },
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                    cx.emit(DismissEvent);
+                                }))
                                 .disabled(!can_commit)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
@@ -473,9 +490,22 @@ impl CommitModal {
                                         }
                                     })
                                     .disabled(!can_commit)
-                                    .on_click(move |_, window, cx| {
-                                        window.dispatch_action(Box::new(git::Commit), cx);
-                                    }),
+                                    .on_click(cx.listener(
+                                        move |this, _: &ClickEvent, window, cx| {
+                                            telemetry::event!(
+                                                "Git Committed",
+                                                source = "Git Modal"
+                                            );
+                                            this.git_panel.update(cx, |git_panel, cx| {
+                                                git_panel.commit_changes(
+                                                    CommitOptions { amend: false },
+                                                    window,
+                                                    cx,
+                                                )
+                                            });
+                                            cx.emit(DismissEvent);
+                                        },
+                                    )),
                             )
                         })
                     }),
@@ -503,26 +533,18 @@ impl CommitModal {
     }
 
     fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
-        if self
-            .commit_editor
-            .focus_handle(cx)
-            .contains_focused(window, cx)
-        {
-            if !self.git_panel.read(cx).amend_pending() {
-                self.git_panel.update(cx, |git_panel, cx| {
-                    git_panel.set_amend_pending(true, cx);
-                    git_panel.load_last_commit_message_if_empty(cx);
-                });
-            } else {
-                telemetry::event!("Git Amended", source = "Git Panel");
-                self.git_panel.update(cx, |git_panel, cx| {
-                    git_panel.set_amend_pending(false, cx);
-                    git_panel.commit_changes(CommitOptions { amend: true }, window, cx);
-                });
-                cx.emit(DismissEvent);
-            }
+        if !self.git_panel.read(cx).amend_pending() {
+            self.git_panel.update(cx, |git_panel, cx| {
+                git_panel.set_amend_pending(true, cx);
+                git_panel.load_last_commit_message_if_empty(cx);
+            });
         } else {
-            cx.propagate();
+            telemetry::event!("Git Amended", source = "Git Modal");
+            self.git_panel.update(cx, |git_panel, cx| {
+                git_panel.set_amend_pending(false, cx);
+                git_panel.commit_changes(CommitOptions { amend: true }, window, cx);
+            });
+            cx.emit(DismissEvent);
         }
     }
 
