@@ -9,10 +9,13 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: BillingSubscriptionId,
     pub billing_customer_id: BillingCustomerId,
+    pub kind: Option<SubscriptionKind>,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
     pub stripe_cancel_at: Option<DateTime>,
     pub stripe_cancellation_reason: Option<StripeCancellationReason>,
+    pub stripe_current_period_start: Option<i64>,
+    pub stripe_current_period_end: Option<i64>,
     pub created_at: DateTime,
 }
 
@@ -33,6 +36,14 @@ impl Related<super::billing_customer::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Hash, Serialize)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriptionKind {
+    #[sea_orm(string_value = "zed_pro")]
+    ZedPro,
+}
 
 /// The status of a Stripe subscription.
 ///
