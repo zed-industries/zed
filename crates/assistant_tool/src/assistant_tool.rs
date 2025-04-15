@@ -24,6 +24,19 @@ pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
 }
 
+/// The result of running a tool
+pub struct ToolResult {
+    /// The asynchronous task that will eventually resolve to the tool's output
+    pub output: Task<Result<String>>,
+}
+
+impl From<Task<Result<String>>> for ToolResult {
+    /// Convert from a task to a ToolResult
+    fn from(output: Task<Result<String>>) -> Self {
+        Self { output }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub enum ToolSource {
     /// A native tool built-in to Zed.
@@ -68,7 +81,7 @@ pub trait Tool: 'static + Send + Sync {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>>;
+    ) -> ToolResult;
 }
 
 impl Debug for dyn Tool {
