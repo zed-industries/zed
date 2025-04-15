@@ -2,17 +2,25 @@
 (_ "{" "}" @end) @indent
 (_ "(" ")" @end) @indent
 
-(try_statement
-    body: (_) @start
-    [(except_clause) (finally_clause)] @end
-    ) @indent
+[
+  (if_statement)
+  (for_statement)
+  (while_statement)
+  (with_statement)
+  (function_definition)
+  (class_definition)
+  (match_statement)
+  (try_statement)
+] @indent
 
-(if_statement
-    consequence: (_) @start
-    alternative: (_) @end
-    ) @indent
+[
+  (else_clause)
+  (elif_clause)
+  (except_clause)
+  (finally_clause)
+] @outdent
 
-(_
-    alternative: (elif_clause) @start
-    alternative: (_) @end
-    ) @indent
+[
+  (block)
+  (case_clause)
+] @indent
