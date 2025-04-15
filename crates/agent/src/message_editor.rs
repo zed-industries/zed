@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
+use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::MoveUp;
@@ -41,6 +42,7 @@ use crate::{
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
+    incompatible_tools_state: Entity<IncompatibleToolsState>,
     editor: Entity<Editor>,
     #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
@@ -124,6 +126,9 @@ impl MessageEditor {
             )
         });
 
+        let incompatible_tools =
+            cx.new(|cx| IncompatibleToolsState::new(thread.read(cx).tools().clone(), cx));
+
         let subscriptions =
             vec![cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event)];
 
@@ -131,6 +136,7 @@ impl MessageEditor {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
             thread,
+            incompatible_tools_state: incompatible_tools.clone(),
             workspace,
             context_store,
             context_strip,
@@ -368,6 +374,23 @@ impl MessageEditor {
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
 
+        let model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.model.clone());
+
+        let incompatible_tools = model
+            .as_ref()
+            .map(|model| {
+                self.incompatible_tools_state.update(cx, |state, cx| {
+                    state
+                        .incompatible_tools(model, cx)
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
+
         let is_editor_expanded = self.editor_is_expanded;
         let expand_icon = if is_editor_expanded {
             IconName::Minimize
@@ -472,54 +495,80 @@ impl MessageEditor {
                             .flex_none()
                             .justify_between()
                             .child(h_flex().gap_2().child(self.profile_selector.clone()))
-                            .child(h_flex().gap_1().child(self.model_selector.clone()).map({
-                                let focus_handle = focus_handle.clone();
-                                move |parent| {
-                                    if is_generating {
-                                        parent
-                                            .when(is_editor_empty, |parent| {
-                                                parent.child(
-                                                    IconButton::new(
-                                                        "stop-generation",
-                                                        IconName::StopFilled,
-                                                    )
-                                                    .icon_color(Color::Error)
-                                                    .style(ButtonStyle::Tinted(
-                                                        ui::TintColor::Error,
-                                                    ))
-                                                    .tooltip(move |window, cx| {
-                                                        Tooltip::for_action(
-                                                            "Stop Generation",
-                                                            &editor::actions::Cancel,
-                                                            window,
-                                                            cx,
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .when(!incompatible_tools.is_empty(), |this| {
+                                        this.child(
+                                            IconButton::new(
+                                                "tools-incompatible-warning",
+                                                IconName::Warning,
+                                            )
+                                            .icon_color(Color::Warning)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                move |_, cx| {
+                                                    cx.new(|_| IncompatibleToolsTooltip {
+                                                        incompatible_tools: incompatible_tools
+                                                            .clone(),
+                                                    })
+                                                    .into()
+                                                }
+                                            }),
+                                        )
+                                    })
+                                    .child(self.model_selector.clone())
+                                    .map({
+                                        let focus_handle = focus_handle.clone();
+                                        move |parent| {
+                                            if is_generating {
+                                                parent
+                                                    .when(is_editor_empty, |parent| {
+                                                        parent.child(
+                                                            IconButton::new(
+                                                                "stop-generation",
+                                                                IconName::StopFilled,
+                                                            )
+                                                            .icon_color(Color::Error)
+                                                            .style(ButtonStyle::Tinted(
+                                                                ui::TintColor::Error,
+                                                            ))
+                                                            .tooltip(move |window, cx| {
+                                                                Tooltip::for_action(
+                                                                    "Stop Generation",
+                                                                    &editor::actions::Cancel,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                            })
+                                                            .on_click({
+                                                                let focus_handle =
+                                                                    focus_handle.clone();
+                                                                move |_event, window, cx| {
+                                                                    focus_handle.dispatch_action(
+                                                                        &editor::actions::Cancel,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                }
+                                                            })
+                                                            .with_animation(
+                                                                "pulsating-label",
+                                                                Animation::new(
+                                                                    Duration::from_secs(2),
+                                                                )
+                                                                .repeat()
+                                                                .with_easing(pulsating_between(
+                                                                    0.4, 1.0,
+                                                                )),
+                                                                |icon_button, delta| {
+                                                                    icon_button.alpha(delta)
+                                                                },
+                                                            ),
                                                         )
                                                     })
-                                                    .on_click({
-                                                        let focus_handle = focus_handle.clone();
-                                                        move |_event, window, cx| {
-                                                            focus_handle.dispatch_action(
-                                                                &editor::actions::Cancel,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        }
-                                                    })
-                                                    .with_animation(
-                                                        "pulsating-label",
-                                                        Animation::new(Duration::from_secs(2))
-                                                            .repeat()
-                                                            .with_easing(pulsating_between(
-                                                                0.4, 1.0,
-                                                            )),
-                                                        |icon_button, delta| {
-                                                            icon_button.alpha(delta)
-                                                        },
-                                                    ),
-                                                )
-                                            })
-                                            .when(!is_editor_empty, |parent| {
-                                                parent.child(
+                                                    .when(!is_editor_empty, |parent| {
+                                                        parent.child(
                                                     IconButton::new("send-message", IconName::Send)
                                                         .icon_color(Color::Accent)
                                                         .style(ButtonStyle::Filled)
@@ -545,48 +594,51 @@ impl MessageEditor {
                                                             )
                                                         }),
                                                 )
-                                            })
-                                    } else {
-                                        parent.child(
-                                            IconButton::new("send-message", IconName::Send)
-                                                .icon_color(Color::Accent)
-                                                .style(ButtonStyle::Filled)
-                                                .disabled(
-                                                    is_editor_empty
-                                                        || !is_model_selected
-                                                        || self.waiting_for_summaries_to_send,
-                                                )
-                                                .on_click({
-                                                    let focus_handle = focus_handle.clone();
-                                                    move |_event, window, cx| {
-                                                        focus_handle
-                                                            .dispatch_action(&Chat, window, cx);
-                                                    }
-                                                })
-                                                .when(
-                                                    !is_editor_empty && is_model_selected,
-                                                    |button| {
-                                                        button.tooltip(move |window, cx| {
-                                                            Tooltip::for_action(
-                                                                "Send", &Chat, window, cx,
-                                                            )
+                                                    })
+                                            } else {
+                                                parent.child(
+                                                    IconButton::new("send-message", IconName::Send)
+                                                        .icon_color(Color::Accent)
+                                                        .style(ButtonStyle::Filled)
+                                                        .disabled(
+                                                            is_editor_empty
+                                                                || !is_model_selected
+                                                                || self
+                                                                    .waiting_for_summaries_to_send,
+                                                        )
+                                                        .on_click({
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |_event, window, cx| {
+                                                                focus_handle.dispatch_action(
+                                                                    &Chat, window, cx,
+                                                                );
+                                                            }
                                                         })
-                                                    },
+                                                        .when(
+                                                            !is_editor_empty && is_model_selected,
+                                                            |button| {
+                                                                button.tooltip(move |window, cx| {
+                                                                    Tooltip::for_action(
+                                                                        "Send", &Chat, window, cx,
+                                                                    )
+                                                                })
+                                                            },
+                                                        )
+                                                        .when(is_editor_empty, |button| {
+                                                            button.tooltip(Tooltip::text(
+                                                                "Type a message to submit",
+                                                            ))
+                                                        })
+                                                        .when(!is_model_selected, |button| {
+                                                            button.tooltip(Tooltip::text(
+                                                                "Select a model to continue",
+                                                            ))
+                                                        }),
                                                 )
-                                                .when(is_editor_empty, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Type a message to submit",
-                                                    ))
-                                                })
-                                                .when(!is_model_selected, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Select a model to continue",
-                                                    ))
-                                                }),
-                                        )
-                                    }
-                                }
-                            })),
+                                            }
+                                        }
+                                    }),
+                            ),
                     ),
             )
     }

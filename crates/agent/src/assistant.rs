@@ -18,6 +18,7 @@ mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
+mod tool_compatibility;
 mod tool_use;
 mod ui;
 
