@@ -58,6 +58,8 @@ pub struct Example {
     pub criteria: String,
     /// Markdown output file to append to
     pub output_file: Option<Arc<Mutex<File>>>,
+    /// Path to the output run directory.
+    pub run_dir: PathBuf,
     /// Path to markdown output file
     pub output_file_path: PathBuf,
     /// Prefix used for logging that identifies this example
@@ -103,6 +105,7 @@ impl Example {
             base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
             criteria: fs::read_to_string(criteria_path.clone())?,
+            run_dir: run_dir.to_path_buf(),
             output_file: None,
             output_file_path,
             log_prefix: name,
@@ -425,6 +428,10 @@ impl Example {
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
 
+            let repository_diff_path = this.run_dir.join(format!("{}.diff", this.name));
+            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
+            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
+
             println!("{}Getting diagnostics", this.log_prefix);
             let diagnostics = cx
                 .update(move |cx| {
@@ -456,6 +463,7 @@ impl Example {
         &self,
         model: Arc<dyn LanguageModel>,
         repository_diff: String,
+        judge_repetitions: u32,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
         let judge_prompt = include_str!("judge_prompt.hbs");
@@ -483,14 +491,14 @@ impl Example {
 
         let response = send_language_model_request(model, request, cx).await?;
 
-        let output_file_ref = self.output_file();
-        let mut output_file = output_file_ref.lock().unwrap();
+        let judge_file_path = self.run_dir.join(format!(
+            "{}_judge_{}.md",
+            self.name, // This is the eval_name
+            judge_repetitions
+        ));
 
-        writeln!(&mut output_file, "\n\n").log_err();
-        writeln!(&mut output_file, "========================================").log_err();
-        writeln!(&mut output_file, "              JUDGE OUTPUT              ").log_err();
-        writeln!(&mut output_file, "========================================").log_err();
-        writeln!(&mut output_file, "\n{}", &response).log_err();
+        let mut judge_output_file = File::create(&judge_file_path)?;
+        writeln!(&mut judge_output_file, "{}", &response).log_err();
 
         parse_judge_output(&response)
     }
