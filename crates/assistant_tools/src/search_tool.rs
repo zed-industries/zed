@@ -10,7 +10,6 @@ use project::{
     Project, Symbol,
     search::{SearchQuery, SearchResult},
 };
-use regex::{Regex, RegexBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, convert::TryFrom, fmt::Write, path::PathBuf, sync::Arc};
@@ -56,20 +55,20 @@ pub struct SearchToolInput {
 #[serde(rename_all = "snake_case")]
 pub enum Output {
     /// Output matching file paths only.
-    /// If no path_regex is specified, outputs all the paths in the project.
+    /// If no path_glob is specified, outputs all the paths in the project.
     Paths,
     /// Output matching arbitrary text regions within files, including their line numbers.
-    /// If no path_regex is specified, outputs text found in any file in the project.
+    /// If no path_glob is specified, outputs text found in any file in the project.
     Text,
     /// Output matching code symbols (such as identifiers, types, etc.) within files, including their line numbers.
-    /// If no path_regex is specified, outputs symbols found across the entire project.
+    /// If no path_glob is specified, outputs symbols found across the entire project.
     Symbols,
 }
 
 // Different search modes have different pagination limits
 const PATHS_RESULTS_PER_PAGE: usize = 50;
 const TEXT_RESULTS_PER_PAGE: usize = 20;
-const SYMBOLS_RESULTS_PER_PAGE: u32 = 100;
+const SYMBOLS_LINES_PER_PAGE: u32 = 1000;
 
 pub struct SearchTool;
 
@@ -172,7 +171,7 @@ impl Tool for SearchTool {
 
         match input.output {
             Output::Paths => search_paths(input, project, cx),
-            Output::Text => search_text(input, project, cx),
+            Output::Text => search_text(input, project, action_log.clone(), cx),
             Output::Symbols => search_symbols(input, project, action_log, cx),
         }
     }
@@ -185,6 +184,8 @@ fn search_paths(
 ) -> Task<Result<String>> {
     // Clone the path_glob to avoid borrowing issues with the async closure
     let path_glob_option = input.path_glob.clone();
+    let query_option = input.query.clone();
+    let case_sensitive = input.contents_regex_case_sensitive;
 
     // Create the path matcher based on the provided glob pattern or use a matcher that matches everything
     let path_matcher = if let Some(glob) = path_glob_option.as_deref() {
@@ -205,6 +206,25 @@ fn search_paths(
         }
     };
 
+    // If a query regex is provided, create a search query for filtering files by content
+    let regex_query = if let Some(regex) = &query_option {
+        match SearchQuery::regex(
+            regex,
+            false,
+            case_sensitive,
+            false,
+            false,
+            path_matcher.clone(),
+            PathMatcher::default(),
+            None,
+        ) {
+            Ok(query) => Some(query),
+            Err(error) => return Task::ready(Err(error)),
+        }
+    } else {
+        None
+    };
+
     let snapshots: Vec<Snapshot> = project
         .read(cx)
         .worktrees(cx)
@@ -214,6 +234,66 @@ fn search_paths(
     // Create a copy of path_glob for use in the async closure
     let path_glob_for_error = path_glob_option.clone();
 
+    // If we need to filter by content, use the search functionality
+    if let Some(query) = regex_query {
+        let results = project.update(cx, |project, cx| project.search(query, cx));
+
+        return cx.spawn(async move |cx| {
+            futures::pin_mut!(results);
+
+            let mut filtered_paths = Vec::new();
+
+            while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
+                if !ranges.is_empty() {
+                    if let Some(path) = buffer.read_with(cx, |buffer, cx| {
+                        buffer.file().map(|file| file.full_path(cx).to_string_lossy().to_string())
+                    })? {
+                        filtered_paths.push(path);
+                    }
+                }
+            }
+
+            if filtered_paths.is_empty() {
+                return Ok(format!("No paths in the project matched the glob {:?} and content regex {:?}",
+                                 path_glob_for_error, query_option));
+            }
+
+            // Sort to group entries in the same directory together
+            filtered_paths.sort();
+
+            let total_matches = filtered_paths.len();
+            let response = if total_matches > PATHS_RESULTS_PER_PAGE + input.offset as usize {
+                let paginated_matches: Vec<_> = filtered_paths
+                    .into_iter()
+                    .skip(input.offset as usize)
+                    .take(PATHS_RESULTS_PER_PAGE)
+                    .collect();
+
+                format!(
+                    "Found {} paths matching the content regex. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
+                    total_matches,
+                    input.offset + 1,
+                    input.offset as usize + paginated_matches.len(),
+                    paginated_matches.join("\n")
+                )
+            } else {
+                let displayed_matches: Vec<_> = filtered_paths
+                    .into_iter()
+                    .skip(input.offset as usize)
+                    .collect();
+
+                format!(
+                    "Found {} paths matching the content regex:\n\n{}",
+                    total_matches,
+                    displayed_matches.join("\n")
+                )
+            };
+
+            Ok(response)
+        });
+    }
+
+    // If no content regex, just filter by path glob as before
     cx.background_executor().spawn(async move {
         let mut matches = Vec::new();
 
@@ -275,15 +355,54 @@ fn search_paths(
 fn search_text(
     input: SearchToolInput,
     project: Entity<Project>,
+    action_log: Entity<ActionLog>,
     cx: &mut App,
 ) -> Task<Result<String>> {
     const CONTEXT_LINES: u32 = 2;
+    /// If the model requests to read a file whose size exceeds this, then
+    /// the tool will return an outline instead of the full file contents
+    const MAX_FILE_SIZE_TO_READ: usize = 16384;
+
+    // If no query is provided and path_glob points to a specific file, read the file contents
+    if input.query.is_none()
+        && input.path_glob.as_ref().map_or(false, |glob| {
+            !glob.contains('*') && !glob.contains('?') && !glob.contains('[')
+        })
+    {
+        let file_path = input.path_glob.unwrap();
+
+        return cx.spawn(async move |cx| {
+            let Some(project_path) = project.read_with(cx, |project, cx| {
+                project.find_project_path(&file_path, cx)
+            })? else {
+                return Err(anyhow!("Path {} not found in project", &file_path));
+            };
+
+            let buffer = project.update(cx, |project, cx| {
+                project.open_buffer(project_path, cx)
+            })?.await?;
+
+            // Check file size to see if it's too big
+            let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
+
+            if file_size <= MAX_FILE_SIZE_TO_READ {
+                // File is small enough, so return its contents
+                let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+                Ok(format!("Contents of {}:\n\n```\n{}\n```", file_path, result))
+            } else {
+                // File is too big, so get its outline instead
+                let outline = render_file_outline(project, file_path.clone(), action_log.clone(), None, 0, cx).await?;
+
+                Ok(format!("The file '{}' was too big to read all at once. Here is an outline of its symbols:\n\n{}\n\nTry searching for specific content by providing a regex query.", file_path, outline))
+            }
+        });
+    }
 
     let search_regex = match &input.query {
         Some(regex) => regex.clone(),
         None => {
             return Task::ready(Err(anyhow!(
-                "file_contents_regex is required for text search mode"
+                "Either provide a specific file path in path_glob or a regex query to search for text"
             )));
         }
     };
@@ -308,7 +427,7 @@ fn search_text(
     };
 
     let query = match SearchQuery::regex(
-        &search_regex,
+        dbg!(&search_regex),
         false,
         input.contents_regex_case_sensitive,
         false,
@@ -422,7 +541,7 @@ fn search_symbols(
         if !path.contains('*') && !path.contains('?') && !path.contains('[') {
             let path_string = path.clone();
             return cx.spawn(async move |cx| {
-                file_outline(
+                render_file_outline(
                     project,
                     path_string,
                     action_log,
@@ -450,7 +569,7 @@ fn search_symbols(
     })
 }
 
-async fn file_outline(
+async fn render_file_outline(
     project: Entity<Project>,
     path: String,
     action_log: Entity<ActionLog>,
@@ -491,6 +610,9 @@ async fn file_outline(
     let mut output = String::new();
     writeln!(&mut output, "# Symbols in {}\n", path).ok();
 
+    // Get buffer text for showing content at each symbol
+    let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text())?;
+
     render_outline(
         &mut output,
         outline
@@ -499,7 +621,9 @@ async fn file_outline(
             .map(|item| item.to_point(&snapshot)),
         query,
         offset,
-        SYMBOLS_RESULTS_PER_PAGE,
+        u32::MAX, // No symbol limit, just use line limit
+        Some((&buffer_text, path.clone())),
+        SYMBOLS_LINES_PER_PAGE,
     )
 }
 
@@ -509,7 +633,6 @@ async fn project_symbols(
     query: &str,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<String> {
-    const SYMBOLS_RESULTS_PER_PAGE_USIZE: usize = 100;
     let symbols = project
         .update(cx, |project, cx| project.symbols(query, cx))?
         .await?;
@@ -542,31 +665,120 @@ async fn project_symbols(
     }
 
     let mut symbols_rendered: usize = 0;
-    let mut has_more_symbols = false;
     let mut output = String::new();
+    let mut lines_shown = 0;
+    let mut skipped_symbols = 0;
 
-    'outer: for (file_path, file_symbols) in symbols_by_path {
+    for (file_path, file_symbols) in symbols_by_path {
         if symbols_rendered > 0 {
             output.push('\n');
         }
 
         writeln!(&mut output, "## {}", file_path.display()).ok();
 
-        for symbol in file_symbols {
-            write!(&mut output, "  {} ", symbol.label.text()).ok();
+        // We'll need to read the file's content to display snippets
+        let file_path_str = file_path.to_string_lossy().to_string();
+        let project_path = project.read_with(cx, |project, cx| {
+            project.find_project_path(&file_path_str, cx)
+        })?;
 
-            // Convert to 1-based line numbers for display
-            let start_line = symbol.range.start.0.row + 1;
-            let end_line = symbol.range.end.0.row + 1;
+        if let Some(project_path) = project_path {
+            // Get file content if possible
+            let buffer_task =
+                project.update(cx, |project, cx| project.open_buffer(project_path, cx))?;
+            if let Ok(buffer) = buffer_task.await {
+                if let Ok(file_text) = buffer.read_with(cx, |buffer, _| buffer.text()) {
+                    // Process symbols for this file
+                    for symbol in file_symbols {
+                        // Convert to 0-based line numbers for slicing the content
+                        let start_line = symbol.range.start.0.row;
+                        let end_line = symbol.range.end.0.row;
 
-            if start_line == end_line {
-                writeln!(&mut output, "[L{}]", start_line).ok();
-            } else {
-                writeln!(&mut output, "[L{}-{}]", start_line, end_line).ok();
+                        // Convert to 1-based line numbers for display
+                        let display_start = start_line + 1;
+                        let display_end = end_line + 1;
+
+                        // Write the symbol header
+                        write!(&mut output, "  {} ", symbol.label.text()).ok();
+
+                        if display_start == display_end {
+                            writeln!(&mut output, "[L{}]", display_start).ok();
+                        } else {
+                            writeln!(&mut output, "[L{}-{}]", display_start, display_end).ok();
+                        }
+
+                        // Increment count even if we don't show content due to lines limit
+                        symbols_rendered += 1;
+
+                        // Check if we still have line budget to show content
+                        if lines_shown < SYMBOLS_LINES_PER_PAGE as usize {
+                            // Add the code content with indentation
+                            let lines: Vec<&str> = file_text.split('\n').collect();
+                            let start_idx = start_line as usize;
+                            let end_idx = (end_line as usize) + 1;
+
+                            if start_idx < lines.len() {
+                                let actual_end = end_idx.min(lines.len());
+                                let line_count = actual_end - start_idx;
+
+                                // Only show content if we have enough line budget
+                                if lines_shown + line_count <= SYMBOLS_LINES_PER_PAGE as usize {
+                                    writeln!(&mut output, "```").ok();
+                                    for line in &lines[start_idx..actual_end] {
+                                        writeln!(&mut output, "    {}", line).ok();
+                                    }
+                                    writeln!(&mut output, "```\n").ok();
+
+                                    lines_shown += line_count;
+                                } else {
+                                    // We've hit our limit, note that we're skipping content
+                                    skipped_symbols += 1;
+                                }
+                            }
+                        } else {
+                            // We've hit our line limit
+                            skipped_symbols += 1;
+                        }
+                    }
+                }
             }
+        } else {
+            // Fall back to just showing the symbols without content if we can't open the file
+            for symbol in file_symbols {
+                write!(&mut output, "  {} ", symbol.label.text()).ok();
 
-            symbols_rendered += 1;
+                // Convert to 1-based line numbers for display
+                let start_line = symbol.range.start.0.row + 1;
+                let end_line = symbol.range.end.0.row + 1;
+
+                if start_line == end_line {
+                    writeln!(&mut output, "[L{}]", start_line).ok();
+                } else {
+                    writeln!(&mut output, "[L{}-{}]", start_line, end_line).ok();
+                }
+
+                symbols_rendered += 1;
+            }
         }
+    }
+
+    // Add information about lines shown and skipped symbols
+    if skipped_symbols > 0 {
+        writeln!(
+            &mut output,
+            "\nShowing {} symbols with {} lines of content. {} symbols' content was not shown due to the {} line limit.",
+            symbols_rendered,
+            lines_shown,
+            skipped_symbols,
+            SYMBOLS_LINES_PER_PAGE
+        ).ok();
+    } else {
+        writeln!(
+            &mut output,
+            "\nShowing {} symbols with {} lines of content.",
+            symbols_rendered, lines_shown
+        )
+        .ok();
     }
 
     Ok(output)
@@ -578,6 +790,8 @@ fn render_outline(
     query: Option<String>,
     offset: u32,
     results_per_page: u32,
+    file_content: Option<(&str, String)>,
+    max_lines_per_page: u32,
 ) -> anyhow::Result<String> {
     let mut items = items.into_iter().skip(offset as usize);
 
@@ -593,7 +807,16 @@ fn render_outline(
 
     let has_more = items.next().is_some();
 
-    let entries_rendered = render_symbol_entries(output, entries);
+    // Track content lines shown
+    let mut content_lines = 0;
+
+    let entries_rendered = render_symbol_entries(
+        output,
+        entries,
+        file_content,
+        max_lines_per_page,
+        &mut content_lines,
+    );
 
     // Calculate pagination information
     let page_start = offset + 1;
@@ -606,12 +829,12 @@ fn render_outline(
 
     // Add pagination information
     if has_more {
-        writeln!(output, "\nShowing symbols {page_start}-{page_end} (there were more symbols found; use offset: {page_end} to see next page)",
+        writeln!(output, "\nShowing symbols {page_start}-{page_end} with {content_lines} lines of content (there were more symbols found; use offset: {page_end} to see next page)",
         )
     } else {
         writeln!(
             output,
-            "\nShowing symbols {page_start}-{page_end} (total symbols: {total_symbols})",
+            "\nShowing symbols {page_start}-{page_end} with {content_lines} lines of content (total symbols: {total_symbols})",
         )
     }
     .ok();
@@ -622,8 +845,12 @@ fn render_outline(
 fn render_symbol_entries(
     output: &mut String,
     items: impl IntoIterator<Item = OutlineItem<Point>>,
+    file_content: Option<(&str, String)>,
+    max_lines_per_page: u32,
+    offset: &mut u32,
 ) -> u32 {
     let mut entries_rendered = 0;
+    let mut lines_shown: u32 = 0;
 
     for item in items {
         // Indent based on depth ("#" for level 0, "##" for level 1, etc.)
@@ -643,7 +870,39 @@ fn render_symbol_entries(
             writeln!(output, " [L{}-{}]", start_line, end_line).ok();
         }
         entries_rendered += 1;
+
+        // Add file content if available
+        if let Some((content, _)) = &file_content {
+            // Convert to 0-based line numbers for content
+            let content_start = item.range.start.row as usize;
+            let content_end = item.range.end.row as usize + 1; // +1 to include the end line
+
+            // Check if we still have line budget
+            if lines_shown < max_lines_per_page {
+                // Split content into lines and get the relevant section
+                let lines: Vec<&str> = content.split('\n').collect();
+
+                if content_start < lines.len() {
+                    let actual_end = content_end.min(lines.len());
+                    let line_count = (actual_end - content_start) as u32;
+
+                    // Make sure we don't exceed the maximum lines per page
+                    if lines_shown + line_count <= max_lines_per_page {
+                        writeln!(output, "```").ok();
+                        for line in &lines[content_start..actual_end] {
+                            writeln!(output, "    {}", line).ok();
+                        }
+                        writeln!(output, "```\n").ok();
+
+                        lines_shown += line_count;
+                    }
+                }
+            }
+        }
     }
+
+    // Update the offset with lines shown
+    *offset = lines_shown;
 
     entries_rendered
 }

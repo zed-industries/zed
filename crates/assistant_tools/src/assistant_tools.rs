@@ -19,10 +19,10 @@ mod regex_search_tool;
 mod rename_tool;
 mod replace;
 mod schema;
+mod search_tool;
 mod symbol_info_tool;
 mod terminal_tool;
 mod thinking_tool;
-mod search_tool;
 
 use std::sync::Arc;
 
@@ -49,10 +49,10 @@ use crate::path_search_tool::PathSearchTool;
 use crate::read_file_tool::ReadFileTool;
 use crate::regex_search_tool::RegexSearchTool;
 use crate::rename_tool::RenameTool;
+use crate::search_tool::SearchTool;
 use crate::symbol_info_tool::SymbolInfoTool;
 use crate::terminal_tool::TerminalTool;
 use crate::thinking_tool::ThinkingTool;
-use crate::search_tool::SearchTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
