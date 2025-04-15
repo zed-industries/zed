@@ -965,16 +965,20 @@ impl Thread {
             .find(|msg| msg.role == Role::User)
         {
             if model.id().0.contains("gemini") {
-                let enabled_tools = self.tools()
+                let enabled_tools = self
+                    .tools()
                     .read(cx)
                     .enabled_tools(cx)
                     .into_iter()
                     .map(|tool| tool.name())
                     .collect::<Vec<_>>();
-                
+
                 last_user_message
                     .content
-                    .push(MessageContent::Text(gemini_reminder(&self.prompt_builder, enabled_tools)));
+                    .push(MessageContent::Text(gemini_reminder(
+                        &self.prompt_builder,
+                        enabled_tools,
+                    )));
             }
         }
 
@@ -1497,22 +1501,23 @@ impl Thread {
         let is_gemini = model_registry
             .default_model()
             .map_or(false, |model| model.model.id().0.contains("gemini"));
-            
+
         // Get the list of enabled tools if we're using Gemini
         let mut message = "Here are the tool results.".to_string();
-        
+
         if is_gemini {
-            let enabled_tools = self.tools()
+            let enabled_tools = self
+                .tools()
                 .read(cx)
                 .enabled_tools(cx)
                 .into_iter()
                 .map(|tool| tool.name())
                 .collect::<Vec<_>>();
-                
+
             message.push_str("\n\n");
             message.push_str(&gemini_reminder(&self.prompt_builder, enabled_tools));
         }
-        
+
         // Insert a user message to contain the tool results.
         self.insert_user_message(
             // TODO: Sending up a user message without any content results in the model sending back

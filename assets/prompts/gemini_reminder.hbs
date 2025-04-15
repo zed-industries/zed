@@ -1,3 +1,9 @@
 The following tools are available for you to use: {{#each tools}}{{#if @index}}, {{/if}}{{this}}{{/each}}.
 
-You MUST use one of these tools unless you are absolutely certain that you are completely done, and have satisfactorily completed the original request.
+There is also a special tool named final_response which takes no input. Use this tool when you are completely finished,
+and do not need to run any more tools because the original request has been satisfied.
+
+You MUST respond with one of these tool uses. If you are completely done, then use the final_response tool.
+If you respond with ANYTHING other than a tool use, I will know that you have disregarded my instructions and I will
+be very disappointed, and will just prompt you once again to respond with a tool use. So you MUST respond with a
+tool use RIGHT NOW NO MATTER WHAT.
