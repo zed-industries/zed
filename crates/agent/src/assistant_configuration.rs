@@ -29,7 +29,7 @@ pub struct AssistantConfiguration {
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_manager: Entity<ContextServerManager>,
     expanded_context_server_tools: HashMap<Arc<str>, bool>,
-    tools: Arc<ToolWorkingSet>,
+    tools: Entity<ToolWorkingSet>,
     _registry_subscription: Subscription,
 }
 
@@ -37,7 +37,7 @@ impl AssistantConfiguration {
     pub fn new(
         fs: Arc<dyn Fs>,
         context_server_manager: Entity<ContextServerManager>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -226,7 +226,7 @@ impl AssistantConfiguration {
 
     fn render_context_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let context_servers = self.context_server_manager.read(cx).all_servers().clone();
-        let tools_by_source = self.tools.tools_by_source(cx);
+        let tools_by_source = self.tools.read(cx).tools_by_source(cx);
         let empty = Vec::new();
 
         const SUBHEADING: &str = "Connect to context servers via the Model Context Protocol either via Zed extensions or directly.";
