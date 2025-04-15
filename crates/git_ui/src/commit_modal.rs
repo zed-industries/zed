@@ -2,7 +2,6 @@ use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{GitPanel, commit_message_editor};
 use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage};
-use language::Buffer;
 use panel::{panel_button, panel_editor_style, panel_filled_button};
 use ui::{
     ContextMenu, KeybindingHint, PopoverMenu, PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
@@ -100,22 +99,47 @@ struct RestoreDock {
     active_index: Option<usize>,
 }
 
+pub enum ForceMode {
+    Amend,
+    Commit,
+}
+
 impl CommitModal {
     pub fn register(workspace: &mut Workspace) {
         workspace.register_action(|workspace, _: &Commit, window, cx| {
-            CommitModal::toggle(workspace, window, cx);
+            CommitModal::toggle(workspace, Some(ForceMode::Commit), window, cx);
         });
         workspace.register_action(|workspace, _: &Amend, window, cx| {
-            CommitModal::toggle(workspace, window, cx);
+            CommitModal::toggle(workspace, Some(ForceMode::Amend), window, cx);
         });
     }
 
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    pub fn toggle(
+        workspace: &mut Workspace,
+        force_mode: Option<ForceMode>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
         let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
             return;
         };
 
         git_panel.update(cx, |git_panel, cx| {
+            if let Some(force_mode) = force_mode {
+                match force_mode {
+                    ForceMode::Amend => {
+                        if !git_panel.amend_pending() {
+                            git_panel.set_amend_pending(true, cx);
+                            git_panel.load_last_commit_message_if_empty(cx);
+                        }
+                    }
+                    ForceMode::Commit => {
+                        if git_panel.amend_pending() {
+                            git_panel.set_amend_pending(false, cx);
+                        }
+                    }
+                }
+            }
             git_panel.set_modal_open(true, cx);
         });
 
@@ -461,21 +485,10 @@ impl CommitModal {
     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         if self.git_panel.read(cx).amend_pending() {
             self.git_panel
-                .update(cx, |git_panel, _| git_panel.set_amend_pending(false));
-            cx.notify();
+                .update(cx, |git_panel, cx| git_panel.set_amend_pending(false, cx));
         } else {
             cx.emit(DismissEvent);
         }
-    }
-
-    pub fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
-        self.commit_editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .unwrap()
-            .clone()
     }
 
     fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
@@ -490,54 +503,20 @@ impl CommitModal {
     }
 
     fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(active_repository) = self.git_panel.read(cx).active_repository.as_ref() else {
-            return;
-        };
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
-            return;
-        };
-        let Some(recent_sha) = branch
-            .most_recent_commit
-            .as_ref()
-            .map(|commit| commit.sha.to_string())
-        else {
-            return;
-        };
         if self
             .commit_editor
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
             if !self.git_panel.read(cx).amend_pending() {
-                self.git_panel.update(cx, |git_panel, _| {
-                    git_panel.set_amend_pending(true);
+                self.git_panel.update(cx, |git_panel, cx| {
+                    git_panel.set_amend_pending(true, cx);
+                    git_panel.load_last_commit_message_if_empty(cx);
                 });
-                cx.notify();
-                if self.commit_editor.read(cx).is_empty(cx) {
-                    let detail_task = self.git_panel.update(cx, |git_panel, cx| {
-                        git_panel.load_commit_details(recent_sha, cx)
-                    });
-                    cx.spawn(async move |this, cx| {
-                        if let Ok(message) = detail_task.await.map(|detail| detail.message) {
-                            this.update(cx, |this, cx| {
-                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                    let insert_position = buffer.anchor_before(buffer.len());
-                                    buffer.edit(
-                                        [(insert_position..insert_position, message)],
-                                        None,
-                                        cx,
-                                    );
-                                });
-                            })
-                            .log_err();
-                        }
-                    })
-                    .detach();
-                }
             } else {
                 telemetry::event!("Git Amended", source = "Git Panel");
                 self.git_panel.update(cx, |git_panel, cx| {
-                    git_panel.set_amend_pending(false);
+                    git_panel.set_amend_pending(false, cx);
                     git_panel.commit_changes(CommitOptions { amend: true }, window, cx);
                 });
                 cx.emit(DismissEvent);
