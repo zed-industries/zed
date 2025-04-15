@@ -16,7 +16,6 @@ doctest = false
 anyhow.workspace = true
 collections.workspace = true
 component.workspace = true
-component_preview.workspace = true
 ctor.workspace = true
 editor.workspace = true
 env_logger.workspace = true
