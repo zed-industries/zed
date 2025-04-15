@@ -5,7 +5,7 @@ use assistant_tool::{Tool, ToolWorkingSet};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
-use gpui::{App, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolResult,
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
@@ -49,7 +49,7 @@ impl ToolUseStatus {
 }
 
 pub struct ToolUseState {
-    tools: Arc<ToolWorkingSet>,
+    tools: Entity<ToolWorkingSet>,
     tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
     tool_uses_by_user_message: HashMap<MessageId, Vec<LanguageModelToolUseId>>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
@@ -59,7 +59,7 @@ pub struct ToolUseState {
 pub const USING_TOOL_MARKER: &str = "<using_tool>";
 
 impl ToolUseState {
-    pub fn new(tools: Arc<ToolWorkingSet>) -> Self {
+    pub fn new(tools: Entity<ToolWorkingSet>) -> Self {
         Self {
             tools,
             tool_uses_by_assistant_message: HashMap::default(),
@@ -73,7 +73,7 @@ impl ToolUseState {
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
     pub fn from_serialized_messages(
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         messages: &[SerializedMessage],
         mut filter_by_tool_name: impl FnMut(&str) -> bool,
     ) -> Self {
@@ -199,12 +199,12 @@ impl ToolUseState {
                 }
             })();
 
-            let (icon, needs_confirmation) = if let Some(tool) = self.tools.tool(&tool_use.name, cx)
-            {
-                (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
-            } else {
-                (IconName::Cog, false)
-            };
+            let (icon, needs_confirmation) =
+                if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
+                    (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
+                } else {
+                    (IconName::Cog, false)
+                };
 
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
@@ -226,7 +226,7 @@ impl ToolUseState {
         input: &serde_json::Value,
         cx: &App,
     ) -> SharedString {
-        if let Some(tool) = self.tools.tool(tool_name, cx) {
+        if let Some(tool) = self.tools.read(cx).tool(tool_name, cx) {
             tool.ui_text(input).into()
         } else {
             format!("Unknown tool {tool_name:?}").into()

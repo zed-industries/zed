@@ -254,7 +254,7 @@ pub struct Thread {
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
     prompt_builder: Arc<PromptBuilder>,
-    tools: Arc<ToolWorkingSet>,
+    tools: Entity<ToolWorkingSet>,
     tool_use: ToolUseState,
     action_log: Entity<ActionLog>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
@@ -278,7 +278,7 @@ pub struct ExceededWindowError {
 impl Thread {
     pub fn new(
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         system_prompt: SharedProjectContext,
         cx: &mut Context<Self>,
@@ -322,7 +322,7 @@ impl Thread {
         id: ThreadId,
         serialized: SerializedThread,
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         project_context: SharedProjectContext,
         cx: &mut Context<Self>,
@@ -458,7 +458,7 @@ impl Thread {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
     }
 
-    pub fn tools(&self) -> &Arc<ToolWorkingSet> {
+    pub fn tools(&self) -> &Entity<ToolWorkingSet> {
         &self.tools
     }
 
@@ -846,6 +846,7 @@ impl Thread {
                 let mut tools = Vec::new();
                 tools.extend(
                     self.tools()
+                        .read(cx)
                         .enabled_tools(cx)
                         .into_iter()
                         .filter_map(|tool| {
@@ -1354,7 +1355,7 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for tool_use in pending_tool_uses.iter() {
-            if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+            if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
                 if tool.needs_confirmation(&tool_use.input, cx)
                     && !AssistantSettings::get_global(cx).always_allow_tool_actions
                 {
@@ -1406,7 +1407,7 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
+        let run_tool = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
             Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
         } else {
             tool.run(
@@ -1521,6 +1522,7 @@ impl Thread {
 
         let enabled_tool_names: Vec<String> = self
             .tools()
+            .read(cx)
             .enabled_tools(cx)
             .iter()
             .map(|tool| tool.name().to_string())
@@ -2341,7 +2343,7 @@ fn main() {{
             .update(|_, cx| {
                 ThreadStore::load(
                     project.clone(),
-                    Arc::default(),
+                    cx.new(|_| ToolWorkingSet::default()),
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )
