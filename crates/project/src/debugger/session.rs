@@ -30,7 +30,8 @@ use dap::{
 use futures::channel::oneshot;
 use futures::{FutureExt, future::Shared};
 use gpui::{
-    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task, WeakEntity,
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
+    Task, WeakEntity,
 };
 use rpc::AnyProtoClient;
 use serde_json::{Value, json};
@@ -125,6 +126,7 @@ type UpstreamProjectId = u64;
 struct RemoteConnection {
     _client: AnyProtoClient,
     _upstream_project_id: UpstreamProjectId,
+    _adapter_name: SharedString,
 }
 
 impl RemoteConnection {
@@ -996,6 +998,7 @@ impl Session {
     ) -> Self {
         Self {
             mode: Mode::Remote(RemoteConnection {
+                _adapter_name: SharedString::new(""), // todo(debugger) we need to pipe in the right values to deserialize the debugger pane layout
                 _client: client,
                 _upstream_project_id: upstream_project_id,
             }),
@@ -1042,6 +1045,13 @@ impl Session {
 
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    pub fn adapter_name(&self) -> SharedString {
+        match &self.mode {
+            Mode::Local(local_mode) => local_mode.adapter.name().into(),
+            Mode::Remote(remote_mode) => remote_mode._adapter_name.clone(),
+        }
     }
 
     pub fn configuration(&self) -> Option<DebugAdapterConfig> {
