@@ -71,9 +71,7 @@ pub trait Settings: 'static + Send + Sync {
 
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
     /// equivilant settings from a vscode config to the zed settings
-    fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent) {
-        todo!("remove this and make everyone have to implement it...")
-    }
+    fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent);
 
     #[track_caller]
     fn register(cx: &mut App)
@@ -1079,25 +1077,6 @@ impl SettingsStore {
         properties.use_fallbacks();
         Some(properties)
     }
-
-    // pub fn import_vscode(&self, cx: &App, fs: Arc<dyn Fs>) -> Task<anyhow::Result<()>> {
-    //     cx.spawn(async move |cx: &mut AsyncApp| {
-    //         let vscode_settings = VSCodeSettings::load_user_settings(fs).await?;
-
-    //         cx.update(|cx| {
-    //             cx.update_global(|this: &mut Self, cx| {
-    //                 // We don't want to mutate ourselves,
-    //                 // we want to write to the settings file
-    //                 // And the mutation is downstream of that
-    //                 for value in this.setting_values.values_mut() {
-    //                     value.import_from_vscode(&vscode_settings, cx)
-    //                 }
-    //             });
-    //         })?;
-
-    //         anyhow::Ok(())
-    //     })
-    // }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1483,8 +1462,6 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
 
 #[cfg(test)]
 mod tests {
-    use std::ptr::null;
-
     use super::*;
     use serde_derive::Deserialize;
     use unindent::Unindent;
@@ -2008,6 +1985,8 @@ mod tests {
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
             sources.json_merge()
         }
+
+        fn import_from_vscode(_vscode: &VSCodeSettings, _old: &mut Self::FileContent) {}
     }
 
     #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -2104,24 +2083,26 @@ mod tests {
         fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent) {
             old.languages.extend(
                 vscode
-                .read_value("vscode_languages")
-                .and_then(|value| value.as_array())
-                .map(|languages| {
-                    languages
-                        .iter()
-                        .filter_map(|value| value.as_object())
-                        .filter_map(|item| {
-                            let mut rest = item.clone();
-                            let name = rest.remove("name")?.as_str()?.to_string();
-                            let entry = serde_json::from_value::<LanguageSettingEntry>(
-                                serde_json::Value::Object(rest),
-                            ).ok()?;
+                    .read_value("vscode_languages")
+                    .and_then(|value| value.as_array())
+                    .map(|languages| {
+                        languages
+                            .iter()
+                            .filter_map(|value| value.as_object())
+                            .filter_map(|item| {
+                                let mut rest = item.clone();
+                                let name = rest.remove("name")?.as_str()?.to_string();
+                                let entry = serde_json::from_value::<LanguageSettingEntry>(
+                                    serde_json::Value::Object(rest),
+                                )
+                                .ok()?;
 
-                            Some((name, entry))
-                        })
-                })
-                .into_iter()
-                .flatten());
+                                Some((name, entry))
+                            })
+                    })
+                    .into_iter()
+                    .flatten(),
+            );
         }
     }
 }
