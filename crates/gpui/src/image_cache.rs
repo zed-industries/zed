@@ -1,7 +1,7 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-
 use futures::{FutureExt, future::Shared};
 use lru::LruCache;
+use parking_lot::RwLock;
+use std::{fmt, rc::Rc, sync::Arc};
 
 use crate::{
     App, Asset, AssetLogger, AsyncApp, ImageAssetLoader, ImageCacheError, RenderImage, Resource,
@@ -10,19 +10,37 @@ use crate::{
 
 type ImageLoadingTask = Shared<Task<Result<Arc<RenderImage>, ImageCacheError>>>;
 
+enum CacheItem {
+    Loading(ImageLoadingTask),
+    Loaded(Result<Arc<RenderImage>, ImageCacheError>),
+}
+
+impl CacheItem {
+    fn get(&mut self) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+        match self {
+            CacheItem::Loading(task) => {
+                let res = task.now_or_never()?;
+                *self = CacheItem::Loaded(res.clone());
+                Some(res)
+            }
+            CacheItem::Loaded(res) => Some(res.clone()),
+        }
+    }
+}
+
 struct ImageCacheInner {
     app: AsyncApp,
-    images: RefCell<LruCache<u64, ImageLoadingTask>>,
+    images: RwLock<LruCache<u64, CacheItem>>,
     max_items: Option<usize>,
 }
 
 impl Drop for ImageCacheInner {
     fn drop(&mut self) {
         let app = self.app.clone();
-        let mut images = self.images.borrow_mut();
+        let mut images = self.images.write();
         let images = std::mem::replace(&mut *images, LruCache::unbounded())
             .into_iter()
-            .filter_map(|(_, task)| task.now_or_never().transpose().ok().flatten())
+            .filter_map(|(_, mut item)| item.get().transpose().ok().flatten())
             .collect::<Vec<_>>();
 
         // Spawn a task to drop the images in the background
@@ -45,13 +63,21 @@ impl Drop for ImageCacheInner {
 #[derive(Clone)]
 pub struct ImageCache(Rc<ImageCacheInner>);
 
+impl fmt::Debug for ImageCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ImageCache")
+            .field("num_images", &self.0.images.read().len())
+            .finish()
+    }
+}
+
 impl ImageCache {
     /// Create a new image cache.
     #[inline]
     pub fn new(cx: &mut App) -> Self {
         ImageCache(Rc::new(ImageCacheInner {
             app: cx.to_async(),
-            images: RefCell::new(LruCache::unbounded()),
+            images: RwLock::new(LruCache::unbounded()),
             max_items: None,
         }))
     }
@@ -60,89 +86,82 @@ impl ImageCache {
     pub fn max_items(max_items: usize, cx: &mut App) -> Self {
         ImageCache(Rc::new(ImageCacheInner {
             app: cx.to_async(),
-            images: RefCell::new(LruCache::unbounded()),
+            images: RwLock::new(LruCache::unbounded()),
             max_items: Some(max_items),
         }))
     }
 
     /// Load an image from the given source.
     ///
-    /// The image will be cached and returned as a `RenderImage`.
-    /// Returns `None` during loading - the image loads in background.
-    /// When loaded, call `cx.notify()` to refresh the UI.
+    /// Returns `None` if the image is loading.
     pub fn load(
         &self,
         source: &Resource,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
-        let mut images = self.0.images.borrow_mut();
+        let mut images = self.0.images.write();
 
         if let Some(max_items) = self.0.max_items {
             // remove least recently used images
             while images.len() >= max_items {
-                if let Some((_, task)) = images.pop_lru() {
-                    if let Some(Ok(image)) = task.now_or_never() {
-                        remove_image_from_windows(image.clone(), window, cx);
+                if let Some((_, mut item)) = images.pop_lru() {
+                    if let Some(Ok(image)) = item.get() {
+                        remove_image_from_windows(image, window, cx);
                     }
                 }
             }
         }
 
         let hash = hash(source);
-        let mut is_first = false;
-        let task = images
-            .get_or_insert(hash, || {
-                is_first = true;
-                let fut = AssetLogger::<ImageAssetLoader>::load(source.clone(), cx);
-                cx.background_executor().spawn(fut).shared()
+
+        if let Some(item) = images.get_mut(&hash) {
+            return item.get();
+        }
+
+        let fut = AssetLogger::<ImageAssetLoader>::load(source.clone(), cx);
+        let task = cx.background_executor().spawn(fut).shared();
+        images.push(hash, CacheItem::Loading(task.clone()));
+
+        let entity = window.current_view();
+        window
+            .spawn(cx, {
+                async move |cx| {
+                    _ = task.await;
+                    cx.on_next_frame(move |_, cx| {
+                        cx.notify(entity);
+                    });
+                }
             })
-            .clone();
+            .detach();
 
-        task.clone().now_or_never().or_else(|| {
-            if is_first {
-                let entity = window.current_view();
-                window
-                    .spawn(cx, {
-                        let task = task.clone();
-                        async move |cx| {
-                            _ = task.await;
-                            cx.on_next_frame(move |_, cx| {
-                                cx.notify(entity);
-                            });
-                        }
-                    })
-                    .detach();
-            }
-
-            None
-        })
+        None
     }
 
     /// Clear the image cache.
     pub fn clear(&self, window: &mut Window, cx: &mut App) {
-        let mut images = self.0.images.borrow_mut();
-        for (_, task) in std::mem::replace(&mut *images, LruCache::unbounded()) {
-            if let Some(Ok(image)) = task.now_or_never() {
-                remove_image_from_windows(image.clone(), window, cx);
+        let mut images = self.0.images.write();
+        for (_, mut item) in std::mem::replace(&mut *images, LruCache::unbounded()) {
+            if let Some(Ok(image)) = item.get() {
+                remove_image_from_windows(image, window, cx);
             }
         }
     }
 
     /// Remove the image from the cache by the given source.
     pub fn remove(&self, source: &Resource, window: &mut Window, cx: &mut App) {
-        let mut images = self.0.images.borrow_mut();
+        let mut images = self.0.images.write();
         let hash = hash(source);
-        if let Some(task) = images.pop(&hash) {
-            if let Some(Ok(image)) = task.now_or_never() {
-                remove_image_from_windows(image.clone(), window, cx);
+        if let Some(mut item) = images.pop(&hash) {
+            if let Some(Ok(image)) = item.get() {
+                remove_image_from_windows(image, window, cx);
             }
         }
     }
 
     /// Returns the number of images in the cache.
     pub fn len(&self) -> usize {
-        self.0.images.borrow_mut().len()
+        self.0.images.read().len()
     }
 }
 
