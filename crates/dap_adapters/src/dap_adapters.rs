@@ -2,7 +2,6 @@ mod codelldb;
 mod gdb;
 mod go;
 mod javascript;
-mod lldb;
 mod php;
 mod python;
 
@@ -21,7 +20,6 @@ use dap::{
 use gdb::GdbDebugAdapter;
 use go::GoDebugAdapter;
 use javascript::JsDebugAdapter;
-use lldb::LldbDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use serde_json::{Value, json};
@@ -32,7 +30,6 @@ pub fn init(registry: Arc<DapRegistry>) {
     registry.add_adapter(Arc::from(PythonDebugAdapter));
     registry.add_adapter(Arc::from(PhpDebugAdapter));
     registry.add_adapter(Arc::from(JsDebugAdapter));
-    registry.add_adapter(Arc::from(LldbDebugAdapter));
     registry.add_adapter(Arc::from(GoDebugAdapter));
     registry.add_adapter(Arc::from(GdbDebugAdapter));
 }
