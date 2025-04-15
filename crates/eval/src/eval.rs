@@ -42,6 +42,9 @@ struct Args {
     /// Languages to run (comma-separated, e.g. "js,ts,py"). If unspecified, only Rust examples are run.
     #[arg(long, value_delimiter = ',')]
     languages: Option<Vec<String>>,
+    /// How many times to run the judge on each example run.
+    #[arg(long, default_value = "3")]
+    judge_repetitions: u32,
 }
 
 fn main() {
@@ -203,18 +206,23 @@ fn main() {
                 example.setup().await?;
             }
 
+            let judge_repetitions = args.judge_repetitions;
             let tasks = examples
                 .into_iter()
                 .map(|example| {
                     let app_state = app_state.clone();
                     let model = model.clone();
                     cx.spawn(async move |cx| {
-                        (run_example(&example, model, app_state, cx).await, example)
+                        (
+                            run_example(&example, model, app_state, judge_repetitions, cx).await,
+                            example,
+                        )
                     })
                 })
                 .collect::<Vec<_>>();
 
-            let results: Vec<(Result<JudgeOutput>, Example)> = future::join_all(tasks).await;
+            let results: Vec<(Result<Vec<Result<JudgeOutput>>>, Example)> =
+                future::join_all(tasks).await;
 
             println!("\n\n");
             println!("========================================");
@@ -229,16 +237,25 @@ fn main() {
                     Err(err) => {
                         println!("💥 {}{:?}", example.log_prefix, err);
                     }
-                    Ok(judge_output) => {
-                        const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
+                    Ok(judge_results) => {
+                        for judge_result in judge_results {
+                            match judge_result {
+                                Ok(judge_output) => {
+                                    const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
 
-                        println!(
-                            "{} {}{}",
-                            SCORES[judge_output.score.min(5) as usize],
-                            example.log_prefix,
-                            judge_output.score,
-                        );
-                        judge_scores.push(judge_output.score);
+                                    println!(
+                                        "{} {}{}",
+                                        SCORES[judge_output.score.min(5) as usize],
+                                        example.log_prefix,
+                                        judge_output.score,
+                                    );
+                                    judge_scores.push(judge_output.score);
+                                }
+                                Err(err) => {
+                                    println!("💥 {}{:?}", example.log_prefix, err);
+                                }
+                            }
+                        }
                     }
                 }
                 println!(
@@ -266,12 +283,18 @@ async fn run_example(
     example: &Example,
     model: Arc<dyn LanguageModel>,
     app_state: Arc<AgentAppState>,
+    judge_repetitions: u32,
     cx: &mut AsyncApp,
-) -> Result<JudgeOutput> {
+) -> Result<Vec<Result<JudgeOutput>>> {
     cx.update(|cx| example.run(model.clone(), app_state, cx))?
         .await?;
     let diff = example.repository_diff().await?;
-    example.judge(model, diff, cx).await
+
+    let judge_tasks = (0..judge_repetitions)
+        .map(|round| example.judge(model.clone(), diff.clone(), round, cx))
+        .collect::<Vec<_>>();
+
+    Ok(future::join_all(judge_tasks).await)
 }
 
 fn list_all_examples() -> Result<Vec<PathBuf>> {
