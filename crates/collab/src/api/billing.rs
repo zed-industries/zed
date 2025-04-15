@@ -198,9 +198,16 @@ async fn list_billing_subscriptions(
     }))
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProductCode {
+    ZedPro,
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateBillingSubscriptionBody {
     github_user_id: i32,
+    product: Option<ProductCode>,
 }
 
 #[derive(Debug, Serialize)]
@@ -274,15 +281,30 @@ async fn create_billing_subscription(
         customer.id
     };
 
-    let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-7-sonnet")?;
-    let stripe_model = stripe_billing.register_model(default_model).await?;
-    let success_url = format!(
-        "{}/account?checkout_complete=1",
-        app.config.zed_dot_dev_url()
-    );
-    let checkout_session_url = stripe_billing
-        .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
-        .await?;
+    let checkout_session_url = match body.product {
+        Some(ProductCode::ZedPro) => {
+            let success_url = format!(
+                "{}/account?checkout_complete=1",
+                app.config.zed_dot_dev_url()
+            );
+            stripe_billing
+                .checkout_with_zed_pro(customer_id, &user.github_login, &success_url)
+                .await?
+        }
+        None => {
+            let default_model =
+                llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-7-sonnet")?;
+            let stripe_model = stripe_billing.register_model(default_model).await?;
+            let success_url = format!(
+                "{}/account?checkout_complete=1",
+                app.config.zed_dot_dev_url()
+            );
+            stripe_billing
+                .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
+                .await?
+        }
+    };
+
     Ok(Json(CreateBillingSubscriptionResponse {
         checkout_session_url,
     }))

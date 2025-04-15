@@ -167,7 +167,7 @@ pub fn register(workspace: &mut Workspace) {
         workspace.toggle_panel_focus::<GitPanel>(window, cx);
     });
     workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
-        CommitModal::toggle(workspace, window, cx)
+        CommitModal::toggle(workspace, None, window, cx)
     });
 }
 
@@ -1434,7 +1434,10 @@ impl GitPanel {
         }
     }
 
-    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn load_last_commit_message_if_empty(&mut self, cx: &mut Context<Self>) {
+        if !self.commit_editor.read(cx).is_empty(cx) {
+            return;
+        }
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -1448,6 +1451,23 @@ impl GitPanel {
         else {
             return;
         };
+        let detail_task = self.load_commit_details(recent_sha, cx);
+        cx.spawn(async move |this, cx| {
+            if let Ok(message) = detail_task.await.map(|detail| detail.message) {
+                this.update(cx, |this, cx| {
+                    this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                        let start = buffer.anchor_before(0);
+                        let end = buffer.anchor_after(buffer.len());
+                        buffer.edit([(start..end, message)], None, cx);
+                    });
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .commit_editor
             .focus_handle(cx)
@@ -1456,22 +1476,7 @@ impl GitPanel {
             if !self.amend_pending {
                 self.amend_pending = true;
                 cx.notify();
-                if self.commit_editor.read(cx).is_empty(cx) {
-                    let detail_task = self.load_commit_details(recent_sha, cx);
-                    cx.spawn(async move |this, cx| {
-                        if let Ok(message) = detail_task.await.map(|detail| detail.message) {
-                            this.update(cx, |this, cx| {
-                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                    let start = buffer.anchor_before(0);
-                                    let end = buffer.anchor_after(buffer.len());
-                                    buffer.edit([(start..end, message)], None, cx);
-                                });
-                            })
-                            .log_err();
-                        }
-                    })
-                    .detach();
-                }
+                self.load_last_commit_message_if_empty(cx);
             } else {
                 telemetry::event!("Git Amended", source = "Git Panel");
                 self.amend_pending = false;
@@ -2859,7 +2864,7 @@ impl GitPanel {
         window.defer(cx, move |window, cx| {
             workspace
                 .update(cx, |workspace, cx| {
-                    CommitModal::toggle(workspace, window, cx)
+                    CommitModal::toggle(workspace, None, window, cx)
                 })
                 .ok();
         })
@@ -2994,7 +2999,11 @@ impl GitPanel {
             .is_some();
 
         let footer = v_flex()
-            .child(PanelRepoFooter::new(display_name, branch, Some(git_panel)))
+            .child(PanelRepoFooter::new(
+                display_name,
+                branch,
+                Some(git_panel.clone()),
+            ))
             .child(
                 panel_editor_container(window, cx)
                     .id("commit-editor-container")
@@ -3098,9 +3107,19 @@ impl GitPanel {
                                                         )
                                                         .mr_0p5(),
                                                 )
-                                                .on_click(move |_, window, cx| {
-                                                    window
-                                                        .dispatch_action(Box::new(git::Commit), cx);
+                                                .on_click({
+                                                    let git_panel = git_panel.downgrade();
+                                                    move |_, window, cx| {
+                                                        git_panel
+                                                            .update(cx, |git_panel, cx| {
+                                                                git_panel.commit_changes(
+                                                                    CommitOptions { amend: false },
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            })
+                                                            .ok();
+                                                    }
                                                 })
                                                 .disabled(!can_commit || self.modal_open)
                                                 .tooltip({
@@ -3997,8 +4016,9 @@ impl GitPanel {
         self.amend_pending
     }
 
-    pub fn set_amend_pending(&mut self, value: bool) {
+    pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
         self.amend_pending = value;
+        cx.notify();
     }
 }
 

@@ -25,6 +25,7 @@ mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git_store::{Repository, RepositoryId};
+use task::DebugTaskDefinition;
 pub mod search_history;
 mod yarn;
 
@@ -38,7 +39,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{DapRegistry, DebugAdapterConfig, client::DebugAdapterClient};
+use dap::{DapRegistry, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -106,7 +107,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    ResultExt as _, maybe,
+    ResultExt as _,
     paths::{SanitizedPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -870,11 +871,9 @@ impl Project {
                     node.clone(),
                     fs.clone(),
                     languages.clone(),
-                    debug_adapters.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     breakpoint_store.clone(),
-                    worktree_store.clone(),
                     cx,
                 )
             });
@@ -1458,64 +1457,46 @@ impl Project {
         }
     }
 
-    pub fn queue_debug_session(&mut self, config: DebugAdapterConfig, cx: &mut Context<Self>) {
-        if config.locator.is_none() {
-            self.start_debug_session(config, cx).detach_and_log_err(cx);
-        }
-    }
-
     pub fn start_debug_session(
         &mut self,
-        config: DebugAdapterConfig,
+        config: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
-        let worktree = maybe!({ self.worktrees(cx).next() });
-
-        let Some(worktree) = &worktree else {
+        let Some(worktree) = self.worktrees(cx).next() else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
         };
 
-        self.dap_store
-            .update(cx, |dap_store, cx| {
-                dap_store.new_session(config, worktree, None, cx)
-            })
-            .1
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn fake_debug_session(
-        &mut self,
-        request: task::DebugRequestType,
-        caps: Option<dap::Capabilities>,
-        fails: bool,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Session>>> {
-        use dap::{Capabilities, FakeAdapter};
-        use task::DebugRequestDisposition;
-
-        let worktree = maybe!({ self.worktrees(cx).next() });
-
-        let Some(worktree) = &worktree else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
+        let Some(adapter) = self.debug_adapters.adapter(&config.adapter) else {
+            return Task::ready(Err(anyhow!("Failed to find a debug adapter")));
         };
-        let config = DebugAdapterConfig {
-            label: "test config".into(),
-            adapter: FakeAdapter::ADAPTER_NAME.into(),
-            request: DebugRequestDisposition::UserConfigured(request),
-            initialize_args: None,
-            tcp_connection: None,
-            locator: None,
-            stop_on_entry: None,
-        };
-        let caps = caps.unwrap_or(Capabilities {
-            supports_step_back: Some(false),
-            ..Default::default()
+
+        let user_installed_path = ProjectSettings::get_global(cx)
+            .dap
+            .get(&adapter.name())
+            .and_then(|s| s.binary.as_ref().map(PathBuf::from));
+
+        let result = cx.spawn(async move |this, cx| {
+            let delegate = this.update(cx, |project, cx| {
+                project
+                    .dap_store
+                    .update(cx, |dap_store, cx| dap_store.delegate(&worktree, cx))
+            })?;
+
+            let binary = adapter
+                .get_binary(&delegate, &config, user_installed_path, cx)
+                .await?;
+
+            let ret = this
+                .update(cx, |project, cx| {
+                    project.dap_store.update(cx, |dap_store, cx| {
+                        dap_store.new_session(binary, config, None, cx)
+                    })
+                })?
+                .1
+                .await;
+            ret
         });
-        self.dap_store
-            .update(cx, |dap_store, cx| {
-                dap_store.new_fake_session(config, worktree, None, caps, fails, cx)
-            })
-            .1
+        result
     }
 
     #[cfg(any(test, feature = "test-support"))]
