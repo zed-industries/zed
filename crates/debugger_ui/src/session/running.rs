@@ -7,7 +7,7 @@ pub mod variable_list;
 
 use std::{any::Any, ops::ControlFlow, sync::Arc, time::Duration};
 
-use crate::persistence::{self, DebuggerPaneItem, SerializedPaneGroup};
+use crate::persistence::{self, DebuggerPaneItem, SerializedPaneLayout};
 
 use super::DebugPanelItemEvent;
 use breakpoint_list::BreakpointList;
@@ -367,7 +367,7 @@ impl RunningState {
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        serialized_pane_layout: Option<SerializedPaneGroup>,
+        serialized_pane_layout: Option<SerializedPaneLayout>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -424,12 +424,11 @@ impl RunningState {
         ];
 
         let mut pane_close_subscriptions = HashMap::default();
-        let panes = if let Some(root) = serialized_pane_layout.and_then(|serialized| {
-            persistence::deserialize_pane_group(
-                serialized,
+        let panes = if let Some(root) = serialized_pane_layout.and_then(|serialized_layout| {
+            persistence::deserialize_pane_layout(
+                serialized_layout,
                 &workspace,
                 &project,
-                &session,
                 &stack_frame_list,
                 &variable_list,
                 &module_list,
@@ -489,7 +488,7 @@ impl RunningState {
                         let adapter_name = this.session.read(cx).adapter_name();
                         (
                             adapter_name,
-                            persistence::build_serialized_pane_group(&this.panes.root, cx),
+                            persistence::build_serialized_pane_layout(&this.panes.root, cx),
                         )
                     })
                     .ok()
@@ -497,7 +496,7 @@ impl RunningState {
                     return;
                 };
 
-                persistence::serialize_pane_group(adapter_name, pane_group)
+                persistence::serialize_pane_layout(adapter_name, pane_group)
                     .await
                     .log_err();
 

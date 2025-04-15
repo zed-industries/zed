@@ -1,7 +1,7 @@
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{Axis, Context, Entity, EntityId, Focusable, Subscription, WeakEntity, Window};
-use project::{Project, debugger::session::Session};
+use project::Project;
 use serde::{Deserialize, Serialize};
 use ui::{App, SharedString};
 use util::ResultExt;
@@ -37,12 +37,12 @@ impl DebuggerPaneItem {
 pub(crate) struct SerializedAxis(pub Axis);
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) enum SerializedPaneGroup {
+pub(crate) enum SerializedPaneLayout {
     Pane(SerializedPane),
     Group {
         axis: SerializedAxis,
         flexes: Option<Vec<f32>>,
-        children: Vec<SerializedPaneGroup>,
+        children: Vec<SerializedPaneLayout>,
     },
 }
 
@@ -52,9 +52,9 @@ pub(crate) struct SerializedPane {
     pub active_item: Option<DebuggerPaneItem>,
 }
 
-pub(crate) async fn serialize_pane_group(
+pub(crate) async fn serialize_pane_layout(
     adapter_name: SharedString,
-    pane_group: SerializedPaneGroup,
+    pane_group: SerializedPaneLayout,
 ) -> anyhow::Result<()> {
     if let Ok(serialized_pane_group) = serde_json::to_string(&pane_group) {
         KEY_VALUE_STORE
@@ -70,25 +70,25 @@ pub(crate) async fn serialize_pane_group(
     }
 }
 
-pub(crate) fn build_serialized_pane_group(
+pub(crate) fn build_serialized_pane_layout(
     pane_group: &Member,
     cx: &mut App,
-) -> SerializedPaneGroup {
+) -> SerializedPaneLayout {
     match pane_group {
         Member::Axis(PaneAxis {
             axis,
             members,
             flexes,
             bounding_boxes: _,
-        }) => SerializedPaneGroup::Group {
+        }) => SerializedPaneLayout::Group {
             axis: SerializedAxis(*axis),
             children: members
                 .iter()
-                .map(|member| build_serialized_pane_group(member, cx))
+                .map(|member| build_serialized_pane_layout(member, cx))
                 .collect::<Vec<_>>(),
             flexes: Some(flexes.lock().clone()),
         },
-        Member::Pane(pane_handle) => SerializedPaneGroup::Pane(serialize_pane(pane_handle, cx)),
+        Member::Pane(pane_handle) => SerializedPaneLayout::Pane(serialize_pane(pane_handle, cx)),
     }
 }
 
@@ -113,9 +113,9 @@ fn serialize_pane(pane: &Entity<Pane>, cx: &mut App) -> SerializedPane {
     }
 }
 
-pub(crate) async fn get_serialized_pane(
+pub(crate) async fn get_serialized_pane_layout(
     adapter_name: impl AsRef<str>,
-) -> Option<SerializedPaneGroup> {
+) -> Option<SerializedPaneLayout> {
     let key = format!(
         "{}-{}",
         db::kvp::DEBUGGER_PANEL_PREFIX,
@@ -126,14 +126,13 @@ pub(crate) async fn get_serialized_pane(
         .read_kvp(&key)
         .log_err()
         .flatten()
-        .and_then(|value| serde_json::from_str::<SerializedPaneGroup>(&value).ok())
+        .and_then(|value| serde_json::from_str::<SerializedPaneLayout>(&value).ok())
 }
 
-pub(crate) fn deserialize_pane_group(
-    serialized: SerializedPaneGroup,
+pub(crate) fn deserialize_pane_layout(
+    serialized: SerializedPaneLayout,
     workspace: &WeakEntity<Workspace>,
     project: &Entity<Project>,
-    session: &Entity<Session>,
     stack_frame_list: &Entity<StackFrameList>,
     variable_list: &Entity<VariableList>,
     module_list: &Entity<ModuleList>,
@@ -144,18 +143,17 @@ pub(crate) fn deserialize_pane_group(
     cx: &mut Context<RunningState>,
 ) -> Option<Member> {
     match serialized {
-        SerializedPaneGroup::Group {
+        SerializedPaneLayout::Group {
             axis,
             flexes,
             children,
         } => {
             let mut members = Vec::new();
             for child in children {
-                if let Some(new_member) = deserialize_pane_group(
+                if let Some(new_member) = deserialize_pane_layout(
                     child,
                     workspace,
                     project,
-                    session,
                     stack_frame_list,
                     variable_list,
                     module_list,
@@ -183,7 +181,7 @@ pub(crate) fn deserialize_pane_group(
                 flexes.clone(),
             )))
         }
-        SerializedPaneGroup::Pane(serialized_pane) => {
+        SerializedPaneLayout::Pane(serialized_pane) => {
             let pane = running::new_debugger_pane(workspace.clone(), project.clone(), window, cx);
             subscriptions.insert(
                 pane.entity_id(),

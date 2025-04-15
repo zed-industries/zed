@@ -297,7 +297,8 @@ impl DebugPanel {
 
                 let session_id = *session_id;
                 cx.spawn_in(window, async move |this, cx| {
-                    let serialized_layout = persistence::get_serialized_pane(adapter_name).await;
+                    let serialized_layout =
+                        persistence::get_serialized_pane_layout(adapter_name).await;
 
                     this.update_in(cx, |this, window, cx| {
                         let Some(project) = this.project.upgrade() else {
