@@ -4135,7 +4135,8 @@ async fn get_llm_api_token(
         Err(anyhow!("terms of service not accepted"))?
     }
 
-    let has_llm_subscription = session.has_llm_subscription(&db).await?;
+    let has_legacy_llm_subscription = session.has_llm_subscription(&db).await?;
+    let billing_subscription = db.get_active_billing_subscription(user.id).await?;
     let billing_preferences = db.get_billing_preferences(user.id).await?;
 
     let token = LlmTokenClaims::create(
@@ -4143,8 +4144,9 @@ async fn get_llm_api_token(
         session.is_staff(),
         billing_preferences,
         &flags,
-        has_llm_subscription,
+        has_legacy_llm_subscription,
         session.current_plan(&db).await?,
+        billing_subscription,
         session.system_id.clone(),
         &session.app_state.config,
     )?;
