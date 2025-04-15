@@ -4,15 +4,13 @@ use assistant_tool::{ActionLog, Tool};
 use collections::IndexMap;
 use futures::StreamExt;
 use gpui::{App, AsyncApp, Entity, Task};
-use language::{
-    BufferSnapshot, Location, OffsetRangeExt, OutlineItem, ParseStatus, Point, ToPoint,
-};
+use language::{OffsetRangeExt, OutlineItem, ParseStatus, Point};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{
     Project, Symbol,
     search::{SearchQuery, SearchResult},
 };
-
+use regex::{Regex, RegexBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, convert::TryFrom, fmt::Write, path::PathBuf, sync::Arc};
@@ -36,8 +34,8 @@ pub struct SearchToolInput {
     /// When specified, this filters the output based on the contents of the files or code symbols.
     ///
     /// - If the "output" parameter is "symbols", then this search query be sent to the language server to filter which the code symbols (such as identifiers, types, etc.) will be included in the output.
-    /// - If the "output" parameter is "text", then this query will be interpreted as a regex, and only text snippets matching that regex will be included.
-    /// - If the "output" parameter is "paths", then this query will be interpreted as a regex, and only files whose text contents match that regex will be included.
+    /// - If the "output" parameter is "text", then this query will be interpreted as a regex, adn only text snippets matching that regex will be included.
+    /// - If the "output" parameter is "paths", then this query will be interpreted as a regex, adn only files whose text contents match that regex will be included.
     #[serde(default)]
     pub query: Option<String>,
 
@@ -58,80 +56,14 @@ pub struct SearchToolInput {
 #[serde(rename_all = "snake_case")]
 pub enum Output {
     /// Output matching file paths only.
-    /// If no path_glob is specified, outputs all the paths in the project.
+    /// If no path_regex is specified, outputs all the paths in the project.
     Paths,
     /// Output matching arbitrary text regions within files, including their line numbers.
-    /// If no path_glob is specified, outputs text found in any file in the project.
+    /// If no path_regex is specified, outputs text found in any file in the project.
     Text,
     /// Output matching code symbols (such as identifiers, types, etc.) within files, including their line numbers.
-    /// If no path_glob is specified, outputs symbols found across the entire project.
+    /// If no path_regex is specified, outputs symbols found across the entire project.
     Symbols,
-    /// Output the *definitions* of matching code symbols (such as identifiers, types, etc.)
-    /// within files, including line numbers. If no path_glob is specified, outputs
-    /// the definitions of matching code symbols found across the entire project.
-    ///
-    /// This is different from "declarations" in that the "definition" is where the code symbol
-    /// is first *assigned*, even if it was given its name earlier. For example, in C, there
-    /// might be a "declaration" of `int a;` and then later a "definition" of `a = 5;`
-    ///
-    /// <example>
-    /// Using "output": "definitions" and a "query" of "abc" would output the `abc = 5;` line of this C code:
-    ///
-    /// ```c
-    /// int abc;
-    /// int xyz;
-    /// abc = 5;
-    /// xyz = 6;
-    /// ```
-    /// </example>
-    Definitions,
-    /// Output the *declarations* of matching code symbols (such as identifiers, types, etc.)
-    /// within files, including line numbers. If no path_glob is specified, outputs
-    /// the declarations of matching code symbols found across the entire project.
-    ///
-    /// This is different from "definition" in that the "declaration" is where the code symbol
-    /// is first given a name, even if it's not assigned a value until later. For example, in C,
-    /// there might be a "declaration" of `int a;` and then later a "definition" of `a = 5;`
-    ///
-    /// <example>
-    /// Using "output": "declarations" and a "query" of "abc" would output the `int abc;` line of this C code:
-    ///
-    /// ```c
-    /// int abc;
-    /// int xyz;
-    /// abc = 5;
-    /// xyz = 6;
-    /// ```
-    /// </example>
-    Declarations,
-    /// Output the *implementations* of matching code symbols (such as identifiers, types, etc.)
-    /// within files, including line numbers. If no path_glob is specified, outputs
-    /// the implementations of matching code symbols found across the entire project.
-    ///
-    /// As an example, in a Java code base you might use this to query for method which is
-    /// defined in an interface or abstract class, and potentially implemented in multiple derived
-    /// classes. This "implementations" output type would tell you about those multiple implementations
-    /// in the derived classes.
-    Implementations,
-    /// Output the *type definitions* of matching code symbols (such as identifiers, types, etc.)
-    /// within files, including line numbers. If no path_glob is specified, outputs
-    /// the type definitions of matching code symbols found across the entire project.
-    ///
-    /// <example>
-    /// Using "output": "types" and a "query" of "abc" would output the `enum direction { N, E, S, W };` line of this C code:
-    ///
-    /// ```c
-    /// enum direction { N, E, S, W };
-    ///
-    /// int x = 5;
-    /// enum direction abc = N;
-    /// ```
-    /// </example>
-    Types,
-    /// Output the *references* of matching code symbols (such as identifiers, types, etc.)
-    /// within files, including line numbers. If no path_glob is specified, outputs
-    /// the type definitions of matching code symbols found across the entire project.
-    References,
 }
 
 // Different search modes have different pagination limits
@@ -140,15 +72,6 @@ const TEXT_RESULTS_PER_PAGE: usize = 20;
 const SYMBOLS_RESULTS_PER_PAGE: u32 = 100;
 
 pub struct SearchTool;
-
-#[derive(Debug, Clone, Copy)]
-enum SymbolInfoType {
-    Definition,
-    Declaration,
-    Implementation,
-    TypeDefinition,
-    References,
-}
 
 impl Tool for SearchTool {
     fn name(&self) -> String {
@@ -228,122 +151,6 @@ impl Tool for SearchTool {
                             }
                         }
                     }
-                    Output::Definitions => {
-                        if let Some(search_regex) = &input.query {
-                            let search_pattern = MarkdownString::inline_code(search_regex);
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find definitions of {} in files matching {}{}",
-                                    search_pattern, pattern, case_info
-                                ),
-                                None => {
-                                    format!("Find definitions of {}{}", search_pattern, case_info)
-                                }
-                            }
-                        } else {
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find definitions in files matching {}{}",
-                                    pattern, case_info
-                                ),
-                                None => format!("Find all definitions{}", case_info),
-                            }
-                        }
-                    }
-                    Output::Declarations => {
-                        if let Some(search_regex) = &input.query {
-                            let search_pattern = MarkdownString::inline_code(search_regex);
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find declarations of {} in files matching {}{}",
-                                    search_pattern, pattern, case_info
-                                ),
-                                None => {
-                                    format!("Find declarations of {}{}", search_pattern, case_info)
-                                }
-                            }
-                        } else {
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find declarations in files matching {}{}",
-                                    pattern, case_info
-                                ),
-                                None => format!("Find all declarations{}", case_info),
-                            }
-                        }
-                    }
-                    Output::Implementations => {
-                        if let Some(search_regex) = &input.query {
-                            let search_pattern = MarkdownString::inline_code(search_regex);
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find implementations of {} in files matching {}{}",
-                                    search_pattern, pattern, case_info
-                                ),
-                                None => {
-                                    format!(
-                                        "Find implementations of {}{}",
-                                        search_pattern, case_info
-                                    )
-                                }
-                            }
-                        } else {
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find implementations in files matching {}{}",
-                                    pattern, case_info
-                                ),
-                                None => format!("Find all implementations{}", case_info),
-                            }
-                        }
-                    }
-                    Output::Types => {
-                        if let Some(search_regex) = &input.query {
-                            let search_pattern = MarkdownString::inline_code(search_regex);
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find type definitions of {} in files matching {}{}",
-                                    search_pattern, pattern, case_info
-                                ),
-                                None => {
-                                    format!(
-                                        "Find type definitions of {}{}",
-                                        search_pattern, case_info
-                                    )
-                                }
-                            }
-                        } else {
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find type definitions in files matching {}{}",
-                                    pattern, case_info
-                                ),
-                                None => format!("Find all type definitions{}", case_info),
-                            }
-                        }
-                    }
-                    Output::References => {
-                        if let Some(search_regex) = &input.query {
-                            let search_pattern = MarkdownString::inline_code(search_regex);
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find references to {} in files matching {}{}",
-                                    search_pattern, pattern, case_info
-                                ),
-                                None => {
-                                    format!("Find references to {}{}", search_pattern, case_info)
-                                }
-                            }
-                        } else {
-                            match path_pattern {
-                                Some(pattern) => format!(
-                                    "Find references in files matching {}{}",
-                                    pattern, case_info
-                                ),
-                                None => format!("Find all references{}", case_info),
-                            }
-                        }
-                    }
                 }
             }
             Err(_) => "Unified search".to_string(),
@@ -367,29 +174,6 @@ impl Tool for SearchTool {
             Output::Paths => search_paths(input, project, cx),
             Output::Text => search_text(input, project, cx),
             Output::Symbols => search_symbols(input, project, action_log, cx),
-            Output::Definitions => {
-                search_symbol_info(input, project, action_log, SymbolInfoType::Definition, cx)
-            }
-            Output::Declarations => {
-                search_symbol_info(input, project, action_log, SymbolInfoType::Declaration, cx)
-            }
-            Output::Implementations => search_symbol_info(
-                input,
-                project,
-                action_log,
-                SymbolInfoType::Implementation,
-                cx,
-            ),
-            Output::Types => search_symbol_info(
-                input,
-                project,
-                action_log,
-                SymbolInfoType::TypeDefinition,
-                cx,
-            ),
-            Output::References => {
-                search_symbol_info(input, project, action_log, SymbolInfoType::References, cx)
-            }
         }
     }
 }
@@ -666,165 +450,6 @@ fn search_symbols(
     })
 }
 
-async fn file_symbol_info(
-    project: Entity<Project>,
-    path: String,
-    query: Option<String>,
-    action_log: Entity<ActionLog>,
-    info_type: SymbolInfoType,
-    offset: u32,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<String> {
-    let buffer = {
-        let project_path = project.read_with(cx, |project, cx| {
-            project
-                .find_project_path(&path, cx)
-                .ok_or_else(|| anyhow!("Path {} not found in project", path))
-        })??;
-
-        project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-            .await?
-    };
-
-    action_log.update(cx, |action_log, cx| {
-        action_log.buffer_read(buffer.clone(), cx);
-    })?;
-
-    // Wait until the buffer has been fully parsed
-    let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
-    while *parse_status.borrow() != ParseStatus::Idle {
-        parse_status.changed().await?;
-    }
-
-    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let Some(outline) = snapshot.outline(None) else {
-        return Err(anyhow!(
-            "No outline information available for file: {}",
-            path
-        ));
-    };
-
-    // Filter outline items based on query if provided
-    let filtered_items: Vec<_> = outline
-        .items
-        .into_iter()
-        .filter(|item| query.as_ref().map_or(true, |q| item.text.contains(q)))
-        .collect();
-
-    // If there are no matching items, return early
-    if filtered_items.is_empty() {
-        return Err(anyhow!("No symbols matching query found in file: {}", path));
-    }
-
-    // Process each filtered symbol to get the requested information
-    let mut results = String::new();
-    let mut items_processed = 0;
-
-    for item in filtered_items
-        .into_iter()
-        .skip(offset as usize)
-        .take(SYMBOLS_RESULTS_PER_PAGE as usize)
-    {
-        let point_item = item.to_point(&snapshot);
-        let position = point_item.range.start;
-
-        dbg!(&item.text);
-
-        match dbg!(info_type) {
-            SymbolInfoType::Definition => {
-                let definitions = project
-                    .update(cx, |project, cx| project.definition(&buffer, position, cx))?
-                    .await?;
-
-                if !definitions.is_empty() {
-                    write_symbol_locations(
-                        &mut results,
-                        &item.text,
-                        definitions.into_iter().map(|link| link.target),
-                        cx,
-                    )?;
-                    items_processed += 1;
-                }
-            }
-            SymbolInfoType::Declaration => {
-                let declarations = project
-                    .update(cx, |project, cx| project.declaration(&buffer, position, cx))?
-                    .await?;
-
-                if !declarations.is_empty() {
-                    write_symbol_locations(
-                        &mut results,
-                        &item.text,
-                        declarations.into_iter().map(|link| link.target),
-                        cx,
-                    )?;
-                    items_processed += 1;
-                }
-            }
-            SymbolInfoType::Implementation => {
-                let implementations = project
-                    .update(cx, |project, cx| {
-                        project.implementation(&buffer, position, cx)
-                    })?
-                    .await?;
-
-                if !implementations.is_empty() {
-                    write_symbol_locations(
-                        &mut results,
-                        &item.text,
-                        implementations.into_iter().map(|link| link.target),
-                        cx,
-                    )?;
-                    items_processed += 1;
-                }
-            }
-            SymbolInfoType::TypeDefinition => {
-                let type_defs = project
-                    .update(cx, |project, cx| {
-                        project.type_definition(&buffer, position, cx)
-                    })?
-                    .await?;
-
-                if !type_defs.is_empty() {
-                    write_symbol_locations(
-                        &mut results,
-                        &item.text,
-                        type_defs.into_iter().map(|link| link.target),
-                        cx,
-                    )?;
-                    items_processed += 1;
-                }
-            }
-            SymbolInfoType::References => {
-                let references = project
-                    .update(cx, |project, cx| project.references(&buffer, position, cx))?
-                    .await?;
-
-                if !references.is_empty() {
-                    write_symbol_locations(&mut results, &item.text, references, cx)?;
-                    items_processed += 1;
-                }
-            }
-        }
-    }
-
-    if results.is_empty() {
-        Err(anyhow!(
-            "No {} found for symbols in {}",
-            format!("{:?}", info_type).to_lowercase(),
-            path
-        ))
-    } else {
-        Ok(format!(
-            "Found {} items with {}:\n\n{}",
-            items_processed,
-            format!("{:?}", info_type).to_lowercase(),
-            results
-        ))
-    }
-}
-
 async fn file_outline(
     project: Entity<Project>,
     path: String,
@@ -878,241 +503,13 @@ async fn file_outline(
     )
 }
 
-fn search_symbol_info(
-    input: SearchToolInput,
-    project: Entity<Project>,
-    action_log: Entity<ActionLog>,
-    info_type: SymbolInfoType,
-    cx: &mut App,
-) -> Task<Result<String>> {
-    // Check if path_glob is a specific file path
-    if let Some(path) = &input.path_glob {
-        // If the glob pattern doesn't contain wildcards, assume it's a specific file path
-        if !path.contains('*') && !path.contains('?') && !path.contains('[') {
-            let path_string = path.clone();
-            return cx.spawn(async move |cx| {
-                file_symbol_info(
-                    project,
-                    path_string,
-                    input.query,
-                    action_log,
-                    info_type,
-                    input.offset,
-                    cx,
-                )
-                .await
-            });
-        }
-    }
-
-    // Create a path matcher for filtering symbols
-    let path_matcher = if let Some(glob) = input.path_glob.as_deref() {
-        match PathMatcher::new([glob]) {
-            Ok(matcher) => Some(matcher),
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob pattern: {}", err))),
-        }
-    } else {
-        None
-    };
-
-    cx.spawn(async move |cx| {
-        project_symbol_info(
-            project,
-            path_matcher,
-            &input.query.unwrap_or_default(),
-            info_type,
-            input.offset,
-            cx,
-        )
-        .await
-    })
-}
-
-async fn project_symbol_info(
-    project: Entity<Project>,
-    path_matcher: Option<PathMatcher>,
-    query: &str,
-    info_type: SymbolInfoType,
-    offset: u32,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<String> {
-    // First get all the project symbols
-    let symbols = project
-        .update(cx, |project, cx| project.symbols(query, cx))?
-        .await?;
-
-    if symbols.is_empty() {
-        return Err(anyhow!("No matching symbols found in project."));
-    }
-
-    // Filter symbols by path if matcher is provided
-    let filtered_symbols: Vec<_> = symbols
-        .iter()
-        .filter(|symbol| {
-            path_matcher
-                .as_ref()
-                .map(|matcher| matcher.is_match(&symbol.path.path))
-                .unwrap_or(true)
-        })
-        .collect();
-
-    if filtered_symbols.is_empty() {
-        return Err(anyhow!("No symbols found matching the criteria."));
-    }
-
-    // Apply pagination
-    let page_symbols = filtered_symbols
-        .into_iter()
-        .skip(offset as usize)
-        .take(SYMBOLS_RESULTS_PER_PAGE as usize);
-
-    let mut result = String::new();
-    let mut processed_count = 0;
-
-    for symbol in page_symbols {
-        dbg!(&symbol.name);
-        // Get the project path for the symbol
-        let project_path = project.read_with(cx, |project, cx| {
-            if let Some(worktree) = project.worktree_for_id(symbol.path.worktree_id, cx) {
-                let worktree_path = worktree.read(cx).root_name().to_string();
-                Some(
-                    project
-                        .find_project_path(
-                            &format!("{}/{}", worktree_path, symbol.path.path.to_string_lossy()),
-                            cx,
-                        )
-                        .unwrap(),
-                )
-            } else {
-                None
-            }
-        })?;
-
-        let Some(project_path) = project_path else {
-            continue;
-        };
-
-        // Open the buffer to process the symbol
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-            .await?;
-
-        dbg!(&symbol);
-
-        // Convert from symbol range to position
-        let position = buffer.read_with(cx, |_, _| Point {
-            row: symbol.range.start.0.row,
-            column: symbol.range.start.0.column,
-        })?;
-
-        match dbg!(info_type) {
-            SymbolInfoType::Definition => {
-                dbg!(&position);
-                let definitions = project
-                    .update(cx, |project, cx| project.definition(&buffer, position, cx))?
-                    .await?;
-
-                dbg!(&definitions);
-                if !definitions.is_empty() {
-                    write_symbol_locations(
-                        &mut result,
-                        &symbol.label.text().to_string(),
-                        definitions.into_iter().map(|link| link.target),
-                        cx,
-                    )?;
-                    processed_count += 1;
-                }
-            }
-            SymbolInfoType::Declaration => {
-                dbg!(&position);
-                let declarations = project
-                    .update(cx, |project, cx| project.declaration(&buffer, position, cx))?
-                    .await?;
-
-                dbg!(&declarations);
-                if !declarations.is_empty() {
-                    write_symbol_locations(
-                        &mut result,
-                        &symbol.label.text().to_string(),
-                        declarations.into_iter().map(|link| link.target),
-                        cx,
-                    )?;
-                    processed_count += 1;
-                }
-            }
-            SymbolInfoType::Implementation => {
-                let implementations = project
-                    .update(cx, |project, cx| {
-                        project.implementation(&buffer, position, cx)
-                    })?
-                    .await?;
-
-                if !implementations.is_empty() {
-                    write_symbol_locations(
-                        &mut result,
-                        &symbol.label.text().to_string(),
-                        implementations.into_iter().map(|link| link.target),
-                        cx,
-                    )?;
-                    processed_count += 1;
-                }
-            }
-            SymbolInfoType::TypeDefinition => {
-                let type_defs = project
-                    .update(cx, |project, cx| {
-                        project.type_definition(&buffer, position, cx)
-                    })?
-                    .await?;
-
-                if !type_defs.is_empty() {
-                    write_symbol_locations(
-                        &mut result,
-                        &symbol.label.text().to_string(),
-                        type_defs.into_iter().map(|link| link.target),
-                        cx,
-                    )?;
-                    processed_count += 1;
-                }
-            }
-            SymbolInfoType::References => {
-                let references = project
-                    .update(cx, |project, cx| project.references(&buffer, position, cx))?
-                    .await?;
-
-                if !references.is_empty() {
-                    write_symbol_locations(
-                        &mut result,
-                        &symbol.label.text().to_string(),
-                        references,
-                        cx,
-                    )?;
-                    processed_count += 1;
-                }
-            }
-        }
-    }
-
-    if processed_count == 0 {
-        Err(anyhow!(
-            "No {} found for any of the symbols.",
-            format!("{:?}", info_type).to_lowercase()
-        ))
-    } else {
-        Ok(format!(
-            "Found {} for {} symbols:\n\n{}",
-            format!("{:?}", info_type).to_lowercase(),
-            processed_count,
-            result
-        ))
-    }
-}
-
 async fn project_symbols(
     project: Entity<Project>,
     path_matcher: Option<PathMatcher>,
     query: &str,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<String> {
+    const SYMBOLS_RESULTS_PER_PAGE_USIZE: usize = 100;
     let symbols = project
         .update(cx, |project, cx| project.symbols(query, cx))?
         .await?;
@@ -1145,9 +542,10 @@ async fn project_symbols(
     }
 
     let mut symbols_rendered: usize = 0;
+    let mut has_more_symbols = false;
     let mut output = String::new();
 
-    for (file_path, file_symbols) in symbols_by_path {
+    'outer: for (file_path, file_symbols) in symbols_by_path {
         if symbols_rendered > 0 {
             output.push('\n');
         }
@@ -1219,98 +617,6 @@ fn render_outline(
     .ok();
 
     Ok(output.clone())
-}
-
-fn write_symbol_locations(
-    output: &mut String,
-    symbol_name: &str,
-    locations: impl IntoIterator<Item = Location>,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<()> {
-    writeln!(output, "### Symbol: {}", symbol_name).ok();
-
-    let mut location_count = 0;
-
-    for location in locations {
-        location
-            .buffer
-            .read_with(cx, |buffer, _cx| {
-                if let Some(target_path) = buffer
-                    .file()
-                    .and_then(|file| file.path().as_os_str().to_str())
-                {
-                    let snapshot = buffer.snapshot();
-                    let start = location.range.start.to_point(&snapshot);
-                    let end = location.range.end.to_point(&snapshot);
-
-                    // Convert to 1-based line/column numbers for display
-                    let start_line = start.row + 1;
-                    let start_col = start.column + 1;
-                    let end_line = end.row + 1;
-                    let end_col = end.column + 1;
-
-                    if start_line == end_line {
-                        writeln!(output, "- {}:{}:{}", target_path, start_line, start_col).ok();
-                    } else {
-                        writeln!(
-                            output,
-                            "- {}:{}:{}-{}:{}",
-                            target_path, start_line, start_col, end_line, end_col
-                        )
-                        .ok();
-                    }
-
-                    // Add code excerpt
-                    write_code_excerpt(output, &snapshot, start, end);
-                    location_count += 1;
-                }
-            })
-            .ok();
-    }
-
-    if location_count > 0 {
-        writeln!(output).ok();
-    }
-
-    Ok(())
-}
-
-fn write_code_excerpt(output: &mut String, snapshot: &BufferSnapshot, start: Point, end: Point) {
-    const MAX_CONTEXT_LINES: u32 = 3;
-    const MAX_LINE_LEN: u32 = 200;
-
-    let start_row = start.row.saturating_sub(MAX_CONTEXT_LINES);
-    let end_row = cmp::min(snapshot.max_point().row, end.row + MAX_CONTEXT_LINES);
-
-    writeln!(output, "```").ok();
-
-    for row in start_row..=end_row {
-        let row_start = Point::new(row, 0);
-        let row_end = if row < snapshot.max_point().row {
-            Point::new(row + 1, 0)
-        } else {
-            Point::new(row, u32::MAX)
-        };
-
-        // Add line number prefix
-        write!(output, "{}: ", row + 1).ok();
-
-        // Add line content with truncation if too long
-        let line_content = snapshot
-            .text_for_range(row_start..row_end)
-            .take(MAX_LINE_LEN as usize)
-            .collect::<String>();
-
-        output.push_str(&line_content);
-
-        if row_end.column > MAX_LINE_LEN {
-            output.push_str("…");
-        }
-
-        output.push('\n');
-    }
-
-    writeln!(output, "```").ok();
 }
 
 fn render_symbol_entries(
