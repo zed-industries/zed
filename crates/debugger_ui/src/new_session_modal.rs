@@ -2,11 +2,10 @@ use std::{
     borrow::Cow,
     ops::Not,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use anyhow::{Result, anyhow};
-use dap::{DapRegistry, DebugRequestType};
+use dap::DebugRequestType;
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
@@ -174,17 +173,9 @@ impl NewSessionModal {
             if selected_debugger != this.debug_definition.adapter {
                 this.debug_definition.adapter = selected_debugger.into();
 
-                let Some(adapter) = this.registry.adapter(&this.debug_definition.adapter) else {
-                    return;
-                };
-                let new_query = adapter.attach_processes_filter();
                 this.attach_picker.update(cx, |this, cx| {
                     this.picker.update(cx, |this, cx| {
                         this.delegate.debug_config.adapter = selected_debugger.into();
-                        if this.query(cx).is_empty() {
-                            this.set_query(new_query.as_str(), window, cx);
-                        }
-
                         this.focus(window, cx);
                     })
                 });
@@ -369,7 +360,6 @@ impl LaunchMode {
 
 #[derive(Clone)]
 struct AttachMode {
-    registry: Arc<DapRegistry>,
     debug_definition: DebugTaskDefinition,
     attach_picker: Entity<AttachModal>,
 }
@@ -390,7 +380,6 @@ impl AttachMode {
             initialize_args: None,
             stop_on_entry: Some(false),
         };
-        let registry = project.read(cx).debug_adapters().clone();
         let attach_picker = cx.new(|cx| {
             let modal = AttachModal::new(project, debug_definition.clone(), false, window, cx);
             window.focus(&modal.focus_handle(cx));
@@ -398,7 +387,6 @@ impl AttachMode {
             modal
         });
         cx.new(|_| Self {
-            registry,
             debug_definition,
             attach_picker,
         })
