@@ -76,7 +76,6 @@ fn main() {
     app.run(move |cx| {
         let app_state = init(cx);
 
-        // === Telemetry IDs initialization ===
         let system_id = ids::get_or_create_id(&ids::eval_system_id_path())
             .unwrap_or_else(|_| "unknown-system-id".to_string());
         let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path())
