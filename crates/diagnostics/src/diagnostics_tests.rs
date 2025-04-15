@@ -1,7 +1,13 @@
 use super::*;
 use collections::{HashMap, HashSet};
-use editor::{DisplayPoint, display_map::DisplayRow, test::editor_content_with_blocks};
+use editor::{
+    DisplayPoint,
+    actions::{GoToDiagnostic, GoToPreviousDiagnostic, MoveToBeginning},
+    display_map::DisplayRow,
+    test::{editor_content_with_blocks, editor_test_context::EditorTestContext},
+};
 use gpui::{TestAppContext, VisualTestContext};
+use indoc::indoc;
 use language::Rope;
 use lsp::LanguageServerId;
 use pretty_assertions::assert_eq;
@@ -771,6 +777,263 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     if next_ref_line.is_some() || skipped_block {
         pretty_assertions::assert_eq!(mutated_excerpts, reference_excerpts);
     }
+}
+
+#[gpui::test]
+async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.set_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    let message = "Something's wrong!";
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 11),
+                                lsp::Position::new(0, 12),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: message.to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        assert_eq!(
+            editor
+                .active_diagnostic_group()
+                .map(|diagnostics_group| diagnostics_group.active_message.as_str()),
+            Some(message),
+            "Should have a diagnostics group activated"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: Vec::new(),
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(editor.active_diagnostic_group(), None);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        assert_eq!(editor.active_diagnostic_group(), None);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+}
+
+#[gpui::test]
+async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.set_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 11),
+                                    lsp::Position::new(0, 12),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 25),
+                                    lsp::Position::new(0, 28),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                        ],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    cx.run_until_parked();
+
+    //// Backward
+
+    // Fourth diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    // Third diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // Second diagnostic, same place
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // First diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    // Wrapped over, fourth diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    //// Forward
+
+    // First diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    // Second diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // Third diagnostic, same place
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // Fourth diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    // Wrapped around, first diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
 }
 
 fn init_test(cx: &mut TestAppContext) {

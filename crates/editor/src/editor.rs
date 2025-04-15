@@ -1091,13 +1091,14 @@ struct RegisteredInlineCompletionProvider {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ActiveDiagnosticGroup {
-    primary_range: Range<Anchor>,
-    primary_message: String,
-    group_id: usize,
-    blocks: HashSet<CustomBlockId>,
+pub struct ActiveDiagnosticGroup {
+    pub active_range: Range<Anchor>,
+    pub active_message: String,
+    pub group_id: usize,
+    pub blocks: HashSet<CustomBlockId>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ActiveDiagnostic {
     None,
     All,
@@ -13035,7 +13036,7 @@ impl Editor {
         });
     }
 
-    fn go_to_diagnostic(
+    pub fn go_to_diagnostic(
         &mut self,
         _: &GoToDiagnostic,
         window: &mut Window,
@@ -13045,7 +13046,7 @@ impl Editor {
         self.go_to_diagnostic_impl(Direction::Next, window, cx)
     }
 
-    fn go_to_prev_diagnostic(
+    pub fn go_to_prev_diagnostic(
         &mut self,
         _: &GoToPreviousDiagnostic,
         window: &mut Window,
@@ -13062,19 +13063,19 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selection = self.selections.newest::<Point>(cx);
+        let selection = self.selections.newest::<usize>(cx);
 
         let mut active_group_id = None;
         if let ActiveDiagnostic::Group(active_group) = &self.active_diagnostics {
-            if active_group.primary_range.start.to_point(&buffer) == selection.start {
+            if active_group.active_range.start.to_offset(&buffer) == selection.start {
                 active_group_id = Some(active_group.group_id);
             }
         }
 
         fn filtered(
             snapshot: EditorSnapshot,
-            diagnostics: impl Iterator<Item = DiagnosticEntry<Point>>,
-        ) -> impl Iterator<Item = DiagnosticEntry<Point>> {
+            diagnostics: impl Iterator<Item = DiagnosticEntry<usize>>,
+        ) -> impl Iterator<Item = DiagnosticEntry<usize>> {
             diagnostics
                 .filter(|entry| entry.range.start != entry.range.end)
                 .filter(|entry| !entry.diagnostic.is_unnecessary)
@@ -13084,25 +13085,25 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let before = filtered(
             snapshot.clone(),
-            buffer.diagnostics_in_range(Point::zero()..selection.start),
+            buffer
+                .diagnostics_in_range(0..selection.start)
+                .filter(|entry| entry.range.start <= selection.start),
         );
         let after = filtered(
             snapshot,
-            buffer.diagnostics_in_range(selection.start..buffer.max_point()),
+            buffer
+                .diagnostics_in_range(selection.start..buffer.len())
+                .filter(|entry| entry.range.start >= selection.start),
         );
 
-        let mut found = None;
+        let mut found: Option<DiagnosticEntry<usize>> = None;
         if direction == Direction::Prev {
-            'outer: for range in [before, after] {
-                let prev_diagnostics = range.collect::<Vec<_>>();
-
+            'outer: for prev_diagnostics in [before.collect::<Vec<_>>(), after.collect::<Vec<_>>()]
+            {
                 for diagnostic in prev_diagnostics.into_iter().rev() {
-                    if diagnostic.range.start < selection.start
-                        && !(Some(diagnostic.diagnostic.group_id) == active_group_id
-                            && diagnostic.range.start.row == selection.start.row)
-                        || diagnostic.range.start == selection.start
-                            && active_group_id
-                                .is_some_and(|active| diagnostic.diagnostic.group_id < active)
+                    if diagnostic.range.start != selection.start
+                        || active_group_id
+                            .is_some_and(|active| diagnostic.diagnostic.group_id < active)
                     {
                         found = Some(diagnostic);
                         break 'outer;
@@ -13111,12 +13112,8 @@ impl Editor {
             }
         } else {
             for diagnostic in after.chain(before) {
-                if diagnostic.range.start > selection.start
-                    && !(Some(diagnostic.diagnostic.group_id) == active_group_id
-                        && diagnostic.range.start.row == selection.start.row)
-                    || diagnostic.range.start == selection.start
-                        && active_group_id
-                            .is_some_and(|active| diagnostic.diagnostic.group_id > active)
+                if diagnostic.range.start != selection.start
+                    || active_group_id.is_some_and(|active| diagnostic.diagnostic.group_id > active)
                 {
                     found = Some(diagnostic);
                     break;
@@ -13130,12 +13127,12 @@ impl Editor {
         let Some(buffer_id) = buffer.anchor_after(next_diagnostic.range.start).buffer_id else {
             return;
         };
-        self.activate_diagnostics(buffer_id, next_diagnostic.diagnostic.group_id, window, cx);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.select_ranges(vec![
                 next_diagnostic.range.start..next_diagnostic.range.start,
             ])
         });
+        self.activate_diagnostics(buffer_id, next_diagnostic, window, cx);
         self.refresh_inline_completion(false, true, window, cx);
     }
 
@@ -14430,20 +14427,27 @@ impl Editor {
     fn refresh_active_diagnostics(&mut self, cx: &mut Context<Editor>) {
         if let ActiveDiagnostic::Group(active_diagnostics) = &mut self.active_diagnostics {
             let buffer = self.buffer.read(cx).snapshot(cx);
-            let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
-            let primary_range_end = active_diagnostics.primary_range.end.to_offset(&buffer);
+            let primary_range_start = active_diagnostics.active_range.start.to_offset(&buffer);
+            let primary_range_end = active_diagnostics.active_range.end.to_offset(&buffer);
             let is_valid = buffer
                 .diagnostics_in_range::<usize>(primary_range_start..primary_range_end)
                 .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == active_diagnostics.primary_message
+                        && entry.diagnostic.message == active_diagnostics.active_message
                 });
 
             if !is_valid {
                 self.dismiss_diagnostics(cx);
             }
+        }
+    }
+
+    pub fn active_diagnostic_group(&self) -> Option<&ActiveDiagnosticGroup> {
+        match &self.active_diagnostics {
+            ActiveDiagnostic::Group(group) => Some(group),
+            _ => None,
         }
     }
 
@@ -14455,7 +14459,7 @@ impl Editor {
     fn activate_diagnostics(
         &mut self,
         buffer_id: BufferId,
-        group_id: usize,
+        diagnostic: DiagnosticEntry<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -14472,26 +14476,12 @@ impl Editor {
         };
         let buffer = self.buffer.read(cx).snapshot(cx);
 
-        let mut primary_range = None;
-        let mut primary_message = None;
         let diagnostic_group = buffer
-            .diagnostic_group(buffer_id, group_id)
-            .inspect(|entry| {
-                if entry.diagnostic.is_primary {
-                    primary_range = Some(entry.range.clone());
-                    primary_message = Some(entry.diagnostic.message.clone());
-                }
-            })
+            .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
             .collect::<Vec<_>>();
-        let Some(primary_range) = primary_range else {
-            return;
-        };
-        let Some(primary_message) = primary_message else {
-            return;
-        };
 
         let blocks = diagnostic_renderer.render_group(
-            diagnostic_group.clone(),
+            diagnostic_group,
             buffer_id,
             snapshot,
             cx.weak_entity(),
@@ -14502,10 +14492,10 @@ impl Editor {
             display_map.insert_blocks(blocks, cx).into_iter().collect()
         });
         self.active_diagnostics = ActiveDiagnostic::Group(ActiveDiagnosticGroup {
-            primary_range: buffer.anchor_before(primary_range.start)
-                ..buffer.anchor_after(primary_range.end),
-            primary_message,
-            group_id,
+            active_range: buffer.anchor_before(diagnostic.range.start)
+                ..buffer.anchor_after(diagnostic.range.end),
+            active_message: diagnostic.diagnostic.message.clone(),
+            group_id: diagnostic.diagnostic.group_id,
             blocks,
         });
         cx.notify();
