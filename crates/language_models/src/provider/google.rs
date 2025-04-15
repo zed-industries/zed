@@ -4,7 +4,8 @@ use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
-    FunctionDeclaration, GenerateContentResponse, Part, SystemInstructions, UsageMetadata,
+    FunctionCallingConfig, FunctionCallingMode, FunctionDeclaration, GenerateContentResponse, Part,
+    SystemInstructions, ToolConfig, UsageMetadata,
 };
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
@@ -449,7 +450,12 @@ pub fn into_google(
                     .collect(),
             }]
         }),
-        tool_config: None,
+        tool_config: Some(ToolConfig {
+            function_calling_config: FunctionCallingConfig {
+                mode: FunctionCallingMode::Any,
+                allowed_function_names: None,
+            },
+        }),
     }
 }
 
