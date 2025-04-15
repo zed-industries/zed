@@ -2999,7 +2999,11 @@ impl GitPanel {
             .is_some();
 
         let footer = v_flex()
-            .child(PanelRepoFooter::new(display_name, branch, Some(git_panel)))
+            .child(PanelRepoFooter::new(
+                display_name,
+                branch,
+                Some(git_panel.clone()),
+            ))
             .child(
                 panel_editor_container(window, cx)
                     .id("commit-editor-container")
@@ -3103,9 +3107,19 @@ impl GitPanel {
                                                         )
                                                         .mr_0p5(),
                                                 )
-                                                .on_click(move |_, window, cx| {
-                                                    window
-                                                        .dispatch_action(Box::new(git::Commit), cx);
+                                                .on_click({
+                                                    let git_panel = git_panel.downgrade();
+                                                    move |_, window, cx| {
+                                                        git_panel
+                                                            .update(cx, |git_panel, cx| {
+                                                                git_panel.commit_changes(
+                                                                    CommitOptions { amend: false },
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            })
+                                                            .ok();
+                                                    }
                                                 })
                                                 .disabled(!can_commit || self.modal_open)
                                                 .tooltip({
