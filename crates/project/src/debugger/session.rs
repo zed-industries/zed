@@ -11,7 +11,7 @@ use super::dap_command::{
     StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
     TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
-use super::dap_store::DapAdapterDelegate;
+use super::dap_store::{DapAdapterDelegate, DapStore};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
@@ -51,6 +51,7 @@ use std::{
 use task::{DebugAdapterConfig, DebugTaskDefinition};
 use text::{PointUtf16, ToPointUtf16};
 use util::{ResultExt, merge_json_value_into};
+use worktree::Worktree;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
@@ -172,6 +173,7 @@ pub struct LocalMode {
     adapter: Arc<dyn DebugAdapter>,
     breakpoint_store: Entity<BreakpointStore>,
     tmp_breakpoint: Option<SourceBreakpoint>,
+    worktree: WeakEntity<Worktree>,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -194,6 +196,7 @@ impl LocalMode {
         debug_adapters: Arc<DapRegistry>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
+        worktree: WeakEntity<Worktree>,
         breakpoint_store: Entity<BreakpointStore>,
         config: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
@@ -205,6 +208,7 @@ impl LocalMode {
             session_id,
             parent_session,
             breakpoint_store,
+            worktree,
             config,
             delegate,
             messages_tx,
@@ -360,6 +364,7 @@ impl LocalMode {
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         breakpoint_store: Entity<BreakpointStore>,
+        worktree: WeakEntity<Worktree>,
         config: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
@@ -493,7 +498,12 @@ impl LocalMode {
         };
         self.request(arg, cx.background_executor().clone())
     }
-    fn send_source_breakpoints(&self, ignore_breakpoints: bool, cx: &App) -> Task<()> {
+
+    fn send_source_breakpoints(
+        &self,
+        ignore_breakpoints: bool,
+        cx: &App,
+    ) -> Task<HashMap<Arc<Path>, anyhow::Error>> {
         let mut breakpoint_tasks = Vec::new();
         let breakpoints = self
             .breakpoint_store
@@ -510,26 +520,25 @@ impl LocalMode {
                     .collect()
             };
 
-            breakpoint_tasks.push(self.request(
-                dap_command::SetBreakpoints {
-                    source: client_source(&path),
-                    source_modified: Some(false),
-                    breakpoints,
-                },
-                cx.background_executor().clone(),
-            ));
+            breakpoint_tasks.push(
+                self.request(
+                    dap_command::SetBreakpoints {
+                        source: client_source(&path),
+                        source_modified: Some(false),
+                        breakpoints,
+                    },
+                    cx.background_executor().clone(),
+                )
+                .map(|result| result.map_err(|e| (path, e))),
+            );
         }
 
         cx.background_spawn(async move {
             futures::future::join_all(breakpoint_tasks)
                 .await
-                .iter()
-                .for_each(|res| match res {
-                    Ok(_) => {}
-                    Err(err) => {
-                        log::warn!("Set breakpoints request failed: {}", err);
-                    }
-                });
+                .into_iter()
+                .filter_map(Result::err)
+                .collect::<HashMap<_, _>>()
         })
     }
 
@@ -590,6 +599,7 @@ impl LocalMode {
         &self,
         capabilities: &Capabilities,
         initialized_rx: oneshot::Receiver<()>,
+        dap_store: WeakEntity<DapStore>,
         cx: &App,
     ) -> Task<Result<()>> {
         let (mut raw, is_launch) = match &self.config.request {
@@ -643,10 +653,28 @@ impl LocalMode {
             let this = self.clone();
             async move |cx| {
                 initialized_rx.await?;
-                // todo(debugger) figure out if we want to handle a breakpoint response error
-                // This will probably consist of letting a user know that breakpoints failed to be set
-                cx.update(|cx| this.send_source_breakpoints(false, cx))?
+                let errors_by_path = cx
+                    .update(|cx| this.send_source_breakpoints(false, cx))?
                     .await;
+
+                dap_store.update(cx, |dap_store, cx| {
+                    let mut error_messages = text::Rope::new();
+
+                    for (failed_path, error_msg) in errors_by_path {
+                        error_messages.push(&format!(
+                            "Failed to send breakpoints at path: {}, reason: {}",
+                            failed_path.to_string_lossy(),
+                            error_msg
+                        ));
+                    }
+
+                    if !error_messages.is_empty() {
+                        cx.emit(super::dap_store::DapStoreEvent::Notification(
+                            error_messages.to_string(),
+                        ));
+                    }
+                })?;
+
                 cx.update(|cx| {
                     this.send_exception_breakpoints(
                         exception_filters,
@@ -907,6 +935,7 @@ impl EventEmitter<SessionStateEvent> for Session {}
 impl Session {
     pub(crate) fn local(
         breakpoint_store: Entity<BreakpointStore>,
+        worktree: WeakEntity<Worktree>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         delegate: DapAdapterDelegate,
@@ -923,6 +952,7 @@ impl Session {
                 debug_adapters,
                 session_id,
                 parent_session.clone(),
+                worktree,
                 breakpoint_store.clone(),
                 config.clone(),
                 delegate,
@@ -1118,11 +1148,12 @@ impl Session {
     pub(super) fn initialize_sequence(
         &mut self,
         initialize_rx: oneshot::Receiver<()>,
+        dap_store: WeakEntity<DapStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         match &self.mode {
             Mode::Local(local_mode) => {
-                local_mode.initialize_sequence(&self.capabilities, initialize_rx, cx)
+                local_mode.initialize_sequence(&self.capabilities, initialize_rx, dap_store, cx)
             }
             Mode::Remote(_) => Task::ready(Err(anyhow!("cannot initialize remote session"))),
         }
@@ -1539,13 +1570,20 @@ impl Session {
         self.ignore_breakpoints
     }
 
-    pub fn toggle_ignore_breakpoints(&mut self, cx: &mut App) -> Task<()> {
+    pub fn toggle_ignore_breakpoints(
+        &mut self,
+        cx: &mut App,
+    ) -> Task<HashMap<Arc<Path>, anyhow::Error>> {
         self.set_ignore_breakpoints(!self.ignore_breakpoints, cx)
     }
 
-    pub(crate) fn set_ignore_breakpoints(&mut self, ignore: bool, cx: &mut App) -> Task<()> {
+    pub(crate) fn set_ignore_breakpoints(
+        &mut self,
+        ignore: bool,
+        cx: &mut App,
+    ) -> Task<HashMap<Arc<Path>, anyhow::Error>> {
         if self.ignore_breakpoints == ignore {
-            return Task::ready(());
+            return Task::ready(HashMap::default());
         }
 
         self.ignore_breakpoints = ignore;

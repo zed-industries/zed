@@ -312,7 +312,7 @@ impl DapStore {
                     session.set_ignore_breakpoints(envelope.payload.ignore, cx)
                 })
             } else {
-                Task::ready(())
+                Task::ready(HashMap::default())
             }
         })?
         .await;
@@ -371,6 +371,7 @@ impl DapStore {
             let start_client_task = this.update(cx, |this, cx| {
                 Session::local(
                     this.breakpoint_store.clone(),
+                    worktree.downgrade(),
                     session_id,
                     parent_session,
                     delegate,
@@ -859,7 +860,7 @@ fn create_new_session(
 
             session
                 .update(cx, |session, cx| {
-                    session.initialize_sequence(initialized_rx, cx)
+                    session.initialize_sequence(initialized_rx, this.clone(), cx)
                 })?
                 .await
         };

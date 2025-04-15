@@ -12,7 +12,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
+use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
 use text::{Point, PointUtf16};
 
 use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
@@ -538,7 +538,7 @@ impl BreakpointStore {
                         .map(|(position, breakpoint)| {
                             let position = snapshot.summary_for_anchor::<PointUtf16>(position).row;
                             SourceBreakpoint {
-                                row: position,
+                                row: u32::MAX,
                                 path: path.clone(),
                                 message: breakpoint.message.clone(),
                                 state: breakpoint.state,
