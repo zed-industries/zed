@@ -22,6 +22,7 @@ mod schema;
 mod symbol_info_tool;
 mod terminal_tool;
 mod thinking_tool;
+mod search_tool;
 
 use std::sync::Arc;
 
@@ -51,6 +52,7 @@ use crate::rename_tool::RenameTool;
 use crate::symbol_info_tool::SymbolInfoTool;
 use crate::terminal_tool::TerminalTool;
 use crate::thinking_tool::ThinkingTool;
+use crate::search_tool::SearchTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
@@ -77,6 +79,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(RegexSearchTool);
     registry.register_tool(RenameTool);
     registry.register_tool(ThinkingTool);
+    registry.register_tool(SearchTool);
     registry.register_tool(FetchTool::new(http_client));
 }
 
