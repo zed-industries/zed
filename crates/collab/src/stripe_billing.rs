@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{Cents, Result, llm};
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use chrono::{Datelike, Utc};
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 pub struct StripeBilling {
     state: RwLock<StripeBillingState>,
     client: Arc<stripe::Client>,
+    zed_pro_price_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -31,10 +32,11 @@ struct StripeBillingPrice {
 }
 
 impl StripeBilling {
-    pub fn new(client: Arc<stripe::Client>) -> Self {
+    pub fn new(client: Arc<stripe::Client>, zed_pro_price_id: Option<String>) -> Self {
         Self {
             client,
             state: RwLock::default(),
+            zed_pro_price_id,
         }
     }
 
@@ -377,6 +379,32 @@ impl StripeBilling {
             })
             .collect(),
         );
+        params.success_url = Some(success_url);
+
+        let session = stripe::CheckoutSession::create(&self.client, params).await?;
+        Ok(session.url.context("no checkout session URL")?)
+    }
+
+    pub async fn checkout_with_zed_pro(
+        &self,
+        customer_id: stripe::CustomerId,
+        github_login: &str,
+        success_url: &str,
+    ) -> Result<String> {
+        let zed_pro_price_id = self
+            .zed_pro_price_id
+            .as_ref()
+            .ok_or_else(|| anyhow!("Zed Pro price ID not set"))?;
+
+        let mut params = stripe::CreateCheckoutSession::new();
+        params.mode = Some(stripe::CheckoutSessionMode::Subscription);
+        params.customer = Some(customer_id);
+        params.client_reference_id = Some(github_login);
+        params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
+            price: Some(zed_pro_price_id.clone()),
+            quantity: Some(1),
+            ..Default::default()
+        }]);
         params.success_url = Some(success_url);
 
         let session = stripe::CheckoutSession::create(&self.client, params).await?;
