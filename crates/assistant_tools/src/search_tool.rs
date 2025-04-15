@@ -19,42 +19,29 @@ use util::markdown::MarkdownString;
 use util::paths::PathMatcher;
 use worktree::Snapshot;
 
-// No helper traits needed
-
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SearchToolInput {
-    /// Only paths matching this regex will be considered for the output.
+    /// Only paths matching this glob pattern will be considered for the output.
     ///
-    /// If this paramter is omitted, all files will be considered.
-    ///
-    /// <example>
-    /// To find all Markdown files, use ".*\\.md$"
-    /// To find files in a specific directory, use "src/zed\\.dev/.*"
-    /// </example>
-    pub path_regex: Option<String>,
-
-    /// Whether path_regex should do case-senstive matches. Defaults to false.
+    /// If this parameter is omitted, all files will be considered.
     ///
     /// <example>
-    /// Set to `true` to make path pattern matching case-sensitive.
-    /// For instance, "SRC" would not match "src" when this is true.
+    /// To find all Markdown files, use "**/*.md"
+    /// To find files in a specific directory, use "src/zed.dev/**"
     /// </example>
-    #[serde(default)]
-    pub path_regex_case_sensitive: bool,
+    pub path_glob: Option<String>,
 
-    /// Only files containing this regex will be included in the output.
+    /// When specified, this filters the output based on the contents of the files or code symbols.
     ///
-    /// - If the "output" parameter is "symbols", then only code symbols (such as identifiers, types, etc.) matching this regex will be included.
-    /// - If the "output" parameter is "text", then only text snippets matching this regex will be included.
-    /// - If the "output" parameter is "paths", then only files whose contents match this regex will be included.
-    ///
-    /// If this parameter is omitted, then no filtering based on file contents will occur.
+    /// - If the "output" parameter is "symbols", then this search query be sent to the language server to filter which the code symbols (such as identifiers, types, etc.) will be included in the output.
+    /// - If the "output" parameter is "text", then this query will be interpreted as a regex, adn only text snippets matching that regex will be included.
+    /// - If the "output" parameter is "paths", then this query will be interpreted as a regex, adn only files whose text contents match that regex will be included.
     #[serde(default)]
-    pub file_contents_regex: Option<String>,
+    pub query: Option<String>,
 
     /// Whether the regex is case-sensitive. Defaults to false (case-insensitive).
     #[serde(default)]
-    pub file_contents_regex_case_sensitive: bool,
+    pub contents_regex_case_sensitive: bool,
 
     /// The desired format for the output.
     pub output: Output,
@@ -69,10 +56,13 @@ pub struct SearchToolInput {
 #[serde(rename_all = "snake_case")]
 pub enum Output {
     /// Output matching file paths only.
+    /// If no path_regex is specified, outputs all the paths in the project.
     Paths,
     /// Output matching arbitrary text regions within files, including their line numbers.
+    /// If no path_regex is specified, outputs text found in any file in the project.
     Text,
     /// Output matching code symbols (such as identifiers, types, etc.) within files, including their line numbers.
+    /// If no path_regex is specified, outputs symbols found across the entire project.
     Symbols,
 }
 
@@ -85,7 +75,7 @@ pub struct SearchTool;
 
 impl Tool for SearchTool {
     fn name(&self) -> String {
-        "search".into()
+        "search_project".into()
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
@@ -107,43 +97,58 @@ impl Tool for SearchTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<SearchToolInput>(input.clone()) {
             Ok(input) => {
-                let path_pattern =
-                    MarkdownString::inline_code(input.path_regex.as_deref().unwrap_or(".*"));
-                let case_info = if input.path_regex_case_sensitive
-                    || input.file_contents_regex_case_sensitive
-                {
+                // Don't show any pattern if not specified
+                let path_pattern = input.path_glob.as_deref().map(MarkdownString::inline_code);
+                let case_info = if input.contents_regex_case_sensitive {
                     " (case-sensitive)"
                 } else {
                     ""
                 };
 
                 match input.output {
-                    Output::Paths => {
-                        format!("Find paths matching {}{}", path_pattern, case_info)
-                    }
+                    Output::Paths => match path_pattern {
+                        Some(pattern) => format!("Find paths matching {}{}", pattern, case_info),
+                        None => format!("Find all paths{}", case_info),
+                    },
                     Output::Text => {
-                        if let Some(search_regex) = &input.file_contents_regex {
+                        if let Some(search_regex) = &input.query {
                             let search_pattern = MarkdownString::inline_code(search_regex);
-                            format!(
-                                "Search for {} in files matching {}{}",
-                                search_pattern, path_pattern, case_info
-                            )
+                            match path_pattern {
+                                Some(pattern) => format!(
+                                    "Search for {} in files matching {}{}",
+                                    search_pattern, pattern, case_info
+                                ),
+                                None => format!("Search for {}{}", search_pattern, case_info),
+                            }
                         } else {
-                            format!("Search in files matching {}{}", path_pattern, case_info)
+                            match path_pattern {
+                                Some(pattern) => {
+                                    format!("Search in files matching {}{}", pattern, case_info)
+                                }
+                                None => format!("Search in all files{}", case_info),
+                            }
                         }
                     }
                     Output::Symbols => {
-                        if let Some(search_regex) = &input.file_contents_regex {
+                        if let Some(search_regex) = &input.query {
                             let search_pattern = MarkdownString::inline_code(search_regex);
-                            format!(
-                                "Find symbols matching {} in files matching {}{}",
-                                search_pattern, path_pattern, case_info
-                            )
+                            match path_pattern {
+                                Some(pattern) => format!(
+                                    "Find symbols matching {} in files matching {}{}",
+                                    search_pattern, pattern, case_info
+                                ),
+                                None => {
+                                    format!("Find symbols matching {}{}", search_pattern, case_info)
+                                }
+                            }
                         } else {
-                            format!(
-                                "Find symbols in files matching {}{}",
-                                path_pattern, case_info
-                            )
+                            match path_pattern {
+                                Some(pattern) => format!(
+                                    "Find symbols in files matching {}{}",
+                                    pattern, case_info
+                                ),
+                                None => format!("Find all symbols{}", case_info),
+                            }
                         }
                     }
                 }
@@ -178,12 +183,26 @@ fn search_paths(
     project: Entity<Project>,
     cx: &mut App,
 ) -> Task<Result<String>> {
-    let path_regex = match RegexBuilder::new(input.path_regex.as_deref().unwrap_or(".*"))
-        .case_insensitive(!input.path_regex_case_sensitive)
-        .build()
-    {
-        Ok(regex) => regex,
-        Err(err) => return Task::ready(Err(anyhow!("Invalid path regex: {}", err))),
+    // Clone the path_glob to avoid borrowing issues with the async closure
+    let path_glob_option = input.path_glob.clone();
+
+    // Create the path matcher based on the provided glob pattern or use a matcher that matches everything
+    let path_matcher = if let Some(glob) = path_glob_option.as_deref() {
+        match PathMatcher::new([glob]) {
+            Ok(matcher) => matcher,
+            Err(err) => return Task::ready(Err(anyhow!("Invalid glob pattern: {}", err))),
+        }
+    } else {
+        // When no glob pattern is provided, match all files
+        match PathMatcher::new(["*"]) {
+            Ok(matcher) => matcher,
+            Err(err) => {
+                return Task::ready(Err(anyhow!(
+                    "Failed to create default path matcher: {}",
+                    err
+                )));
+            }
+        }
     };
 
     let snapshots: Vec<Snapshot> = project
@@ -191,6 +210,9 @@ fn search_paths(
         .worktrees(cx)
         .map(|worktree| worktree.read(cx).snapshot())
         .collect();
+
+    // Create a copy of path_glob for use in the async closure
+    let path_glob_for_error = path_glob_option.clone();
 
     cx.background_executor().spawn(async move {
         let mut matches = Vec::new();
@@ -200,9 +222,7 @@ fn search_paths(
 
             // Don't consider ignored entries
             for entry in worktree.entries(false, 0) {
-                let path_string = entry.path.to_string_lossy().to_string();
-
-                if path_regex.is_match(&path_string) {
+                if path_matcher.is_match(&entry.path) {
                     matches.push(
                         PathBuf::from(root_name)
                             .join(&entry.path)
@@ -214,7 +234,7 @@ fn search_paths(
         }
 
         if matches.is_empty() {
-            Ok(format!("No paths in the project matched the regex {:?}", input.path_regex))
+            Ok(format!("No paths in the project matched the glob {:?}", path_glob_for_error))
         } else {
             // Sort to group entries in the same directory together
             matches.sort();
@@ -259,7 +279,7 @@ fn search_text(
 ) -> Task<Result<String>> {
     const CONTEXT_LINES: u32 = 2;
 
-    let search_regex = match &input.file_contents_regex {
+    let search_regex = match &input.query {
         Some(regex) => regex.clone(),
         None => {
             return Task::ready(Err(anyhow!(
@@ -268,17 +288,29 @@ fn search_text(
         }
     };
 
-    // We don't have a specific_file field anymore, so always use path_regex
-    // Create a query based on the path regex
-    let path_matcher = match PathMatcher::new([input.path_regex.as_deref().unwrap_or(".*")]) {
-        Ok(matcher) => matcher,
-        Err(err) => return Task::ready(Err(anyhow!("Invalid file path: {}", err))),
+    // Create a query based on the path glob or use a matcher that matches everything
+    let path_matcher = if let Some(glob) = input.path_glob.as_deref() {
+        match PathMatcher::new([glob]) {
+            Ok(matcher) => matcher,
+            Err(err) => return Task::ready(Err(anyhow!("Invalid glob pattern: {}", err))),
+        }
+    } else {
+        // When no glob pattern is provided, match all files
+        match PathMatcher::new(["*"]) {
+            Ok(matcher) => matcher,
+            Err(err) => {
+                return Task::ready(Err(anyhow!(
+                    "Failed to create default path matcher: {}",
+                    err
+                )));
+            }
+        }
     };
 
     let query = match SearchQuery::regex(
         &search_regex,
         false,
-        input.file_contents_regex_case_sensitive,
+        input.contents_regex_case_sensitive,
         false,
         false,
         path_matcher,
@@ -384,45 +416,45 @@ fn search_symbols(
     action_log: Entity<ActionLog>,
     cx: &mut App,
 ) -> Task<Result<String>> {
-    // Create regex for filtering symbols if file_contents_regex is provided
-    let regex = match &input.file_contents_regex {
-        Some(regex_str) => {
-            match RegexBuilder::new(regex_str)
-                .case_insensitive(!input.file_contents_regex_case_sensitive)
-                .build()
-            {
-                Ok(regex) => Some(regex),
-                Err(err) => return Task::ready(Err(anyhow!("Invalid regex: {}", err))),
-            }
+    // Check if path_glob is a specific file path
+    if let Some(path) = &input.path_glob {
+        // If the glob pattern doesn't contain wildcards, assume it's a specific file path
+        if !path.contains('*') && !path.contains('?') && !path.contains('[') {
+            let path_string = path.clone();
+            return cx.spawn(async move |cx| {
+                file_outline(
+                    project,
+                    path_string,
+                    action_log,
+                    input.query,
+                    input.offset,
+                    cx,
+                )
+                .await
+            });
         }
-        None => None,
-    };
-
-    // We don't use specific_file anymore - use path_regex directly if it's a single file
-    if let Some(path) = &input.path_regex {
-        let path_string = path.clone();
-        return cx.spawn(async move |cx| {
-            file_outline(project, path_string, action_log, regex, input.offset, cx).await
-        });
     }
 
-    // Otherwise, get project-wide symbols filtered by path_regex
-    let path_regex = match RegexBuilder::new(input.path_regex.as_deref().unwrap_or(".*"))
-        .case_insensitive(!input.path_regex_case_sensitive)
-        .build()
-    {
-        Ok(regex) => regex,
-        Err(err) => return Task::ready(Err(anyhow!("Invalid path regex: {}", err))),
+    // Otherwise, get project-wide symbols filtered by path_glob
+    let path_matcher = if let Some(glob) = input.path_glob.as_deref() {
+        match PathMatcher::new([glob]) {
+            Ok(matcher) => Some(matcher),
+            Err(err) => return Task::ready(Err(anyhow!("Invalid glob pattern: {}", err))),
+        }
+    } else {
+        None
     };
 
-    cx.spawn(async move |cx| project_symbols(project, path_regex, regex, input.offset, cx).await)
+    cx.spawn(async move |cx| {
+        project_symbols(project, path_matcher, &input.query.unwrap_or_default(), cx).await
+    })
 }
 
 async fn file_outline(
     project: Entity<Project>,
     path: String,
     action_log: Entity<ActionLog>,
-    regex: Option<Regex>,
+    query: Option<String>,
     offset: u32,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<String> {
@@ -465,7 +497,7 @@ async fn file_outline(
             .items
             .into_iter()
             .map(|item| item.to_point(&snapshot)),
-        regex,
+        query,
         offset,
         SYMBOLS_RESULTS_PER_PAGE,
     )
@@ -473,14 +505,13 @@ async fn file_outline(
 
 async fn project_symbols(
     project: Entity<Project>,
-    path_regex: Regex,
-    name_regex: Option<Regex>,
-    offset: u32,
+    path_matcher: Option<PathMatcher>,
+    query: &str,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<String> {
     const SYMBOLS_RESULTS_PER_PAGE_USIZE: usize = 100;
     let symbols = project
-        .update(cx, |project, cx| project.symbols("", cx))?
+        .update(cx, |project, cx| project.symbols(query, cx))?
         .await?;
 
     if symbols.is_empty() {
@@ -489,26 +520,12 @@ async fn project_symbols(
 
     let mut symbols_by_path: IndexMap<PathBuf, Vec<&Symbol>> = IndexMap::default();
 
-    for symbol in symbols
-        .iter()
-        // Apply both path and name filters
-        .filter(|symbol| {
-            // Convert path to string for regex matching
-            let path_string = symbol.path.path.to_string_lossy().to_string();
-            let path_matches = path_regex.is_match(&path_string);
-
-            let name_matches = if let Some(regex) = &name_regex {
-                regex.is_match(&symbol.name)
-            } else {
-                true
-            };
-
-            path_matches && name_matches
-        })
-        .skip(offset as usize)
-        // Take 1 more than RESULTS_PER_PAGE so we can tell if there are more results
-        .take(SYMBOLS_RESULTS_PER_PAGE_USIZE + 1)
-    {
+    for symbol in symbols.iter().filter(|symbol| {
+        path_matcher
+            .as_ref()
+            .map(|matcher| matcher.is_match(&symbol.path.path))
+            .unwrap_or(true)
+    }) {
         if let Some(worktree_path) = project.read_with(cx, |project, cx| {
             project
                 .worktree_for_id(symbol.path.worktree_id, cx)
@@ -536,11 +553,6 @@ async fn project_symbols(
         writeln!(&mut output, "## {}", file_path.display()).ok();
 
         for symbol in file_symbols {
-            if symbols_rendered >= SYMBOLS_RESULTS_PER_PAGE_USIZE {
-                has_more_symbols = true;
-                break 'outer;
-            }
-
             write!(&mut output, "  {} ", symbol.label.text()).ok();
 
             // Convert to 1-based line numbers for display
@@ -557,27 +569,13 @@ async fn project_symbols(
         }
     }
 
-    Ok(if has_more_symbols {
-        format!(
-            "{output}\n\nShowing symbols {}-{} (more symbols were found; use offset: {} to see next page)",
-            offset + 1,
-            offset + u32::try_from(symbols_rendered).unwrap_or(0),
-            offset + 100,
-        )
-    } else {
-        format!(
-            "{output}\n\nShowing symbols {}-{} (total symbols: {})",
-            offset + 1,
-            offset + u32::try_from(symbols_rendered).unwrap_or(0),
-            offset + u32::try_from(symbols_rendered).unwrap_or(0),
-        )
-    })
+    Ok(output)
 }
 
 fn render_outline(
     output: &mut String,
     items: impl IntoIterator<Item = OutlineItem<Point>>,
-    regex: Option<Regex>,
+    query: Option<String>,
     offset: u32,
     results_per_page: u32,
 ) -> anyhow::Result<String> {
@@ -586,9 +584,9 @@ fn render_outline(
     let entries = items
         .by_ref()
         .filter(|item| {
-            regex
+            query
                 .as_ref()
-                .map_or(true, |regex| regex.is_match(&item.text))
+                .map_or(true, |query| item.text.contains(query))
         })
         .take(results_per_page as usize)
         .collect::<Vec<_>>();
