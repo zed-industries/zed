@@ -125,6 +125,7 @@ pub struct GenerateContentRequest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
     pub contents: Vec<Content>,
+    pub system_instructions: Option<SystemInstructions>,
     pub generation_config: Option<GenerationConfig>,
     pub safety_settings: Option<Vec<SafetySetting>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -157,6 +158,12 @@ pub struct GenerateContentCandidate {
 pub struct Content {
     pub parts: Vec<Part>,
     pub role: Role,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemInstructions {
+    pub parts: Vec<Part>,
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
