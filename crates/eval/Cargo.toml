@@ -38,6 +38,7 @@ reqwest_client.workspace = true
 serde.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
+telemetry.workspace = true
 toml.workspace = true
 unindent.workspace = true
 util.workspace = true

@@ -257,6 +257,9 @@ fn main() {
                 / (score_count as f32);
             println!("\nAverage score: {average_score}");
 
+            // Give telemetry time to send before quitting
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
             cx.update(|cx| cx.quit())
         })
         .detach_and_log_err(cx);
@@ -269,10 +272,45 @@ async fn run_example(
     app_state: Arc<AgentAppState>,
     cx: &mut AsyncApp,
 ) -> Result<JudgeOutput> {
-    cx.update(|cx| example.run(model.clone(), app_state, cx))?
+    let run_output = cx
+        .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
         .await?;
     let diff = example.repository_diff().await?;
-    example.judge(model, diff, cx).await
+    let judge_output = example.judge(model.clone(), diff.clone(), cx).await?;
+
+    let cohort_id = example
+        .output_file_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+
+    // Send the telemetry event
+    telemetry::event!(
+        "Agent Eval Completed",
+        cohort_id = cohort_id,
+        example_name = example.name.clone(),
+        score = judge_output.score,
+        tool_use_counts = run_output.tool_use_counts,
+        response_count = run_output.response_count,
+        token_usage = run_output.token_usage,
+        model = model.telemetry_id(),
+        model_provider = model.provider_id().to_string(),
+        repository_url = example.base.url.clone(),
+        repository_revision = example.base.revision.clone(),
+        diagnostics_summary = run_output.diagnostics
+    );
+    
+    // Force a flush of the telemetry
+    app_state.client.telemetry().flush_events();
+    
+    // Add extra delay to give telemetry time to send
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    
+    println!("judge_output.score: {}", judge_output.score);
+    println!("judge_output: {}", judge_output.analysis);
+
+    Ok(judge_output)
 }
 
 fn list_all_examples() -> Result<Vec<PathBuf>> {
