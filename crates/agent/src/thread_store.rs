@@ -391,7 +391,7 @@ impl ThreadStore {
                             id: context_server.id().into(),
                         },
                         cx,
-                    )
+                    );
                 });
             }
         } else {
