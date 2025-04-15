@@ -12,6 +12,9 @@ fn main() {
 
         // Register exported Objective-C selectors, protocols, etc
         println!("cargo:rustc-link-arg=-Wl,-ObjC");
+
+        // weak link to support Catalina
+        println!("cargo:rustc-link-arg=-Wl,-weak_framework,ScreenCaptureKit");
     }
 
     // Populate git sha environment variable if git is available
