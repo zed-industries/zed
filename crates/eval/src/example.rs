@@ -330,7 +330,11 @@ impl Example {
                                 Ok(StopReason::MaxTokens) => {
                                     return Err(anyhow!("Exceeded maximum tokens"));
                                 }
-                                Ok(StopReason::ToolUse) => {}
+                                Ok(StopReason::ToolUse) => {
+                                    if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                                        println!("{}StopReason: Tool use", log_prefix);
+                                    }
+                                }
                                 Err(error) => {
                                     return Err(anyhow!(error.clone()));
                                 }
@@ -371,7 +375,20 @@ impl Example {
                                     }
                                 })?;
                             }
-                            _ => {}
+                            ThreadEvent::ToolConfirmationNeeded => {
+                                panic!("{}Bug: Tool confirmation should not be required in eval", log_prefix);
+                            },
+                            ThreadEvent::StreamedCompletion |
+                            ThreadEvent::MessageAdded(_) |
+                            ThreadEvent::MessageEdited(_) |
+                            ThreadEvent::MessageDeleted(_) |
+                            ThreadEvent::SummaryChanged |
+                            ThreadEvent::SummaryGenerated |
+                            ThreadEvent::CheckpointChanged => {
+                                if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                                    println!("{}Event: {:#?}", log_prefix, event);
+                                }
+                            }
                         }
 
                         output_file.flush().log_err();
@@ -387,16 +404,22 @@ impl Example {
 
             event_handler_task.await?;
 
+            println!("{}Stopped", this.log_prefix);
+
             if let Some((_, lsp_store)) = lsp_open_handle_and_store.as_ref() {
                 wait_for_lang_server(lsp_store, this.log_prefix.clone(), cx).await?;
             }
 
+            println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
+
+            println!("{}Getting diagnostics", this.log_prefix);
             let diagnostics = cx
                 .update(move |cx| {
                     cx.spawn(async move |cx| query_lsp_diagnostics(project, cx).await)
                 })?
                 .await?;
+            println!("{}Got diagnostics", this.log_prefix);
 
             drop(subscription);
             drop(lsp_open_handle_and_store);

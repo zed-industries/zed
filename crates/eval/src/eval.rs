@@ -1,6 +1,5 @@
 mod example;
 
-use assistant_settings::AssistantSettings;
 use client::{Client, ProxySettings, UserStore};
 pub(crate) use example::*;
 
@@ -10,7 +9,7 @@ use clap::Parser;
 use extension::ExtensionHostProxy;
 use futures::future;
 use gpui::http_client::{Uri, read_proxy_from_env};
-use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task};
+use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{
@@ -390,13 +389,10 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
     agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
 
-    AssistantSettings::override_global(
-        AssistantSettings {
-            always_allow_tool_actions: true,
-            ..AssistantSettings::get_global(cx).clone()
-        },
-        cx,
-    );
+    SettingsStore::update_global(cx, |store, cx| {
+        store.set_user_settings(include_str!("../runner_settings.json"), cx)
+    })
+    .unwrap();
 
     Arc::new(AgentAppState {
         languages,
