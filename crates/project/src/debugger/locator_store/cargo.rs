@@ -38,7 +38,6 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
 #[async_trait]
 impl DapLocator for CargoLocator {
     async fn run_locator(&self, debug_config: &mut DebugTaskDefinition) -> Result<()> {
-        dbg!(&debug_config);
         let Some(launch_config) = (match &mut debug_config.request {
             task::DebugRequestType::Launch(launch_config) => Some(launch_config),
             _ => None,
