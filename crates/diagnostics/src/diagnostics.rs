@@ -209,6 +209,7 @@ impl ProjectDiagnosticsEditor {
         .detach();
         cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
             this.include_warnings = cx.global::<IncludeWarnings>().0;
+            this.diagnostics.clear();
             this.update_all_excerpts(window, cx);
         })
         .detach();
@@ -301,10 +302,7 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, window: &mut Window, cx: &mut Context<Self>) {
-        self.include_warnings = !self.include_warnings;
-        cx.set_global(IncludeWarnings(self.include_warnings));
-        self.update_all_excerpts(window, cx);
-        cx.notify();
+        cx.set_global(IncludeWarnings(!self.include_warnings));
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
