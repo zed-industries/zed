@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolSource};
+use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
 use gpui::{App, Entity, Task};
 use icons::IconName;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -78,7 +78,7 @@ impl Tool for ContextServerTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
             let tool_name = self.tool.name.clone();
             let server_clone = server.clone();
@@ -118,8 +118,9 @@ impl Tool for ContextServerTool {
                 }
                 Ok(result)
             })
+            .into()
         } else {
-            Task::ready(Err(anyhow!("Context server not found")))
+            Task::ready(Err(anyhow!("Context server not found"))).into()
         }
     }
 }

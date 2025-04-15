@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -77,10 +77,10 @@ impl Tool for CopyPathTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<CopyPathToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
         let copy_task = project.update(cx, |project, cx| {
             match project
@@ -117,5 +117,6 @@ impl Tool for CopyPathTool {
                 )),
             }
         })
+        .into()
     }
 }
