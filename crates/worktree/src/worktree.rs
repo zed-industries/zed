@@ -3120,11 +3120,12 @@ impl BackgroundScannerState {
             .as_path()
             .into();
 
-        // Parse .git if it's a "gitfile" pointing to a repository directory elsewhere.
         let (repository_dir_abs_path, common_dir_abs_path) =
             discover_git_paths(&dot_git_abs_path, fs);
-        // FIXME watch the repository dir too
         watcher.add(&common_dir_abs_path).log_err();
+        if !repository_dir_abs_path.starts_with(&common_dir_abs_path) {
+            watcher.add(&repository_dir_abs_path).log_err();
+        }
 
         let work_directory_id = work_dir_entry.id;
 
