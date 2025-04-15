@@ -56,10 +56,12 @@ pub struct Example {
     pub prompt: String,
     /// Content of `criteria.md`
     pub criteria: String,
-    /// Markdown log file to append to
-    pub log_file: Arc<Mutex<File>>,
-    /// Path to markdown log file
-    pub log_file_path: PathBuf,
+    /// Markdown output file to append to
+    pub output_file: Arc<Mutex<File>>,
+    /// Path to markdown output file
+    pub output_file_path: PathBuf,
+    /// Prefix used for logging that identifies this example
+    pub log_prefix: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -86,26 +88,39 @@ pub struct JudgeOutput {
 impl Example {
     /// Load an example from a directory containing base.toml, prompt.md, and criteria.md
     pub fn load_from_directory(dir_path: &Path, run_dir: &Path) -> Result<Self> {
-        let name = dir_path.file_name().unwrap().to_string_lossy().to_string();
+        let name = Self::name_from_path(dir_path);
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
         let criteria_path = dir_path.join("criteria.md");
 
-        let log_file_path = run_dir.join(format!(
+        let output_file_path = run_dir.join(format!(
             "{}.md",
             dir_path.file_name().unwrap().to_str().unwrap()
         ));
-        let log_file = Arc::new(Mutex::new(File::create(&log_file_path).unwrap()));
-        println!("{}> Logging to {:?}", name, log_file_path);
+        let output_file = Arc::new(Mutex::new(File::create(&output_file_path).unwrap()));
 
         Ok(Example {
-            name,
+            name: name.clone(),
             base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
             criteria: fs::read_to_string(criteria_path.clone())?,
-            log_file,
-            log_file_path,
+            output_file,
+            output_file_path,
+            log_prefix: name,
         })
+    }
+
+    pub fn set_log_prefix_style(&mut self, color: &str, name_width: usize) {
+        self.log_prefix = format!(
+            "{}{:<width$}\x1b[0m | ",
+            color,
+            self.name,
+            width = name_width
+        );
+    }
+
+    pub fn name_from_path(path: &Path) -> String {
+        path.file_name().unwrap().to_string_lossy().to_string()
     }
 
     pub fn worktree_path(&self) -> PathBuf {
@@ -120,7 +135,7 @@ impl Example {
     pub async fn setup(&self) -> Result<()> {
         let repo_path = repo_path_for_url(&self.base.url);
 
-        println!("{}> Fetching", self.name);
+        println!("{}Fetching", self.log_prefix);
 
         run_git(
             &repo_path,
@@ -131,7 +146,7 @@ impl Example {
         let worktree_path = self.worktree_path();
 
         if worktree_path.is_dir() {
-            println!("{}> Resetting existing worktree", self.name);
+            println!("{}Resetting existing worktree", self.log_prefix);
 
             // TODO: consider including "-x" to remove ignored files. The downside of this is that
             // it will also remove build artifacts, and so prevent incremental reuse there.
@@ -139,7 +154,7 @@ impl Example {
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
             run_git(&worktree_path, &["checkout", &self.base.revision]).await?;
         } else {
-            println!("{}> Creating worktree", self.name);
+            println!("{}Creating worktree", self.log_prefix);
 
             let worktree_path_string = worktree_path.to_string_lossy().to_string();
 
@@ -235,7 +250,7 @@ impl Example {
 
                 // TODO: remove this once the diagnostics tool waits for new diagnostics
                 cx.background_executor().timer(Duration::new(5, 0)).await;
-                wait_for_lang_server(&lsp_store, this.name.clone(), cx).await?;
+                wait_for_lang_server(&lsp_store, this.log_prefix.clone(), cx).await?;
 
                 lsp_store.update(cx, |lsp_store, cx| {
                     lsp_open_handle.update(cx, |buffer, cx| {
@@ -272,11 +287,11 @@ impl Example {
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
 
             {
-                let mut log_file = this.log_file.lock().unwrap();
-                writeln!(&mut log_file, "👤 USER:").log_err();
-                writeln!(&mut log_file, "{}", this.prompt).log_err();
-                writeln!(&mut log_file, "🤖 ASSISTANT:").log_err();
-                log_file.flush().log_err();
+                let mut output_file = this.output_file.lock().unwrap();
+                writeln!(&mut output_file, "👤 USER:").log_err();
+                writeln!(&mut output_file, "{}", this.prompt).log_err();
+                writeln!(&mut output_file, "🤖 ASSISTANT:").log_err();
+                output_file.flush().log_err();
             }
 
             let tool_use_counts: Arc<Mutex<HashMap<Arc<str>, u32>>> =
@@ -289,8 +304,8 @@ impl Example {
             });
 
             let event_handler_task = cx.spawn({
-                let log_file = this.log_file.clone();
-                let name = this.name.clone();
+                let output_file = this.output_file.clone();
+                let log_prefix = this.log_prefix.clone();
                 let tool_use_counts = tool_use_counts.clone();
                 let thread = thread.downgrade();
                 async move |cx| {
@@ -305,7 +320,7 @@ impl Example {
                             return Err(anyhow!("ThreadEvent channel ended early"));
                         };
 
-                        let mut log_file = log_file.lock().unwrap();
+                        let mut output_file = output_file.lock().unwrap();
 
                         match event {
                             ThreadEvent::Stopped(reason) => match reason {
@@ -324,15 +339,15 @@ impl Example {
                                 break Err(anyhow!(thread_error.clone()));
                             }
                             ThreadEvent::StreamedAssistantText(_, chunk) => {
-                                write!(&mut log_file, "{}", chunk).log_err();
+                                write!(&mut output_file, "{}", chunk).log_err();
                             }
                             ThreadEvent::StreamedAssistantThinking(_, chunk) => {
-                                write!(&mut log_file, "{}", chunk).log_err();
+                                write!(&mut output_file, "{}", chunk).log_err();
                             }
                             ThreadEvent::UsePendingTools { tool_uses } => {
-                                writeln!(&mut log_file, "\n\nUSING TOOLS:").log_err();
+                                writeln!(&mut output_file, "\n\nUSING TOOLS:").log_err();
                                 for tool_use in tool_uses {
-                                    writeln!(&mut log_file, "{}: {}", tool_use.name, tool_use.input)
+                                    writeln!(&mut output_file, "{}: {}", tool_use.name, tool_use.input)
                                         .log_err();
                                 }
                             }
@@ -343,12 +358,12 @@ impl Example {
                             } => {
                                 if let Some(tool_use) = pending_tool_use {
                                     let message = format!("TOOL FINISHED: {}", tool_use.name);
-                                    println!("{name}> {message}");
-                                    writeln!(&mut log_file, "\n{}", message).log_err();
+                                    println!("{}{message}", log_prefix);
+                                    writeln!(&mut output_file, "\n{}", message).log_err();
                                 }
                                 thread.update(cx, |thread, _cx| {
                                     if let Some(tool_result) = thread.tool_result(&tool_use_id) {
-                                        writeln!(&mut log_file, "\n{}\n", tool_result.content).log_err();
+                                        writeln!(&mut output_file, "\n{}\n", tool_result.content).log_err();
                                         let mut tool_use_counts = tool_use_counts.lock().unwrap();
                                         *tool_use_counts
                                             .entry(tool_result.tool_name.clone())
@@ -359,7 +374,7 @@ impl Example {
                             _ => {}
                         }
 
-                        log_file.flush().log_err();
+                        output_file.flush().log_err();
                     }
                 }
             });
@@ -373,7 +388,7 @@ impl Example {
             event_handler_task.await?;
 
             if let Some((_, lsp_store)) = lsp_open_handle_and_store.as_ref() {
-                wait_for_lang_server(lsp_store, this.name.clone(), cx).await?;
+                wait_for_lang_server(lsp_store, this.log_prefix.clone(), cx).await?;
             }
 
             let repository_diff = this.repository_diff().await?;
@@ -433,13 +448,13 @@ impl Example {
 
         let response = send_language_model_request(model, request, cx).await?;
 
-        let mut log_file = self.log_file.lock().unwrap();
+        let mut output_file = self.output_file.lock().unwrap();
 
-        writeln!(&mut log_file, "\n\n").log_err();
-        writeln!(&mut log_file, "========================================").log_err();
-        writeln!(&mut log_file, "              JUDGE OUTPUT              ").log_err();
-        writeln!(&mut log_file, "========================================").log_err();
-        writeln!(&mut log_file, "\n{}", &response).log_err();
+        writeln!(&mut output_file, "\n\n").log_err();
+        writeln!(&mut output_file, "========================================").log_err();
+        writeln!(&mut output_file, "              JUDGE OUTPUT              ").log_err();
+        writeln!(&mut output_file, "========================================").log_err();
+        writeln!(&mut output_file, "\n{}", &response).log_err();
 
         parse_judge_output(&response)
     }
@@ -453,7 +468,7 @@ impl Example {
 
 fn wait_for_lang_server(
     lsp_store: &Entity<LspStore>,
-    name: String,
+    log_prefix: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
     if cx
@@ -464,13 +479,13 @@ fn wait_for_lang_server(
         return Task::ready(anyhow::Ok(()));
     }
 
-    println!("{}> ⏵ Waiting for language server", name);
+    println!("{}⏵ Waiting for language server", log_prefix);
 
     let (mut tx, mut rx) = mpsc::channel(1);
 
     let subscription =
         cx.subscribe(&lsp_store, {
-            let name = name.clone();
+            let log_prefix = log_prefix.clone();
             move |lsp_store, event, cx| {
                 match event {
                     project::LspStoreEvent::LanguageServerUpdate {
@@ -482,7 +497,7 @@ fn wait_for_lang_server(
                                 },
                             ),
                         ..
-                    } => println!("{name}> ⟲ {message}"),
+                    } => println!("{}⟲ {message}", log_prefix),
                     _ => {}
                 }
 
@@ -496,7 +511,7 @@ fn wait_for_lang_server(
         let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
         let result = futures::select! {
             _ = rx.next() => {
-                println!("{}> ⚑ Language server idle", name);
+                println!("{}⚑ Language server idle", log_prefix);
                 anyhow::Ok(())
             },
             _ = timeout.fuse() => {
@@ -623,7 +638,6 @@ pub async fn send_language_model_request(
             while let Some(chunk_result) = stream.stream.next().await {
                 match chunk_result {
                     Ok(chunk_str) => {
-                        print!("{}", &chunk_str);
                         full_response.push_str(&chunk_str);
                     }
                     Err(err) => {
