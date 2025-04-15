@@ -36,7 +36,7 @@ enum Transform {
 
 #[derive(Debug, Clone)]
 pub struct Inlay {
-    pub(crate) id: InlayId,
+    pub id: InlayId,
     pub position: Anchor,
     pub text: text::Rope,
 }
@@ -60,6 +60,15 @@ impl Inlay {
     pub fn inline_completion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::InlineCompletion(id),
+            position,
+            text: text.into(),
+        }
+    }
+
+    pub fn conflict_marker(id: usize, position: Anchor, mut text: String) -> Self {
+        text.insert(0, ' ');
+        Self {
+            id: InlayId::ConflictMarker(id),
             position,
             text: text.into(),
         }
@@ -287,6 +296,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         })
                     }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
+                    InlayId::ConflictMarker(_) => self.highlight_styles.inlay_hint,
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;

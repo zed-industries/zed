@@ -27,6 +27,21 @@ pub struct CommitDetails {
     pub message: Option<ParsedCommitMessage>,
 }
 
+impl CommitDetails {
+    pub fn parse(orig: &git::repository::CommitDetails) -> anyhow::Result<Self> {
+        Ok(CommitDetails {
+            sha: orig.sha.clone(),
+            author_name: orig.author_name.clone(),
+            author_email: orig.author_email.clone(),
+            commit_time: OffsetDateTime::from_unix_timestamp(orig.commit_timestamp)?,
+            message: Some(ParsedCommitMessage {
+                message: orig.message.clone(),
+                ..Default::default()
+            }),
+        })
+    }
+}
+
 struct CommitAvatar<'a> {
     commit: &'a CommitDetails,
 }

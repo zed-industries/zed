@@ -34,6 +34,7 @@ pub struct FakeGitRepositoryState {
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
+    pub merge_head_shas: Vec<String>,
     pub simulated_index_write_error_message: Option<String>,
 }
 
@@ -47,6 +48,7 @@ impl FakeGitRepositoryState {
             blames: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
+            merge_head_shas: Default::default(),
             simulated_index_write_error_message: Default::default(),
         }
     }
@@ -137,7 +139,15 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn merge_head_shas(&self) -> Vec<String> {
-        vec![]
+        self.with_state(|state| state.merge_head_shas.clone())
+    }
+
+    fn cherry_pick_head_sha(&self) -> Option<String> {
+        None
+    }
+
+    fn rebase_head_sha(&self) -> Option<String> {
+        None
     }
 
     fn show(&self, _commit: String) -> BoxFuture<Result<CommitDetails>> {

@@ -1,4 +1,5 @@
 use crate::{
+    conflict_view::ConflictAddon,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     remote_button::{render_publish_button, render_push_button},
 };
@@ -13,22 +14,28 @@ use editor::{
 use futures::StreamExt;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::FileStatus,
 };
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, Capability, LineEnding, OffsetRangeExt, Point, Rope, TextBuffer};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
+    Project, ProjectPath, WorktreeId,
+    git_store::{GitStore, GitStoreEvent, RepositoryEvent, RepositorySnapshot},
 };
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    ops::Range,
+    path::Path,
+    sync::Arc,
+};
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
+use unindent::Unindent as _;
 use util::ResultExt as _;
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
@@ -61,9 +68,83 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u32 = 0;
-const TRACKED_NAMESPACE: u32 = 1;
-const NEW_NAMESPACE: u32 = 2;
+/// Pseudo-file providing a multibuffer excerpt at the top of the project diff to describe the merge conflict situation.
+struct ConflictMetadataFile {
+    path: Arc<Path>,
+    snapshot: RepositorySnapshot,
+    worktree_id: WorktreeId,
+}
+
+const MERGE_DETAILS_NAMESPACE: u32 = 0;
+const CONFLICT_NAMESPACE: u32 = 1;
+const TRACKED_NAMESPACE: u32 = 2;
+const NEW_NAMESPACE: u32 = 3;
+
+impl ConflictMetadataFile {
+    fn new(snapshot: RepositorySnapshot, worktree_id: WorktreeId) -> Self {
+        Self {
+            path: Path::new("conflicted merge").into(),
+            snapshot,
+            worktree_id,
+        }
+    }
+
+    fn path_key(&self) -> PathKey {
+        PathKey::namespaced(MERGE_DETAILS_NAMESPACE, self.path.clone())
+    }
+
+    fn content(&self) -> Rope {
+        "
+            Resolving merge conflicts.
+
+
+
+
+        "
+        .unindent()
+        .into()
+        // info to consider for this:
+        //
+        //
+        // - "merging X into Y" or "rebasing X onto Y" (do we have access to this info?)
+        // - HEAD is ...
+        // - other-branch is ...
+    }
+}
+
+impl language::File for ConflictMetadataFile {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> language::DiskState {
+        language::DiskState::New
+    }
+
+    fn path(&self) -> &std::sync::Arc<Path> {
+        &self.path
+    }
+
+    fn full_path(&self, _cx: &App) -> std::path::PathBuf {
+        self.path.as_ref().into()
+    }
+
+    fn file_name<'a>(&'a self, _cx: &'a App) -> &'a std::ffi::OsStr {
+        self.path.file_name().unwrap()
+    }
+
+    fn worktree_id(&self, _cx: &App) -> project::WorktreeId {
+        self.worktree_id
+    }
+
+    fn to_proto(&self, _cx: &App) -> language::proto::File {
+        unimplemented!()
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
+}
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -154,7 +235,8 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, _window, _cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true) => {
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true)
+                | GitStoreEvent::ConflictsUpdated => {
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
@@ -395,11 +477,25 @@ impl ProjectDiff {
         let buffer = diff_buffer.buffer;
         let diff = diff_buffer.diff;
 
+        let conflict_addon = self
+            .editor
+            .read(cx)
+            .addon::<ConflictAddon>()
+            .expect("project diff editor should have a conflict addon");
+
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
         let diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+            .map(|diff_hunk| diff_hunk.buffer_range.clone());
+        let conflicts = conflict_addon
+            .conflict_set(snapshot.remote_id())
+            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts.clone())
+            .unwrap_or_default();
+        let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
+
+        let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
+            .map(|range| range.to_point(&snapshot))
             .collect::<Vec<_>>();
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
@@ -407,7 +503,7 @@ impl ProjectDiff {
             let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
-                diff_hunk_ranges,
+                excerpt_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
             );
@@ -450,19 +546,56 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
-            this.update(cx, |this, cx| {
-                let new_branch = this
-                    .git_store
-                    .read(cx)
-                    .active_repository()
-                    .and_then(|active_repository| active_repository.read(cx).branch.clone());
-                if new_branch != this.current_branch {
-                    this.current_branch = new_branch;
+            let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
+
+            let repo_snapshot = this.update(cx, |this, cx| {
+                let git_store = this.git_store.read(cx);
+                let active_repository = git_store.active_repository()?;
+                if active_repository.read(cx).branch != this.current_branch {
+                    this.current_branch = active_repository.read(cx).branch.clone();
                     cx.notify();
                 }
+                Some(active_repository.read(cx).snapshot())
             })?;
 
-            let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
+            if let Some(repo_snapshot) =
+                repo_snapshot.filter(|snapshot| !snapshot.merge_conflicts.is_empty())
+            {
+                this.update(cx, |this, cx| {
+                    // FIXME use an appropriate worktree id for the repo? or does it matter?
+                    let Some(worktree_id) = this
+                        .project
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .map(|worktree| worktree.read(cx).id())
+                    else {
+                        return;
+                    };
+                    let file = Arc::new(ConflictMetadataFile::new(repo_snapshot, worktree_id));
+                    let buffer = cx.new(|cx| {
+                        let buffer = TextBuffer::new_normalized(
+                            0,
+                            cx.entity_id().as_non_zero_u64().into(),
+                            LineEnding::default(),
+                            file.content(),
+                        );
+                        Buffer::build(buffer, Some(file.clone()), Capability::ReadOnly)
+                    });
+                    this.multibuffer.update(cx, |multibuffer, cx| {
+                        let max_point = buffer.read(cx).max_point();
+                        multibuffer.set_excerpts_for_path(
+                            file.path_key(),
+                            buffer,
+                            [Point::zero()..max_point],
+                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            cx,
+                        );
+                    });
+                })
+                .ok();
+            }
+
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
                     cx.update(|window, cx| {
@@ -533,6 +666,7 @@ impl Item for ProjectDiff {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
+        // FIXME adjust name if there are conflicts?
         Label::new("Uncommitted Changes")
             .color(if params.selected {
                 Color::Default
@@ -1127,47 +1261,6 @@ impl RenderOnce for ProjectDiffEmptyState {
     }
 }
 
-// .when(self.can_push_and_pull, |this| {
-//     let remote_button = crate::render_remote_button(
-//         "project-diff-remote-button",
-//         &branch,
-//         self.focus_handle.clone(),
-//         false,
-//     );
-
-//     match remote_button {
-//         Some(button) => {
-//             this.child(h_flex().justify_around().child(button))
-//         }
-//         None => this.child(
-//             h_flex()
-//                 .justify_around()
-//                 .child(Label::new("Remote up to date")),
-//         ),
-//     }
-// }),
-//
-// // .map(|this| {
-//     this.child(h_flex().justify_around().mt_1().child(
-//         Button::new("project-diff-close-button", "Close").when_some(
-//             self.focus_handle.clone(),
-//             |this, focus_handle| {
-//                 this.key_binding(KeyBinding::for_action_in(
-//                     &CloseActiveItem::default(),
-//                     &focus_handle,
-//                     window,
-//                     cx,
-//                 ))
-//                 .on_click(move |_, window, cx| {
-//                     window.focus(&focus_handle);
-//                     window
-//                         .dispatch_action(Box::new(CloseActiveItem::default()), cx);
-//                 })
-//             },
-//         ),
-//     ))
-// }),
-
 mod preview {
     use git::repository::{
         Branch, CommitSummary, Upstream, UpstreamTracking, UpstreamTrackingStatus,
@@ -1291,6 +1384,53 @@ mod preview {
             )
         }
     }
+}
+
+fn merge_anchor_ranges<'a>(
+    left: impl 'a + Iterator<Item = Range<Anchor>>,
+    right: impl 'a + Iterator<Item = Range<Anchor>>,
+    snapshot: &'a language::BufferSnapshot,
+) -> impl 'a + Iterator<Item = Range<Anchor>> {
+    let mut left = left.fuse().peekable();
+    let mut right = right.fuse().peekable();
+
+    std::iter::from_fn(move || {
+        let Some(left_range) = left.peek().cloned() else {
+            return right.next();
+        };
+        let Some(right_range) = right.peek().clone() else {
+            return left.next();
+        };
+
+        let mut next_range = if left_range.start.cmp(&right_range.start, snapshot).is_lt() {
+            left.next().unwrap()
+        } else {
+            right.next().unwrap()
+        };
+
+        // Extend the basic range while there's overlap with a range from either stream.
+        loop {
+            if let Some(left_range) = left
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                left.next();
+                next_range.end = left_range.end;
+            } else if let Some(right_range) = right
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                right.next();
+                next_range.end = right_range.end;
+            } else {
+                break;
+            }
+        }
+
+        Some(next_range)
+    })
 }
 
 #[cfg(not(target_os = "windows"))]

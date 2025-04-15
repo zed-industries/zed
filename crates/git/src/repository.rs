@@ -201,6 +201,8 @@ pub trait GitRepository: Send + Sync {
     fn head_sha(&self) -> Option<String>;
 
     fn merge_head_shas(&self) -> Vec<String>;
+    fn cherry_pick_head_sha(&self) -> Option<String>;
+    fn rebase_head_sha(&self) -> Option<String>;
 
     fn merge_message(&self) -> BoxFuture<Option<String>>;
 
@@ -719,16 +721,29 @@ impl GitRepository for RealGitRepository {
                 true
             })
             .ok();
-        if let Some(oid) = self
+        shas
+    }
+
+    fn cherry_pick_head_sha(&self) -> Option<String> {
+        let sha = self
             .repository
             .lock()
             .find_reference("CHERRY_PICK_HEAD")
-            .ok()
-            .and_then(|reference| reference.target())
-        {
-            shas.push(oid.to_string())
-        }
-        shas
+            .ok()?
+            .target()?
+            .to_string();
+        Some(sha)
+    }
+
+    fn rebase_head_sha(&self) -> Option<String> {
+        let sha = self
+            .repository
+            .lock()
+            .find_reference("REBASE_HEAD")
+            .ok()?
+            .target()?
+            .to_string();
+        Some(sha)
     }
 
     fn merge_message(&self) -> BoxFuture<Option<String>> {
