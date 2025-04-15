@@ -326,7 +326,6 @@ dependencies = [
  "serde_json",
  "strum",
  "thiserror 2.0.12",
- "util",
  "workspace-hack",
 ]
 
@@ -2943,7 +2942,6 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "assistant",
  "assistant_context_editor",
@@ -4003,7 +4001,6 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "paths",
- "regex",
  "schemars",
  "serde",
  "serde_json",
@@ -4035,7 +4032,6 @@ dependencies = [
  "gpui",
  "language",
  "paths",
- "regex",
  "serde",
  "serde_json",
  "task",
@@ -4179,6 +4175,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "dap",
+ "db",
  "editor",
  "env_logger 0.11.8",
  "feature_flags",
@@ -4878,25 +4875,37 @@ dependencies = [
  "assistant_settings",
  "assistant_tool",
  "assistant_tools",
+ "async-watch",
+ "chrono",
+ "clap",
  "client",
+ "collections",
  "context_server",
  "dap",
  "env_logger 0.11.8",
+ "extension",
  "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
+ "handlebars 4.5.0",
  "language",
+ "language_extension",
  "language_model",
  "language_models",
+ "languages",
  "node_runtime",
+ "paths",
  "project",
  "prompt_store",
  "release_channel",
  "reqwest_client",
  "serde",
  "settings",
+ "shellexpand 2.1.2",
  "toml 0.8.20",
+ "unindent",
+ "util",
  "workspace-hack",
 ]
 
@@ -18125,7 +18134,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.182.0"
+version = "0.183.0"
 dependencies = [
  "activity_indicator",
  "agent",

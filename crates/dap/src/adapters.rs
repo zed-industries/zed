@@ -10,7 +10,6 @@ pub use http_client::{HttpClient, github::latest_github_release};
 use language::LanguageToolchainStore;
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use settings::WorktreeId;
 use smol::{self, fs::File, lock::Mutex};
 use std::{
@@ -21,7 +20,7 @@ use std::{
     net::Ipv4Addr,
     ops::Deref,
     path::PathBuf,
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 use task::DebugTaskDefinition;
 use util::ResultExt;
@@ -291,14 +290,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
-
-    fn attach_processes_filter(&self) -> regex::Regex {
-        EMPTY_REGEX.clone()
-    }
 }
-
-static EMPTY_REGEX: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new("").expect("Regex compilation to succeed"));
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeAdapter {}
 
@@ -384,11 +376,5 @@ impl DebugAdapter for FakeAdapter {
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         unimplemented!("get installed binary");
-    }
-
-    fn attach_processes_filter(&self) -> regex::Regex {
-        static REGEX: LazyLock<regex::Regex> =
-            LazyLock::new(|| regex::Regex::new("^fake-binary").unwrap());
-        REGEX.clone()
     }
 }

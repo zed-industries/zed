@@ -253,7 +253,6 @@ impl Config {
 pub enum ServiceMode {
     Api,
     Collab,
-    Llm,
     All,
 }
 
@@ -264,10 +263,6 @@ impl ServiceMode {
 
     pub fn is_api(&self) -> bool {
         matches!(self, Self::Api | Self::All)
-    }
-
-    pub fn is_llm(&self) -> bool {
-        matches!(self, Self::Llm | Self::All)
     }
 }
 

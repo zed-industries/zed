@@ -3862,8 +3862,8 @@ impl Repository {
     fn spawn_local_git_worker(
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
-        repository_dir_abs_path: Arc<Path>,
-        common_dir_abs_path: Arc<Path>,
+        _repository_dir_abs_path: Arc<Path>,
+        _common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
@@ -3888,9 +3888,6 @@ impl Repository {
                         .ok_or_else(|| anyhow!("failed to build repository"))
                 })
                 .await?;
-
-            debug_assert_eq!(backend.path().as_path(), repository_dir_abs_path.as_ref());
-            debug_assert_eq!(backend.main_repository_path().as_path(), common_dir_abs_path.as_ref());
 
             if let Some(git_hosting_provider_registry) =
                 cx.update(|cx| GitHostingProviderRegistry::try_global(cx))?

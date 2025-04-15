@@ -69,6 +69,8 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
         })
     });
 
+    cx.run_until_parked();
+
     // assert we have a debug panel item before the session has stopped
     workspace
         .update(cx, |workspace, _window, cx| {
@@ -205,6 +207,8 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
             total_frames: None,
         })
     });
+
+    cx.run_until_parked();
 
     // assert we have a debug panel item before the session has stopped
     workspace
@@ -961,6 +965,8 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
             hit_breakpoint_ids: None,
         }))
         .await;
+
+    cx.run_until_parked();
 
     let running_state = active_debug_session_panel(workspace, cx).update_in(cx, |item, _, _| {
         item.mode()

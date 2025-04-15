@@ -56,7 +56,7 @@ pub struct MessageEditor {
     _subscriptions: Vec<Subscription>,
 }
 
-const MAX_EDITOR_LINES: usize = 3;
+const MAX_EDITOR_LINES: usize = 8;
 
 impl MessageEditor {
     pub fn new(
@@ -93,6 +93,7 @@ impl MessageEditor {
             );
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
+            editor.set_soft_wrap();
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,

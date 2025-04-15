@@ -128,7 +128,7 @@ impl Tool for FetchTool {
         IconName::Globe
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<FetchToolInput>(format)
     }
 
