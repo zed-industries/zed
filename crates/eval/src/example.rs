@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use dap::DapRegistry;
 use futures::channel::oneshot;
-use gpui::{App, Task};
+use gpui::{App, AppContext as _, Task};
 use language_model::{LanguageModel, StopReason};
 use project::Project;
 use serde::Deserialize;
@@ -93,7 +93,7 @@ impl Example {
             project.create_worktree(self.base.path, true, cx)
         });
 
-        let tools = Arc::new(ToolWorkingSet::default());
+        let tools = cx.new(|_| ToolWorkingSet::default());
         let thread_store =
             ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
 
