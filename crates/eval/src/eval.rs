@@ -40,7 +40,6 @@ struct Args {
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
-    /// Languages to run (comma-separated, e.g. "js,ts,py"). If unspecified, only Rust examples are run.
     #[arg(long, value_delimiter = ',')]
     languages: Option<Vec<String>>,
 }
@@ -257,7 +256,6 @@ fn main() {
                 / (score_count as f32);
             println!("\nAverage score: {average_score}");
 
-            // Give telemetry time to send before quitting
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             cx.update(|cx| cx.quit())
@@ -285,7 +283,6 @@ async fn run_example(
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
 
-    // Send the telemetry event
     telemetry::event!(
         "Agent Eval Completed",
         cohort_id = cohort_id,
@@ -300,13 +297,11 @@ async fn run_example(
         repository_revision = example.base.revision.clone(),
         diagnostics_summary = run_output.diagnostics
     );
-    
-    // Force a flush of the telemetry
+
     app_state.client.telemetry().flush_events();
-    
-    // Add extra delay to give telemetry time to send
+
     std::thread::sleep(std::time::Duration::from_secs(1));
-    
+
     println!("judge_output.score: {}", judge_output.score);
     println!("judge_output: {}", judge_output.analysis);
 
