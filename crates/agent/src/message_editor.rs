@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use assistant_tool::{Tool, ToolWorkingSet, ToolWorkingSetEvent};
+use crate::tool_compatibility::IncompatibleToolsState;
 use buffer_diff::BufferDiff;
-use collections::{HashMap, HashSet};
+use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{
     ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode, EditorStyle,
@@ -17,9 +17,7 @@ use gpui::{
     linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelRegistry, LanguageModelToolSchemaFormat,
-};
+use language_model::{ConfiguredModel, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
@@ -44,7 +42,7 @@ use crate::{
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
-    incompatible_tools_state: Entity<IncompatibleToolState>,
+    incompatible_tools_state: Entity<IncompatibleToolsState>,
     editor: Entity<Editor>,
     #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
@@ -129,7 +127,7 @@ impl MessageEditor {
         });
 
         let incompatible_tools =
-            cx.new(|cx| IncompatibleToolState::new(thread.read(cx).tools().clone(), cx));
+            cx.new(|cx| IncompatibleToolsState::new(thread.read(cx).tools().clone(), cx));
 
         let subscriptions =
             vec![cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event)];
@@ -138,7 +136,7 @@ impl MessageEditor {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
             thread,
-            incompatible_tools_state: incompatible_tools,
+            incompatible_tools_state: incompatible_tools.clone(),
             workspace,
             context_store,
             context_strip,
@@ -490,7 +488,7 @@ impl MessageEditor {
                                                         .size(IconSize::Small),
                                                 )
                                                 .tooltip({
-                                                    const MESSAGE: &'static str = "Some tools are not compatible with this model. They will be excluded from the conversation.";
+                                                    const MESSAGE: &'static str = "Some tools are not compatible with this model, these tools will be excluded from the conversation.";
 
                                                     let incompatible_tool_names = model.as_ref().map(|model| {
                                                         self.incompatible_tools_state.update(cx, |state, cx| state.incompatible_tools(model, cx).iter().map(|tool| tool.name()).collect::<Vec<_>>())
@@ -887,51 +885,6 @@ impl MessageEditor {
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .label_size(LabelSize::Small),
             )
-    }
-}
-
-struct IncompatibleToolState {
-    cache: HashMap<LanguageModelToolSchemaFormat, Vec<Arc<dyn Tool>>>,
-    tool_working_set: Entity<ToolWorkingSet>,
-    _tool_working_set_subscription: Subscription,
-}
-
-impl IncompatibleToolState {
-    pub fn new(tool_working_set: Entity<ToolWorkingSet>, cx: &mut Context<Self>) -> Self {
-        let _tool_working_set_subscription =
-            cx.subscribe(&tool_working_set, |this, _, event, _| match event {
-                ToolWorkingSetEvent::EnabledToolsChanged => {
-                    this.cache.clear();
-                }
-            });
-
-        Self {
-            cache: HashMap::default(),
-            tool_working_set,
-            _tool_working_set_subscription,
-        }
-    }
-
-    pub fn has_incompatible_tools(&mut self, model: &Arc<dyn LanguageModel>, cx: &App) -> bool {
-        self.incompatible_tools(model, cx).len() > 0
-    }
-
-    pub fn incompatible_tools(
-        &mut self,
-        model: &Arc<dyn LanguageModel>,
-        cx: &App,
-    ) -> &[Arc<dyn Tool>] {
-        self.cache
-            .entry(model.tool_input_format())
-            .or_insert_with(|| {
-                self.tool_working_set
-                    .read(cx)
-                    .enabled_tools(cx)
-                    .iter()
-                    .filter(|tool| tool.input_schema(model.tool_input_format()).is_err())
-                    .cloned()
-                    .collect()
-            })
     }
 }
 
