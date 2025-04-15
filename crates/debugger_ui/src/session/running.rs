@@ -768,7 +768,7 @@ impl RunningState {
         DropdownMenu::new(
             ("thread-list", self.session_id.0),
             selected_thread_name,
-            ContextMenu::build(window, cx, move |mut this, _, _| {
+            ContextMenu::build_eager(window, cx, move |mut this, _, _| {
                 for (thread, _) in threads {
                     let state = state.clone();
                     let thread_id = thread.id;
