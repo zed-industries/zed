@@ -105,12 +105,12 @@ impl Tool for MovePathTool {
                     None => Task::ready(Err(anyhow!(
                         "Destination path {} was outside the project.",
                         input.destination_path
-                    ))).into(),
+                    ))),
                 },
                 None => Task::ready(Err(anyhow!(
                     "Source path {} was not found in the project.",
                     input.source_path
-                ))).into(),
+                ))),
             }
         });
 
