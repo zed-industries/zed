@@ -27,7 +27,7 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
         concat!(
             "https://github.com/zed-industries/zed/issues/new",
             "?",
-            "template=1_bug_report.yml",
+            "template=10_bug_report.yml",
             "&",
             "environment={}"
         ),
