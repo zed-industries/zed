@@ -56,7 +56,6 @@ impl Render for IncompatibleToolsTooltip {
         ui::tooltip_container(window, cx, |container, _, cx| {
             container
                 .w_72()
-                .flex_1()
                 .child(Label::new("Incompatible Tools").size(LabelSize::Small))
                 .child(
                     Label::new(
@@ -69,7 +68,7 @@ impl Render for IncompatibleToolsTooltip {
                     v_flex()
                         .my_1p5()
                         .py_0p5()
-                        .border_y_1()
+                        .border_b_1()
                         .border_color(cx.theme().colors().border_variant)
                         .children(
                             self.incompatible_tools
