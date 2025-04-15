@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -53,7 +53,7 @@ impl Tool for PathSearchTool {
         IconName::SearchCode
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<PathSearchToolInput>(format)
     }
 
@@ -71,10 +71,10 @@ impl Tool for PathSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
             Ok(input) => (input.offset, input.glob),
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         let path_matcher = match PathMatcher::new([
@@ -82,7 +82,7 @@ impl Tool for PathSearchTool {
             if glob.is_empty() { "*" } else { &glob },
         ]) {
             Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
+            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))).into(),
         };
         let snapshots: Vec<Snapshot> = project
             .read(cx)
@@ -136,6 +136,6 @@ impl Tool for PathSearchTool {
 
                 Ok(response)
             }
-        })
+        }).into()
     }
 }

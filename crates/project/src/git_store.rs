@@ -21,7 +21,7 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, DiffType, GitRepository,
+        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, GitRepository,
         GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
         UpstreamTrackingStatus,
     },
@@ -1656,10 +1656,18 @@ impl GitStore {
         let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
+        let options = envelope.payload.options.unwrap_or_default();
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.commit(message, name.zip(email), cx)
+                repository_handle.commit(
+                    message,
+                    name.zip(email),
+                    CommitOptions {
+                        amend: options.amend,
+                    },
+                    cx,
+                )
             })?
             .await??;
         Ok(proto::Ack {})
@@ -3248,6 +3256,7 @@ impl Repository {
         &mut self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
+        options: CommitOptions,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
@@ -3258,7 +3267,11 @@ impl Repository {
                     backend,
                     environment,
                     ..
-                } => backend.commit(message, name_and_email, environment).await,
+                } => {
+                    backend
+                        .commit(message, name_and_email, options, environment)
+                        .await
+                }
                 RepositoryState::Remote { project_id, client } => {
                     let (name, email) = name_and_email.unzip();
                     client
@@ -3268,6 +3281,9 @@ impl Repository {
                             message: String::from(message),
                             name: name.map(String::from),
                             email: email.map(String::from),
+                            options: Some(proto::commit::CommitOptions {
+                                amend: options.amend,
+                            }),
                         })
                         .await
                         .context("sending commit request")?;
@@ -3846,8 +3862,8 @@ impl Repository {
     fn spawn_local_git_worker(
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
-        repository_dir_abs_path: Arc<Path>,
-        common_dir_abs_path: Arc<Path>,
+        _repository_dir_abs_path: Arc<Path>,
+        _common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
@@ -3872,9 +3888,6 @@ impl Repository {
                         .ok_or_else(|| anyhow!("failed to build repository"))
                 })
                 .await?;
-
-            debug_assert_eq!(backend.path().as_path(), repository_dir_abs_path.as_ref());
-            debug_assert_eq!(backend.main_repository_path().as_path(), common_dir_abs_path.as_ref());
 
             if let Some(git_hosting_provider_registry) =
                 cx.update(|cx| GitHostingProviderRegistry::try_global(cx))?

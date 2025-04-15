@@ -93,6 +93,21 @@ impl SearchQuery {
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let query = query.to_string();
+        if !case_sensitive && !query.is_ascii() {
+            // AhoCorasickBuilder doesn't support case-insensitive search with unicode characters
+            // Fallback to regex search as recommended by
+            // https://docs.rs/aho-corasick/1.1/aho_corasick/struct.AhoCorasickBuilder.html#method.ascii_case_insensitive
+            return Self::regex(
+                regex::escape(&query),
+                whole_word,
+                case_sensitive,
+                include_ignored,
+                false,
+                files_to_include,
+                files_to_exclude,
+                buffers,
+            );
+        }
         let search = AhoCorasickBuilder::new()
             .ascii_case_insensitive(!case_sensitive)
             .build([&query])?;

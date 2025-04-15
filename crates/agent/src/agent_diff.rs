@@ -894,6 +894,7 @@ mod tests {
     use super::*;
     use crate::{ThreadStore, thread_store};
     use assistant_settings::AssistantSettings;
+    use assistant_tool::ToolWorkingSet;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::TestAppContext;
@@ -937,7 +938,7 @@ mod tests {
             .update(|cx| {
                 ThreadStore::load(
                     project.clone(),
-                    Arc::default(),
+                    cx.new(|_| ToolWorkingSet::default()),
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )

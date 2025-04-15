@@ -1265,6 +1265,7 @@ impl Buffer {
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
+
                 Some((file.disk_state().mtime(), file.load(cx)))
             })?
             else {
@@ -1376,11 +1377,20 @@ impl Buffer {
     /// Returns each [`Language`] for the active syntax layers at the given location.
     pub fn languages_at<D: ToOffset>(&self, position: D) -> Vec<Arc<Language>> {
         let offset = position.to_offset(self);
-        self.syntax_map
+        let mut languages: Vec<Arc<Language>> = self
+            .syntax_map
             .lock()
             .layers_for_range(offset..offset, &self.text, false)
             .map(|info| info.language.clone())
-            .collect()
+            .collect();
+
+        if languages.is_empty() {
+            if let Some(buffer_language) = self.language() {
+                languages.push(buffer_language.clone());
+            }
+        }
+
+        languages
     }
 
     /// An integer version number that accounts for all updates besides

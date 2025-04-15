@@ -20,6 +20,12 @@ pub struct SplitButton {
     pub right: AnyElement,
 }
 
+impl SplitButton {
+    pub fn new(left: ButtonLike, right: AnyElement) -> Self {
+        Self { left, right }
+    }
+}
+
 impl RenderOnce for SplitButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()

@@ -1,6 +1,6 @@
 use crate::{
     ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, Pause, Restart, StepBack,
-    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
+    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
@@ -293,35 +293,49 @@ impl DebugPanel {
                     );
                 };
 
-                let Some(project) = self.project.upgrade() else {
-                    return log::error!("Debug Panel out lived it's weak reference to Project");
-                };
+                let adapter_name = session.read(cx).adapter_name();
 
-                if self
-                    .sessions
-                    .iter()
-                    .any(|item| item.read(cx).session_id(cx) == *session_id)
-                {
-                    // We already have an item for this session.
-                    return;
-                }
-                let session_item = DebugSession::running(
-                    project,
-                    self.workspace.clone(),
-                    session,
-                    cx.weak_entity(),
-                    window,
-                    cx,
-                );
+                let session_id = *session_id;
+                cx.spawn_in(window, async move |this, cx| {
+                    let serialized_layout =
+                        persistence::get_serialized_pane_layout(adapter_name).await;
 
-                if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
-                    // We might want to make this an event subscription and only notify when a new thread is selected
-                    // This is used to filter the command menu correctly
-                    cx.observe(&running, |_, _, cx| cx.notify()).detach();
-                }
+                    this.update_in(cx, |this, window, cx| {
+                        let Some(project) = this.project.upgrade() else {
+                            return log::error!(
+                                "Debug Panel out lived it's weak reference to Project"
+                            );
+                        };
 
-                self.sessions.push(session_item.clone());
-                self.activate_session(session_item, window, cx);
+                        if this
+                            .sessions
+                            .iter()
+                            .any(|item| item.read(cx).session_id(cx) == session_id)
+                        {
+                            // We already have an item for this session.
+                            return;
+                        }
+                        let session_item = DebugSession::running(
+                            project,
+                            this.workspace.clone(),
+                            session,
+                            cx.weak_entity(),
+                            serialized_layout,
+                            window,
+                            cx,
+                        );
+
+                        if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
+                            // We might want to make this an event subscription and only notify when a new thread is selected
+                            // This is used to filter the command menu correctly
+                            cx.observe(&running, |_, _, cx| cx.notify()).detach();
+                        }
+
+                        this.sessions.push(session_item.clone());
+                        this.activate_session(session_item, window, cx);
+                    })
+                })
+                .detach();
             }
             dap_store::DapStoreEvent::RunInTerminal {
                 title,

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use collections::IndexMap;
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{OutlineItem, ParseStatus, Point};
@@ -91,7 +91,7 @@ impl Tool for CodeSymbolsTool {
         IconName::Code
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<CodeSymbolsInput>(format)
     }
 
@@ -129,10 +129,10 @@ impl Tool for CodeSymbolsTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<CodeSymbolsInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         let regex = match input.regex {
@@ -141,7 +141,7 @@ impl Tool for CodeSymbolsTool {
                 .build()
             {
                 Ok(regex) => Some(regex),
-                Err(err) => return Task::ready(Err(anyhow!("Invalid regex: {err}"))),
+                Err(err) => return Task::ready(Err(anyhow!("Invalid regex: {err}"))).into(),
             },
             None => None,
         };
@@ -150,6 +150,7 @@ impl Tool for CodeSymbolsTool {
             Some(path) => file_outline(project, path, action_log, regex, input.offset, cx).await,
             None => project_symbols(project, regex, input.offset, cx).await,
         })
+        .into()
     }
 }
 

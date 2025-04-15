@@ -10,7 +10,6 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
-use util::ResultExt as _;
 
 pub use supported_countries::*;
 
@@ -363,11 +362,25 @@ pub struct RateLimitInfo {
 
 impl RateLimitInfo {
     fn from_headers(headers: &HeaderMap<HeaderValue>) -> Self {
+        // Check if any rate limit headers exist
+        let has_rate_limit_headers = headers
+            .keys()
+            .any(|k| k.as_str().starts_with("anthropic-ratelimit-"));
+
+        if !has_rate_limit_headers {
+            return Self {
+                requests: None,
+                tokens: None,
+                input_tokens: None,
+                output_tokens: None,
+            };
+        }
+
         Self {
-            requests: RateLimit::from_headers("requests", headers).log_err(),
-            tokens: RateLimit::from_headers("tokens", headers).log_err(),
-            input_tokens: RateLimit::from_headers("input-tokens", headers).log_err(),
-            output_tokens: RateLimit::from_headers("output-tokens", headers).log_err(),
+            requests: RateLimit::from_headers("requests", headers).ok(),
+            tokens: RateLimit::from_headers("tokens", headers).ok(),
+            input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
+            output_tokens: RateLimit::from_headers("output-tokens", headers).ok(),
         }
     }
 }
@@ -724,4 +737,54 @@ impl ApiError {
     pub fn is_rate_limit_error(&self) -> bool {
         matches!(self.error_type.as_str(), "rate_limit_error")
     }
+
+    pub fn match_window_exceeded(&self) -> Option<usize> {
+        let Some(ApiErrorCode::InvalidRequestError) = self.code() else {
+            return None;
+        };
+
+        parse_prompt_too_long(&self.message)
+    }
+}
+
+pub fn parse_prompt_too_long(message: &str) -> Option<usize> {
+    message
+        .strip_prefix("prompt is too long: ")?
+        .split_once(" tokens")?
+        .0
+        .parse::<usize>()
+        .ok()
+}
+
+#[test]
+fn test_match_window_exceeded() {
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "prompt is too long: 220000 tokens > 200000".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), Some(220_000));
+
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "prompt is too long: 1234953 tokens".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), Some(1234953));
+
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "not a prompt length error".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), None);
+
+    let error = ApiError {
+        error_type: "rate_limit_error".to_string(),
+        message: "prompt is too long: 12345 tokens".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), None);
+
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "prompt is too long: invalid tokens".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), None);
 }

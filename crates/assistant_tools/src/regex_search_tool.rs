@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
@@ -60,7 +60,7 @@ impl Tool for RegexSearchTool {
         IconName::Regex
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<RegexSearchToolInput>(format)
     }
 
@@ -92,13 +92,13 @@ impl Tool for RegexSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         const CONTEXT_LINES: u32 = 2;
 
         let (offset, regex, case_sensitive) =
             match serde_json::from_value::<RegexSearchToolInput>(input) {
                 Ok(input) => (input.offset, input.regex, input.case_sensitive),
-                Err(err) => return Task::ready(Err(anyhow!(err))),
+                Err(err) => return Task::ready(Err(anyhow!(err))).into(),
             };
 
         let query = match SearchQuery::regex(
@@ -112,7 +112,7 @@ impl Tool for RegexSearchTool {
             None,
         ) {
             Ok(query) => query,
-            Err(error) => return Task::ready(Err(error)),
+            Err(error) => return Task::ready(Err(error)).into(),
         };
 
         let results = project.update(cx, |project, cx| project.search(query, cx));
@@ -201,6 +201,6 @@ impl Tool for RegexSearchTool {
             } else {
                 Ok(format!("Found {matches_found} matches:\n{output}"))
             }
-        })
+        }).into()
     }
 }
