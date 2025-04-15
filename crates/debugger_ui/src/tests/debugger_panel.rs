@@ -1,6 +1,6 @@
 use crate::*;
 use dap::{
-    DebugRequestType, ErrorResponse, Message, RunInTerminalRequestArguments, SourceBreakpoint,
+    ErrorResponse, Message, RunInTerminalRequestArguments, SourceBreakpoint,
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
     client::SessionId,
     requests::{
@@ -25,7 +25,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use task::DebugTaskDefinition;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
