@@ -51,7 +51,7 @@ use crate::{
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
-const ASSISTANT_PANEL_KEY: &str = "assistant_panel";
+const AGENT_PANEL_KEY: &str = "agent_panel";
 
 #[derive(Serialize, Deserialize)]
 struct SerializedAssistantPanel {
@@ -213,7 +213,7 @@ impl AssistantPanel {
         self.pending_serialization = Some(cx.background_spawn(async move {
             KEY_VALUE_STORE
                 .write_kvp(
-                    ASSISTANT_PANEL_KEY.into(),
+                    AGENT_PANEL_KEY.into(),
                     serde_json::to_string(&SerializedAssistantPanel { width })?,
                 )
                 .await?;
@@ -248,7 +248,7 @@ impl AssistantPanel {
                 .await?;
 
             let serialized_panel = if let Some(panel) = cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(ASSISTANT_PANEL_KEY) })
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(AGENT_PANEL_KEY) })
                 .await
                 .log_err()
                 .flatten()
