@@ -153,7 +153,7 @@ impl HyperlinkFinder {
 
         found_word.map(|(maybe_url_or_path, is_url, word_match)| {
             if is_url {
-                // Treat "file://" URLs like file paths to ensure
+                // Treat "file://" IRIs like file paths to ensure
                 // that line numbers at the end of the path are
                 // handled correctly
                 if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
@@ -297,22 +297,8 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    /// By default tests with terminal column counts of `[3, longest_line / 2, and longest_line + 1]`.
-    /// Also accepts specific column count overrides as `test_hyperlink!(3, 4, 5; "some stuff")`
-    ///
-    /// 👉 := hovered on following char
-    ///
-    /// 👈 := hovered on wide char spacer of previous full width char
-    ///
-    /// **`‹›`** := **hyperlink** match
-    ///
-    /// **`«aaaaa»`** := **path** capture group
-    ///
-    /// **`«NN»`** := **row** or **column** capture group
-    ///
-    /// **NN @** := minimum terminal columns
     macro_rules! test_hyperlink {
-        ($($lines:literal),+) => {
+        ($($lines:expr),+; $is_iri:ident) => { {
             let test_lines = vec![$($lines),+];
             let (total_chars, longest_line_chars) = test_lines
                 .iter()
@@ -321,235 +307,334 @@ mod tests {
                     (state.0 + line_chars, std::cmp::max(state.1, line_chars))
                 });
             // Alacritty has issues with 2 columns, use 3 as the minimum for now.
-            test_hyperlink!([3, longest_line_chars / 2, longest_line_chars + 1]; total_chars; &test_lines)
-        };
-        ($($columns:literal),+; $($lines:literal),+) => {
+            test_hyperlink!([3, longest_line_chars / 2, longest_line_chars + 1]; total_chars; &test_lines; $is_iri)
+        } };
+        ($($columns:literal),+; $($lines:expr),+; $is_iri:ident) => { {
             let test_lines = vec![$($lines),+];
             let total_chars = test_lines
                 .iter()
                 .fold(0, |state, line| {
                     state + line.chars().filter(|c| "‹«»›".find(*c).is_none()).count()
                 });
-            test_hyperlink!([ $($columns),+ ]; total_chars; &vec![$($lines),+])
-        };
-        ([ $($columns:expr),+ ]; $total_chars:expr; $lines:expr) => {{
+            test_hyperlink!([ $($columns),+ ]; total_chars; &vec![$($lines),+]; $is_iri)
+        } };
+        ([ $($columns:expr),+ ]; $total_chars:expr; $lines:expr; $is_iri:ident) => { {
             for columns in vec![ $($columns),+] {
                 use crate::terminal_hyperlinks::tests::test_hyperlink;
-                test_hyperlink(columns, $total_chars, $lines,
+                test_hyperlink(columns, $total_chars, $lines, $is_iri,
                     format!("{}:{}:{}", std::file!(), std::line!(), std::column!()));
             }
-        }};
+        } };
     }
 
     // TODO(davewa): More tests
     // - [x] Resize the terminal down to a few columns, to test matches that span multiple lines
     // - [x] MSBuild-style(line,column)
+    // - [x] IRIs
     // - [ ] Windows paths
-    // - [ ] Urls
 
-    #[test]
-    fn simple() {
-        // Rust paths
-        // Just the path
-        test_hyperlink!("‹«/👉test/cool.rs»›");
-        test_hyperlink!("‹«/test/cool👉.rs»›");
+    mod iri {
+        /// By default tests with terminal column counts of `[3, longest_line / 2, and longest_line + 1]`.
+        /// Also accepts specific column count overrides as `test_iri!(3, 4, 5; "some stuff")`
+        ///
+        /// **`‹«aaaaa»›`** := **iri** match
+        ///
+        /// **I, J, ..., K; ** := use terminal with [I, J, ..., K] **columns**
+        macro_rules! test_iri {
+            ($iri:literal) => { { test_hyperlink!(concat!("‹«", $iri, "»›"); true) } };
+            ($($columns:literal),+; $iri:literal) => { { test_hyperlink!($($columns),+; concat!("‹«", $iri, "»›"); true) } };
+            ([ $($columns:expr),+ ]; $total_chars:expr; $lines:expr) => { { test_hyperlink!([ $($columns),+ ]; $total_chars; $lines; true) } };
+        }
 
-        // path and line
-        test_hyperlink!("‹«/👉test/cool.rs»:«4»›");
-        test_hyperlink!("‹«/test/cool.rs»👉:«4»›");
-        test_hyperlink!("‹«/test/cool.rs»:«👉4»›");
-        test_hyperlink!("‹«/👉test/cool.rs»(«4»)›");
-        test_hyperlink!("‹«/test/cool.rs»👉(«4»)›");
-        test_hyperlink!("‹«/test/cool.rs»(«👉4»)›");
-        test_hyperlink!("‹«/test/cool.rs»(«4»👉)›");
-
-        // path, line, and column
-        test_hyperlink!("‹«/👉test/cool.rs»:«4»:«2»›");
-        test_hyperlink!("‹«/test/cool.rs»:«4»:«👉2»›");
-        test_hyperlink!("‹«/👉test/cool.rs»(«4»,«2»)›");
-        test_hyperlink!("‹«/test/cool.rs»(«4»👉,«2»)›");
-
-        // path, line, column, and ':' suffix
-        test_hyperlink!("‹«/👉test/cool.rs»:«4»:«2»›:");
-        test_hyperlink!("‹«/test/cool.rs»:«4»:«👉2»›:");
-        test_hyperlink!("‹«/👉test/cool.rs»(«4»,«2»)›:");
-        test_hyperlink!("‹«/test/cool.rs»(«4»,«2»👉)›:");
-
-        // path, line, column, and description
-        test_hyperlink!("‹«/test/cool.rs»:«4»:«2»›👉:Error!");
-        test_hyperlink!("‹«/test/cool.rs»:«4»:«2»›:👉Error!");
-        test_hyperlink!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
-
-        // Cargo output
-        test_hyperlink!("    Compiling Cool 👉(‹«/test/Cool»›)");
-        test_hyperlink!("    Compiling Cool (‹«/👉test/Cool»›)");
-        test_hyperlink!("    Compiling Cool (‹«/test/Cool»›👉)");
-
-        // Python
-        test_hyperlink!("‹«awe👉some.py»›");
-
-        test_hyperlink!("    ‹F👉ile \"«/awesome.py»\", line «42»›: Wat?");
-        test_hyperlink!("    ‹File \"«/awe👉some.py»\", line «42»›: Wat?");
-        test_hyperlink!("    ‹File \"«/awesome.py»👉\", line «42»›: Wat?");
-        test_hyperlink!("    ‹File \"«/awesome.py»\", line «4👉2»›: Wat?");
-    }
-
-    #[test]
-    fn colons_galore() {
-        test_hyperlink!("‹«/test/co👉ol.rs»:«4»›");
-        test_hyperlink!("‹«/test/co👉ol.rs»:«4»›:");
-        test_hyperlink!("‹«/test/co👉ol.rs»:«4»:«2»›");
-        test_hyperlink!("‹«/test/co👉ol.rs»:«4»:«2»›:");
-        test_hyperlink!("‹«/test/co👉ol.rs»(«1»)›");
-        test_hyperlink!("‹«/test/co👉ol.rs»(«1»)›:");
-        test_hyperlink!("‹«/test/co👉ol.rs»(«1»,«618»)›");
-        test_hyperlink!("‹«/test/co👉ol.rs»(«1»,«618»)›:");
-        test_hyperlink!("‹«/test/co👉ol.rs»::«42»›");
-        test_hyperlink!("‹«/test/co👉ol.rs»::«42»›:");
-        test_hyperlink!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›");
-        test_hyperlink!("‹«/test/co👉ol.rs»(«1»,«618»)›::");
-    }
-
-    #[test]
-    fn word_wide_chars() {
-        // Rust paths
-        test_hyperlink!(4, 6, 12; "‹«/👉例/cool.rs»›");
-        test_hyperlink!(4, 6, 12; "‹«/例👈/cool.rs»›");
-        test_hyperlink!(4, 8, 16; "‹«/例/cool.rs»:«👉4»›");
-        test_hyperlink!(4, 8, 16; "‹«/例/cool.rs»:«4»:«👉2»›");
-
-        // Cargo output
-        test_hyperlink!(4, 25, 30; "    Compiling Cool (‹«/👉例/Cool»›)");
-        test_hyperlink!(4, 25, 30; "    Compiling Cool (‹«/例👈/Cool»›)");
-
-        // Python
-        test_hyperlink!(4, 11; "‹«👉例wesome.py»›");
-        test_hyperlink!(4, 11; "‹«例👈wesome.py»›");
-        test_hyperlink!(6, 15, 40; "    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
-        test_hyperlink!(6, 15, 40; "    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
-    }
-
-    #[test]
-    fn non_word_wide_chars() {
-        // Mojo diagnostic message
-        // TODO(davewa): I haven't ever run Mojo, this is assuming it uses the same format as Python.
-        test_hyperlink!(4, 18, 38; "    ‹File \"«/awe👉some.🔥»\", line «42»›: Wat?");
-        test_hyperlink!(4, 18, 38; "    ‹File \"«/awesome👉.🔥»\", line «42»›: Wat?");
-        test_hyperlink!(4, 18, 38; "    ‹File \"«/awesome.👉🔥»\", line «42»›: Wat?");
-        test_hyperlink!(4, 18, 38; "    ‹File \"«/awesome.🔥👈»\", line «42»›: Wat?");
-    }
-
-    /// These likely rise to the level of being worth fixing.
-    mod issues {
         #[test]
-        // We use custom columns in many tests to workaround this issue by ensuring a wrapped line
-        // never ends on a wide char.
-        //
-        // Any wide char at the end of a wrapped line is buggy in alacritty.
-        //
-        // [davewa]: I feel like this is worth fixing, even if no one has reported it. It is most likely
-        // in the category of people experiencing failures, but somewhat randomly and not really
-        // understanding what situation is causing it to work or not work, which isn't a great experience,
-        // even though it might not have been reported as an actual issue with a clear repro case.
-        #[should_panic(expected = "Path = «例»")]
-        fn issue_alacritty_bugs_with_wide_char_at_line_wrap() {
+        fn simple() {
+            // In the order they appear in URL_REGEX, except 'file://' which is treated as a path
+            test_iri!("ipfs://test/cool.ipfs");
+            test_iri!("ipns://test/cool.ipns");
+            test_iri!("magnet://test/cool.git");
+            test_iri!("mailto:someone@somewhere.here");
+            test_iri!("gemini://somewhere.here");
+            test_iri!("gopher://somewhere.here");
+            test_iri!("http://test/cool/index.html");
+            test_iri!("http://10.10.10.10:1111/cool.html");
+            test_iri!("http://test/cool/index.html?amazing=1");
+            test_iri!("http://test/cool/index.html#right%20here");
+            test_iri!("http://test/cool/index.html?amazing=1#right%20here");
+            test_iri!("https://test/cool/index.html");
+            test_iri!("https://10.10.10.10:1111/cool.html");
+            test_iri!("https://test/cool/index.html?amazing=1");
+            test_iri!("https://test/cool/index.html#right%20here");
+            test_iri!("https://test/cool/index.html?amazing=1#right%20here");
+            test_iri!("news://test/cool.news");
+            test_iri!("git://test/cool.git");
+            test_iri!("ssh://user@somewhere.over.here:12345/test/cool.git");
+            test_iri!("ftp://test/cool.ftp");
+        }
+
+        // There are likely more tests needed for IRI vs URI
+        #[test]
+        fn iris() {
+            // These refer to the same location, see example here:
+            // <https://en.wikipedia.org/wiki/Internationalized_Resource_Identifier#Compatibility>
+            test_iri!("https://en.wiktionary.org/wiki/Ῥόδος"); // IRI
+            test_iri!("https://en.wiktionary.org/wiki/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82"); // URI
+        }
+
+        #[test]
+        #[should_panic(expected = "Expected a iri, but was a path")]
+        fn file_is_a_path() {
+            test_iri!("file://test/cool/index.rs");
+        }
+    }
+
+    mod path {
+        /// By default tests with terminal column counts of `[3, longest_line / 2, and longest_line + 1]`.
+        /// Also accepts specific column count overrides as `test_path!(3, 4, 5; "some stuff"; true)`
+        ///
+        /// 👉 := hovered on following char
+        ///
+        /// 👈 := hovered on wide char spacer of previous full width char
+        ///
+        /// **`‹›`** := **hyperlink** match
+        ///
+        /// **`«aaaaa»`** := **path** capture group
+        ///
+        /// **`«NN»`** := **row** or **column** capture group
+        ///
+        /// **I, J, ..., K; ** := use terminal with [I, J, ..., K] **columns**
+        macro_rules! test_path {
+            ($($lines:literal),+) => { test_hyperlink!($($lines),+; false) };
+            ($($columns:literal),+; $($lines:literal),+) => { test_hyperlink!($($columns),+; $($lines),+; false) };
+            ([ $($columns:expr),+ ]; $total_chars:expr; $lines:expr) => { test_hyperlink!([ $($columns),+ ]; $total_chars; $lines; false) };
+        }
+
+        #[test]
+        fn simple() {
             // Rust paths
-            test_hyperlink!("‹«/👉例/cool.rs»›");
-            test_hyperlink!("‹«/例👈/cool.rs»›");
-            test_hyperlink!("‹«/例/cool.rs»:«👉4»›");
-            test_hyperlink!("‹«/例/cool.rs»:«4»:«👉2»›");
+            // Just the path
+            test_path!("‹«/👉test/cool.rs»›");
+            test_path!("‹«/test/cool👉.rs»›");
+
+            // path and line
+            test_path!("‹«/👉test/cool.rs»:«4»›");
+            test_path!("‹«/test/cool.rs»👉:«4»›");
+            test_path!("‹«/test/cool.rs»:«👉4»›");
+            test_path!("‹«/👉test/cool.rs»(«4»)›");
+            test_path!("‹«/test/cool.rs»👉(«4»)›");
+            test_path!("‹«/test/cool.rs»(«👉4»)›");
+            test_path!("‹«/test/cool.rs»(«4»👉)›");
+
+            // path, line, and column
+            test_path!("‹«/👉test/cool.rs»:«4»:«2»›");
+            test_path!("‹«/test/cool.rs»:«4»:«👉2»›");
+            test_path!("‹«/👉test/cool.rs»(«4»,«2»)›");
+            test_path!("‹«/test/cool.rs»(«4»👉,«2»)›");
+
+            // path, line, column, and ':' suffix
+            test_path!("‹«/👉test/cool.rs»:«4»:«2»›:");
+            test_path!("‹«/test/cool.rs»:«4»:«👉2»›:");
+            test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:");
+            test_path!("‹«/test/cool.rs»(«4»,«2»👉)›:");
+
+            // path, line, column, and description
+            test_path!("‹«/test/cool.rs»:«4»:«2»›👉:Error!");
+            test_path!("‹«/test/cool.rs»:«4»:«2»›:👉Error!");
+            test_path!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
             // Cargo output
-            test_hyperlink!("    Compiling Cool (‹«/👉例/Cool»›)");
-            test_hyperlink!("    Compiling Cool (‹«/例👈/Cool»›)");
+            test_path!("    Compiling Cool 👉(‹«/test/Cool»›)");
+            test_path!("    Compiling Cool (‹«/👉test/Cool»›)");
+            test_path!("    Compiling Cool (‹«/test/Cool»›👉)");
 
             // Python
-            test_hyperlink!("‹«👉例wesome.py»›");
-            test_hyperlink!("‹«例👈wesome.py»›");
-            test_hyperlink!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
-            test_hyperlink!("    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
+            test_path!("‹«awe👉some.py»›");
+
+            test_path!("    ‹F👉ile \"«/awesome.py»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awe👉some.py»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome.py»👉\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›: Wat?");
         }
 
         #[test]
-        #[should_panic(expected = "No hyperlink found")]
-        fn issue_12338() {
-            // Issue #12338
-            test_hyperlink!(".rw-r--r--     0     staff 05-27 14:03 ‹«test👉、2.txt»›");
-            test_hyperlink!(".rw-r--r--     0     staff 05-27 14:03 ‹«test、👈2.txt»›");
-            test_hyperlink!(".rw-r--r--     0     staff 05-27 14:03 ‹«test👉。3.txt»›");
-            test_hyperlink!(".rw-r--r--     0     staff 05-27 14:03 ‹«test。👈3.txt»›");
+        fn file_iri() {
+            test_path!("‹file://«/👉test/cool/index.rs»›");
+            test_path!("‹file://«/👉test/cool/»›");
+        }
 
+        #[test]
+        fn colons_galore() {
+            test_path!("‹«/test/co👉ol.rs»:«4»›");
+            test_path!("‹«/test/co👉ol.rs»:«4»›:");
+            test_path!("‹«/test/co👉ol.rs»:«4»:«2»›");
+            test_path!("‹«/test/co👉ol.rs»:«4»:«2»›:");
+            test_path!("‹«/test/co👉ol.rs»(«1»)›");
+            test_path!("‹«/test/co👉ol.rs»(«1»)›:");
+            test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›");
+            test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›:");
+            test_path!("‹«/test/co👉ol.rs»::«42»›");
+            test_path!("‹«/test/co👉ol.rs»::«42»›:");
+            test_path!("‹«/test/co👉ol.rs:4:2»(«1»,«618»)›");
+            test_path!("‹«/test/co👉ol.rs»(«1»,«618»)›::");
+        }
+
+        #[test]
+        fn word_wide_chars() {
             // Rust paths
-            test_hyperlink!("‹«/👉🏃/🦀.rs»›");
-            test_hyperlink!("‹«/🏃👈/🦀.rs»›");
-            test_hyperlink!("‹«/🏃/👉🦀.rs»:«4»›");
-            test_hyperlink!("‹«/🏃/🦀👈.rs»:«4»:«2»›");
+            test_path!(4, 6, 12; "‹«/👉例/cool.rs»›");
+            test_path!(4, 6, 12; "‹«/例👈/cool.rs»›");
+            test_path!(4, 8, 16; "‹«/例/cool.rs»:«👉4»›");
+            test_path!(4, 8, 16; "‹«/例/cool.rs»:«4»:«👉2»›");
 
             // Cargo output
-            test_hyperlink!("    Compiling Cool (‹«/👉🏃/Cool»›)");
-            test_hyperlink!("    Compiling Cool (‹«/🏃👈/Cool»›)");
+            test_path!(4, 25, 30; "    Compiling Cool (‹«/👉例/Cool»›)");
+            test_path!(4, 25, 30; "    Compiling Cool (‹«/例👈/Cool»›)");
 
             // Python
-            test_hyperlink!("‹«👉🏃wesome.py»›");
-            test_hyperlink!("‹«🏃👈wesome.py»›");
-            test_hyperlink!("    ‹File \"«/👉🏃wesome.py»\", line «42»›: Wat?");
-            test_hyperlink!("    ‹File \"«/🏃👈wesome.py»\", line «42»›: Wat?");
+            test_path!(4, 11; "‹«👉例wesome.py»›");
+            test_path!(4, 11; "‹«例👈wesome.py»›");
+            test_path!(6, 15, 40; "    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
+            test_path!(6, 15, 40; "    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
+        }
 
-            // Mojo
-            test_hyperlink!("‹«/awe👉some.🔥»› is some good Mojo!");
-            test_hyperlink!("‹«/awesome👉.🔥»› is some good Mojo!");
-            test_hyperlink!("‹«/awesome.👉🔥»› is some good Mojo!");
-            test_hyperlink!("‹«/awesome.🔥👈»› is some good Mojo!");
-            test_hyperlink!("    ‹File \"«/👉🏃wesome.🔥»\", line «42»›: Wat?");
-            test_hyperlink!("    ‹File \"«/🏃👈wesome.🔥»\", line «42»›: Wat?");
+        #[test]
+        fn non_word_wide_chars() {
+            // Mojo diagnostic message
+            // TODO(davewa): I haven't ever run Mojo, this is assuming it uses the same format as Python.
+            test_path!(4, 18, 38; "    ‹File \"«/awe👉some.🔥»\", line «42»›: Wat?");
+            test_path!(4, 18, 38; "    ‹File \"«/awesome👉.🔥»\", line «42»›: Wat?");
+            test_path!(4, 18, 38; "    ‹File \"«/awesome.👉🔥»\", line «42»›: Wat?");
+            test_path!(4, 18, 38; "    ‹File \"«/awesome.🔥👈»\", line «42»›: Wat?");
+        }
+
+        /// These likely rise to the level of being worth fixing.
+        mod issues {
+            #[test]
+            // We use custom columns in many tests to workaround this issue by ensuring a wrapped line
+            // never ends on a wide char.
+            //
+            // Any wide char at the end of a wrapped line is buggy in alacritty.
+            //
+            // [davewa]: I feel like this is worth fixing, even if no one has reported it. It is most likely
+            // in the category of people experiencing failures, but somewhat randomly and not really
+            // understanding what situation is causing it to work or not work, which isn't a great experience,
+            // even though it might not have been reported as an actual issue with a clear repro case.
+            #[should_panic(expected = "Path = «例»")]
+            fn issue_alacritty_bugs_with_wide_char_at_line_wrap() {
+                // Rust paths
+                test_path!("‹«/👉例/cool.rs»›");
+                test_path!("‹«/例👈/cool.rs»›");
+                test_path!("‹«/例/cool.rs»:«👉4»›");
+                test_path!("‹«/例/cool.rs»:«4»:«👉2»›");
+
+                // Cargo output
+                test_path!("    Compiling Cool (‹«/👉例/Cool»›)");
+                test_path!("    Compiling Cool (‹«/例👈/Cool»›)");
+
+                // Python
+                test_path!("‹«👉例wesome.py»›");
+                test_path!("‹«例👈wesome.py»›");
+                test_path!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
+                test_path!("    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
+            }
+
+            #[test]
+            #[should_panic(expected = "No hyperlink found")]
+            fn issue_12338() {
+                // Issue #12338
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test👉、2.txt»›");
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test、👈2.txt»›");
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test👉。3.txt»›");
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test。👈3.txt»›");
+
+                // Rust paths
+                test_path!("‹«/👉🏃/🦀.rs»›");
+                test_path!("‹«/🏃👈/🦀.rs»›");
+                test_path!("‹«/🏃/👉🦀.rs»:«4»›");
+                test_path!("‹«/🏃/🦀👈.rs»:«4»:«2»›");
+
+                // Cargo output
+                test_path!("    Compiling Cool (‹«/👉🏃/Cool»›)");
+                test_path!("    Compiling Cool (‹«/🏃👈/Cool»›)");
+
+                // Python
+                test_path!("‹«👉🏃wesome.py»›");
+                test_path!("‹«🏃👈wesome.py»›");
+                test_path!("    ‹File \"«/👉🏃wesome.py»\", line «42»›: Wat?");
+                test_path!("    ‹File \"«/🏃👈wesome.py»\", line «42»›: Wat?");
+
+                // Mojo
+                test_path!("‹«/awe👉some.🔥»› is some good Mojo!");
+                test_path!("‹«/awesome👉.🔥»› is some good Mojo!");
+                test_path!("‹«/awesome.👉🔥»› is some good Mojo!");
+                test_path!("‹«/awesome.🔥👈»› is some good Mojo!");
+                test_path!("    ‹File \"«/👉🏃wesome.🔥»\", line «42»›: Wat?");
+                test_path!("    ‹File \"«/🏃👈wesome.🔥»\", line «42»›: Wat?");
+            }
+
+            #[test]
+            #[should_panic(
+                expected = "Path = «/test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/», at grid cells (0, 0)..=(15, 1)"
+            )]
+            fn issue_file_iri_with_percent_encoded_characters() {
+                // Non-space characters
+                // file:///test/Ῥόδος/
+                test_path!("‹file://«/👉test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/»›"); // URI
+
+                // Spaces
+                test_path!("‹file://«/👉te%20st/co%20ol/index.rs»›");
+                test_path!("‹file://«/👉te%20st/co%20ol/»›");
+            }
+        }
+
+        /// Minor issues arguably not important enough to fix/workaround...
+        mod nits {
+            #[test]
+            #[should_panic(expected = "Path = «/test/cool.rs(4»")]
+            fn alacritty_bugs_with_two_columns() {
+                test_path!(2; "‹«/👉test/cool.rs»(«4»)›");
+                test_path!(2; "‹«/test/cool.rs»(«👉4»)›");
+                test_path!(2; "‹«/test/cool.rs»(«4»,«👉2»)›");
+
+                // Python
+                test_path!(2; "‹«awe👉some.py»›");
+            }
+
+            #[test]
+            #[should_panic(
+                expected = "Path = «/test/cool.rs», line = 1, at grid cells (0, 0)..=(9, 0)"
+            )]
+            fn invalid_row_column_should_be_part_of_path() {
+                test_path!("‹«/👉test/cool.rs:1:618033988749»›");
+                test_path!("‹«/👉test/cool.rs(1,618033988749)»›");
+            }
+
+            #[test]
+            #[should_panic(expected = "Path = «»")]
+            fn colon_suffix_succeeds_in_finding_an_empty_maybe_path() {
+                test_path!("‹«/test/cool.rs»:«4»:«2»›👉:", "What is this?");
+                test_path!("‹«/test/cool.rs»(«4»,«2»)›👉:", "What is this?");
+            }
+
+            #[test]
+            #[should_panic(expected = "Path = «/test/cool.rs»")]
+            fn many_trailing_colons_should_be_parsed_as_part_of_the_path() {
+                test_path!("‹«/test/cool.rs:::👉:»›");
+                test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
+            }
         }
     }
-
-    /// Minor issues arguably not important enough to fix/workaround...
-    mod nits {
-        #[test]
-        #[should_panic(expected = "Path = «/test/cool.rs(4»")]
-        fn alacritty_bugs_with_two_columns() {
-            test_hyperlink!(2; "‹«/👉test/cool.rs»(«4»)›");
-            test_hyperlink!(2; "‹«/test/cool.rs»(«👉4»)›");
-            test_hyperlink!(2; "‹«/test/cool.rs»(«4»,«👉2»)›");
-
-            // Python
-            test_hyperlink!(2; "‹«awe👉some.py»›");
-        }
-
-        #[test]
-        #[should_panic(
-            expected = "Path = «/test/cool.rs», line = 1, at grid cells (0, 0)..=(9, 0)"
-        )]
-        fn invalid_row_column_should_be_part_of_path() {
-            test_hyperlink!("‹«/👉test/cool.rs:1:618033988749»›");
-            test_hyperlink!("‹«/👉test/cool.rs(1,618033988749)»›");
-        }
-
-        #[test]
-        #[should_panic(expected = "Path = «»")]
-        fn colon_suffix_succeeds_in_finding_an_empty_maybe_path() {
-            test_hyperlink!("‹«/test/cool.rs»:«4»:«2»›👉:", "What is this?");
-            test_hyperlink!("‹«/test/cool.rs»(«4»,«2»)›👉:", "What is this?");
-        }
-
-        #[test]
-        #[should_panic(expected = "Path = «/test/cool.rs»")]
-        fn many_trailing_colons_should_be_parsed_as_part_of_the_path() {
-            test_hyperlink!("‹«/test/cool.rs:::👉:»›");
-            test_hyperlink!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
-        }
-    }
-
     struct ExpectedHyperlink {
         hovered_grid_point: AlacPoint,
         hovered_char: char,
-        path_with_position: PathWithPosition,
+        is_iri: bool,
+        iri_or_path: String,
+        row: Option<u32>,
+        column: Option<u32>,
         hyperlink_match: RangeInclusive<AlacPoint>,
     }
 
     fn build_term_from_test_lines<'a>(
+        is_iri: bool,
         term_size: TermSize,
         test_lines: &(impl IntoIterator<Item = &'a str> + Clone),
     ) -> (Term<VoidListener>, ExpectedHyperlink) {
@@ -598,11 +683,15 @@ mod tests {
 
         let mut hovered_grid_point = AlacPoint::default();
         let mut hyperlink_match = AlacPoint::default()..=AlacPoint::default();
-        let mut path_with_position = PathWithPosition::from_path(PathBuf::new());
+        let mut iri_or_path_is_file_iri = false;
+        let mut iri_or_path = String::new();
+        let mut row = None;
+        let mut column = None;
         let mut prev_input_point = AlacPoint::default();
         let mut hovered_state = HoveredState::HoveredScan;
         let mut match_state = MatchState::MatchScan;
         let mut captures_state = CapturesState::PathScan;
+        const FILE_SCHEME: &str = "file://";
 
         let mut term = Term::new(Config::default(), &term_size, VoidListener);
 
@@ -623,19 +712,17 @@ mod tests {
                                 panic!("Should have been handled by char input")
                             }
                             CapturesState::Path(start_point) => {
-                                path_with_position = PathWithPosition::from_path(PathBuf::from(
-                                    &term.bounds_to_string(start_point, prev_input_point),
-                                ));
+                                iri_or_path = term.bounds_to_string(start_point, prev_input_point);
                                 CapturesState::RowScan
                             }
                             CapturesState::RowScan => CapturesState::Row(String::new()),
                             CapturesState::Row(number) => {
-                                path_with_position.row = Some(number.parse::<u32>().unwrap());
+                                row = Some(number.parse::<u32>().unwrap());
                                 CapturesState::ColumnScan
                             }
                             CapturesState::ColumnScan => CapturesState::Column(String::new()),
                             CapturesState::Column(number) => {
-                                path_with_position.column = Some(number.parse::<u32>().unwrap());
+                                column = Some(number.parse::<u32>().unwrap());
                                 CapturesState::Done
                             }
                             CapturesState::Done => {
@@ -673,6 +760,15 @@ mod tests {
                             hovered_state = HoveredState::Done;
                         }
                         if captures_state == CapturesState::PathNextChar {
+                            if !is_iri {
+                                let iri_scheme = term.bounds_to_string(
+                                    prev_input_point.sub(&term, Boundary::Grid, FILE_SCHEME.len()),
+                                    prev_input_point.sub(&term, Boundary::Grid, 1),
+                                );
+                                if iri_scheme == FILE_SCHEME {
+                                    iri_or_path_is_file_iri = true
+                                }
+                            }
                             captures_state = CapturesState::Path(prev_input_point);
                         }
                         if match_state == MatchState::MatchNextChar {
@@ -684,13 +780,23 @@ mod tests {
             term.move_down_and_cr(1);
         }
 
+        if iri_or_path_is_file_iri {
+            use url::Url;
+            let file_iri = format!("{FILE_SCHEME}{iri_or_path}");
+            let iri = Url::parse(&file_iri).unwrap();
+            iri_or_path = iri.to_file_path().unwrap().to_string_lossy().to_string();
+        }
+
         let hovered_char = term.grid().index(hovered_grid_point).c;
         (
             term,
             ExpectedHyperlink {
                 hovered_grid_point,
                 hovered_char,
-                path_with_position,
+                is_iri,
+                iri_or_path,
+                row,
+                column,
                 hyperlink_match,
             },
         )
@@ -746,7 +852,7 @@ mod tests {
     fn check_path_with_position_and_match(
         term: &Term<VoidListener>,
         expected_hyperlink: &ExpectedHyperlink,
-        path_with_position: &PathWithPosition,
+        path_with_position: PathWithPosition,
         hyperlink_match: &Match,
         source_location: String,
     ) {
@@ -773,10 +879,43 @@ mod tests {
 
         assert_eq!(
             format_path_with_position_and_match(
-                &expected_hyperlink.path_with_position,
+                &PathWithPosition {
+                    path: PathBuf::from(expected_hyperlink.iri_or_path.clone()),
+                    row: expected_hyperlink.row,
+                    column: expected_hyperlink.column
+                },
                 &expected_hyperlink.hyperlink_match
             ),
-            format_path_with_position_and_match(path_with_position, hyperlink_match),
+            format_path_with_position_and_match(&path_with_position, hyperlink_match),
+            "\n    at {source_location}:\n{}",
+            format_renderable_content(term, expected_hyperlink)
+        );
+    }
+
+    fn check_iri_and_match(
+        term: &Term<VoidListener>,
+        expected_hyperlink: &ExpectedHyperlink,
+        iri: String,
+        hyperlink_match: &Match,
+        source_location: String,
+    ) {
+        let format_iri_and_match = |iri: &String, hyperlink_match: &Match| {
+            format!(
+                "Url = «{}», at grid cells ({}, {})..=({}, {})",
+                iri,
+                hyperlink_match.start().line.0,
+                hyperlink_match.start().column.0,
+                hyperlink_match.end().line.0,
+                hyperlink_match.end().column.0,
+            )
+        };
+
+        assert_eq!(
+            format_iri_and_match(
+                &expected_hyperlink.iri_or_path,
+                &expected_hyperlink.hyperlink_match
+            ),
+            format_iri_and_match(&iri, hyperlink_match),
             "\n    at {source_location}:\n{}",
             format_renderable_content(term, expected_hyperlink)
         );
@@ -786,29 +925,50 @@ mod tests {
         columns: usize,
         total_chars: usize,
         test_lines: &(impl IntoIterator<Item = &'a str> + Clone),
+        is_iri: bool,
         source_location: String,
     ) {
         let screen_lines = total_chars / columns + 2;
         let term_size = TermSize::new(columns, screen_lines);
-        let (mut term, expected_hyperlink) = build_term_from_test_lines(term_size, test_lines);
+        let (mut term, expected_hyperlink) =
+            build_term_from_test_lines(is_iri, term_size, test_lines);
         let mut hyperlink_finder = HyperlinkFinder::new();
-        if let Some((hyperlink_word, false, hyperlink_match)) =
-            hyperlink_finder.find_from_grid_point(&mut term, expected_hyperlink.hovered_grid_point)
+        match hyperlink_finder
+            .find_from_grid_point(&mut term, expected_hyperlink.hovered_grid_point)
         {
-            let path_with_position = PathWithPosition::parse_str(&hyperlink_word);
-            check_path_with_position_and_match(
-                &term,
-                &expected_hyperlink,
-                &path_with_position,
-                &hyperlink_match,
-                source_location,
-            );
-        } else {
-            assert!(
-                false,
-                "No hyperlink found\n     at {source_location}:\n{}",
-                format_renderable_content(&term, &expected_hyperlink)
-            )
+            Some((hyperlink_word, false, hyperlink_match)) => {
+                assert_eq!(
+                    expected_hyperlink.is_iri, false,
+                    "\n    at {source_location}\nExpected a iri, but was a path"
+                );
+                check_path_with_position_and_match(
+                    &term,
+                    &expected_hyperlink,
+                    PathWithPosition::parse_str(&hyperlink_word),
+                    &hyperlink_match,
+                    source_location,
+                );
+            }
+            Some((hyperlink_word, true, hyperlink_match)) => {
+                assert_eq!(
+                    expected_hyperlink.is_iri, true,
+                    "\n    at {source_location}\nExpected a path, but was a iri"
+                );
+                check_iri_and_match(
+                    &term,
+                    &expected_hyperlink,
+                    hyperlink_word,
+                    &hyperlink_match,
+                    source_location,
+                );
+            }
+            _ => {
+                assert!(
+                    false,
+                    "No hyperlink found\n     at {source_location}:\n{}",
+                    format_renderable_content(&term, &expected_hyperlink)
+                )
+            }
         }
     }
 }

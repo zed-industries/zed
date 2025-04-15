@@ -14294,6 +14294,7 @@ dependencies = [
  "task",
  "theme",
  "thiserror 2.0.12",
+ "url",
  "util",
  "windows 0.61.1",
  "workspace-hack",
