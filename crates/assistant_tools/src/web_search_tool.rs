@@ -131,23 +131,30 @@ impl ToolCard for WebSearchToolCard {
                     .color(Color::Muted),
             )
             .child(match self.response.as_ref() {
-                Some(Ok(response)) => h_flex()
-                    .gap_1p5()
-                    .child(Label::new("Searched the Web").size(LabelSize::Small))
-                    .child(
-                        div()
-                            .size(px(3.))
-                            .rounded_full()
-                            .bg(cx.theme().colors().text),
-                    )
-                    .child(
-                        Label::new(format!("{} results", response.citations.len()))
-                            .size(LabelSize::Small),
-                    )
+                Some(Ok(response)) => {
+                    let text: SharedString = if response.citations.len() == 1 {
+                        "1 result".into()
+                    } else {
+                        format!("{} results", response.citations.len()).into()
+                    };
+                    h_flex()
+                        .gap_1p5()
+                        .child(Label::new("Searched the Web").size(LabelSize::Small))
+                        .child(
+                            div()
+                                .size(px(3.))
+                                .rounded_full()
+                                .bg(cx.theme().colors().text),
+                        )
+                        .child(Label::new(text).size(LabelSize::Small))
+                        .into_any_element()
+                }
+                Some(Err(error)) => div()
+                    .id("web-search-error")
+                    .child(Label::new("Web Search failed").size(LabelSize::Small))
+                    .tooltip(Tooltip::text(error.to_string()))
                     .into_any_element(),
-                Some(Err(_)) => Label::new("Web Search failed")
-                    .size(LabelSize::Small)
-                    .into_any_element(),
+
                 None => Label::new("Searching the Web…")
                     .size(LabelSize::Small)
                     .with_animation(
@@ -182,21 +189,22 @@ impl ToolCard for WebSearchToolCard {
                                         .icon(IconName::ArrowUpRight)
                                         .icon_size(IconSize::XSmall)
                                         .icon_position(IconPosition::End)
+                                        .truncate(true)
                                         .tooltip({
-                                            let url_clone = url.clone();
+                                            let url = url.clone();
                                             move |window, cx| {
                                                 Tooltip::with_meta(
                                                     "Citation Link",
                                                     None,
-                                                    url_clone.clone(),
+                                                    url.clone(),
                                                     window,
                                                     cx,
                                                 )
                                             }
                                         })
                                         .on_click({
-                                            let url_clone = url.clone();
-                                            move |_, _, cx| cx.open_url(&url_clone)
+                                            let url = url.clone();
+                                            move |_, _, cx| cx.open_url(&url)
                                         })
                                 },
                             ))
