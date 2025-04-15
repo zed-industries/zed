@@ -260,6 +260,7 @@ pub struct Thread {
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
+    request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
     feedback: Option<ThreadFeedback>,
@@ -310,6 +311,7 @@ impl Thread {
                     .spawn(async move { Some(project_snapshot.await) })
                     .shared()
             },
+            request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
             feedback: None,
@@ -377,6 +379,7 @@ impl Thread {
             tool_use,
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
+            request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
             feedback: None,
@@ -828,6 +831,7 @@ impl Thread {
                     .collect(),
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage,
+                request_token_usage: this.request_token_usage.clone(),
                 detailed_summary_state: this.detailed_summary_state.clone(),
                 exceeded_window_error: this.exceeded_window_error.clone(),
             })
@@ -1042,7 +1046,9 @@ impl Thread {
                                 thread.cumulative_token_usage = thread.cumulative_token_usage
                                     + token_usage
                                     - current_token_usage;
-                                current_token_usage = token_usage;
+                                current_token_usage = token_usage.clone();
+
+                                thread.update_token_usage_at_last_message(token_usage);
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
                                 if let Some(last_message) = thread.messages.last_mut() {
@@ -1894,7 +1900,10 @@ impl Thread {
         #[cfg(not(debug_assertions))]
         let warning_threshold: f32 = 0.8;
 
-        let total = self.cumulative_token_usage.total_tokens() as usize;
+        let total = self
+            .token_usage_at_last_message()
+            .unwrap_or_default()
+            .total_tokens() as usize;
 
         let ratio = if total >= max {
             TokenUsageRatio::Exceeded
@@ -1905,6 +1914,23 @@ impl Thread {
         };
 
         TotalTokenUsage { total, max, ratio }
+    }
+
+    fn token_usage_at_last_message(&self) -> Option<TokenUsage> {
+        self.request_token_usage
+            .get(self.messages.len().saturating_sub(1))
+            .or_else(|| self.request_token_usage.last())
+            .cloned()
+    }
+
+    fn update_token_usage_at_last_message(&mut self, token_usage: TokenUsage) {
+        let placeholder = self.token_usage_at_last_message().unwrap_or_default();
+        self.request_token_usage
+            .resize(self.messages.len(), placeholder);
+
+        if let Some(last) = self.request_token_usage.last_mut() {
+            *last = token_usage;
+        }
     }
 
     pub fn deny_tool_use(
