@@ -3,6 +3,7 @@ pub mod editor_test_context;
 
 use std::{rc::Rc, sync::LazyLock};
 
+pub use crate::rust_analyzer_ext::expand_macro_recursively;
 use crate::{
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
     display_map::{
@@ -16,11 +17,10 @@ use gpui::{
     VisualTestContext, Window, font, size,
 };
 use multi_buffer::ToPoint;
+use pretty_assertions::assert_eq;
 use project::Project;
 use ui::{App, BorrowAppContext, px};
 use util::test::{marked_text_offsets, marked_text_ranges};
-
-pub use crate::rust_analyzer_ext::expand_macro_recursively;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -102,8 +102,12 @@ pub fn assert_text_with_selections(
     cx: &mut Context<Editor>,
 ) {
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
-    assert_eq!(editor.text(cx), unmarked_text);
-    assert_eq!(editor.selections.ranges(cx), text_ranges);
+    assert_eq!(editor.text(cx), unmarked_text, "text doesn't match");
+    assert_eq!(
+        editor.selections.ranges(cx),
+        text_ranges,
+        "selections don't match",
+    );
 }
 
 // RA thinks this is dead code even though it is used in a whole lot of tests

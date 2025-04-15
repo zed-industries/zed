@@ -694,7 +694,15 @@ async fn test_collaborating_with_code_actions(
     // Confirming the code action will trigger a resolve request.
     let confirm_action = editor_b
         .update_in(cx_b, |editor, window, cx| {
-            Editor::confirm_code_action(editor, &ConfirmCodeAction { item_ix: Some(0) }, window, cx)
+            Editor::confirm_code_action(
+                editor,
+                &ConfirmCodeAction {
+                    item_ix: Some(0),
+                    from_mouse_context_menu: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap();
     fake_language_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>(

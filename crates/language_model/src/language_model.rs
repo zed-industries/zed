@@ -83,7 +83,7 @@ pub enum StopReason {
     ToolUse,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     #[serde(default, skip_serializing_if = "is_default")]
     pub input_tokens: u32,
@@ -174,10 +174,6 @@ impl Default for LanguageModelTextStream {
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
-    /// If None, falls back to [LanguageModelProvider::icon]
-    fn icon(&self) -> Option<IconName> {
-        None
-    }
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
@@ -282,6 +278,12 @@ pub trait LanguageModel: Send + Sync {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum LanguageModelKnownError {
+    #[error("Context window limit exceeded ({tokens})")]
+    ContextWindowLimitExceeded { tokens: usize },
+}
+
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
     fn name() -> String;
     fn description() -> String;
@@ -304,6 +306,9 @@ pub trait LanguageModelProvider: 'static {
     }
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
+    fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        Vec::new()
+    }
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
@@ -348,7 +353,7 @@ pub trait LanguageModelProviderState: 'static {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct LanguageModelId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]

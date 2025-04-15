@@ -6,7 +6,6 @@ use client::Client;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal as _,
 };
-use icons::IconName;
 use proto::{Plan, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -53,13 +52,6 @@ impl CloudModel {
         }
     }
 
-    pub fn icon(&self) -> Option<IconName> {
-        match self {
-            Self::Anthropic(_) => Some(IconName::AiAnthropicHosted),
-            _ => None,
-        }
-    }
-
     pub fn max_token_count(&self) -> usize {
         match self {
             Self::Anthropic(model) => model.max_token_count(),
@@ -91,6 +83,9 @@ impl CloudModel {
                 | open_ai::Model::FourTurbo
                 | open_ai::Model::FourOmni
                 | open_ai::Model::FourOmniMini
+                | open_ai::Model::FourPointOne
+                | open_ai::Model::FourPointOneMini
+                | open_ai::Model::FourPointOneNano
                 | open_ai::Model::O1Mini
                 | open_ai::Model::O1Preview
                 | open_ai::Model::O1

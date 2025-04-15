@@ -21,7 +21,7 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, DiffType, GitRepository,
+        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, GitRepository,
         GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
         UpstreamTrackingStatus,
     },
@@ -61,7 +61,8 @@ use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
 use util::{ResultExt, debug_panic, post_inc};
 use worktree::{
-    File, PathKey, PathProgress, PathSummary, PathTarget, UpdatedGitRepositoriesSet, Worktree,
+    File, PathKey, PathProgress, PathSummary, PathTarget, UpdatedGitRepositoriesSet,
+    UpdatedGitRepository, Worktree,
 };
 
 pub struct GitStore {
@@ -1144,18 +1145,23 @@ impl GitStore {
                 } else {
                     removed_ids.push(*id);
                 }
-            } else if let Some((work_directory_abs_path, dot_git_abs_path)) = update
-                .new_work_directory_abs_path
-                .clone()
-                .zip(update.dot_git_abs_path.clone())
+            } else if let UpdatedGitRepository {
+                new_work_directory_abs_path: Some(work_directory_abs_path),
+                dot_git_abs_path: Some(dot_git_abs_path),
+                repository_dir_abs_path: Some(repository_dir_abs_path),
+                common_dir_abs_path: Some(common_dir_abs_path),
+                ..
+            } = update
             {
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
                     let mut repo = Repository::local(
                         id,
-                        work_directory_abs_path,
-                        dot_git_abs_path,
+                        work_directory_abs_path.clone(),
+                        dot_git_abs_path.clone(),
+                        repository_dir_abs_path.clone(),
+                        common_dir_abs_path.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
                         git_store,
@@ -1650,10 +1656,18 @@ impl GitStore {
         let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
+        let options = envelope.payload.options.unwrap_or_default();
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.commit(message, name.zip(email), cx)
+                repository_handle.commit(
+                    message,
+                    name.zip(email),
+                    CommitOptions {
+                        amend: options.amend,
+                    },
+                    cx,
+                )
             })?
             .await??;
         Ok(proto::Ack {})
@@ -2542,6 +2556,8 @@ impl Repository {
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
+        repository_dir_abs_path: Arc<Path>,
+        common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         git_store: WeakEntity<GitStore>,
@@ -2559,6 +2575,8 @@ impl Repository {
             job_sender: Repository::spawn_local_git_worker(
                 work_directory_abs_path,
                 dot_git_abs_path,
+                repository_dir_abs_path,
+                common_dir_abs_path,
                 project_environment,
                 fs,
                 cx,
@@ -3238,6 +3256,7 @@ impl Repository {
         &mut self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
+        options: CommitOptions,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
@@ -3248,7 +3267,11 @@ impl Repository {
                     backend,
                     environment,
                     ..
-                } => backend.commit(message, name_and_email, environment).await,
+                } => {
+                    backend
+                        .commit(message, name_and_email, options, environment)
+                        .await
+                }
                 RepositoryState::Remote { project_id, client } => {
                     let (name, email) = name_and_email.unzip();
                     client
@@ -3258,6 +3281,9 @@ impl Repository {
                             message: String::from(message),
                             name: name.map(String::from),
                             email: email.map(String::from),
+                            options: Some(proto::commit::CommitOptions {
+                                amend: options.amend,
+                            }),
                         })
                         .await
                         .context("sending commit request")?;
@@ -3836,6 +3862,8 @@ impl Repository {
     fn spawn_local_git_worker(
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
+        _repository_dir_abs_path: Arc<Path>,
+        _common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
@@ -4091,6 +4119,10 @@ impl Repository {
     /// currently running git command and when it started
     pub fn current_job(&self) -> Option<JobInfo> {
         self.active_jobs.values().next().cloned()
+    }
+
+    pub fn barrier(&mut self) -> oneshot::Receiver<()> {
+        self.send_job(None, |_, _| async {})
     }
 }
 
