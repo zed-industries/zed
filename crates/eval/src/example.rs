@@ -428,6 +428,10 @@ impl Example {
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
 
+            let repository_diff_path = this.run_dir.join(format!("{}.diff", this.name));
+            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
+            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
+
             println!("{}Getting diagnostics", this.log_prefix);
             let diagnostics = cx
                 .update(move |cx| {
