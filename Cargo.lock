@@ -4877,7 +4877,6 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "anyhow",
- "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-watch",
