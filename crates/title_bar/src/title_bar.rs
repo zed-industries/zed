@@ -210,7 +210,7 @@ impl Render for TitleBar {
                             .pr_1()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .children(self.render_call_controls(window, cx))
-                            .child(self.render_layout_menu(cx))
+                            .children(self.render_layout_menu(cx))
                             .map(|el| {
                                 let status = self.client.status();
                                 let status = &*status.borrow();
@@ -623,13 +623,17 @@ impl TitleBar {
         }
     }
 
-    pub fn render_layout_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_layout_menu(&self, cx: &mut Context<Self>) -> Option<impl Element> {
         let ws = WorkspaceSettings::get_global(cx);
         let button_shown = ws.layout.button.unwrap_or_default();
-        let workspace = self.workspace.upgrade().unwrap();
+        let workspace = self.workspace.upgrade()?;
         let current_layout = workspace.update(cx, |workspace, _cx| workspace.bottom_dock_layout());
 
-        if button_shown {
+        if !button_shown {
+            return None;
+        }
+
+        Some(
             PopoverMenu::new("layout-menu")
                 .trigger(
                     IconButton::new("toggle_layout", IconName::Layout)
@@ -718,10 +722,8 @@ impl TitleBar {
                         }
                     })
                     .into()
-                })
-        } else {
-            PopoverMenu::new("layout-menu")
-        }
+                }),
+        )
     }
 
     pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
