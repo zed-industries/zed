@@ -762,7 +762,7 @@ fn create_new_session(
             cx.emit(DapStoreEvent::DebugClientStarted(session_id));
             cx.notify();
         })?;
-        let seq_result = {
+        let seq_result = async || {
             session
                 .update(cx, |session, cx| session.request_initialize(cx))?
                 .await?;
@@ -773,12 +773,11 @@ fn create_new_session(
                 })?
                 .await
         };
-        match seq_result {
+        match seq_result().await {
             Ok(_) => {}
             Err(error) => {
                 this.update(cx, |this, cx| {
                     cx.emit(DapStoreEvent::Notification(error.to_string()));
-
                     this.shutdown_session(session_id, cx)
                 })?
                 .await
