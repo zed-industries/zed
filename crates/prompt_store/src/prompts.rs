@@ -7,6 +7,7 @@ use handlebars::{Handlebars, RenderError};
 use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
 use serde::Serialize;
+use serde_json;
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -265,6 +266,12 @@ impl PromptBuilder {
         self.handlebars
             .lock()
             .render("assistant_system_prompt", context)
+    }
+
+    pub fn generate_gemini_reminder(&self, tools: Vec<String>) -> Result<String, RenderError> {
+        self.handlebars
+            .lock()
+            .render("gemini_reminder", &serde_json::json!({"tools": tools}))
     }
 
     pub fn generate_inline_transformation_prompt(

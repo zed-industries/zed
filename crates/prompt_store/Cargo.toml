@@ -28,6 +28,7 @@ parking_lot.workspace = true
 paths.workspace = true
 rope.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 text.workspace = true
 util.workspace = true
 uuid.workspace = true
