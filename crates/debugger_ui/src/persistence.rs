@@ -12,7 +12,7 @@ use crate::session::running::{
     module_list::ModuleList, stack_frame_list::StackFrameList, variable_list::VariableList,
 };
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) enum DebuggerPaneItem {
     Console,
     Variables,
@@ -241,9 +241,18 @@ pub(crate) fn deserialize_pane_group(
                 .collect();
 
             pane.update(cx, |pane, cx| {
-                for sub_view in sub_views.into_iter() {
+                let mut active_idx = 0;
+                for (idx, sub_view) in sub_views.into_iter().enumerate() {
+                    if serialized_pane
+                        .active_item
+                        .is_some_and(|active| active == sub_view.read(cx).view_kind())
+                    {
+                        active_idx = idx;
+                    }
                     pane.add_item(sub_view, false, false, None, window, cx);
                 }
+
+                pane.activate_item(active_idx, false, false, window, cx);
             });
 
             Some(Member::Pane(pane.clone()))
