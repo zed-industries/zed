@@ -6,7 +6,7 @@ use collections::HashMap;
 use dap::DapRegistry;
 use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{
@@ -181,7 +181,7 @@ impl Example {
             project.create_worktree(&worktree_path, true, cx)
         });
 
-        let tools = Arc::new(ToolWorkingSet::default());
+        let tools = cx.new(|_| ToolWorkingSet::default());
         let thread_store =
             ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
         let this = self.clone();
