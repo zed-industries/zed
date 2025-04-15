@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
 use gpui::{App, Entity, Task};
 use icons::IconName;
@@ -117,7 +117,8 @@ impl Tool for ContextServerTool {
                     }
                 }
                 Ok(result)
-            }).into()
+            })
+            .into()
         } else {
             Task::ready(Err(anyhow!("Context server not found"))).into()
         }

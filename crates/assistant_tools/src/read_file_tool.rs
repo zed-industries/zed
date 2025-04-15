@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{code_symbols_tool::file_outline, schema::json_schema_for};
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use itertools::Itertools;
