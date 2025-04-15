@@ -187,6 +187,7 @@ impl ProjectDiagnosticsEditor {
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), window, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor.disable_inline_diagnostics();
+            editor.set_all_diagnostics_active(cx);
             editor
         });
         cx.subscribe_in(
