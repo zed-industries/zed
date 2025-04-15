@@ -208,6 +208,7 @@ impl MessageEditor {
         }
 
         if self.thread.read(cx).is_generating() {
+            self.stop_current_and_send_new_message(window, cx);
             return;
         }
 
@@ -295,6 +296,17 @@ impl MessageEditor {
                 .log_err();
         })
         .detach();
+    }
+
+    fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cancelled = self
+            .thread
+            .update(cx, |thread, cx| thread.cancel_last_completion(cx));
+
+        if cancelled {
+            self.set_editor_is_expanded(false, cx);
+            self.send_to_model(RequestKind::Chat, window, cx);
+        }
     }
 
     fn handle_context_strip_event(
@@ -464,39 +476,76 @@ impl MessageEditor {
                                 let focus_handle = focus_handle.clone();
                                 move |parent| {
                                     if is_generating {
-                                        parent.child(
-                                            IconButton::new(
-                                                "stop-generation",
-                                                IconName::StopFilled,
-                                            )
-                                            .icon_color(Color::Error)
-                                            .style(ButtonStyle::Tinted(ui::TintColor::Error))
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::for_action(
-                                                    "Stop Generation",
-                                                    &editor::actions::Cancel,
-                                                    window,
-                                                    cx,
+                                        parent
+                                            .when(is_editor_empty, |parent| {
+                                                parent.child(
+                                                    IconButton::new(
+                                                        "stop-generation",
+                                                        IconName::StopFilled,
+                                                    )
+                                                    .icon_color(Color::Error)
+                                                    .style(ButtonStyle::Tinted(
+                                                        ui::TintColor::Error,
+                                                    ))
+                                                    .tooltip(move |window, cx| {
+                                                        Tooltip::for_action(
+                                                            "Stop Generation",
+                                                            &editor::actions::Cancel,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .on_click({
+                                                        let focus_handle = focus_handle.clone();
+                                                        move |_event, window, cx| {
+                                                            focus_handle.dispatch_action(
+                                                                &editor::actions::Cancel,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }
+                                                    })
+                                                    .with_animation(
+                                                        "pulsating-label",
+                                                        Animation::new(Duration::from_secs(2))
+                                                            .repeat()
+                                                            .with_easing(pulsating_between(
+                                                                0.4, 1.0,
+                                                            )),
+                                                        |icon_button, delta| {
+                                                            icon_button.alpha(delta)
+                                                        },
+                                                    ),
                                                 )
                                             })
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |_event, window, cx| {
-                                                    focus_handle.dispatch_action(
-                                                        &editor::actions::Cancel,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
+                                            .when(!is_editor_empty, |parent| {
+                                                parent.child(
+                                                    IconButton::new("send-message", IconName::Send)
+                                                        .icon_color(Color::Accent)
+                                                        .style(ButtonStyle::Filled)
+                                                        .disabled(
+                                                            !is_model_selected
+                                                                || self
+                                                                    .waiting_for_summaries_to_send,
+                                                        )
+                                                        .on_click({
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |_event, window, cx| {
+                                                                focus_handle.dispatch_action(
+                                                                    &Chat, window, cx,
+                                                                );
+                                                            }
+                                                        })
+                                                        .tooltip(move |window, cx| {
+                                                            Tooltip::for_action(
+                                                                "Stop and Send New Message",
+                                                                &Chat,
+                                                                window,
+                                                                cx,
+                                                            )
+                                                        }),
+                                                )
                                             })
-                                            .with_animation(
-                                                "pulsating-label",
-                                                Animation::new(Duration::from_secs(2))
-                                                    .repeat()
-                                                    .with_easing(pulsating_between(0.4, 1.0)),
-                                                |icon_button, delta| icon_button.alpha(delta),
-                                            ),
-                                        )
                                     } else {
                                         parent.child(
                                             IconButton::new("send-message", IconName::Send)
