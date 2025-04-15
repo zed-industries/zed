@@ -440,21 +440,9 @@ async fn manage_billing_subscription(
     let flow = match body.intent {
         ManageSubscriptionIntent::ManageSubscription => None,
         ManageSubscriptionIntent::UpgradeToPro => {
-            let zed_pro_price_id = app
-                .config
-                .stripe_zed_pro_price_id
-                .clone()
-                .ok_or_else(|| anyhow!("Zed Pro price ID not set"))?;
-            let zed_pro_trial_price_id = app
-                .config
-                .stripe_zed_pro_trial_price_id
-                .clone()
-                .ok_or_else(|| anyhow!("Zed Pro trial price ID not set"))?;
-            let zed_free_price_id = app
-                .config
-                .stripe_zed_free_price_id
-                .clone()
-                .ok_or_else(|| anyhow!("Zed Free price ID not set"))?;
+            let zed_pro_price_id = app.config.zed_pro_price_id()?;
+            let zed_pro_trial_price_id = app.config.zed_pro_trial_price_id()?;
+            let zed_free_price_id = app.config.zed_free_price_id()?;
 
             let stripe_subscription =
                 Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
@@ -466,9 +454,7 @@ async fn manage_billing_subscription(
                 .find_map(|item| {
                     let price = item.price.as_ref()?;
 
-                    if price.id.as_str() == zed_free_price_id
-                        || price.id.as_str() == zed_pro_trial_price_id
-                    {
+                    if price.id == zed_free_price_id || price.id == zed_pro_trial_price_id {
                         Some(item.id.clone())
                     } else {
                         None
@@ -484,7 +470,7 @@ async fn manage_billing_subscription(
                         items: vec![
                             CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirmItems {
                                 id: subscription_item_to_update.to_string(),
-                                price: Some(zed_pro_price_id),
+                                price: Some(zed_pro_price_id.to_string()),
                                 quantity: Some(1),
                             },
                         ],
