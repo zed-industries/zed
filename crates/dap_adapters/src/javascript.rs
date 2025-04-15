@@ -6,13 +6,8 @@ use task::{DebugRequestType, DebugTaskDefinition};
 use crate::*;
 
 #[derive(Debug)]
-pub(crate) struct JsDebugAdapter {}
+pub(crate) struct JsDebugAdapter;
 
-impl Default for JsDebugAdapter {
-    fn default() -> Self {
-        Self {}
-    }
-}
 impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "JavaScript";
     const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
