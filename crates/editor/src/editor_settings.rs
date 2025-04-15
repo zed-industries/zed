@@ -476,10 +476,7 @@ impl Settings for EditorSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(
-        vscode: &VSCodeSettings,
-        current: &mut Self::FileContent,
-    ) {
+    fn import_from_vscode(vscode: &VSCodeSettings, current: &mut Self::FileContent) {
         let mut gutter = current.gutter.unwrap_or_default();
         vscode.bool_setting("editor.showFoldingControls", &mut gutter.folds);
         current.gutter = Some(gutter);
