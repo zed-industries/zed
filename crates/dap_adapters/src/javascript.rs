@@ -1,24 +1,13 @@
 use adapters::latest_github_release;
 use gpui::AsyncApp;
-use regex::Regex;
 use std::path::PathBuf;
 use task::{DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
 #[derive(Debug)]
-pub(crate) struct JsDebugAdapter {
-    attach_processes: Regex,
-}
+pub(crate) struct JsDebugAdapter;
 
-impl Default for JsDebugAdapter {
-    fn default() -> Self {
-        Self {
-            attach_processes: Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)")
-                .expect("Regex compilation to succeed"),
-        }
-    }
-}
 impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "JavaScript";
     const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
@@ -148,9 +137,5 @@ impl DebugAdapter for JsDebugAdapter {
             }
         }
         args
-    }
-
-    fn attach_processes_filter(&self) -> Regex {
-        self.attach_processes.clone()
     }
 }

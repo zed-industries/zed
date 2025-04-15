@@ -20,7 +20,7 @@ use std::{
     net::Ipv4Addr,
     ops::Deref,
     path::PathBuf,
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 use task::{DebugAdapterConfig, DebugTaskDefinition};
 use util::ResultExt;
@@ -291,14 +291,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     /// Should return base configuration to make the debug adapter work
     fn request_args(&self, config: &DebugTaskDefinition) -> Value;
-
-    fn attach_processes_filter(&self) -> regex::Regex {
-        EMPTY_REGEX.clone()
-    }
 }
-
-static EMPTY_REGEX: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new("").expect("Regex compilation to succeed"));
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeAdapter {}
 
@@ -374,11 +367,5 @@ impl DebugAdapter for FakeAdapter {
                 None
             },
         })
-    }
-
-    fn attach_processes_filter(&self) -> regex::Regex {
-        static REGEX: LazyLock<regex::Regex> =
-            LazyLock::new(|| regex::Regex::new("^fake-binary").unwrap());
-        REGEX.clone()
     }
 }
