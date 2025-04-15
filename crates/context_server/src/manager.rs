@@ -39,6 +39,7 @@ pub struct ContextServer {
     pub id: Arc<str>,
     pub config: Arc<ServerConfig>,
     pub client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
+    pub is_starting: RwLock<bool>,
 }
 
 impl ContextServer {
@@ -47,6 +48,7 @@ impl ContextServer {
             id,
             config,
             client: RwLock::new(None),
+            is_starting: RwLock::new(false),
         }
     }
 
@@ -63,35 +65,62 @@ impl ContextServer {
     }
 
     pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
+        // Check if server is already starting or running to prevent duplicate starts
+        {
+            let mut is_starting = self.is_starting.write();
+            if *is_starting {
+                log::debug!("context server {} is already starting", self.id);
+                return Ok(());
+            }
+
+            if self.client.read().is_some() {
+                log::debug!("context server {} is already running", self.id);
+                return Ok(());
+            }
+
+            // Mark as starting
+            *is_starting = true;
+        }
+
         log::info!("starting context server {}", self.id);
-        let Some(command) = &self.config.command else {
-            bail!("no command specified for server {}", self.id);
-        };
-        let client = Client::new(
-            client::ContextServerId(self.id.clone()),
-            client::ModelContextServerBinary {
-                executable: Path::new(&command.path).to_path_buf(),
-                args: command.args.clone(),
-                env: command.env.clone(),
-            },
-            cx.clone(),
-        )?;
 
-        let protocol = crate::protocol::ModelContextProtocol::new(client);
-        let client_info = types::Implementation {
-            name: "Zed".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        };
-        let initialized_protocol = protocol.initialize(client_info).await?;
+        // Get command or bail
+        let result = async {
+            let Some(command) = &self.config.command else {
+                bail!("no command specified for server {}", self.id);
+            };
+            let client = Client::new(
+                client::ContextServerId(self.id.clone()),
+                client::ModelContextServerBinary {
+                    executable: Path::new(&command.path).to_path_buf(),
+                    args: command.args.clone(),
+                    env: command.env.clone(),
+                },
+                cx.clone(),
+            )?;
 
-        log::debug!(
-            "context server {} initialized: {:?}",
-            self.id,
-            initialized_protocol.initialize,
-        );
+            let protocol = crate::protocol::ModelContextProtocol::new(client);
+            let client_info = types::Implementation {
+                name: "Zed".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            };
+            let initialized_protocol = protocol.initialize(client_info).await?;
 
-        *self.client.write() = Some(Arc::new(initialized_protocol));
-        Ok(())
+            log::debug!(
+                "context server {} initialized: {:?}",
+                self.id,
+                initialized_protocol.initialize,
+            );
+
+            *self.client.write() = Some(Arc::new(initialized_protocol));
+            Ok(())
+        }
+        .await;
+
+        // Reset starting state regardless of result
+        *self.is_starting.write() = false;
+
+        result
     }
 
     pub fn stop(&self) -> Result<()> {
