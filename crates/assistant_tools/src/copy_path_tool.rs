@@ -116,6 +116,7 @@ impl Tool for CopyPathTool {
                     err
                 )),
             }
-        }).into()
+        })
+        .into()
     }
 }

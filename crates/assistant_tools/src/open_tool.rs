@@ -63,6 +63,7 @@ impl Tool for OpenTool {
             open::that(&input.path_or_url).context("Failed to open URL or file path")?;
 
             Ok(format!("Successfully opened {}", input.path_or_url))
-        }).into()
+        })
+        .into()
     }
 }

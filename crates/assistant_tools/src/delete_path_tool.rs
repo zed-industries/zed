@@ -71,7 +71,8 @@ impl Tool for DeletePathTool {
         let Some(project_path) = project.read(cx).find_project_path(&path_str, cx) else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path_str} because that path isn't in this project."
-            ))).into();
+            )))
+            .into();
         };
 
         let Some(worktree) = project
@@ -80,7 +81,8 @@ impl Tool for DeletePathTool {
         else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path_str} because that path isn't in this project."
-            ))).into();
+            )))
+            .into();
         };
 
         let worktree_snapshot = worktree.read(cx).snapshot();
@@ -131,6 +133,7 @@ impl Tool for DeletePathTool {
                     "Couldn't delete {path_str} because that path isn't in this project."
                 )),
             }
-        }).into()
+        })
+        .into()
     }
 }

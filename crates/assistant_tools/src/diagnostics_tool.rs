@@ -90,7 +90,8 @@ impl Tool for DiagnosticsTool {
         {
             Some(path) if !path.is_empty() => {
                 let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                    return Task::ready(Err(anyhow!("Could not find path {path} in project",))).into();
+                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)))
+                        .into();
                 };
 
                 let buffer =
@@ -124,7 +125,8 @@ impl Tool for DiagnosticsTool {
                     } else {
                         Ok(output)
                     }
-                }).into()
+                })
+                .into()
             }
             _ => {
                 let project = project.read(cx);
@@ -157,7 +159,8 @@ impl Tool for DiagnosticsTool {
                 if has_diagnostics {
                     Task::ready(Ok(output)).into()
                 } else {
-                    Task::ready(Ok("No errors or warnings found in the project.".to_string())).into()
+                    Task::ready(Ok("No errors or warnings found in the project.".to_string()))
+                        .into()
                 }
             }
         }

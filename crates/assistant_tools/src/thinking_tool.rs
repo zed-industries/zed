@@ -56,6 +56,7 @@ impl Tool for ThinkingTool {
         Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
             Ok(_input) => Ok("Finished thinking.".to_string()),
             Err(err) => Err(anyhow!(err)),
-        }).into()
+        })
+        .into()
     }
 }

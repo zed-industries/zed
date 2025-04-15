@@ -127,6 +127,7 @@ impl Tool for MovePathTool {
                     err
                 )),
             }
-        }).into()
+        })
+        .into()
     }
 }

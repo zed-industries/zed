@@ -80,7 +80,9 @@ impl Tool for CreateFileTool {
         };
         let project_path = match project.read(cx).find_project_path(&input.path, cx) {
             Some(project_path) => project_path,
-            None => return Task::ready(Err(anyhow!("Path to create was outside the project"))).into(),
+            None => {
+                return Task::ready(Err(anyhow!("Path to create was outside the project"))).into();
+            }
         };
         let contents: Arc<str> = input.contents.as_str().into();
         let destination_path: Arc<str> = input.path.as_str().into();
@@ -105,6 +107,7 @@ impl Tool for CreateFileTool {
                 .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
 
             Ok(format!("Created file {destination_path}"))
-        }).into()
+        })
+        .into()
     }
 }
