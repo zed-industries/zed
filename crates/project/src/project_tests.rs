@@ -8273,16 +8273,33 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         json!({
             ".git": {
                 "worktrees": {
-                    "some-worktree": {}
+                    "some-worktree": {
+                        "commondir": "../..\n"
+                    }
                 },
+                "modules": {
+                    "subdir": {
+                        "some-submodule": {
+                            // For is_git_dir
+                            "HEAD": "",
+                            "config": "",
+                        }
+                    }
+                }
             },
             "src": {
                 "a.txt": "A",
             },
             "some-worktree": {
-                ".git": "gitdir: ../.git/worktrees/some-worktree",
+                ".git": "gitdir: ../.git/worktrees/some-worktree\n",
                 "src": {
                     "b.txt": "B",
+                }
+            },
+            "subdir": {
+                "some-submodule": {
+                    ".git": "gitdir: ../../.git/modules/subdir/some-submodule\n",
+                    "c.txt": "C",
                 }
             }
         }),
@@ -8315,9 +8332,11 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         [
             Path::new(path!("/project")).into(),
             Path::new(path!("/project/some-worktree")).into(),
+            Path::new(path!("/project/subdir/some-submodule")).into(),
         ]
     );
 
+    // Generate a git-related event for the worktree and check that it's refreshed.
     fs.with_git_state(
         path!("/project/some-worktree/.git").as_ref(),
         true,
@@ -8356,6 +8375,45 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     worktree_repo.update(cx, |repo, _| {
         pretty_assertions::assert_eq!(
             repo.status_for_path(&"src/b.txt".into()).unwrap().status,
+            StatusCode::Modified.worktree(),
+        );
+    });
+
+    // The same for the submodule.
+    fs.with_git_state(
+        path!("/project/subdir/some-submodule/.git").as_ref(),
+        true,
+        |state| {
+            state.head_contents.insert("c.txt".into(), "c".to_owned());
+            state.index_contents.insert("c.txt".into(), "c".to_owned());
+        },
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/subdir/some-submodule/c.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (submodule_repo, barrier) = project.update(cx, |project, cx| {
+        let (repo, _) = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+            .unwrap();
+        pretty_assertions::assert_eq!(
+            repo.read(cx).work_directory_abs_path,
+            Path::new(path!("/project/subdir/some-submodule")).into(),
+        );
+        let barrier = repo.update(cx, |repo, _| repo.barrier());
+        (repo.clone(), barrier)
+    });
+    barrier.await.unwrap();
+    submodule_repo.update(cx, |repo, _| {
+        pretty_assertions::assert_eq!(
+            repo.status_for_path(&"c.txt".into()).unwrap().status,
             StatusCode::Modified.worktree(),
         );
     });

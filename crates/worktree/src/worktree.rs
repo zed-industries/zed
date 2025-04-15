@@ -3979,7 +3979,8 @@ impl BackgroundScanner {
                 let mut is_git_related = false;
 
                 let dot_git_paths = abs_path.as_path().ancestors().find_map(|ancestor| {
-                    if smol::block_on(is_git_dir(ancestor, self.fs.as_ref())) {
+                    log::trace!("considering {ancestor:?} for git dir");
+                    if dbg!(smol::block_on(is_git_dir(ancestor, self.fs.as_ref()))) {
                         let path_in_git_dir = abs_path.as_path().strip_prefix(ancestor).expect("stripping off the ancestor");
                         Some((ancestor.to_owned(), path_in_git_dir.to_owned()))
                     } else {
