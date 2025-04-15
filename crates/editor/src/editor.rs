@@ -23,7 +23,7 @@ mod element;
 mod git;
 mod highlight_matching_bracket;
 mod hover_links;
-mod hover_popover;
+pub mod hover_popover;
 mod indent_guides;
 mod inlay_hint_cache;
 pub mod items;
@@ -88,10 +88,9 @@ use gpui::{
     ClipboardItem, Context, DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter,
     FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
     KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render,
-    SharedString, Size, Stateful, Styled, StyledText, Subscription, Task, TextStyle,
-    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
-    WeakFocusHandle, Window, div, impl_actions, point, prelude::*, pulsating_between, px, relative,
-    size,
+    SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
+    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
@@ -105,7 +104,7 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText,
+    CursorShape, DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText,
     IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
@@ -143,12 +142,12 @@ use language::BufferSnapshot;
 pub use lsp_ext::lsp_tasks;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, RowInfo,
-    ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, PathKey,
+    RowInfo, ToOffset, ToPoint,
 };
 use multi_buffer::{
     ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    MultiOrSingleBufferOffsetRange, PathKey, ToOffsetUtf16,
+    MultiOrSingleBufferOffsetRange, ToOffsetUtf16,
 };
 use parking_lot::Mutex;
 use project::{
@@ -354,6 +353,24 @@ pub fn init(cx: &mut App) {
 
 pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
+}
+
+pub trait DiagnosticRenderer {
+    fn render_group(
+        &self,
+        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        buffer_id: BufferId,
+        snapshot: EditorSnapshot,
+        editor: WeakEntity<Editor>,
+        cx: &mut App,
+    ) -> Vec<BlockProperties<Anchor>>;
+}
+
+pub(crate) struct GlobalDiagnosticRenderer(pub Arc<dyn DiagnosticRenderer>);
+
+impl gpui::Global for GlobalDiagnosticRenderer {}
+pub fn set_diagnostic_renderer(renderer: impl DiagnosticRenderer + 'static, cx: &mut App) {
+    cx.set_global(GlobalDiagnosticRenderer(Arc::new(renderer)));
 }
 
 pub struct SearchWithinRange;
@@ -701,7 +718,7 @@ pub struct Editor {
     snippet_stack: InvalidationStack<SnippetState>,
     select_syntax_node_history: SelectSyntaxNodeHistory,
     ime_transaction: Option<TransactionId>,
-    active_diagnostics: Option<ActiveDiagnosticGroup>,
+    active_diagnostics: ActiveDiagnostic,
     show_inline_diagnostics: bool,
     inline_diagnostics_update: Task<()>,
     inline_diagnostics_enabled: bool,
@@ -1074,12 +1091,19 @@ struct RegisteredInlineCompletionProvider {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ActiveDiagnosticGroup {
-    primary_range: Range<Anchor>,
-    primary_message: String,
-    group_id: usize,
-    blocks: HashMap<CustomBlockId, Diagnostic>,
-    is_valid: bool,
+pub struct ActiveDiagnosticGroup {
+    pub active_range: Range<Anchor>,
+    pub active_message: String,
+    pub group_id: usize,
+    pub blocks: HashSet<CustomBlockId>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum ActiveDiagnostic {
+    None,
+    All,
+    Group(ActiveDiagnosticGroup),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1475,7 +1499,7 @@ impl Editor {
             snippet_stack: Default::default(),
             select_syntax_node_history: SelectSyntaxNodeHistory::default(),
             ime_transaction: Default::default(),
-            active_diagnostics: None,
+            active_diagnostics: ActiveDiagnostic::None,
             show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
             inline_diagnostics_update: Task::ready(()),
             inline_diagnostics: Vec::new(),
@@ -3076,7 +3100,7 @@ impl Editor {
             return true;
         }
 
-        if self.mode.is_full() && self.active_diagnostics.is_some() {
+        if self.mode.is_full() && matches!(self.active_diagnostics, ActiveDiagnostic::Group(_)) {
             self.dismiss_diagnostics(cx);
             return true;
         }
@@ -13052,7 +13076,7 @@ impl Editor {
         });
     }
 
-    fn go_to_diagnostic(
+    pub fn go_to_diagnostic(
         &mut self,
         _: &GoToDiagnostic,
         window: &mut Window,
@@ -13062,7 +13086,7 @@ impl Editor {
         self.go_to_diagnostic_impl(Direction::Next, window, cx)
     }
 
-    fn go_to_prev_diagnostic(
+    pub fn go_to_prev_diagnostic(
         &mut self,
         _: &GoToPreviousDiagnostic,
         window: &mut Window,
@@ -13080,137 +13104,76 @@ impl Editor {
     ) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.selections.newest::<usize>(cx);
-        // If there is an active Diagnostic Popover jump to its diagnostic instead.
-        if direction == Direction::Next {
-            if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
-                let Some(buffer_id) = popover.local_diagnostic.range.start.buffer_id else {
-                    return;
-                };
-                self.activate_diagnostics(
-                    buffer_id,
-                    popover.local_diagnostic.diagnostic.group_id,
-                    window,
-                    cx,
-                );
-                if let Some(active_diagnostics) = self.active_diagnostics.as_ref() {
-                    let primary_range_start = active_diagnostics.primary_range.start;
-                    self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                        let mut new_selection = s.newest_anchor().clone();
-                        new_selection.collapse_to(primary_range_start, SelectionGoal::None);
-                        s.select_anchors(vec![new_selection.clone()]);
-                    });
-                    self.refresh_inline_completion(false, true, window, cx);
-                }
-                return;
+
+        let mut active_group_id = None;
+        if let ActiveDiagnostic::Group(active_group) = &self.active_diagnostics {
+            if active_group.active_range.start.to_offset(&buffer) == selection.start {
+                active_group_id = Some(active_group.group_id);
             }
         }
 
-        let active_group_id = self
-            .active_diagnostics
-            .as_ref()
-            .map(|active_group| active_group.group_id);
-        let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
-            active_diagnostics
-                .primary_range
-                .to_offset(&buffer)
-                .to_inclusive()
-        });
-        let search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
-            if active_primary_range.contains(&selection.head()) {
-                *active_primary_range.start()
-            } else {
-                selection.head()
-            }
-        } else {
-            selection.head()
-        };
+        fn filtered(
+            snapshot: EditorSnapshot,
+            diagnostics: impl Iterator<Item = DiagnosticEntry<usize>>,
+        ) -> impl Iterator<Item = DiagnosticEntry<usize>> {
+            diagnostics
+                .filter(|entry| entry.range.start != entry.range.end)
+                .filter(|entry| !entry.diagnostic.is_unnecessary)
+                .filter(move |entry| !snapshot.intersects_fold(entry.range.start))
+        }
 
         let snapshot = self.snapshot(window, cx);
-        let primary_diagnostics_before = buffer
-            .diagnostics_in_range::<usize>(0..search_start)
-            .filter(|entry| entry.diagnostic.is_primary)
-            .filter(|entry| entry.range.start != entry.range.end)
-            .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
-            .filter(|entry| !snapshot.intersects_fold(entry.range.start))
-            .collect::<Vec<_>>();
-        let last_same_group_diagnostic_before = active_group_id.and_then(|active_group_id| {
-            primary_diagnostics_before
-                .iter()
-                .position(|entry| entry.diagnostic.group_id == active_group_id)
-        });
+        let before = filtered(
+            snapshot.clone(),
+            buffer
+                .diagnostics_in_range(0..selection.start)
+                .filter(|entry| entry.range.start <= selection.start),
+        );
+        let after = filtered(
+            snapshot,
+            buffer
+                .diagnostics_in_range(selection.start..buffer.len())
+                .filter(|entry| entry.range.start >= selection.start),
+        );
 
-        let primary_diagnostics_after = buffer
-            .diagnostics_in_range::<usize>(search_start..buffer.len())
-            .filter(|entry| entry.diagnostic.is_primary)
-            .filter(|entry| entry.range.start != entry.range.end)
-            .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
-            .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start))
-            .collect::<Vec<_>>();
-        let last_same_group_diagnostic_after = active_group_id.and_then(|active_group_id| {
-            primary_diagnostics_after
-                .iter()
-                .enumerate()
-                .rev()
-                .find_map(|(i, entry)| {
-                    if entry.diagnostic.group_id == active_group_id {
-                        Some(i)
-                    } else {
-                        None
+        let mut found: Option<DiagnosticEntry<usize>> = None;
+        if direction == Direction::Prev {
+            'outer: for prev_diagnostics in [before.collect::<Vec<_>>(), after.collect::<Vec<_>>()]
+            {
+                for diagnostic in prev_diagnostics.into_iter().rev() {
+                    if diagnostic.range.start != selection.start
+                        || active_group_id
+                            .is_some_and(|active| diagnostic.diagnostic.group_id < active)
+                    {
+                        found = Some(diagnostic);
+                        break 'outer;
                     }
-                })
-        });
-
-        let next_primary_diagnostic = match direction {
-            Direction::Prev => primary_diagnostics_before
-                .iter()
-                .take(last_same_group_diagnostic_before.unwrap_or(usize::MAX))
-                .rev()
-                .next(),
-            Direction::Next => primary_diagnostics_after
-                .iter()
-                .skip(
-                    last_same_group_diagnostic_after
-                        .map(|index| index + 1)
-                        .unwrap_or(0),
-                )
-                .next(),
-        };
-
-        // Cycle around to the start of the buffer, potentially moving back to the start of
-        // the currently active diagnostic.
-        let cycle_around = || match direction {
-            Direction::Prev => primary_diagnostics_after
-                .iter()
-                .rev()
-                .chain(primary_diagnostics_before.iter().rev())
-                .next(),
-            Direction::Next => primary_diagnostics_before
-                .iter()
-                .chain(primary_diagnostics_after.iter())
-                .next(),
-        };
-
-        if let Some((primary_range, group_id)) = next_primary_diagnostic
-            .or_else(cycle_around)
-            .map(|entry| (&entry.range, entry.diagnostic.group_id))
-        {
-            let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
-                return;
-            };
-            self.activate_diagnostics(buffer_id, group_id, window, cx);
-            if self.active_diagnostics.is_some() {
-                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select(vec![Selection {
-                        id: selection.id,
-                        start: primary_range.start,
-                        end: primary_range.start,
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    }]);
-                });
-                self.refresh_inline_completion(false, true, window, cx);
+                }
+            }
+        } else {
+            for diagnostic in after.chain(before) {
+                if diagnostic.range.start != selection.start
+                    || active_group_id.is_some_and(|active| diagnostic.diagnostic.group_id > active)
+                {
+                    found = Some(diagnostic);
+                    break;
+                }
             }
         }
+        let Some(next_diagnostic) = found else {
+            return;
+        };
+
+        let Some(buffer_id) = buffer.anchor_after(next_diagnostic.range.start).buffer_id else {
+            return;
+        };
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.select_ranges(vec![
+                next_diagnostic.range.start..next_diagnostic.range.start,
+            ])
+        });
+        self.activate_diagnostics(buffer_id, next_diagnostic, window, cx);
+        self.refresh_inline_completion(false, true, window, cx);
     }
 
     fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
@@ -14502,110 +14465,91 @@ impl Editor {
     }
 
     fn refresh_active_diagnostics(&mut self, cx: &mut Context<Editor>) {
-        if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
+        if let ActiveDiagnostic::Group(active_diagnostics) = &mut self.active_diagnostics {
             let buffer = self.buffer.read(cx).snapshot(cx);
-            let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
-            let primary_range_end = active_diagnostics.primary_range.end.to_offset(&buffer);
+            let primary_range_start = active_diagnostics.active_range.start.to_offset(&buffer);
+            let primary_range_end = active_diagnostics.active_range.end.to_offset(&buffer);
             let is_valid = buffer
                 .diagnostics_in_range::<usize>(primary_range_start..primary_range_end)
                 .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == active_diagnostics.primary_message
+                        && entry.diagnostic.message == active_diagnostics.active_message
                 });
 
-            if is_valid != active_diagnostics.is_valid {
-                active_diagnostics.is_valid = is_valid;
-                if is_valid {
-                    let mut new_styles = HashMap::default();
-                    for (block_id, diagnostic) in &active_diagnostics.blocks {
-                        new_styles.insert(
-                            *block_id,
-                            diagnostic_block_renderer(diagnostic.clone(), None, true),
-                        );
-                    }
-                    self.display_map.update(cx, |display_map, _cx| {
-                        display_map.replace_blocks(new_styles);
-                    });
-                } else {
-                    self.dismiss_diagnostics(cx);
-                }
+            if !is_valid {
+                self.dismiss_diagnostics(cx);
             }
         }
+    }
+
+    pub fn active_diagnostic_group(&self) -> Option<&ActiveDiagnosticGroup> {
+        match &self.active_diagnostics {
+            ActiveDiagnostic::Group(group) => Some(group),
+            _ => None,
+        }
+    }
+
+    pub fn set_all_diagnostics_active(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_diagnostics(cx);
+        self.active_diagnostics = ActiveDiagnostic::All;
     }
 
     fn activate_diagnostics(
         &mut self,
         buffer_id: BufferId,
-        group_id: usize,
+        diagnostic: DiagnosticEntry<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(self.active_diagnostics, ActiveDiagnostic::All) {
+            return;
+        }
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
-        self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
-            let buffer = self.buffer.read(cx).snapshot(cx);
+        let Some(diagnostic_renderer) = cx
+            .try_global::<GlobalDiagnosticRenderer>()
+            .map(|g| g.0.clone())
+        else {
+            return;
+        };
+        let buffer = self.buffer.read(cx).snapshot(cx);
 
-            let mut primary_range = None;
-            let mut primary_message = None;
-            let diagnostic_group = buffer
-                .diagnostic_group(buffer_id, group_id)
-                .filter_map(|entry| {
-                    let start = entry.range.start;
-                    let end = entry.range.end;
-                    if snapshot.is_line_folded(MultiBufferRow(start.row))
-                        && (start.row == end.row
-                            || snapshot.is_line_folded(MultiBufferRow(end.row)))
-                    {
-                        return None;
-                    }
-                    if entry.diagnostic.is_primary {
-                        primary_range = Some(entry.range.clone());
-                        primary_message = Some(entry.diagnostic.message.clone());
-                    }
-                    Some(entry)
-                })
-                .collect::<Vec<_>>();
-            let primary_range = primary_range?;
-            let primary_message = primary_message?;
+        let diagnostic_group = buffer
+            .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
+            .collect::<Vec<_>>();
 
-            let blocks = display_map
-                .insert_blocks(
-                    diagnostic_group.iter().map(|entry| {
-                        let diagnostic = entry.diagnostic.clone();
-                        let message_height = diagnostic.message.matches('\n').count() as u32 + 1;
-                        BlockProperties {
-                            style: BlockStyle::Fixed,
-                            placement: BlockPlacement::Below(
-                                buffer.anchor_after(entry.range.start),
-                            ),
-                            height: Some(message_height),
-                            render: diagnostic_block_renderer(diagnostic, None, true),
-                            priority: 0,
-                        }
-                    }),
-                    cx,
-                )
-                .into_iter()
-                .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
-                .collect();
+        let blocks = diagnostic_renderer.render_group(
+            diagnostic_group,
+            buffer_id,
+            snapshot,
+            cx.weak_entity(),
+            cx,
+        );
 
-            Some(ActiveDiagnosticGroup {
-                primary_range: buffer.anchor_before(primary_range.start)
-                    ..buffer.anchor_after(primary_range.end),
-                primary_message,
-                group_id,
-                blocks,
-                is_valid: true,
-            })
+        let blocks = self.display_map.update(cx, |display_map, cx| {
+            display_map.insert_blocks(blocks, cx).into_iter().collect()
         });
+        self.active_diagnostics = ActiveDiagnostic::Group(ActiveDiagnosticGroup {
+            active_range: buffer.anchor_before(diagnostic.range.start)
+                ..buffer.anchor_after(diagnostic.range.end),
+            active_message: diagnostic.diagnostic.message.clone(),
+            group_id: diagnostic.diagnostic.group_id,
+            blocks,
+        });
+        cx.notify();
     }
 
     fn dismiss_diagnostics(&mut self, cx: &mut Context<Self>) {
-        if let Some(active_diagnostic_group) = self.active_diagnostics.take() {
+        if matches!(self.active_diagnostics, ActiveDiagnostic::All) {
+            return;
+        };
+
+        let prev = mem::replace(&mut self.active_diagnostics, ActiveDiagnostic::None);
+        if let ActiveDiagnostic::Group(group) = prev {
             self.display_map.update(cx, |display_map, cx| {
-                display_map.remove_blocks(active_diagnostic_group.blocks.into_keys().collect(), cx);
+                display_map.remove_blocks(group.blocks, cx);
             });
             cx.notify();
         }
@@ -14658,6 +14602,8 @@ impl Editor {
             None
         };
         self.inline_diagnostics_update = cx.spawn_in(window, async move |editor, cx| {
+            let editor = editor.upgrade().unwrap();
+
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
@@ -15230,7 +15176,7 @@ impl Editor {
         &mut self,
         creases: Vec<Crease<T>>,
         auto_scroll: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if creases.is_empty() {
@@ -15254,18 +15200,6 @@ impl Editor {
         }
 
         cx.notify();
-
-        if let Some(active_diagnostics) = self.active_diagnostics.take() {
-            // Clear diagnostics block when folding a range that contains it.
-            let snapshot = self.snapshot(window, cx);
-            if snapshot.intersects_fold(active_diagnostics.primary_range.start) {
-                drop(snapshot);
-                self.active_diagnostics = Some(active_diagnostics);
-                self.dismiss_diagnostics(cx);
-            } else {
-                self.active_diagnostics = Some(active_diagnostics);
-            }
-        }
 
         self.scrollbar_marker_state.dirty = true;
         self.folds_did_change(cx);
@@ -20120,103 +20054,6 @@ impl InvalidationRegion for SnippetState {
     }
 }
 
-pub fn diagnostic_block_renderer(
-    diagnostic: Diagnostic,
-    max_message_rows: Option<u8>,
-    allow_closing: bool,
-) -> RenderBlock {
-    let (text_without_backticks, code_ranges) =
-        highlight_diagnostic_message(&diagnostic, max_message_rows);
-
-    Arc::new(move |cx: &mut BlockContext| {
-        let group_id: SharedString = cx.block_id.to_string().into();
-
-        let mut text_style = cx.window.text_style().clone();
-        text_style.color = diagnostic_style(diagnostic.severity, cx.theme().status());
-        let theme_settings = ThemeSettings::get_global(cx);
-        text_style.font_family = theme_settings.buffer_font.family.clone();
-        text_style.font_style = theme_settings.buffer_font.style;
-        text_style.font_features = theme_settings.buffer_font.features.clone();
-        text_style.font_weight = theme_settings.buffer_font.weight;
-
-        let multi_line_diagnostic = diagnostic.message.contains('\n');
-
-        let buttons = |diagnostic: &Diagnostic| {
-            if multi_line_diagnostic {
-                v_flex()
-            } else {
-                h_flex()
-            }
-            .when(allow_closing, |div| {
-                div.children(diagnostic.is_primary.then(|| {
-                    IconButton::new("close-block", IconName::XCircle)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::Compact)
-                        .style(ButtonStyle::Transparent)
-                        .visible_on_hover(group_id.clone())
-                        .on_click(move |_click, window, cx| {
-                            window.dispatch_action(Box::new(Cancel), cx)
-                        })
-                        .tooltip(|window, cx| {
-                            Tooltip::for_action("Close Diagnostics", &Cancel, window, cx)
-                        })
-                }))
-            })
-            .child(
-                IconButton::new("copy-block", IconName::Copy)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Transparent)
-                    .visible_on_hover(group_id.clone())
-                    .on_click({
-                        let message = diagnostic.message.clone();
-                        move |_click, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
-                        }
-                    })
-                    .tooltip(Tooltip::text("Copy diagnostic message")),
-            )
-        };
-
-        let icon_size = buttons(&diagnostic).into_any_element().layout_as_root(
-            AvailableSpace::min_size(),
-            cx.window,
-            cx.app,
-        );
-
-        h_flex()
-            .id(cx.block_id)
-            .group(group_id.clone())
-            .relative()
-            .size_full()
-            .block_mouse_down()
-            .pl(cx.gutter_dimensions.width)
-            .w(cx.max_width - cx.gutter_dimensions.full_width())
-            .child(
-                div()
-                    .flex()
-                    .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
-                    .flex_shrink(),
-            )
-            .child(buttons(&diagnostic))
-            .child(div().flex().flex_shrink_0().child(
-                StyledText::new(text_without_backticks.clone()).with_default_highlights(
-                    &text_style,
-                    code_ranges.iter().map(|range| {
-                        (
-                            range.clone(),
-                            HighlightStyle {
-                                font_weight: Some(FontWeight::BOLD),
-                                ..Default::default()
-                            },
-                        )
-                    }),
-                ),
-            ))
-            .into_any_element()
-    })
-}
-
 fn inline_completion_edit_text(
     current_snapshot: &BufferSnapshot,
     edits: &[(Range<Anchor>, String)],
@@ -20237,74 +20074,7 @@ fn inline_completion_edit_text(
     edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
 }
 
-pub fn highlight_diagnostic_message(
-    diagnostic: &Diagnostic,
-    mut max_message_rows: Option<u8>,
-) -> (SharedString, Vec<Range<usize>>) {
-    let mut text_without_backticks = String::new();
-    let mut code_ranges = Vec::new();
-
-    if let Some(source) = &diagnostic.source {
-        text_without_backticks.push_str(source);
-        code_ranges.push(0..source.len());
-        text_without_backticks.push_str(": ");
-    }
-
-    let mut prev_offset = 0;
-    let mut in_code_block = false;
-    let has_row_limit = max_message_rows.is_some();
-    let mut newline_indices = diagnostic
-        .message
-        .match_indices('\n')
-        .filter(|_| has_row_limit)
-        .map(|(ix, _)| ix)
-        .fuse()
-        .peekable();
-
-    for (quote_ix, _) in diagnostic
-        .message
-        .match_indices('`')
-        .chain([(diagnostic.message.len(), "")])
-    {
-        let mut first_newline_ix = None;
-        let mut last_newline_ix = None;
-        while let Some(newline_ix) = newline_indices.peek() {
-            if *newline_ix < quote_ix {
-                if first_newline_ix.is_none() {
-                    first_newline_ix = Some(*newline_ix);
-                }
-                last_newline_ix = Some(*newline_ix);
-
-                if let Some(rows_left) = &mut max_message_rows {
-                    if *rows_left == 0 {
-                        break;
-                    } else {
-                        *rows_left -= 1;
-                    }
-                }
-                let _ = newline_indices.next();
-            } else {
-                break;
-            }
-        }
-        let prev_len = text_without_backticks.len();
-        let new_text = &diagnostic.message[prev_offset..first_newline_ix.unwrap_or(quote_ix)];
-        text_without_backticks.push_str(new_text);
-        if in_code_block {
-            code_ranges.push(prev_len..text_without_backticks.len());
-        }
-        prev_offset = last_newline_ix.unwrap_or(quote_ix) + 1;
-        in_code_block = !in_code_block;
-        if first_newline_ix.map_or(false, |newline_ix| newline_ix < quote_ix) {
-            text_without_backticks.push_str("...");
-            break;
-        }
-    }
-
-    (text_without_backticks.into(), code_ranges)
-}
-
-fn diagnostic_style(severity: DiagnosticSeverity, colors: &StatusColors) -> Hsla {
+pub fn diagnostic_style(severity: DiagnosticSeverity, colors: &StatusColors) -> Hsla {
     match severity {
         DiagnosticSeverity::ERROR => colors.error,
         DiagnosticSeverity::WARNING => colors.warning,
