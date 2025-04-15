@@ -35,7 +35,7 @@ pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
 pub const REPOS_DIR: &str = "./crates/eval/repos";
 pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
 
-const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 10);
+const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExampleBase {
