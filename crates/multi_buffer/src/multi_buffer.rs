@@ -6041,7 +6041,7 @@ impl MultiBufferSnapshot {
                     return &entry.locator;
                 }
             }
-            panic!("invalid excerpt id {:?}", id)
+            panic!("invalid excerpt id {id:?}")
         }
     }
 
