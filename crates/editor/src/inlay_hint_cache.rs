@@ -989,6 +989,16 @@ fn fetch_and_update_hints(
                 }
 
                 let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
+                if !editor.registered_buffers.contains_key(&query.buffer_id) {
+                    if let Some(project) = editor.project.as_ref() {
+                        project.update(cx, |project, cx| {
+                            editor.registered_buffers.insert(
+                                query.buffer_id,
+                                project.register_buffer_with_language_servers(&buffer, cx),
+                            );
+                        })
+                    }
+                }
                 editor
                     .semantics_provider
                     .as_ref()?
