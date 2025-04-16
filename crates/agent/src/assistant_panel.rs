@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AssistantPanelDelegate, ConfigurationError, ContextEditor, SlashCommandCompletionProvider,
-    make_lsp_adapter_delegate, render_remaining_tokens,
+    humanize_token_count, make_lsp_adapter_delegate, render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -861,7 +861,7 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_title_view(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
         const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
 
         let content = match &self.active_view {
@@ -921,16 +921,8 @@ impl AssistantPanel {
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_thread = self.thread.read(cx);
         let thread = active_thread.thread().read(cx);
-        let message_editor = self.message_editor.read(cx);
-        let is_waiting_to_update_token_count = message_editor.is_waiting_to_update_token_count();
-        let unsent_tokens = message_editor.last_estimated_token_count().unwrap_or(0);
-        let token_usage = thread.total_token_usage(cx).add(unsent_tokens);
         let thread_id = thread.id().clone();
-
-        let is_generating = thread.is_generating();
         let is_empty = active_thread.is_empty();
-        let focus_handle = self.focus_handle(cx);
-
         let is_history = matches!(self.active_view, ActiveView::History);
 
         let show_token_count = match &self.active_view {
@@ -938,6 +930,8 @@ impl AssistantPanel {
             ActiveView::PromptEditor => self.context_editor.is_some(),
             _ => false,
         };
+
+        let focus_handle = self.focus_handle(cx);
 
         let go_back_button = match &self.active_view {
             ActiveView::History | ActiveView::Configuration => Some(
@@ -985,76 +979,9 @@ impl AssistantPanel {
                 h_flex()
                     .h_full()
                     .gap_2()
-                    .when(show_token_count, |parent| match self.active_view {
-                        ActiveView::Thread { .. } => {
-                            if token_usage.total == 0 {
-                                return parent;
-                            }
-
-                            let token_color = match token_usage.ratio() {
-                                TokenUsageRatio::Normal => Color::Muted,
-                                TokenUsageRatio::Warning => Color::Warning,
-                                TokenUsageRatio::Exceeded => Color::Error,
-                            };
-
-                            parent.child(
-                                h_flex()
-                                    .flex_shrink_0()
-                                    .gap_0p5()
-                                    .when(unsent_tokens > 0, |parent| {
-                                        parent.child(
-                                            Label::new("~")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                        )
-                                    })
-                                    .child(
-                                        Label::new(assistant_context_editor::humanize_token_count(
-                                            token_usage.total,
-                                        ))
-                                        .size(LabelSize::Small)
-                                        .color(token_color)
-                                        .map(|label| {
-                                            if is_generating || is_waiting_to_update_token_count {
-                                                label
-                                                    .with_animation(
-                                                        "used-tokens-label",
-                                                        Animation::new(Duration::from_secs(2))
-                                                            .repeat()
-                                                            .with_easing(pulsating_between(
-                                                                0.6, 1.,
-                                                            )),
-                                                        |label, delta| label.alpha(delta),
-                                                    )
-                                                    .into_any()
-                                            } else {
-                                                label.into_any_element()
-                                            }
-                                        }),
-                                    )
-                                    .child(
-                                        Label::new("/").size(LabelSize::Small).color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(assistant_context_editor::humanize_token_count(
-                                            token_usage.max,
-                                        ))
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                    ),
-                            )
-                        }
-                        ActiveView::PromptEditor => {
-                            let Some(editor) = self.context_editor.as_ref() else {
-                                return parent;
-                            };
-                            let Some(element) = render_remaining_tokens(editor, cx) else {
-                                return parent;
-                            };
-                            parent.child(element)
-                        }
-                        _ => parent,
-                    })
+                    .when(show_token_count, |parent|
+                        parent.children(self.render_token_count(&thread, cx))
+                    )
                     .child(
                         h_flex()
                             .h_full()
@@ -1148,6 +1075,101 @@ impl AssistantPanel {
                             ),
                     ),
             )
+    }
+
+    fn render_token_count(&self, thread: &Thread, cx: &App) -> Option<AnyElement> {
+        let is_generating = thread.is_generating();
+        let message_editor = self.message_editor.read(cx);
+
+        let conversation_token_usage = thread.total_token_usage(cx);
+        let unsent_tokens = message_editor.last_estimated_token_count().unwrap_or(0);
+        let total_token_usage = conversation_token_usage.add(unsent_tokens);
+        let is_waiting_to_update_token_count = message_editor.is_waiting_to_update_token_count();
+
+        match self.active_view {
+            ActiveView::Thread { .. } => {
+                if total_token_usage.total == 0 {
+                    return None;
+                }
+
+                let token_color = match total_token_usage.ratio() {
+                    TokenUsageRatio::Normal if unsent_tokens > 0 => Color::Default,
+                    TokenUsageRatio::Normal => Color::Muted,
+                    TokenUsageRatio::Warning => Color::Warning,
+                    TokenUsageRatio::Exceeded => Color::Error,
+                };
+
+                let token_count = h_flex()
+                    .id("token-count")
+                    .flex_shrink_0()
+                    .gap_0p5()
+                    .when(unsent_tokens > 0, |parent| {
+                        parent
+                            .child(
+                                h_flex()
+                                    .mr_1()
+                                    .size_2()
+                                    .justify_center()
+                                    .rounded_full()
+                                    .bg(cx.theme().colors().text_accent.opacity(0.05))
+                                    .child(
+                                        div()
+                                            .size_1()
+                                            .rounded_full()
+                                            .bg(cx.theme().colors().text_accent),
+                                    ),
+                            )
+                            .tooltip(move |window, cx| {
+                                Tooltip::with_meta(
+                                    "Estimated New Token Count",
+                                    None,
+                                    format!(
+                                        "Current Conversation Tokens: {}",
+                                        humanize_token_count(conversation_token_usage.total)
+                                    ),
+                                    window,
+                                    cx,
+                                )
+                            })
+                    })
+                    .child(
+                        Label::new(humanize_token_count(total_token_usage.total))
+                            .size(LabelSize::Small)
+                            .color(token_color)
+                            .map(|label| {
+                                if is_generating || is_waiting_to_update_token_count {
+                                    label
+                                        .with_animation(
+                                            "used-tokens-label",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.6, 1.)),
+                                            |label, delta| label.alpha(delta),
+                                        )
+                                        .into_any()
+                                } else {
+                                    label.into_any_element()
+                                }
+                            }),
+                    )
+                    .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                    .child(
+                        Label::new(humanize_token_count(total_token_usage.max))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .into_any();
+
+                Some(token_count)
+            }
+            ActiveView::PromptEditor => {
+                let editor = self.context_editor.as_ref()?;
+                let element = render_remaining_tokens(editor, cx)?;
+
+                Some(element.into_any_element())
+            }
+            _ => None,
+        }
     }
 
     fn render_active_thread_or_empty_state(

@@ -247,7 +247,7 @@ impl TotalTokenUsage {
         }
     }
 
-    pub fn add(self, tokens: usize) -> TotalTokenUsage {
+    pub fn add(&self, tokens: usize) -> TotalTokenUsage {
         TotalTokenUsage {
             total: self.total + tokens,
             max: self.max,
