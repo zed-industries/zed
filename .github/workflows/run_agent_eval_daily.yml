@@ -21,10 +21,10 @@ jobs:
         with:
           clean: false
 
-      - name: Install mold linker
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y mold
+          sudo apt-get install -y mold pkg-config libx11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
