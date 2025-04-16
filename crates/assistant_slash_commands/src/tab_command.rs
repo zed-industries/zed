@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -6,13 +6,13 @@ use assistant_slash_command::{
 use collections::{HashMap, HashSet};
 use editor::Editor;
 use futures::future::join_all;
-use gpui::{Entity, Task, WeakView};
+use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
 use std::{
     path::PathBuf,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
-use ui::{prelude::*, ActiveTheme, WindowContext};
+use ui::{ActiveTheme, App, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -51,8 +51,9 @@ impl SlashCommand for TabSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let mut has_all_tabs_completion_item = false;
         let argument_set = arguments
@@ -82,10 +83,10 @@ impl SlashCommand for TabSlashCommand {
         });
         let current_query = arguments.last().cloned().unwrap_or_default();
         let tab_items_search =
-            tab_items_for_queries(workspace, &[current_query], cancel, false, cx);
+            tab_items_for_queries(workspace, &[current_query], cancel, false, window, cx);
 
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-        cx.spawn(|_| async move {
+        window.spawn(cx, async move |_| {
             let tab_items = tab_items_search.await?;
             let run_command = tab_items.len() == 1;
             let tab_completion_items = tab_items.into_iter().filter_map(|(path, ..)| {
@@ -137,19 +138,21 @@ impl SlashCommand for TabSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let tab_items_search = tab_items_for_queries(
             Some(workspace),
             arguments,
             Arc::new(AtomicBool::new(false)),
             true,
+            window,
             cx,
         );
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut output = SlashCommandOutput::default();
             for (full_path, buffer, _) in tab_items_search.await? {
                 append_buffer_to_output(&buffer, full_path.as_deref(), &mut output).log_err();
@@ -160,19 +163,20 @@ impl SlashCommand for TabSlashCommand {
 }
 
 fn tab_items_for_queries(
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakEntity<Workspace>>,
     queries: &[String],
     cancel: Arc<AtomicBool>,
     strict_match: bool,
-    cx: &mut WindowContext,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Task<anyhow::Result<Vec<(Option<PathBuf>, BufferSnapshot, usize)>>> {
     let empty_query = queries.is_empty() || queries.iter().all(|query| query.trim().is_empty());
     let queries = queries.to_owned();
-    cx.spawn(|mut cx| async move {
+    window.spawn(cx, async move |cx| {
         let mut open_buffers =
             workspace
                 .context("no workspace")?
-                .update(&mut cx, |workspace, cx| {
+                .update(cx, |workspace, cx| {
                     if strict_match && empty_query {
                         let snapshot = active_item_buffer(workspace, cx)?;
                         let full_path = snapshot.resolve_file_path(cx, true);
@@ -208,80 +212,79 @@ fn tab_items_for_queries(
                 })??;
 
         let background_executor = cx.background_executor().clone();
-        cx.background_executor()
-            .spawn(async move {
-                open_buffers.sort_by_key(|(_, _, timestamp)| *timestamp);
-                if empty_query
-                    || queries
-                        .iter()
-                        .any(|query| query == ALL_TABS_COMPLETION_ITEM)
-                {
-                    return Ok(open_buffers);
-                }
+        cx.background_spawn(async move {
+            open_buffers.sort_by_key(|(_, _, timestamp)| *timestamp);
+            if empty_query
+                || queries
+                    .iter()
+                    .any(|query| query == ALL_TABS_COMPLETION_ITEM)
+            {
+                return Ok(open_buffers);
+            }
 
-                let matched_items = if strict_match {
-                    let match_candidates = open_buffers
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(id, (full_path, ..))| {
-                            let path_string = full_path.as_deref()?.to_string_lossy().to_string();
-                            Some((id, path_string))
-                        })
-                        .fold(HashMap::default(), |mut candidates, (id, path_string)| {
-                            candidates
-                                .entry(path_string)
-                                .or_insert_with(Vec::new)
-                                .push(id);
-                            candidates
-                        });
-
-                    queries
-                        .iter()
-                        .filter_map(|query| match_candidates.get(query))
-                        .flatten()
-                        .copied()
-                        .filter_map(|id| open_buffers.get(id))
-                        .cloned()
-                        .collect()
-                } else {
-                    let match_candidates = open_buffers
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(id, (full_path, ..))| {
-                            let path_string = full_path.as_deref()?.to_string_lossy().to_string();
-                            Some(fuzzy::StringMatchCandidate::new(id, &path_string))
-                        })
-                        .collect::<Vec<_>>();
-                    let mut processed_matches = HashSet::default();
-                    let file_queries = queries.iter().map(|query| {
-                        fuzzy::match_strings(
-                            &match_candidates,
-                            query,
-                            true,
-                            usize::MAX,
-                            &cancel,
-                            background_executor.clone(),
-                        )
+            let matched_items = if strict_match {
+                let match_candidates = open_buffers
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, (full_path, ..))| {
+                        let path_string = full_path.as_deref()?.to_string_lossy().to_string();
+                        Some((id, path_string))
+                    })
+                    .fold(HashMap::default(), |mut candidates, (id, path_string)| {
+                        candidates
+                            .entry(path_string)
+                            .or_insert_with(Vec::new)
+                            .push(id);
+                        candidates
                     });
 
-                    join_all(file_queries)
-                        .await
-                        .into_iter()
-                        .flatten()
-                        .filter(|string_match| processed_matches.insert(string_match.candidate_id))
-                        .filter_map(|string_match| open_buffers.get(string_match.candidate_id))
-                        .cloned()
-                        .collect()
-                };
-                Ok(matched_items)
-            })
-            .await
+                queries
+                    .iter()
+                    .filter_map(|query| match_candidates.get(query))
+                    .flatten()
+                    .copied()
+                    .filter_map(|id| open_buffers.get(id))
+                    .cloned()
+                    .collect()
+            } else {
+                let match_candidates = open_buffers
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, (full_path, ..))| {
+                        let path_string = full_path.as_deref()?.to_string_lossy().to_string();
+                        Some(fuzzy::StringMatchCandidate::new(id, &path_string))
+                    })
+                    .collect::<Vec<_>>();
+                let mut processed_matches = HashSet::default();
+                let file_queries = queries.iter().map(|query| {
+                    fuzzy::match_strings(
+                        &match_candidates,
+                        query,
+                        true,
+                        usize::MAX,
+                        &cancel,
+                        background_executor.clone(),
+                    )
+                });
+
+                join_all(file_queries)
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .filter(|string_match| processed_matches.insert(string_match.candidate_id))
+                    .filter_map(|string_match| open_buffers.get(string_match.candidate_id))
+                    .cloned()
+                    .collect()
+            };
+            Ok(matched_items)
+        })
+        .await
     })
 }
 
 fn active_item_buffer(
     workspace: &mut Workspace,
-    cx: &mut ViewContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) -> anyhow::Result<BufferSnapshot> {
     let active_editor = workspace
         .active_item(cx)

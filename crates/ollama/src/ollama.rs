@@ -1,9 +1,9 @@
-use anyhow::{anyhow, Context, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http_client::{http, AsyncBody, HttpClient, Method, Request as HttpRequest};
+use anyhow::{Context as _, Result, anyhow};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{value::RawValue, Value};
+use serde_json::{Value, value::RawValue};
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
@@ -83,8 +83,8 @@ fn get_max_tokens(name: &str) -> usize {
         "codellama" | "starcoder2" => 16384,
         "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "qwen2.5-coder"
         | "dolphin-mixtral" => 32768,
-        "llama3.1" | "phi3" | "phi3.5" | "phi4" | "command-r" | "deepseek-coder-v2"
-        | "deepseek-r1" | "yi-coder" | "llama3.2" => 128000,
+        "llama3.1" | "llama3.2" | "llama3.3" | "phi3" | "phi3.5" | "phi4" | "command-r"
+        | "deepseek-coder-v2" | "deepseek-r1" | "yi-coder" => 128000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)

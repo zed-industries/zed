@@ -1,12 +1,11 @@
-#![allow(missing_docs)]
 use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
-use crate::{prelude::*, px, relative, IntoElement};
+use crate::{IntoElement, prelude::*, px, relative};
 use gpui::{
-    point, quad, Along, Axis as ScrollbarAxis, Bounds, ContentMask, Corners, Edges, Element,
-    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent, Size, Style,
-    UniformListScrollHandle, View, WindowContext,
+    Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element,
+    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, ListState,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
+    Size, Style, UniformListScrollHandle, Window, point, quad,
 };
 
 pub struct Scrollbar {
@@ -34,9 +33,34 @@ impl ScrollableHandle for UniformListScrollHandle {
     fn viewport(&self) -> Bounds<Pixels> {
         self.0.borrow().base_handle.bounds()
     }
+}
 
-    fn as_any(&self) -> &dyn Any {
-        self
+impl ScrollableHandle for ListState {
+    fn content_size(&self) -> Option<ContentSize> {
+        Some(ContentSize {
+            size: self.content_size_for_scrollbar(),
+            scroll_adjustment: None,
+        })
+    }
+
+    fn set_offset(&self, point: Point<Pixels>) {
+        self.set_offset_from_scrollbar(point);
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        self.scroll_px_offset_for_scrollbar()
+    }
+
+    fn drag_started(&self) {
+        self.scrollbar_drag_started();
+    }
+
+    fn drag_ended(&self) {
+        self.scrollbar_drag_ended();
+    }
+
+    fn viewport(&self) -> Bounds<Pixels> {
+        self.viewport_bounds()
     }
 }
 
@@ -75,10 +99,6 @@ impl ScrollableHandle for ScrollHandle {
     fn viewport(&self) -> Bounds<Pixels> {
         self.bounds()
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 #[derive(Debug)]
@@ -87,19 +107,20 @@ pub struct ContentSize {
     pub scroll_adjustment: Option<Point<Pixels>>,
 }
 
-pub trait ScrollableHandle: Debug + 'static {
+pub trait ScrollableHandle: Any + Debug {
     fn content_size(&self) -> Option<ContentSize>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
     fn viewport(&self) -> Bounds<Pixels>;
-    fn as_any(&self) -> &dyn Any;
+    fn drag_started(&self) {}
+    fn drag_ended(&self) {}
 }
 
 /// A scrollbar state that should be persisted across frames.
 #[derive(Clone, Debug)]
 pub struct ScrollbarState {
     // If Some(), there's an active drag, offset by percentage from the origin of a thumb.
-    drag: Rc<Cell<Option<f32>>>,
+    drag: Rc<Cell<Option<Pixels>>>,
     parent_id: Option<EntityId>,
     scroll_handle: Arc<dyn ScrollableHandle>,
 }
@@ -113,8 +134,8 @@ impl ScrollbarState {
         }
     }
 
-    /// Set a parent view which should be notified whenever this Scrollbar gets a scroll event.
-    pub fn parent_view<V: 'static>(mut self, v: &View<V>) -> Self {
+    /// Set a parent model which should be notified whenever this Scrollbar gets a scroll event.
+    pub fn parent_entity<V: 'static>(mut self, v: &Entity<V>) -> Self {
         self.parent_id = Some(v.entity_id());
         self
     }
@@ -128,42 +149,34 @@ impl ScrollbarState {
     }
 
     fn thumb_range(&self, axis: ScrollbarAxis) -> Option<Range<f32>> {
-        const MINIMUM_SCROLLBAR_PERCENTAGE_SIZE: f32 = 0.005;
+        const MINIMUM_THUMB_SIZE: f32 = 25.;
         let ContentSize {
             size: main_dimension_size,
             scroll_adjustment,
         } = self.scroll_handle.content_size()?;
-        let main_dimension_size = main_dimension_size.along(axis).0;
+        let content_size = main_dimension_size.along(axis).0;
         let mut current_offset = self.scroll_handle.offset().along(axis).min(px(0.)).abs().0;
         if let Some(adjustment) = scroll_adjustment.and_then(|adjustment| {
             let adjust = adjustment.along(axis).0;
-            if adjust < 0.0 {
-                Some(adjust)
-            } else {
-                None
-            }
+            if adjust < 0.0 { Some(adjust) } else { None }
         }) {
             current_offset -= adjustment;
         }
-
-        let mut percentage = current_offset / main_dimension_size;
-        let viewport_size = self.scroll_handle.viewport().size;
-        let end_offset = (current_offset + viewport_size.along(axis).0) / main_dimension_size;
-        // Scroll handle might briefly report an offset greater than the length of a list;
-        // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
-        let overshoot = (end_offset - 1.).clamp(0., 1.);
-        if overshoot > 0. {
-            percentage -= overshoot;
-        }
-        if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_SIZE > 1.0 || end_offset > main_dimension_size
-        {
+        let viewport_size = self.scroll_handle.viewport().size.along(axis).0;
+        if content_size < viewport_size {
             return None;
         }
-        if main_dimension_size < viewport_size.along(axis).0 {
+        let visible_percentage = viewport_size / content_size;
+        let thumb_size = MINIMUM_THUMB_SIZE.max(viewport_size * visible_percentage);
+        if thumb_size > viewport_size {
             return None;
         }
-        let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_SIZE, 1.);
-        Some(percentage..end_offset)
+        let max_offset = content_size - viewport_size;
+        current_offset = current_offset.clamp(0., max_offset);
+        let start_offset = (current_offset / max_offset) * (viewport_size - thumb_size);
+        let thumb_percentage_start = start_offset / viewport_size;
+        let thumb_percentage_end = (start_offset + thumb_size) / viewport_size;
+        Some(thumb_percentage_start..thumb_percentage_end)
     }
 }
 
@@ -194,7 +207,8 @@ impl Element for Scrollbar {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.flex_grow = 1.;
@@ -208,7 +222,7 @@ impl Element for Scrollbar {
             style.size.height = px(12.).into();
         }
 
-        (cx.request_layout(style, None), ())
+        (window.request_layout(style, None, cx), ())
     }
 
     fn prepaint(
@@ -216,10 +230,11 @@ impl Element for Scrollbar {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        _: &mut App,
     ) -> Self::PrepaintState {
-        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            cx.insert_hitbox(bounds, false)
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            window.insert_hitbox(bounds, false)
         })
     }
 
@@ -229,9 +244,10 @@ impl Element for Scrollbar {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
-        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let colors = cx.theme().colors();
             let thumb_background = colors
                 .surface_background
@@ -282,100 +298,112 @@ impl Element for Scrollbar {
                 thumb_bounds.size.height /= 1.5;
                 Corners::all(thumb_bounds.size.height / 2.0)
             };
-            cx.paint_quad(quad(
+            window.paint_quad(quad(
                 thumb_bounds,
                 corners,
                 thumb_background,
                 Edges::default(),
                 Hsla::transparent_black(),
+                BorderStyle::default(),
             ));
 
             let scroll = self.state.scroll_handle.clone();
-            let kind = self.kind;
-            let thumb_percentage_size = self.thumb.end - self.thumb.start;
+            let axis = self.kind;
 
-            cx.on_mouse_event({
+            window.on_mouse_event({
                 let scroll = scroll.clone();
                 let state = self.state.clone();
-                let axis = self.kind;
-                move |event: &MouseDownEvent, phase, _cx| {
+                move |event: &MouseDownEvent, phase, _, _| {
                     if !(phase.bubble() && bounds.contains(&event.position)) {
                         return;
                     }
 
+                    scroll.drag_started();
+
                     if thumb_bounds.contains(&event.position) {
-                        let thumb_offset = (event.position.along(axis)
-                            - thumb_bounds.origin.along(axis))
-                            / bounds.size.along(axis);
-                        state.drag.set(Some(thumb_offset));
+                        let offset = event.position.along(axis) - thumb_bounds.origin.along(axis);
+                        state.drag.set(Some(offset));
                     } else if let Some(ContentSize {
                         size: item_size, ..
                     }) = scroll.content_size()
                     {
-                        match kind {
+                        let click_offset = {
+                            let viewport_size = padded_bounds.size.along(axis);
+
+                            let thumb_size = thumb_bounds.size.along(axis);
+                            let thumb_start = (event.position.along(axis)
+                                - padded_bounds.origin.along(axis)
+                                - (thumb_size / 2.))
+                                .clamp(px(0.), viewport_size - thumb_size);
+
+                            let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
+                            let percentage = if viewport_size > thumb_size {
+                                thumb_start / (viewport_size - thumb_size)
+                            } else {
+                                0.
+                            };
+
+                            -max_offset * percentage
+                        };
+                        match axis {
                             ScrollbarAxis::Horizontal => {
-                                let percentage =
-                                    (event.position.x - bounds.origin.x) / bounds.size.width;
-                                let max_offset = item_size.width;
-                                let percentage = percentage.min(1. - thumb_percentage_size);
-                                scroll
-                                    .set_offset(point(-max_offset * percentage, scroll.offset().y));
+                                scroll.set_offset(point(click_offset, scroll.offset().y));
                             }
                             ScrollbarAxis::Vertical => {
-                                let percentage =
-                                    (event.position.y - bounds.origin.y) / bounds.size.height;
-                                let max_offset = item_size.height;
-                                let percentage = percentage.min(1. - thumb_percentage_size);
-                                scroll
-                                    .set_offset(point(scroll.offset().x, -max_offset * percentage));
+                                scroll.set_offset(point(scroll.offset().x, click_offset));
                             }
                         }
                     }
                 }
             });
-            cx.on_mouse_event({
+            window.on_mouse_event({
                 let scroll = scroll.clone();
-                move |event: &ScrollWheelEvent, phase, cx| {
+                move |event: &ScrollWheelEvent, phase, window, _| {
                     if phase.bubble() && bounds.contains(&event.position) {
                         let current_offset = scroll.offset();
-                        scroll
-                            .set_offset(current_offset + event.delta.pixel_delta(cx.line_height()));
+                        scroll.set_offset(
+                            current_offset + event.delta.pixel_delta(window.line_height()),
+                        );
                     }
                 }
             });
             let state = self.state.clone();
-            let kind = self.kind;
-            cx.on_mouse_event(move |event: &MouseMoveEvent, _, cx| {
+            let axis = self.kind;
+            window.on_mouse_event(move |event: &MouseMoveEvent, _, window, cx| {
                 if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
                     if let Some(ContentSize {
                         size: item_size, ..
                     }) = scroll.content_size()
                     {
-                        match kind {
-                            ScrollbarAxis::Horizontal => {
-                                let max_offset = item_size.width;
-                                let percentage = (event.position.x - bounds.origin.x)
-                                    / bounds.size.width
-                                    - drag_state;
+                        let drag_offset = {
+                            let viewport_size = padded_bounds.size.along(axis);
 
-                                let percentage = percentage.min(1. - thumb_percentage_size);
-                                scroll
-                                    .set_offset(point(-max_offset * percentage, scroll.offset().y));
+                            let thumb_size = thumb_bounds.size.along(axis);
+                            let thumb_start = (event.position.along(axis)
+                                - padded_bounds.origin.along(axis)
+                                - drag_state)
+                                .clamp(px(0.), viewport_size - thumb_size);
+
+                            let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
+                            let percentage = if viewport_size > thumb_size {
+                                thumb_start / (viewport_size - thumb_size)
+                            } else {
+                                0.
+                            };
+
+                            -max_offset * percentage
+                        };
+                        match axis {
+                            ScrollbarAxis::Horizontal => {
+                                scroll.set_offset(point(drag_offset, scroll.offset().y));
                             }
                             ScrollbarAxis::Vertical => {
-                                let max_offset = item_size.height;
-                                let percentage = (event.position.y - bounds.origin.y)
-                                    / bounds.size.height
-                                    - drag_state;
-
-                                let percentage = percentage.min(1. - thumb_percentage_size);
-                                scroll
-                                    .set_offset(point(scroll.offset().x, -max_offset * percentage));
+                                scroll.set_offset(point(scroll.offset().x, drag_offset));
                             }
                         };
-
+                        window.refresh();
                         if let Some(id) = state.parent_id {
-                            cx.notify(Some(id));
+                            cx.notify(id);
                         }
                     }
                 } else {
@@ -383,11 +411,13 @@ impl Element for Scrollbar {
                 }
             });
             let state = self.state.clone();
-            cx.on_mouse_event(move |_event: &MouseUpEvent, phase, cx| {
+            let scroll = self.state.scroll_handle.clone();
+            window.on_mouse_event(move |_event: &MouseUpEvent, phase, _, cx| {
                 if phase.bubble() {
                     state.drag.take();
+                    scroll.drag_ended();
                     if let Some(id) = state.parent_id {
-                        cx.notify(Some(id));
+                        cx.notify(id);
                     }
                 }
             });

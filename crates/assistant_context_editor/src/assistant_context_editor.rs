@@ -9,7 +9,7 @@ mod slash_command_picker;
 use std::sync::Arc;
 
 use client::Client;
-use gpui::AppContext;
+use gpui::App;
 
 pub use crate::context::*;
 pub use crate::context_editor::*;
@@ -18,6 +18,6 @@ pub use crate::context_store::*;
 pub use crate::patch::*;
 pub use crate::slash_command::*;
 
-pub fn init(client: Arc<Client>, _cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, _cx: &mut App) {
     context_store::init(&client.into());
 }

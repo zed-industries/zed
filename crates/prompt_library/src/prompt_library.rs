@@ -1,18 +1,15 @@
-mod prompt_store;
-mod prompts;
-
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
-use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
+use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    actions, point, size, transparent_black, Action, AppContext, Bounds, EventEmitter, PromptLevel,
-    Subscription, Task, TextStyle, TitlebarOptions, View, WindowBounds, WindowHandle,
-    WindowOptions,
+    Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
+    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
+    transparent_black,
 };
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
@@ -22,17 +19,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{
-    div, prelude::*, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
-    SharedString, Styled, Tooltip, ViewContext, VisualContext,
+    Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
+    SharedString, Styled, Tooltip, Window, div, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::Workspace;
 use zed_actions::assistant::InlineAssist;
 
-pub use crate::prompt_store::*;
-pub use crate::prompts::*;
+use prompt_store::*;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     prompt_store::init(cx);
 }
 
@@ -54,16 +50,18 @@ const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
 pub trait InlineAssistDelegate {
     fn assist(
         &self,
-        prompt_editor: &View<Editor>,
+        prompt_editor: &Entity<Editor>,
         initial_prompt: Option<String>,
-        cx: &mut ViewContext<PromptLibrary>,
+        window: &mut Window,
+        cx: &mut Context<PromptLibrary>,
     );
 
     /// Returns whether the Assistant panel was focused.
     fn focus_assistant_panel(
         &self,
         workspace: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) -> bool;
 }
 
@@ -77,50 +75,64 @@ pub fn open_prompt_library(
     language_registry: Arc<LanguageRegistry>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
     make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Task<Result<WindowHandle<PromptLibrary>>> {
-    let existing_window = cx
-        .windows()
-        .into_iter()
-        .find_map(|window| window.downcast::<PromptLibrary>());
-    if let Some(existing_window) = existing_window {
-        existing_window
-            .update(cx, |_, cx| cx.activate_window())
-            .ok();
-        Task::ready(Ok(existing_window))
-    } else {
-        let store = PromptStore::global(cx);
-        cx.spawn(|cx| async move {
-            let store = store.await?;
-            cx.update(|cx| {
-                let app_id = ReleaseChannel::global(cx).app_id();
-                let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
-                cx.open_window(
-                    WindowOptions {
-                        titlebar: Some(TitlebarOptions {
-                            title: Some("Prompt Library".into()),
-                            appears_transparent: cfg!(target_os = "macos"),
-                            traffic_light_position: Some(point(px(9.0), px(9.0))),
-                        }),
-                        app_id: Some(app_id.to_owned()),
-                        window_bounds: Some(WindowBounds::Windowed(bounds)),
-                        ..Default::default()
-                    },
-                    |cx| {
-                        cx.new_view(|cx| {
-                            PromptLibrary::new(
-                                store,
-                                language_registry,
-                                inline_assist_delegate,
-                                make_completion_provider,
-                                cx,
-                            )
-                        })
-                    },
-                )
-            })?
-        })
-    }
+    let store = PromptStore::global(cx);
+    cx.spawn(async move |cx| {
+        // We query windows in spawn so that all windows have been returned to GPUI
+        let existing_window = cx
+            .update(|cx| {
+                let existing_window = cx
+                    .windows()
+                    .into_iter()
+                    .find_map(|window| window.downcast::<PromptLibrary>());
+                if let Some(existing_window) = existing_window {
+                    existing_window
+                        .update(cx, |_, window, _| window.activate_window())
+                        .ok();
+
+                    Some(existing_window)
+                } else {
+                    None
+                }
+            })
+            .ok()
+            .flatten();
+
+        if let Some(existing_window) = existing_window {
+            return Ok(existing_window);
+        }
+
+        let store = store.await?;
+        cx.update(|cx| {
+            let app_id = ReleaseChannel::global(cx).app_id();
+            let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Prompt Library".into()),
+                        appears_transparent: cfg!(target_os = "macos"),
+                        traffic_light_position: Some(point(px(9.0), px(9.0))),
+                    }),
+                    app_id: Some(app_id.to_owned()),
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        PromptLibrary::new(
+                            store,
+                            language_registry,
+                            inline_assist_delegate,
+                            make_completion_provider,
+                            window,
+                            cx,
+                        )
+                    })
+                },
+            )
+        })?
+    })
 }
 
 pub struct PromptLibrary {
@@ -128,7 +140,7 @@ pub struct PromptLibrary {
     language_registry: Arc<LanguageRegistry>,
     prompt_editors: HashMap<PromptId, PromptEditor>,
     active_prompt_id: Option<PromptId>,
-    picker: View<Picker<PromptPickerDelegate>>,
+    picker: Entity<Picker<PromptPickerDelegate>>,
     pending_load: Task<()>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
     make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
@@ -136,8 +148,8 @@ pub struct PromptLibrary {
 }
 
 struct PromptEditor {
-    title_editor: View<Editor>,
-    body_editor: View<Editor>,
+    title_editor: Entity<Editor>,
+    body_editor: Entity<Editor>,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
     next_title_and_body_to_save: Option<(String, Rope)>,
@@ -167,19 +179,20 @@ impl PickerDelegate for PromptPickerDelegate {
         self.matches.len()
     }
 
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
-        if self.store.prompt_count() == 0 {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if self.store.prompt_count() == 0 {
             "No prompts.".into()
         } else {
             "No prompts found matching your search.".into()
-        }
+        };
+        Some(text)
     }
 
     fn selected_index(&self) -> usize {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix;
         if let Some(prompt) = self.matches.get(self.selected_index) {
             cx.emit(PromptPickerEvent::Selected {
@@ -188,17 +201,21 @@ impl PickerDelegate for PromptPickerDelegate {
         }
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search...".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
         let search = self.store.search(query);
         let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let (matches, selected_index) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let matches = search.await;
 
                     let selected_index = prev_prompt_id
@@ -210,16 +227,16 @@ impl PickerDelegate for PromptPickerDelegate {
                 })
                 .await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate.matches = matches;
-                this.delegate.set_selected_index(selected_index, cx);
+                this.delegate.set_selected_index(selected_index, window, cx);
                 cx.notify();
             })
             .ok();
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(prompt) = self.matches.get(self.selected_index) {
             cx.emit(PromptPickerEvent::Confirmed {
                 prompt_id: prompt.id,
@@ -227,13 +244,14 @@ impl PickerDelegate for PromptPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let prompt = self.matches.get(ix)?;
         let default = prompt.default;
@@ -250,8 +268,8 @@ impl PickerDelegate for PromptPickerDelegate {
                     .toggle_state(true)
                     .icon_color(Color::Accent)
                     .shape(IconButtonShape::Square)
-                    .tooltip(move |cx| Tooltip::text("Remove from Default Prompt", cx))
-                    .on_click(cx.listener(move |_, _, cx| {
+                    .tooltip(Tooltip::text("Remove from Default Prompt"))
+                    .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
                     }))
             }))
@@ -262,11 +280,12 @@ impl PickerDelegate for PromptPickerDelegate {
                         div()
                             .id("built-in-prompt")
                             .child(Icon::new(IconName::FileLock).color(Color::Muted))
-                            .tooltip(move |cx| {
+                            .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     "Built-in prompt",
                                     None,
                                     BUILT_IN_TOOLTIP_TEXT,
+                                    window,
                                     cx,
                                 )
                             })
@@ -275,8 +294,8 @@ impl PickerDelegate for PromptPickerDelegate {
                         IconButton::new("delete-prompt", IconName::Trash)
                             .icon_color(Color::Muted)
                             .shape(IconButtonShape::Square)
-                            .tooltip(move |cx| Tooltip::text("Delete Prompt", cx))
-                            .on_click(cx.listener(move |_, _, cx| {
+                            .tooltip(Tooltip::text("Delete Prompt"))
+                            .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(PromptPickerEvent::Deleted { prompt_id })
                             }))
                             .into_any_element()
@@ -287,17 +306,12 @@ impl PickerDelegate for PromptPickerDelegate {
                             .selected_icon(IconName::SparkleFilled)
                             .icon_color(if default { Color::Accent } else { Color::Muted })
                             .shape(IconButtonShape::Square)
-                            .tooltip(move |cx| {
-                                Tooltip::text(
-                                    if default {
-                                        "Remove from Default Prompt"
-                                    } else {
-                                        "Add to Default Prompt"
-                                    },
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(move |_, _, cx| {
+                            .tooltip(Tooltip::text(if default {
+                                "Remove from Default Prompt"
+                            } else {
+                                "Add to Default Prompt"
+                            }))
+                            .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
                             })),
                     ),
@@ -305,10 +319,15 @@ impl PickerDelegate for PromptPickerDelegate {
         Some(element)
     }
 
-    fn render_editor(&self, editor: &View<Editor>, cx: &mut ViewContext<Picker<Self>>) -> Div {
+    fn render_editor(
+        &self,
+        editor: &Entity<Editor>,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Div {
         h_flex()
             .bg(cx.theme().colors().editor_background)
-            .rounded_md()
+            .rounded_sm()
             .overflow_hidden()
             .flex_none()
             .py_1()
@@ -324,7 +343,8 @@ impl PromptLibrary {
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
         make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         let delegate = PromptPickerDelegate {
             store: store.clone(),
@@ -332,11 +352,11 @@ impl PromptLibrary {
             matches: Vec::new(),
         };
 
-        let picker = cx.new_view(|cx| {
-            let picker = Picker::uniform_list(delegate, cx)
+        let picker = cx.new(|cx| {
+            let picker = Picker::uniform_list(delegate, window, cx)
                 .modal(false)
                 .max_height(None);
-            picker.focus(cx);
+            picker.focus(window, cx);
             picker
         });
         Self {
@@ -347,54 +367,63 @@ impl PromptLibrary {
             pending_load: Task::ready(()),
             inline_assist_delegate,
             make_completion_provider,
-            _subscriptions: vec![cx.subscribe(&picker, Self::handle_picker_event)],
+            _subscriptions: vec![cx.subscribe_in(&picker, window, Self::handle_picker_event)],
             picker,
         }
     }
 
     fn handle_picker_event(
         &mut self,
-        _: View<Picker<PromptPickerDelegate>>,
+        _: &Entity<Picker<PromptPickerDelegate>>,
         event: &PromptPickerEvent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         match event {
             PromptPickerEvent::Selected { prompt_id } => {
-                self.load_prompt(*prompt_id, false, cx);
+                self.load_prompt(*prompt_id, false, window, cx);
             }
             PromptPickerEvent::Confirmed { prompt_id } => {
-                self.load_prompt(*prompt_id, true, cx);
+                self.load_prompt(*prompt_id, true, window, cx);
             }
             PromptPickerEvent::ToggledDefault { prompt_id } => {
-                self.toggle_default_for_prompt(*prompt_id, cx);
+                self.toggle_default_for_prompt(*prompt_id, window, cx);
             }
             PromptPickerEvent::Deleted { prompt_id } => {
-                self.delete_prompt(*prompt_id, cx);
+                self.delete_prompt(*prompt_id, window, cx);
             }
         }
     }
 
-    pub fn new_prompt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn new_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // If we already have an untitled prompt, use that instead
         // of creating a new one.
         if let Some(metadata) = self.store.first() {
             if metadata.title.is_none() {
-                self.load_prompt(metadata.id, true, cx);
+                self.load_prompt(metadata.id, true, window, cx);
                 return;
             }
         }
 
         let prompt_id = PromptId::new();
         let save = self.store.save(prompt_id, None, false, "".into());
-        self.picker.update(cx, |picker, cx| picker.refresh(cx));
-        cx.spawn(|this, mut cx| async move {
+        self.picker
+            .update(cx, |picker, cx| picker.refresh(window, cx));
+        cx.spawn_in(window, async move |this, cx| {
             save.await?;
-            this.update(&mut cx, |this, cx| this.load_prompt(prompt_id, true, cx))
+            this.update_in(cx, |this, window, cx| {
+                this.load_prompt(prompt_id, true, window, cx)
+            })
         })
         .detach_and_log_err(cx);
     }
 
-    pub fn save_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+    pub fn save_prompt(
+        &mut self,
+        prompt_id: PromptId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         const SAVE_THROTTLE: Duration = Duration::from_millis(500);
 
         if prompt_id.is_built_in() {
@@ -420,10 +449,10 @@ impl PromptLibrary {
 
         prompt_editor.next_title_and_body_to_save = Some((title, body));
         if prompt_editor.pending_save.is_none() {
-            prompt_editor.pending_save = Some(cx.spawn(|this, mut cx| {
+            prompt_editor.pending_save = Some(cx.spawn_in(window, async move |this, cx| {
                 async move {
                     loop {
-                        let title_and_body = this.update(&mut cx, |this, _| {
+                        let title_and_body = this.update(cx, |this, _| {
                             this.prompt_editors
                                 .get_mut(&prompt_id)?
                                 .next_title_and_body_to_save
@@ -440,8 +469,9 @@ impl PromptLibrary {
                                 .save(prompt_id, title, prompt_metadata.default, body)
                                 .await
                                 .log_err();
-                            this.update(&mut cx, |this, cx| {
-                                this.picker.update(cx, |picker, cx| picker.refresh(cx));
+                            this.update_in(cx, |this, window, cx| {
+                                this.picker
+                                    .update(cx, |picker, cx| picker.refresh(window, cx));
                                 cx.notify();
                             })?;
 
@@ -451,84 +481,101 @@ impl PromptLibrary {
                         }
                     }
 
-                    this.update(&mut cx, |this, _cx| {
+                    this.update(cx, |this, _cx| {
                         if let Some(prompt_editor) = this.prompt_editors.get_mut(&prompt_id) {
                             prompt_editor.pending_save = None;
                         }
                     })
                 }
                 .log_err()
+                .await
             }));
         }
     }
 
-    pub fn delete_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn delete_active_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_prompt_id) = self.active_prompt_id {
-            self.delete_prompt(active_prompt_id, cx);
+            self.delete_prompt(active_prompt_id, window, cx);
         }
     }
 
-    pub fn duplicate_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_active_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_prompt_id) = self.active_prompt_id {
-            self.duplicate_prompt(active_prompt_id, cx);
+            self.duplicate_prompt(active_prompt_id, window, cx);
         }
     }
 
-    pub fn toggle_default_for_active_prompt(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn toggle_default_for_active_prompt(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(active_prompt_id) = self.active_prompt_id {
-            self.toggle_default_for_prompt(active_prompt_id, cx);
+            self.toggle_default_for_prompt(active_prompt_id, window, cx);
         }
     }
 
-    pub fn toggle_default_for_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+    pub fn toggle_default_for_prompt(
+        &mut self,
+        prompt_id: PromptId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
             self.store
                 .save_metadata(prompt_id, prompt_metadata.title, !prompt_metadata.default)
                 .detach_and_log_err(cx);
-            self.picker.update(cx, |picker, cx| picker.refresh(cx));
+            self.picker
+                .update(cx, |picker, cx| picker.refresh(window, cx));
             cx.notify();
         }
     }
 
-    pub fn load_prompt(&mut self, prompt_id: PromptId, focus: bool, cx: &mut ViewContext<Self>) {
+    pub fn load_prompt(
+        &mut self,
+        prompt_id: PromptId,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
             if focus {
                 prompt_editor
                     .body_editor
-                    .update(cx, |editor, cx| editor.focus(cx));
+                    .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
             }
-            self.set_active_prompt(Some(prompt_id), cx);
+            self.set_active_prompt(Some(prompt_id), window, cx);
         } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
             let prompt = self.store.load(prompt_id);
             let make_completion_provider = self.make_completion_provider.clone();
-            self.pending_load = cx.spawn(|this, mut cx| async move {
+            self.pending_load = cx.spawn_in(window, async move |this, cx| {
                 let prompt = prompt.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
-                this.update(&mut cx, |this, cx| match prompt {
+                this.update_in(cx, |this, window, cx| match prompt {
                     Ok(prompt) => {
-                        let title_editor = cx.new_view(|cx| {
-                            let mut editor = Editor::auto_width(cx);
+                        let title_editor = cx.new(|cx| {
+                            let mut editor = Editor::auto_width(window, cx);
                             editor.set_placeholder_text("Untitled", cx);
-                            editor.set_text(prompt_metadata.title.unwrap_or_default(), cx);
+                            editor.set_text(prompt_metadata.title.unwrap_or_default(), window, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
-                                editor.set_show_inline_completions(Some(false), cx);
+                                editor.set_show_edit_predictions(Some(false), window, cx);
                             }
                             editor
                         });
-                        let body_editor = cx.new_view(|cx| {
-                            let buffer = cx.new_model(|cx| {
+                        let body_editor = cx.new(|cx| {
+                            let buffer = cx.new(|cx| {
                                 let mut buffer = Buffer::local(prompt, cx);
                                 buffer.set_language(markdown.log_err(), cx);
                                 buffer.set_language_registry(language_registry);
                                 buffer
                             });
 
-                            let mut editor = Editor::for_buffer(buffer, None, cx);
+                            let mut editor = Editor::for_buffer(buffer, None, window, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
-                                editor.set_show_inline_completions(Some(false), cx);
+                                editor.set_show_edit_predictions(Some(false), window, cx);
                             }
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);
@@ -538,17 +585,29 @@ impl PromptLibrary {
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Some(make_completion_provider()));
                             if focus {
-                                editor.focus(cx);
+                                window.focus(&editor.focus_handle(cx));
                             }
                             editor
                         });
                         let _subscriptions = vec![
-                            cx.subscribe(&title_editor, move |this, editor, event, cx| {
-                                this.handle_prompt_title_editor_event(prompt_id, editor, event, cx)
-                            }),
-                            cx.subscribe(&body_editor, move |this, editor, event, cx| {
-                                this.handle_prompt_body_editor_event(prompt_id, editor, event, cx)
-                            }),
+                            cx.subscribe_in(
+                                &title_editor,
+                                window,
+                                move |this, editor, event, window, cx| {
+                                    this.handle_prompt_title_editor_event(
+                                        prompt_id, editor, event, window, cx,
+                                    )
+                                },
+                            ),
+                            cx.subscribe_in(
+                                &body_editor,
+                                window,
+                                move |this, editor, event, window, cx| {
+                                    this.handle_prompt_body_editor_event(
+                                        prompt_id, editor, event, window, cx,
+                                    )
+                                },
+                            ),
                         ];
                         this.prompt_editors.insert(
                             prompt_id,
@@ -562,8 +621,8 @@ impl PromptLibrary {
                                 _subscriptions,
                             },
                         );
-                        this.set_active_prompt(Some(prompt_id), cx);
-                        this.count_tokens(prompt_id, cx);
+                        this.set_active_prompt(Some(prompt_id), window, cx);
+                        this.count_tokens(prompt_id, window, cx);
                     }
                     Err(error) => {
                         // TODO: we should show the error in the UI.
@@ -575,7 +634,12 @@ impl PromptLibrary {
         }
     }
 
-    fn set_active_prompt(&mut self, prompt_id: Option<PromptId>, cx: &mut ViewContext<Self>) {
+    fn set_active_prompt(
+        &mut self,
+        prompt_id: Option<PromptId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.active_prompt_id = prompt_id;
         self.picker.update(cx, |picker, cx| {
             if let Some(prompt_id) = prompt_id {
@@ -593,19 +657,24 @@ impl PromptLibrary {
                         .iter()
                         .position(|mat| mat.id == prompt_id)
                     {
-                        picker.set_selected_index(ix, true, cx);
+                        picker.set_selected_index(ix, None, true, window, cx);
                     }
                 }
             } else {
-                picker.focus(cx);
+                picker.focus(window, cx);
             }
         });
         cx.notify();
     }
 
-    pub fn delete_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+    pub fn delete_prompt(
+        &mut self,
+        prompt_id: PromptId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(metadata) = self.store.metadata(prompt_id) {
-            let confirmation = cx.prompt(
+            let confirmation = window.prompt(
                 PromptLevel::Warning,
                 &format!(
                     "Are you sure you want to delete {}",
@@ -613,17 +682,19 @@ impl PromptLibrary {
                 ),
                 None,
                 &["Delete", "Cancel"],
+                cx,
             );
 
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 if confirmation.await.ok() == Some(0) {
-                    this.update(&mut cx, |this, cx| {
+                    this.update_in(cx, |this, window, cx| {
                         if this.active_prompt_id == Some(prompt_id) {
-                            this.set_active_prompt(None, cx);
+                            this.set_active_prompt(None, window, cx);
                         }
                         this.prompt_editors.remove(&prompt_id);
                         this.store.delete(prompt_id).detach_and_log_err(cx);
-                        this.picker.update(cx, |picker, cx| picker.refresh(cx));
+                        this.picker
+                            .update(cx, |picker, cx| picker.refresh(window, cx));
                         cx.notify();
                     })?;
                 }
@@ -633,7 +704,12 @@ impl PromptLibrary {
         }
     }
 
-    pub fn duplicate_prompt(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_prompt(
+        &mut self,
+        prompt_id: PromptId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(prompt) = self.prompt_editors.get(&prompt_id) {
             const DUPLICATE_SUFFIX: &str = " copy";
             let title_to_duplicate = prompt.title_editor.read(cx).text(cx);
@@ -663,53 +739,62 @@ impl PromptLibrary {
             let save = self
                 .store
                 .save(new_id, Some(title.into()), false, body.into());
-            self.picker.update(cx, |picker, cx| picker.refresh(cx));
-            cx.spawn(|this, mut cx| async move {
+            self.picker
+                .update(cx, |picker, cx| picker.refresh(window, cx));
+            cx.spawn_in(window, async move |this, cx| {
                 save.await?;
-                this.update(&mut cx, |prompt_library, cx| {
-                    prompt_library.load_prompt(new_id, true, cx)
+                this.update_in(cx, |prompt_library, window, cx| {
+                    prompt_library.load_prompt(new_id, true, window, cx)
                 })
             })
             .detach_and_log_err(cx);
         }
     }
 
-    fn focus_active_prompt(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+    fn focus_active_prompt(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_prompt) = self.active_prompt_id {
             self.prompt_editors[&active_prompt]
                 .body_editor
-                .update(cx, |editor, cx| editor.focus(cx));
+                .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
             cx.stop_propagation();
         }
     }
 
-    fn focus_picker(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        self.picker.update(cx, |picker, cx| picker.focus(cx));
+    fn focus_picker(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        self.picker
+            .update(cx, |picker, cx| picker.focus(window, cx));
     }
 
-    pub fn inline_assist(&mut self, action: &InlineAssist, cx: &mut ViewContext<Self>) {
+    pub fn inline_assist(
+        &mut self,
+        action: &InlineAssist,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(active_prompt_id) = self.active_prompt_id else {
             cx.propagate();
             return;
         };
 
         let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+        let Some(ConfiguredModel { provider, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        else {
             return;
         };
 
         let initial_prompt = action.prompt.clone();
         if provider.is_authenticated(cx) {
             self.inline_assist_delegate
-                .assist(prompt_editor, initial_prompt, cx);
+                .assist(prompt_editor, initial_prompt, window, cx);
         } else {
             for window in cx.windows() {
                 if let Some(workspace) = window.downcast::<Workspace>() {
                     let panel = workspace
-                        .update(cx, |workspace, cx| {
-                            cx.activate_window();
+                        .update(cx, |workspace, window, cx| {
+                            window.activate_window();
                             self.inline_assist_delegate
-                                .focus_assistant_panel(workspace, cx)
+                                .focus_assistant_panel(workspace, window, cx)
                         })
                         .ok();
                     if panel == Some(true) {
@@ -720,18 +805,28 @@ impl PromptLibrary {
         }
     }
 
-    fn move_down_from_title(&mut self, _: &editor::actions::MoveDown, cx: &mut ViewContext<Self>) {
+    fn move_down_from_title(
+        &mut self,
+        _: &editor::actions::MoveDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(prompt_id) = self.active_prompt_id {
             if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
-                cx.focus_view(&prompt_editor.body_editor);
+                window.focus(&prompt_editor.body_editor.focus_handle(cx));
             }
         }
     }
 
-    fn move_up_from_body(&mut self, _: &editor::actions::MoveUp, cx: &mut ViewContext<Self>) {
+    fn move_up_from_body(
+        &mut self,
+        _: &editor::actions::MoveUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(prompt_id) = self.active_prompt_id {
             if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
-                cx.focus_view(&prompt_editor.title_editor);
+                window.focus(&prompt_editor.title_editor.focus_handle(cx));
             }
         }
     }
@@ -739,18 +834,19 @@ impl PromptLibrary {
     fn handle_prompt_title_editor_event(
         &mut self,
         prompt_id: PromptId,
-        title_editor: View<Editor>,
+        title_editor: &Entity<Editor>,
         event: &EditorEvent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         match event {
             EditorEvent::BufferEdited => {
-                self.save_prompt(prompt_id, cx);
-                self.count_tokens(prompt_id, cx);
+                self.save_prompt(prompt_id, window, cx);
+                self.count_tokens(prompt_id, window, cx);
             }
             EditorEvent::Blurred => {
                 title_editor.update(cx, |title_editor, cx| {
-                    title_editor.change_selections(None, cx, |selections| {
+                    title_editor.change_selections(None, window, cx, |selections| {
                         let cursor = selections.oldest_anchor().head();
                         selections.select_anchor_ranges([cursor..cursor]);
                     });
@@ -763,18 +859,19 @@ impl PromptLibrary {
     fn handle_prompt_body_editor_event(
         &mut self,
         prompt_id: PromptId,
-        body_editor: View<Editor>,
+        body_editor: &Entity<Editor>,
         event: &EditorEvent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         match event {
             EditorEvent::BufferEdited => {
-                self.save_prompt(prompt_id, cx);
-                self.count_tokens(prompt_id, cx);
+                self.save_prompt(prompt_id, window, cx);
+                self.count_tokens(prompt_id, window, cx);
             }
             EditorEvent::Blurred => {
                 body_editor.update(cx, |body_editor, cx| {
-                    body_editor.change_selections(None, cx, |selections| {
+                    body_editor.change_selections(None, window, cx, |selections| {
                         let cursor = selections.oldest_anchor().head();
                         selections.select_anchor_ranges([cursor..cursor]);
                     });
@@ -784,21 +881,23 @@ impl PromptLibrary {
         }
     }
 
-    fn count_tokens(&mut self, prompt_id: PromptId, cx: &mut ViewContext<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+    fn count_tokens(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).default_model()
+        else {
             return;
         };
         if let Some(prompt) = self.prompt_editors.get_mut(&prompt_id) {
             let editor = &prompt.body_editor.read(cx);
             let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
             let body = buffer.as_rope().clone();
-            prompt.pending_token_count = cx.spawn(|this, mut cx| {
+            prompt.pending_token_count = cx.spawn_in(window, async move |this, cx| {
                 async move {
                     const DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
                     cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
                     let token_count = cx
-                        .update(|cx| {
+                        .update(|_, cx| {
                             model.count_tokens(
                                 LanguageModelRequest {
                                     messages: vec![LanguageModelRequestMessage {
@@ -815,18 +914,19 @@ impl PromptLibrary {
                         })?
                         .await?;
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
                         prompt_editor.token_count = Some(token_count);
                         cx.notify();
                     })
                 }
                 .log_err()
+                .await
             });
         }
     }
 
-    fn render_prompt_list(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_prompt_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("prompt-list")
             .capture_action(cx.listener(Self::focus_active_prompt))
@@ -846,16 +946,18 @@ impl PromptLibrary {
                         IconButton::new("new-prompt", IconName::Plus)
                             .style(ButtonStyle::Transparent)
                             .shape(IconButtonShape::Square)
-                            .tooltip(move |cx| Tooltip::for_action("New Prompt", &NewPrompt, cx))
-                            .on_click(|_, cx| {
-                                cx.dispatch_action(Box::new(NewPrompt));
+                            .tooltip(move |window, cx| {
+                                Tooltip::for_action("New Prompt", &NewPrompt, window, cx)
+                            })
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(NewPrompt), cx);
                             }),
                     ),
             )
             .child(div().flex_grow().child(self.picker.clone()))
     }
 
-    fn render_active_prompt(&mut self, cx: &mut ViewContext<PromptLibrary>) -> gpui::Stateful<Div> {
+    fn render_active_prompt(&mut self, cx: &mut Context<PromptLibrary>) -> gpui::Stateful<Div> {
         div()
             .w_2_3()
             .h_full()
@@ -869,7 +971,9 @@ impl PromptLibrary {
                 let prompt_metadata = self.store.metadata(prompt_id)?;
                 let prompt_editor = &self.prompt_editors[&prompt_id];
                 let focus_handle = prompt_editor.body_editor.focus_handle(cx);
-                let model = LanguageModelRegistry::read_global(cx).active_model();
+                let model = LanguageModelRegistry::read_global(cx)
+                    .default_model()
+                    .map(|default| default.model);
                 let settings = ThemeSettings::get_global(cx);
 
                 Some(
@@ -880,8 +984,8 @@ impl PromptLibrary {
                         .overflow_hidden()
                         .pl(DynamicSpacing::Base16.rems(cx))
                         .pt(DynamicSpacing::Base08.rems(cx))
-                        .on_click(cx.listener(move |_, _, cx| {
-                            cx.focus(&focus_handle);
+                        .on_click(cx.listener(move |_, _, window, _| {
+                            window.focus(&focus_handle);
                         }))
                         .child(
                             h_flex()
@@ -897,7 +1001,7 @@ impl PromptLibrary {
                                             .on_action(cx.listener(Self::move_down_from_title))
                                             .border_1()
                                             .border_color(transparent_black())
-                                            .rounded_md()
+                                            .rounded_sm()
                                             .group_hover("active-editor-header", |this| {
                                                 this.border_color(
                                                     cx.theme().colors().border_variant,
@@ -964,7 +1068,7 @@ impl PromptLibrary {
 
                                                         h_flex()
                                                             .id("token_count")
-                                                            .tooltip(move |cx| {
+                                                            .tooltip(move |window, cx| {
                                                                 let token_count =
                                                                     token_count.clone();
 
@@ -983,6 +1087,7 @@ impl PromptLibrary {
                                                                                 .0)
                                                                             .unwrap_or_default()
                                                                     ),
+                                                                    window,
                                                                     cx,
                                                                 )
                                                             })
@@ -1002,11 +1107,12 @@ impl PromptLibrary {
                                                             Icon::new(IconName::FileLock)
                                                                 .color(Color::Muted),
                                                         )
-                                                        .tooltip(move |cx| {
+                                                        .tooltip(move |window, cx| {
                                                             Tooltip::with_meta(
                                                                 "Built-in prompt",
                                                                 None,
                                                                 BUILT_IN_TOOLTIP_TEXT,
+                                                                window,
                                                                 cx,
                                                             )
                                                         })
@@ -1020,15 +1126,19 @@ impl PromptLibrary {
                                                     .style(ButtonStyle::Transparent)
                                                     .shape(IconButtonShape::Square)
                                                     .size(ButtonSize::Large)
-                                                    .tooltip(move |cx| {
+                                                    .tooltip(move |window, cx| {
                                                         Tooltip::for_action(
                                                             "Delete Prompt",
                                                             &DeletePrompt,
+                                                            window,
                                                             cx,
                                                         )
                                                     })
-                                                    .on_click(|_, cx| {
-                                                        cx.dispatch_action(Box::new(DeletePrompt));
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(
+                                                            Box::new(DeletePrompt),
+                                                            cx,
+                                                        );
                                                     })
                                                     .into_any_element()
                                                 })
@@ -1041,17 +1151,19 @@ impl PromptLibrary {
                                                     .style(ButtonStyle::Transparent)
                                                     .shape(IconButtonShape::Square)
                                                     .size(ButtonSize::Large)
-                                                    .tooltip(move |cx| {
+                                                    .tooltip(move |window, cx| {
                                                         Tooltip::for_action(
                                                             "Duplicate Prompt",
                                                             &DuplicatePrompt,
+                                                            window,
                                                             cx,
                                                         )
                                                     })
-                                                    .on_click(|_, cx| {
-                                                        cx.dispatch_action(Box::new(
-                                                            DuplicatePrompt,
-                                                        ));
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(
+                                                            Box::new(DuplicatePrompt),
+                                                            cx,
+                                                        );
                                                     }),
                                                 )
                                                 .child(
@@ -1069,20 +1181,18 @@ impl PromptLibrary {
                                                     })
                                                     .shape(IconButtonShape::Square)
                                                     .size(ButtonSize::Large)
-                                                    .tooltip(move |cx| {
-                                                        Tooltip::text(
-                                                            if prompt_metadata.default {
-                                                                "Remove from Default Prompt"
-                                                            } else {
-                                                                "Add to Default Prompt"
-                                                            },
+                                                    .tooltip(Tooltip::text(
+                                                        if prompt_metadata.default {
+                                                            "Remove from Default Prompt"
+                                                        } else {
+                                                            "Add to Default Prompt"
+                                                        },
+                                                    ))
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(
+                                                            Box::new(ToggleDefaultPrompt),
                                                             cx,
-                                                        )
-                                                    })
-                                                    .on_click(|_, cx| {
-                                                        cx.dispatch_action(Box::new(
-                                                            ToggleDefaultPrompt,
-                                                        ));
+                                                        );
                                                     }),
                                                 ),
                                         ),
@@ -1103,18 +1213,24 @@ impl PromptLibrary {
 }
 
 impl Render for PromptLibrary {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = theme::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
 
         h_flex()
             .id("prompt-manager")
             .key_context("PromptLibrary")
-            .on_action(cx.listener(|this, &NewPrompt, cx| this.new_prompt(cx)))
-            .on_action(cx.listener(|this, &DeletePrompt, cx| this.delete_active_prompt(cx)))
-            .on_action(cx.listener(|this, &DuplicatePrompt, cx| this.duplicate_active_prompt(cx)))
-            .on_action(cx.listener(|this, &ToggleDefaultPrompt, cx| {
-                this.toggle_default_for_active_prompt(cx)
+            .on_action(cx.listener(|this, &NewPrompt, window, cx| this.new_prompt(window, cx)))
+            .on_action(
+                cx.listener(|this, &DeletePrompt, window, cx| {
+                    this.delete_active_prompt(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, &DuplicatePrompt, window, cx| {
+                this.duplicate_active_prompt(window, cx)
+            }))
+            .on_action(cx.listener(|this, &ToggleDefaultPrompt, window, cx| {
+                this.toggle_default_for_active_prompt(window, cx)
             }))
             .size_full()
             .overflow_hidden()
@@ -1156,10 +1272,13 @@ impl Render for PromptLibrary {
                                                 Button::new("create-prompt", "New Prompt")
                                                     .full_width()
                                                     .key_binding(KeyBinding::for_action(
-                                                        &NewPrompt, cx,
+                                                        &NewPrompt, window, cx,
                                                     ))
-                                                    .on_click(|_, cx| {
-                                                        cx.dispatch_action(NewPrompt.boxed_clone())
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(
+                                                            NewPrompt.boxed_clone(),
+                                                            cx,
+                                                        )
                                                     }),
                                             ),
                                     )

@@ -1,16 +1,16 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
 use fs::Fs;
-use gpui::{AppContext, Model, Task, WeakView};
+use gpui::{App, Entity, Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use project::{Project, ProjectPath};
 use std::{
     fmt::Write,
     path::Path,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
 use workspace::Workspace;
@@ -76,7 +76,7 @@ impl CargoWorkspaceSlashCommand {
         Ok(message)
     }
 
-    fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
+    fn path_to_cargo_toml(project: Entity<Project>, cx: &mut App) -> Option<Arc<Path>> {
         let worktree = project.read(cx).worktrees(cx).next()?;
         let worktree = worktree.read(cx);
         let entry = worktree.entry_for_path("Cargo.toml")?;
@@ -107,8 +107,9 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _workspace: Option<WeakEntity<Workspace>>,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -122,15 +123,16 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _window: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {
             let project = workspace.project().clone();
             let fs = workspace.project().read(cx).fs().clone();
             let path = Self::path_to_cargo_toml(project, cx);
-            let output = cx.background_executor().spawn(async move {
+            let output = cx.background_spawn(async move {
                 let path = path.with_context(|| "Cargo.toml not found")?;
                 Self::build_message(fs, &path).await
             });

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::{
     fmt::{self, Display, Formatter},
@@ -82,7 +82,7 @@ impl From<Rgba> for u32 {
 
 struct RgbaVisitor;
 
-impl<'de> Visitor<'de> for RgbaVisitor {
+impl Visitor<'_> for RgbaVisitor {
     type Value = Rgba;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -180,7 +180,7 @@ impl TryFrom<&'_ str> for Rgba {
                 /// Duplicates a given hex digit.
                 /// E.g., `0xf` -> `0xff`.
                 const fn duplicate(value: u8) -> u8 {
-                    value << 4 | value
+                    (value << 4) | value
                 }
 
                 (duplicate(r), duplicate(g), duplicate(b), duplicate(a))
@@ -486,13 +486,66 @@ impl Hsla {
         self.a *= 1.0 - factor.clamp(0., 1.);
     }
 
-    /// Returns a new HSLA color with the same hue, saturation, and lightness, but with a modified alpha value.
+    /// Multiplies the alpha value of the color by a given factor
+    /// and returns a new HSLA color.
+    ///
+    /// Useful for transforming colors with dynamic opacity,
+    /// like a color from an external source.
+    ///
+    /// Example:
+    /// ```
+    /// let color = gpui::red();
+    /// let faded_color = color.opacity(0.5);
+    /// assert_eq!(faded_color.a, 0.5);
+    /// ```
+    ///
+    /// This will return a red color with half the opacity.
+    ///
+    /// Example:
+    /// ```
+    /// let color = hlsa(0.7, 1.0, 0.5, 0.7); // A saturated blue
+    /// let faded_color = color.opacity(0.16);
+    /// assert_eq!(faded_color.a, 0.112);
+    /// ```
+    ///
+    /// This will return a blue color with around ~10% opacity,
+    /// suitable for an element's hover or selected state.
+    ///
     pub fn opacity(&self, factor: f32) -> Self {
         Hsla {
             h: self.h,
             s: self.s,
             l: self.l,
             a: self.a * factor.clamp(0., 1.),
+        }
+    }
+
+    /// Returns a new HSLA color with the same hue, saturation,
+    /// and lightness, but with a new alpha value.
+    ///
+    /// Example:
+    /// ```
+    /// let color = gpui::red();
+    /// let red_color = color.alpha(0.25);
+    /// assert_eq!(red_color.a, 0.25);
+    /// ```
+    ///
+    /// This will return a red color with half the opacity.
+    ///
+    /// Example:
+    /// ```
+    /// let color = hsla(0.7, 1.0, 0.5, 0.7); // A saturated blue
+    /// let faded_color = color.alpha(0.25);
+    /// assert_eq!(faded_color.a, 0.25);
+    /// ```
+    ///
+    /// This will return a blue color with 25% opacity.
+    pub fn alpha(&self, a: f32) -> Self {
+        Hsla {
+            h: self.h,
+            s: self.s,
+            l: self.l,
+            a: a.clamp(0., 1.),
         }
     }
 }
@@ -553,13 +606,14 @@ impl<'de> Deserialize<'de> for Hsla {
 pub(crate) enum BackgroundTag {
     Solid = 0,
     LinearGradient = 1,
+    PatternSlash = 2,
 }
 
 /// A color space for color interpolation.
 ///
 /// References:
-/// - https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
-/// - https://www.w3.org/TR/css-color-4/#typedef-color-space
+/// - <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
+/// - <https://www.w3.org/TR/css-color-4/#typedef-color-space>
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
 pub enum ColorSpace {
@@ -580,16 +634,38 @@ impl Display for ColorSpace {
 }
 
 /// A background color, which can be either a solid color or a linear gradient.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Background {
     pub(crate) tag: BackgroundTag,
     pub(crate) color_space: ColorSpace,
     pub(crate) solid: Hsla,
-    pub(crate) angle: f32,
+    pub(crate) gradient_angle_or_pattern_height: f32,
     pub(crate) colors: [LinearColorStop; 2],
     /// Padding for alignment for repr(C) layout.
     pad: u32,
+}
+
+impl std::fmt::Debug for Background {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self.tag {
+            BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
+            BackgroundTag::LinearGradient => {
+                write!(
+                    f,
+                    "LinearGradient({}, {:?}, {:?})",
+                    self.gradient_angle_or_pattern_height, self.colors[0], self.colors[1]
+                )
+            }
+            BackgroundTag::PatternSlash => {
+                write!(
+                    f,
+                    "PatternSlash({:?}, {})",
+                    self.solid, self.gradient_angle_or_pattern_height
+                )
+            }
+        }
+    }
 }
 
 impl Eq for Background {}
@@ -599,10 +675,32 @@ impl Default for Background {
             tag: BackgroundTag::Solid,
             solid: Hsla::default(),
             color_space: ColorSpace::default(),
-            angle: 0.0,
+            gradient_angle_or_pattern_height: 0.0,
             colors: [LinearColorStop::default(), LinearColorStop::default()],
             pad: 0,
         }
+    }
+}
+
+/// Creates a hash pattern background
+pub fn pattern_slash(color: Hsla, width: f32, interval: f32) -> Background {
+    let width_scaled = (width * 255.0) as u32;
+    let interval_scaled = (interval * 255.0) as u32;
+    let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
+
+    Background {
+        tag: BackgroundTag::PatternSlash,
+        solid: color,
+        gradient_angle_or_pattern_height: height,
+        ..Default::default()
+    }
+}
+
+/// Creates a solid background color.
+pub fn solid_background(color: impl Into<Hsla>) -> Background {
+    Background {
+        solid: color.into(),
+        ..Default::default()
     }
 }
 
@@ -612,7 +710,7 @@ impl Default for Background {
 ///
 /// The `angle` is in degrees value in the range 0.0 to 360.0.
 ///
-/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient
+/// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient>
 pub fn linear_gradient(
     angle: f32,
     from: impl Into<LinearColorStop>,
@@ -620,7 +718,7 @@ pub fn linear_gradient(
 ) -> Background {
     Background {
         tag: BackgroundTag::LinearGradient,
-        angle,
+        gradient_angle_or_pattern_height: angle,
         colors: [from.into(), to.into()],
         ..Default::default()
     }
@@ -628,7 +726,7 @@ pub fn linear_gradient(
 
 /// A color stop in a linear gradient.
 ///
-/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop
+/// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop>
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[repr(C)]
 pub struct LinearColorStop {
@@ -661,7 +759,7 @@ impl LinearColorStop {
 impl Background {
     /// Use specified color space for color interpolation.
     ///
-    /// https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
+    /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
     pub fn color_space(mut self, color_space: ColorSpace) -> Self {
         self.color_space = color_space;
         self
@@ -683,6 +781,7 @@ impl Background {
         match self.tag {
             BackgroundTag::Solid => self.solid.is_transparent(),
             BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
+            BackgroundTag::PatternSlash => self.solid.is_transparent(),
         }
     }
 }

@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use gpui::{Task, WeakView};
+use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use prompt_library::PromptStore;
-use std::sync::{atomic::AtomicBool, Arc};
+use prompt_store::PromptStore;
+use std::sync::{Arc, atomic::AtomicBool};
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -37,12 +37,13 @@ impl SlashCommand for PromptSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        _workspace: Option<WeakEntity<Workspace>>,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let store = PromptStore::global(cx);
         let query = arguments.to_owned().join(" ");
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let prompts = store.await?.search(query).await;
             Ok(prompts
                 .into_iter()
@@ -64,9 +65,10 @@ impl SlashCommand for PromptSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let title = arguments.to_owned().join(" ");
         if title.trim().is_empty() {
@@ -75,7 +77,7 @@ impl SlashCommand for PromptSlashCommand {
 
         let store = PromptStore::global(cx);
         let title = SharedString::from(title.clone());
-        let prompt = cx.background_executor().spawn({
+        let prompt = cx.background_spawn({
             let title = title.clone();
             async move {
                 let store = store.await?;

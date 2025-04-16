@@ -182,6 +182,9 @@ pub struct Config {
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
     pub stripe_api_key: Option<String>,
+    pub stripe_zed_pro_price_id: Option<String>,
+    pub stripe_zed_pro_trial_price_id: Option<String>,
+    pub stripe_zed_free_price_id: Option<String>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
     pub user_backfiller_github_access_token: Option<Arc<str>>,
 }
@@ -198,6 +201,29 @@ impl Config {
             "staging" => "https://staging.zed.dev",
             _ => "https://zed.dev",
         }
+    }
+
+    pub fn zed_pro_price_id(&self) -> anyhow::Result<stripe::PriceId> {
+        Self::parse_stripe_price_id("Zed Pro", self.stripe_zed_pro_price_id.as_deref())
+    }
+
+    pub fn zed_pro_trial_price_id(&self) -> anyhow::Result<stripe::PriceId> {
+        Self::parse_stripe_price_id(
+            "Zed Pro Trial",
+            self.stripe_zed_pro_trial_price_id.as_deref(),
+        )
+    }
+
+    pub fn zed_free_price_id(&self) -> anyhow::Result<stripe::PriceId> {
+        Self::parse_stripe_price_id("Zed Free", self.stripe_zed_pro_price_id.as_deref())
+    }
+
+    fn parse_stripe_price_id(name: &str, value: Option<&str>) -> anyhow::Result<stripe::PriceId> {
+        use std::str::FromStr as _;
+
+        let price_id = value.ok_or_else(|| anyhow!("{name} price ID not set"))?;
+
+        Ok(stripe::PriceId::from_str(price_id)?)
     }
 
     #[cfg(test)]
@@ -237,6 +263,9 @@ impl Config {
             migrations_path: None,
             seed_path: None,
             stripe_api_key: None,
+            stripe_zed_pro_price_id: None,
+            stripe_zed_pro_trial_price_id: None,
+            stripe_zed_free_price_id: None,
             supermaven_admin_api_key: None,
             user_backfiller_github_access_token: None,
             kinesis_region: None,
@@ -253,7 +282,6 @@ impl Config {
 pub enum ServiceMode {
     Api,
     Collab,
-    Llm,
     All,
 }
 
@@ -265,16 +293,12 @@ impl ServiceMode {
     pub fn is_api(&self) -> bool {
         matches!(self, Self::Api | Self::All)
     }
-
-    pub fn is_llm(&self) -> bool {
-        matches!(self, Self::Llm | Self::All)
-    }
 }
 
 pub struct AppState {
     pub db: Arc<Database>,
     pub llm_db: Option<Arc<LlmDatabase>>,
-    pub livekit_client: Option<Arc<dyn livekit_server::api::Client>>,
+    pub livekit_client: Option<Arc<dyn livekit_api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub stripe_client: Option<Arc<stripe::Client>>,
     pub stripe_billing: Option<Arc<StripeBilling>>,
@@ -311,11 +335,11 @@ impl AppState {
             .zip(config.livekit_key.as_ref())
             .zip(config.livekit_secret.as_ref())
         {
-            Some(Arc::new(livekit_server::api::LiveKitClient::new(
+            Some(Arc::new(livekit_api::LiveKitClient::new(
                 server.clone(),
                 key.clone(),
                 secret.clone(),
-            )) as Arc<dyn livekit_server::api::Client>)
+            )) as Arc<dyn livekit_api::Client>)
         } else {
             None
         };
@@ -407,7 +431,7 @@ async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis
             config
                 .kinesis_region
                 .clone()
-                .ok_or_else(|| anyhow!("missing blob_store_region"))?,
+                .ok_or_else(|| anyhow!("missing kinesis_region"))?,
         ))
         .credentials_provider(keys)
         .load()

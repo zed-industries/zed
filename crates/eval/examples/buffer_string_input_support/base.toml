@@ -1,0 +1,3 @@
+url = "https://github.com/swc-project/swc.git"
+revision = "787d5fabf410fafe6595ec00c197181b27578cb1"
+language_extension = "rs"

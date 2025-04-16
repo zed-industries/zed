@@ -1,4 +1,4 @@
-use crate::{AppContext, PlatformDispatcher};
+use crate::{App, PlatformDispatcher};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
@@ -13,8 +13,8 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
     task::{Context, Poll},
     time::{Duration, Instant},
@@ -35,6 +35,11 @@ pub struct BackgroundExecutor {
 
 /// A pointer to the executor that is currently running,
 /// for spawning tasks on the main thread.
+///
+/// This is intentionally `!Send` via the `not_send` marker field. This is because
+/// `ForegroundExecutor::spawn` does not require `Send` but checks at runtime that the future is
+/// only polled from the same thread it was spawned from. These checks would fail when spawning
+/// foreground tasks from from background threads.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
     #[doc(hidden)]
@@ -84,7 +89,7 @@ where
     /// Run the task to completion in the background and log any
     /// errors that occur.
     #[track_caller]
-    pub fn detach_and_log_err(self, cx: &AppContext) {
+    pub fn detach_and_log_err(self, cx: &App) {
         let location = core::panic::Location::caller();
         cx.foreground_executor()
             .spawn(self.log_tracked_err(*location))
@@ -191,12 +196,12 @@ impl BackgroundExecutor {
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
-    pub(crate) fn block_internal<R>(
+    pub(crate) fn block_internal<Fut: Future>(
         &self,
         _background_only: bool,
-        future: impl Future<Output = R>,
+        future: Fut,
         timeout: Option<Duration>,
-    ) -> Result<R, impl Future<Output = R>> {
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         use std::time::Instant;
 
         let mut future = Box::pin(future);
@@ -229,12 +234,12 @@ impl BackgroundExecutor {
 
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
-    pub(crate) fn block_internal<R>(
+    pub(crate) fn block_internal<Fut: Future>(
         &self,
         background_only: bool,
-        future: impl Future<Output = R>,
+        future: Fut,
         timeout: Option<Duration>,
-    ) -> Result<R, impl Future<Output = R>> {
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         use std::sync::atomic::AtomicBool;
 
         let mut future = Box::pin(future);
@@ -286,8 +291,8 @@ impl BackgroundExecutor {
                                 waiting_message = format!("\n  waiting on: {}\n", waiting_hint);
                             }
                             panic!(
-                                    "parked with nothing left to run{waiting_message}{backtrace_message}",
-                                )
+                                "parked with nothing left to run{waiting_message}{backtrace_message}",
+                            )
                         }
                         self.dispatcher.park(None);
                     }
@@ -298,11 +303,11 @@ impl BackgroundExecutor {
 
     /// Block the current thread until the given future resolves
     /// or `duration` has elapsed.
-    pub fn block_with_timeout<R>(
+    pub fn block_with_timeout<Fut: Future>(
         &self,
         duration: Duration,
-        future: impl Future<Output = R>,
-    ) -> Result<R, impl Future<Output = R>> {
+        future: Fut,
+    ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         self.block_internal(true, future, Some(duration))
     }
 
@@ -360,7 +365,7 @@ impl BackgroundExecutor {
 
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
-    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
+    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
         self.dispatcher.as_test().unwrap().simulate_random_delay()
     }
 
@@ -582,7 +587,7 @@ impl<'a> Scope<'a> {
     }
 }
 
-impl<'a> Drop for Scope<'a> {
+impl Drop for Scope<'_> {
     fn drop(&mut self) {
         self.tx.take().unwrap();
 

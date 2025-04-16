@@ -1,70 +1,76 @@
 use std::sync::Arc;
 use std::{path::Path, str};
 
-use collections::HashMap;
-
-use gpui::{AppContext, AssetSource, Global, SharedString};
-use serde_derive::Deserialize;
+use gpui::{App, SharedString};
 use settings::Settings;
 use theme::{IconTheme, ThemeRegistry, ThemeSettings};
-use util::{maybe, paths::PathExt};
+use util::paths::PathExt;
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 pub struct FileIcons {
-    stems: HashMap<String, String>,
-    suffixes: HashMap<String, String>,
-}
-
-impl Global for FileIcons {}
-
-pub const FILE_TYPES_ASSET: &str = "icons/file_icons/file_types.json";
-
-pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
-    cx.set_global(FileIcons::new(assets))
+    icon_theme: Arc<IconTheme>,
 }
 
 impl FileIcons {
-    pub fn get(cx: &AppContext) -> &Self {
-        cx.global::<FileIcons>()
+    pub fn get(cx: &App) -> Self {
+        let theme_settings = ThemeSettings::get_global(cx);
+
+        Self {
+            icon_theme: theme_settings.active_icon_theme.clone(),
+        }
     }
 
-    pub fn new(assets: impl AssetSource) -> Self {
-        assets
-            .load(FILE_TYPES_ASSET)
-            .ok()
-            .flatten()
-            .and_then(|file| serde_json::from_str::<FileIcons>(str::from_utf8(&file).unwrap()).ok())
-            .unwrap_or_else(|| FileIcons {
-                stems: HashMap::default(),
-                suffixes: HashMap::default(),
-            })
-    }
+    pub fn get_icon(path: &Path, cx: &App) -> Option<SharedString> {
+        let this = Self::get(cx);
 
-    pub fn get_icon(path: &Path, cx: &AppContext) -> Option<SharedString> {
-        let this = cx.try_global::<Self>()?;
-
+        let get_icon_from_suffix = |suffix: &str| -> Option<SharedString> {
+            this.icon_theme
+                .file_stems
+                .get(suffix)
+                .or_else(|| this.icon_theme.file_suffixes.get(suffix))
+                .and_then(|typ| this.get_icon_for_type(typ, cx))
+        };
         // TODO: Associate a type with the languages and have the file's language
         //       override these associations
-        maybe!({
-            let suffix = path.icon_stem_or_suffix()?;
 
-            if let Some(type_str) = this.stems.get(suffix) {
-                return this.get_icon_for_type(type_str, cx);
+        // check if file name is in suffixes
+        // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
+        if let Some(typ) = path.file_name().and_then(|typ| typ.to_str()) {
+            let maybe_path = get_icon_from_suffix(typ);
+            if maybe_path.is_some() {
+                return maybe_path;
             }
+        }
 
-            this.suffixes
-                .get(suffix)
-                .and_then(|type_str| this.get_icon_for_type(type_str, cx))
-        })
-        .or_else(|| this.get_icon_for_type("default", cx))
+        // primary case: check if the files extension or the hidden file name
+        // matches some icon path
+        if let Some(suffix) = path.extension_or_hidden_file_name() {
+            let maybe_path = get_icon_from_suffix(suffix);
+            if maybe_path.is_some() {
+                return maybe_path;
+            }
+        }
+
+        // this _should_ only happen when the file is hidden (has leading '.')
+        // and is not a "special" file we have an icon (e.g. not `.eslint.config.js`)
+        // that should be caught above. In the remaining cases, we want to check
+        // for a normal supported extension e.g. `.data.json` -> `json`
+        let extension = path.extension().and_then(|ext| ext.to_str());
+        if let Some(extension) = extension {
+            let maybe_path = get_icon_from_suffix(extension);
+            if maybe_path.is_some() {
+                return maybe_path;
+            }
+        }
+        return this.get_icon_for_type("default", cx);
     }
 
-    fn default_icon_theme(cx: &AppContext) -> Option<Arc<IconTheme>> {
+    fn default_icon_theme(cx: &App) -> Option<Arc<IconTheme>> {
         let theme_registry = ThemeRegistry::global(cx);
         theme_registry.default_icon_theme().ok()
     }
 
-    pub fn get_icon_for_type(&self, typ: &str, cx: &AppContext) -> Option<SharedString> {
+    pub fn get_icon_for_type(&self, typ: &str, cx: &App) -> Option<SharedString> {
         fn get_icon_for_type(icon_theme: &Arc<IconTheme>, typ: &str) -> Option<SharedString> {
             icon_theme
                 .file_icons
@@ -77,7 +83,7 @@ impl FileIcons {
         })
     }
 
-    pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
+    pub fn get_folder_icon(expanded: bool, cx: &App) -> Option<SharedString> {
         fn get_folder_icon(icon_theme: &Arc<IconTheme>, expanded: bool) -> Option<SharedString> {
             if expanded {
                 icon_theme.directory_icons.expanded.clone()
@@ -92,7 +98,7 @@ impl FileIcons {
         })
     }
 
-    pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
+    pub fn get_chevron_icon(expanded: bool, cx: &App) -> Option<SharedString> {
         fn get_chevron_icon(icon_theme: &Arc<IconTheme>, expanded: bool) -> Option<SharedString> {
             if expanded {
                 icon_theme.chevron_icons.expanded.clone()

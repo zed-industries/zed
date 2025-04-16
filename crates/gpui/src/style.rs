@@ -5,11 +5,11 @@ use std::{
 };
 
 use crate::{
-    black, phi, point, quad, rems, size, AbsoluteLength, Background, BackgroundTag, Bounds,
-    ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges,
-    EdgesRefinement, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length,
-    Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun,
-    WindowContext,
+    AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
+    CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
+    FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
+    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
+    point, quad, rems, size,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -159,6 +159,28 @@ pub struct Style {
     pub scrollbar_width: f32,
     /// Whether both x and y axis should be scrollable at the same time.
     pub allow_concurrent_scroll: bool,
+    /// Whether scrolling should be restricted to the axis indicated by the mouse wheel.
+    ///
+    /// This means that:
+    /// - The mouse wheel alone will only ever scroll the Y axis.
+    /// - Holding `Shift` and using the mouse wheel will scroll the X axis.
+    ///
+    /// ## Motivation
+    ///
+    /// On the web when scrolling with the mouse wheel, scrolling up and down will always scroll the Y axis, even when
+    /// the mouse is over a horizontally-scrollable element.
+    ///
+    /// The only way to scroll horizontally is to hold down `Shift` while scrolling, which then changes the scroll axis
+    /// to the X axis.
+    ///
+    /// Currently, GPUI operates differently from the web in that it will scroll an element in either the X or Y axis
+    /// when scrolling with just the mouse wheel. This causes problems when scrolling in a vertical list that contains
+    /// horizontally-scrollable elements, as when you get to the horizontally-scrollable elements the scroll will be
+    /// hijacked.
+    ///
+    /// Ideally we would match the web's behavior and not have a need for this, but right now we're adding this opt-in
+    /// style property to limit the potential blast radius.
+    pub restrict_scroll_to_axis: bool,
 
     // Position properties
     /// What should the `position` value of this struct use as a base offset?
@@ -222,11 +244,14 @@ pub struct Style {
     /// The border color of this element
     pub border_color: Option<Hsla>,
 
+    /// The border style of this element
+    pub border_style: BorderStyle,
+
     /// The radius of the corners of this element
     #[refineable]
     pub corner_radii: Corners<AbsoluteLength>,
 
-    /// Box Shadow of the element
+    /// Box shadow of the element
     pub box_shadow: SmallVec<[BoxShadow; 2]>,
 
     /// The text style of this element
@@ -287,13 +312,24 @@ pub enum WhiteSpace {
 }
 
 /// How to truncate text that overflows the width of the element
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TextOverflow {
+    /// Truncate the text with an ellipsis, same as: `text-overflow: ellipsis;` in CSS
+    Ellipsis(&'static str),
+}
+
+/// How to align text within the element
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum Truncate {
-    /// Truncate the text without an ellipsis
+pub enum TextAlign {
+    /// Align the text to the left of the element
     #[default]
-    Truncate,
-    /// Truncate the text with an ellipsis
-    Ellipsis,
+    Left,
+
+    /// Center the text within the element
+    Center,
+
+    /// Align the text to the right of the element
+    Right,
 }
 
 /// The properties that can be used to style text in GPUI
@@ -337,7 +373,13 @@ pub struct TextStyle {
     pub white_space: WhiteSpace,
 
     /// The text should be truncated if it overflows the width of the element
-    pub truncate: Option<Truncate>,
+    pub text_overflow: Option<TextOverflow>,
+
+    /// How the text should be aligned within the element
+    pub text_align: TextAlign,
+
+    /// The number of lines to display before truncating the text
+    pub line_clamp: Option<usize>,
 }
 
 impl Default for TextStyle {
@@ -362,7 +404,9 @@ impl Default for TextStyle {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            truncate: None,
+            text_overflow: None,
+            text_align: TextAlign::default(),
+            line_clamp: None,
         }
     }
 }
@@ -550,8 +594,9 @@ impl Style {
     pub fn paint(
         &self,
         bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
-        continuation: impl FnOnce(&mut WindowContext),
+        window: &mut Window,
+        cx: &mut App,
+        continuation: impl FnOnce(&mut Window, &mut App),
     ) {
         #[cfg(debug_assertions)]
         if self.debug_below {
@@ -560,16 +605,16 @@ impl Style {
 
         #[cfg(debug_assertions)]
         if self.debug || cx.has_global::<DebugBelow>() {
-            cx.paint_quad(crate::outline(bounds, crate::red()));
+            window.paint_quad(crate::outline(bounds, crate::red(), BorderStyle::default()));
         }
 
-        let rem_size = cx.rem_size();
+        let rem_size = window.rem_size();
+        let corner_radii = self
+            .corner_radii
+            .to_pixels(rem_size)
+            .clamp_radii_for_quad_size(bounds.size);
 
-        cx.paint_shadows(
-            bounds,
-            self.corner_radii.to_pixels(bounds.size, rem_size),
-            &self.box_shadow,
-        );
+        window.paint_shadows(bounds, corner_radii, &self.box_shadow);
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.map_or(false, |color| !color.is_transparent()) {
@@ -581,23 +626,24 @@ impl Style {
                         .first()
                         .map(|stop| stop.color)
                         .unwrap_or_default(),
+                    BackgroundTag::PatternSlash => color.solid,
                 },
                 None => Hsla::default(),
             };
             border_color.a = 0.;
-            cx.paint_quad(quad(
+            window.paint_quad(quad(
                 bounds,
-                self.corner_radii.to_pixels(bounds.size, rem_size),
+                corner_radii,
                 background_color.unwrap_or_default(),
                 Edges::default(),
                 border_color,
+                self.border_style,
             ));
         }
 
-        continuation(cx);
+        continuation(window, cx);
 
         if self.is_border_visible() {
-            let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
             let border_widths = self.border_widths.to_pixels(rem_size);
             let max_border_width = border_widths.max();
             let max_corner_radius = corner_radii.max();
@@ -627,33 +673,34 @@ impl Style {
                 background,
                 border_widths,
                 self.border_color.unwrap_or_default(),
+                self.border_style,
             );
 
-            cx.with_content_mask(Some(ContentMask { bounds: top_bounds }), |cx| {
-                cx.paint_quad(quad.clone());
+            window.with_content_mask(Some(ContentMask { bounds: top_bounds }), |window| {
+                window.paint_quad(quad.clone());
             });
-            cx.with_content_mask(
+            window.with_content_mask(
                 Some(ContentMask {
                     bounds: right_bounds,
                 }),
-                |cx| {
-                    cx.paint_quad(quad.clone());
+                |window| {
+                    window.paint_quad(quad.clone());
                 },
             );
-            cx.with_content_mask(
+            window.with_content_mask(
                 Some(ContentMask {
                     bounds: bottom_bounds,
                 }),
-                |cx| {
-                    cx.paint_quad(quad.clone());
+                |window| {
+                    window.paint_quad(quad.clone());
                 },
             );
-            cx.with_content_mask(
+            window.with_content_mask(
                 Some(ContentMask {
                     bounds: left_bounds,
                 }),
-                |cx| {
-                    cx.paint_quad(quad);
+                |window| {
+                    window.paint_quad(quad);
                 },
             );
         }
@@ -681,6 +728,7 @@ impl Default for Style {
                 y: Overflow::Visible,
             },
             allow_concurrent_scroll: false,
+            restrict_scroll_to_axis: false,
             scrollbar_width: 0.0,
             position: Position::Relative,
             inset: Edges::auto(),
@@ -705,6 +753,7 @@ impl Default for Style {
             flex_basis: Length::Auto,
             background: None,
             border_color: None,
+            border_style: BorderStyle::default(),
             corner_radii: Corners::default(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),

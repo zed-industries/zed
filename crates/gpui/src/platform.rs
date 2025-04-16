@@ -26,14 +26,21 @@ mod test;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(all(
+    any(target_os = "linux", target_os = "freebsd"),
+    any(feature = "wayland", feature = "x11"),
+))]
+pub(crate) mod scap_screen_capture;
+
 use crate::{
-    point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs,
-    ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, SvgRenderer,
-    SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
+    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
+    Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
+    point, px, size,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
@@ -73,6 +80,11 @@ pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::TestScreenCaptureSource;
+
+/// Returns a background executor for the current platform.
+pub fn background_executor() -> BackgroundExecutor {
+    current_platform(true).background_executor()
+}
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
@@ -153,6 +165,7 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    fn is_screen_capture_supported(&self) -> bool;
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
@@ -189,7 +202,15 @@ pub(crate) trait Platform: 'static {
     }
 
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
+    fn perform_dock_menu_action(&self, _action: usize) {}
     fn add_recent_document(&self, _path: &Path) {}
+    fn update_jump_list(
+        &self,
+        _menus: Vec<MenuItem>,
+        _entries: Vec<SmallVec<[PathBuf; 2]>>,
+    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+        Vec::new()
+    }
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
@@ -240,13 +261,14 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 /// A source of on-screen video content that can be captured.
 pub trait ScreenCaptureSource {
     /// Returns the video resolution of this source.
-    fn resolution(&self) -> Result<Size<Pixels>>;
+    fn resolution(&self) -> Result<Size<DevicePixels>>;
 
     /// Start capture video from this source, invoking the given callback
     /// with each frame.
     fn stream(
         &self,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        foreground_executor: &ForegroundExecutor,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
 }
 
@@ -259,6 +281,12 @@ pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct DisplayId(pub(crate) u32);
+
+impl From<DisplayId> for u32 {
+    fn from(id: DisplayId) -> Self {
+        id.0
+    }
+}
 
 impl Debug for DisplayId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -377,6 +405,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
+    fn resize(&mut self, size: Size<Pixels>);
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
@@ -432,6 +461,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         Decorations::Server
     }
     fn set_app_id(&mut self, _app_id: &str) {}
+    fn map_window(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn window_controls(&self) -> WindowControls {
         WindowControls::default()
     }
@@ -501,40 +533,105 @@ impl PlatformTextSystem for NoopTextSystem {
         Vec::new()
     }
 
-    fn font_id(&self, descriptor: &Font) -> Result<FontId> {
-        Err(anyhow!("No font found for {:?}", descriptor))
+    fn font_id(&self, _descriptor: &Font) -> Result<FontId> {
+        return Ok(FontId(1));
     }
 
     fn font_metrics(&self, _font_id: FontId) -> FontMetrics {
-        unimplemented!()
+        FontMetrics {
+            units_per_em: 1000,
+            ascent: 1025.0,
+            descent: -275.0,
+            line_gap: 0.0,
+            underline_position: -95.0,
+            underline_thickness: 60.0,
+            cap_height: 698.0,
+            x_height: 516.0,
+            bounding_box: Bounds {
+                origin: Point {
+                    x: -260.0,
+                    y: -245.0,
+                },
+                size: Size {
+                    width: 1501.0,
+                    height: 1364.0,
+                },
+            },
+        }
     }
 
-    fn typographic_bounds(&self, font_id: FontId, _glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        Err(anyhow!("No font found for {:?}", font_id))
+    fn typographic_bounds(&self, _font_id: FontId, _glyph_id: GlyphId) -> Result<Bounds<f32>> {
+        Ok(Bounds {
+            origin: Point { x: 54.0, y: 0.0 },
+            size: size(392.0, 528.0),
+        })
     }
 
-    fn advance(&self, font_id: FontId, _glyph_id: GlyphId) -> Result<Size<f32>> {
-        Err(anyhow!("No font found for {:?}", font_id))
+    fn advance(&self, _font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
+        Ok(size(600.0 * glyph_id.0 as f32, 0.0))
     }
 
-    fn glyph_for_char(&self, _font_id: FontId, _ch: char) -> Option<GlyphId> {
-        None
+    fn glyph_for_char(&self, _font_id: FontId, ch: char) -> Option<GlyphId> {
+        Some(GlyphId(ch.len_utf16() as u32))
     }
 
-    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        Err(anyhow!("No font found for {:?}", params))
+    fn glyph_raster_bounds(&self, _params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        Ok(Default::default())
     }
 
     fn rasterize_glyph(
         &self,
-        params: &RenderGlyphParams,
-        _raster_bounds: Bounds<DevicePixels>,
+        _params: &RenderGlyphParams,
+        raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        Err(anyhow!("No font found for {:?}", params))
+        Ok((raster_bounds.size, Vec::new()))
     }
 
-    fn layout_line(&self, _text: &str, _font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
-        unimplemented!()
+    fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
+        let mut position = px(0.);
+        let metrics = self.font_metrics(FontId(0));
+        let em_width = font_size
+            * self
+                .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
+                .unwrap()
+                .width
+            / metrics.units_per_em as f32;
+        let mut glyphs = SmallVec::default();
+        for (ix, c) in text.char_indices() {
+            if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
+                glyphs.push(ShapedGlyph {
+                    id: glyph,
+                    position: point(position, px(0.)),
+                    index: ix,
+                    is_emoji: glyph.0 == 2,
+                });
+                if glyph.0 == 2 {
+                    position += em_width * 2.0;
+                } else {
+                    position += em_width;
+                }
+            } else {
+                position += em_width
+            }
+        }
+        let mut runs = Vec::default();
+        if glyphs.len() > 0 {
+            runs.push(ShapedRun {
+                font_id: FontId(0),
+                glyphs,
+            });
+        } else {
+            position = px(0.);
+        }
+
+        LineLayout {
+            font_size,
+            width: position,
+            ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
+            descent: font_size * (metrics.descent / metrics.units_per_em as f32),
+            runs,
+            len: text.len(),
+        }
     }
 }
 
@@ -697,14 +794,17 @@ impl PlatformInputHandler {
 
     fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
         self.cx
-            .update(|cx| self.handler.selected_text_range(ignore_disabled_input, cx))
+            .update(|window, cx| {
+                self.handler
+                    .selected_text_range(ignore_disabled_input, window, cx)
+            })
             .ok()
             .flatten()
     }
 
     fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
-            .update(|cx| self.handler.marked_text_range(cx))
+            .update(|window, cx| self.handler.marked_text_range(window, cx))
             .ok()
             .flatten()
     }
@@ -716,16 +816,19 @@ impl PlatformInputHandler {
         adjusted: &mut Option<Range<usize>>,
     ) -> Option<String> {
         self.cx
-            .update(|cx| self.handler.text_for_range(range_utf16, adjusted, cx))
+            .update(|window, cx| {
+                self.handler
+                    .text_for_range(range_utf16, adjusted, window, cx)
+            })
             .ok()
             .flatten()
     }
 
     fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
         self.cx
-            .update(|cx| {
+            .update(|window, cx| {
                 self.handler
-                    .replace_text_in_range(replacement_range, text, cx);
+                    .replace_text_in_range(replacement_range, text, window, cx);
             })
             .ok();
     }
@@ -737,11 +840,12 @@ impl PlatformInputHandler {
         new_selected_range: Option<Range<usize>>,
     ) {
         self.cx
-            .update(|cx| {
+            .update(|window, cx| {
                 self.handler.replace_and_mark_text_in_range(
                     range_utf16,
                     new_text,
                     new_selected_range,
+                    window,
                     cx,
                 )
             })
@@ -749,12 +853,14 @@ impl PlatformInputHandler {
     }
 
     fn unmark_text(&mut self) {
-        self.cx.update(|cx| self.handler.unmark_text(cx)).ok();
+        self.cx
+            .update(|window, cx| self.handler.unmark_text(window, cx))
+            .ok();
     }
 
     fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
         self.cx
-            .update(|cx| self.handler.bounds_for_range(range_utf16, cx))
+            .update(|window, cx| self.handler.bounds_for_range(range_utf16, window, cx))
             .ok()
             .flatten()
     }
@@ -764,20 +870,29 @@ impl PlatformInputHandler {
         self.handler.apple_press_and_hold_enabled()
     }
 
-    pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
-        self.handler.replace_text_in_range(None, input, cx);
+    pub(crate) fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
+        self.handler.replace_text_in_range(None, input, window, cx);
     }
 
-    pub fn selected_bounds(&mut self, cx: &mut WindowContext) -> Option<Bounds<Pixels>> {
-        let selection = self.handler.selected_text_range(true, cx)?;
+    pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
+        let selection = self.handler.selected_text_range(true, window, cx)?;
         self.handler.bounds_for_range(
             if selection.reversed {
                 selection.range.start..selection.range.start
             } else {
                 selection.range.end..selection.range.end
             },
+            window,
             cx,
         )
+    }
+
+    #[allow(unused)]
+    pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
+        self.cx
+            .update(|window, cx| self.handler.character_index_for_point(point, window, cx))
+            .ok()
+            .flatten()
     }
 }
 
@@ -805,14 +920,15 @@ pub trait InputHandler: 'static {
     fn selected_text_range(
         &mut self,
         ignore_disabled_input: bool,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Option<UTF16Selection>;
 
     /// Get the range of the currently marked text, if any
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
     ///
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
-    fn marked_text_range(&mut self, cx: &mut WindowContext) -> Option<Range<usize>>;
+    fn marked_text_range(&mut self, window: &mut Window, cx: &mut App) -> Option<Range<usize>>;
 
     /// Get the text for the given document range in UTF-16 characters
     /// Corresponds to [attributedSubstring(forProposedRange: actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438238-attributedsubstring)
@@ -822,7 +938,8 @@ pub trait InputHandler: 'static {
         &mut self,
         range_utf16: Range<usize>,
         adjusted_range: &mut Option<Range<usize>>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Option<String>;
 
     /// Replace the text in the given document range with the given text
@@ -833,7 +950,8 @@ pub trait InputHandler: 'static {
         &mut self,
         replacement_range: Option<Range<usize>>,
         text: &str,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     );
 
     /// Replace the text in the given document range with the given text,
@@ -847,12 +965,13 @@ pub trait InputHandler: 'static {
         range_utf16: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     );
 
     /// Remove the IME 'composing' state from the document
     /// Corresponds to [unmarkText()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438239-unmarktext)
-    fn unmark_text(&mut self, cx: &mut WindowContext);
+    fn unmark_text(&mut self, window: &mut Window, cx: &mut App);
 
     /// Get the bounds of the given document range in screen coordinates
     /// Corresponds to [firstRect(forCharacterRange:actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438240-firstrect)
@@ -861,8 +980,19 @@ pub trait InputHandler: 'static {
     fn bounds_for_range(
         &mut self,
         range_utf16: Range<usize>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
+
+    /// Get the character offset for the given point in terms of UTF16 characters
+    ///
+    /// Corresponds to [characterIndexForPoint:](https://developer.apple.com/documentation/appkit/nstextinputclient/characterindex(for:))
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<usize>;
 
     /// Allows a given input context to opt into getting raw key repeats instead of
     /// sending these to the platform.
@@ -1032,7 +1162,7 @@ pub enum WindowKind {
 ///
 /// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
 /// values.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WindowAppearance {
     /// A light appearance.
     ///
@@ -1191,6 +1321,9 @@ pub enum CursorStyle {
     /// A cursor indicating that the operation will result in a context menu
     /// corresponds to the CSS cursor value `context-menu`
     ContextualMenu,
+
+    /// Hide the cursor
+    None,
 }
 
 impl Default for CursorStyle {
@@ -1256,16 +1389,12 @@ impl ClipboardItem {
 
         for entry in self.entries.iter() {
             if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
-                answer.push_str(text);
+                answer.push_str(&text);
                 any_entries = true;
             }
         }
 
-        if any_entries {
-            Some(answer)
-        } else {
-            None
-        }
+        if any_entries { Some(answer) } else { None }
     }
 
     /// If this item is one ClipboardEntry::String, returns its metadata.
@@ -1287,6 +1416,44 @@ impl ClipboardItem {
     /// Get owned versions of the item's entries
     pub fn into_entries(self) -> impl Iterator<Item = ClipboardEntry> {
         self.entries.into_iter()
+    }
+}
+
+impl From<ClipboardString> for ClipboardEntry {
+    fn from(value: ClipboardString) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<String> for ClipboardEntry {
+    fn from(value: String) -> Self {
+        Self::from(ClipboardString::from(value))
+    }
+}
+
+impl From<Image> for ClipboardEntry {
+    fn from(value: Image) -> Self {
+        Self::Image(value)
+    }
+}
+
+impl From<ClipboardEntry> for ClipboardItem {
+    fn from(value: ClipboardEntry) -> Self {
+        Self {
+            entries: vec![value],
+        }
+    }
+}
+
+impl From<String> for ClipboardItem {
+    fn from(value: String) -> Self {
+        Self::from(ClipboardEntry::from(value))
+    }
+}
+
+impl From<Image> for ClipboardItem {
+    fn from(value: Image) -> Self {
+        Self::from(ClipboardEntry::from(value))
     }
 }
 
@@ -1336,9 +1503,13 @@ impl Image {
     }
 
     /// Use the GPUI `use_asset` API to make this image renderable
-    pub fn use_render_image(self: Arc<Self>, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
+    pub fn use_render_image(
+        self: Arc<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self)
-            .use_data(cx)
+            .use_data(window, cx)
             .and_then(|result| result.ok())
     }
 
@@ -1452,5 +1623,14 @@ impl ClipboardString {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);
         hasher.finish()
+    }
+}
+
+impl From<String> for ClipboardString {
+    fn from(value: String) -> Self {
+        Self {
+            text: value,
+            metadata: None,
+        }
     }
 }

@@ -1,5 +1,5 @@
 use client::telemetry;
-use gpui::{Task, WindowContext};
+use gpui::{App, AppContext as _, SemanticVersion, Task, Window};
 use human_bytes::human_bytes;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;
@@ -19,7 +19,7 @@ pub struct SystemSpecs {
 }
 
 impl SystemSpecs {
-    pub fn new(cx: &WindowContext) -> Task<Self> {
+    pub fn new(window: &mut Window, cx: &mut App) -> Task<Self> {
         let app_version = AppVersion::global(cx).to_string();
         let release_channel = ReleaseChannel::global(cx);
         let os_name = telemetry::os_name();
@@ -35,16 +35,14 @@ impl SystemSpecs {
             _ => None,
         };
 
-        let gpu_specs = if let Some(specs) = cx.gpu_specs() {
-            Some(format!(
+        let gpu_specs = window.gpu_specs().map(|specs| {
+            format!(
                 "{} || {} || {}",
                 specs.device_name, specs.driver_name, specs.driver_info
-            ))
-        } else {
-            None
-        };
+            )
+        });
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let os_version = telemetry::os_version();
             SystemSpecs {
                 app_version,
@@ -58,18 +56,54 @@ impl SystemSpecs {
             }
         })
     }
+
+    pub fn new_stateless(
+        app_version: SemanticVersion,
+        app_commit_sha: Option<AppCommitSha>,
+        release_channel: ReleaseChannel,
+    ) -> Self {
+        let os_name = telemetry::os_name();
+        let os_version = telemetry::os_version();
+        let system = System::new_with_specifics(
+            RefreshKind::new().with_memory(MemoryRefreshKind::everything()),
+        );
+        let memory = system.total_memory();
+        let architecture = env::consts::ARCH;
+        let commit_sha = match release_channel {
+            ReleaseChannel::Dev | ReleaseChannel::Nightly => {
+                app_commit_sha.map(|sha| sha.0.clone())
+            }
+            _ => None,
+        };
+
+        Self {
+            app_version: app_version.to_string(),
+            release_channel: release_channel.display_name(),
+            os_name,
+            os_version,
+            memory,
+            architecture,
+            commit_sha,
+            gpu_specs: try_determine_available_gpus(),
+        }
+    }
 }
 
 impl Display for SystemSpecs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let os_information = format!("OS: {} {}", self.os_name, self.os_version);
         let app_version_information = format!(
-            "Zed: v{} ({})",
+            "Zed: v{} ({}) {}",
             self.app_version,
             match &self.commit_sha {
                 Some(commit_sha) => format!("{} {}", self.release_channel, commit_sha),
                 None => self.release_channel.to_string(),
-            }
+            },
+            if cfg!(debug_assertions) {
+                "(Taylor's Version)"
+            } else {
+                ""
+            },
         );
         let system_specs = [
             app_version_information,
@@ -87,5 +121,31 @@ impl Display for SystemSpecs {
         .join("\n");
 
         write!(f, "{system_specs}")
+    }
+}
+
+fn try_determine_available_gpus() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        return std::process::Command::new("vulkaninfo")
+            .args(&["--summary"])
+            .output()
+            .ok()
+            .map(|output| {
+                [
+                    "<details><summary>`vulkaninfo --summary` output</summary>",
+                    "",
+                    "```",
+                    String::from_utf8_lossy(&output.stdout).as_ref(),
+                    "```",
+                    "</details>",
+                ]
+                .join("\n")
+            })
+            .or(Some("Failed to run `vulkaninfo --summary`".to_string()));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        return None;
     }
 }

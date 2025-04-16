@@ -1,12 +1,11 @@
 use std::{
-    any::Any,
     cell::{Cell, RefCell},
     rc::Rc,
 };
 
-use gpui::{size, Bounds, Point};
+use gpui::{Bounds, Point, size};
 use terminal::Terminal;
-use ui::{px, ContentSize, Pixels, ScrollableHandle};
+use ui::{ContentSize, Pixels, ScrollableHandle, px};
 
 #[derive(Debug)]
 struct ScrollHandleState {
@@ -19,7 +18,7 @@ struct ScrollHandleState {
 impl ScrollHandleState {
     fn new(terminal: &Terminal) -> Self {
         Self {
-            line_height: terminal.last_content().size.line_height,
+            line_height: terminal.last_content().terminal_bounds.line_height,
             total_lines: terminal.total_lines(),
             viewport_lines: terminal.viewport_lines(),
             display_offset: terminal.last_content().display_offset,
@@ -69,9 +68,10 @@ impl ScrollableHandle for TerminalScrollHandle {
         let offset_delta = (point.y.0 / state.line_height.0).round() as i32;
 
         let max_offset = state.total_lines - state.viewport_lines;
-        let display_offset = ((max_offset as i32 + offset_delta) as usize).min(max_offset);
+        let display_offset = (max_offset as i32 + offset_delta).clamp(0, max_offset as i32);
 
-        self.future_display_offset.set(Some(display_offset));
+        self.future_display_offset
+            .set(Some(display_offset as usize));
     }
 
     fn viewport(&self) -> Bounds<Pixels> {
@@ -83,9 +83,5 @@ impl ScrollableHandle for TerminalScrollHandle {
                 px(state.viewport_lines as f32 * state.line_height.0),
             ),
         )
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }

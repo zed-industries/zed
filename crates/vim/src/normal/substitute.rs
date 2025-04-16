@@ -1,25 +1,30 @@
-use editor::{movement, Editor};
-use gpui::{actions, ViewContext};
+use editor::{Editor, movement};
+use gpui::{Context, Window, actions};
 use language::Point;
 
-use crate::{motion::Motion, Mode, Vim};
+use crate::{
+    Mode, Vim,
+    motion::{Motion, MotionKind},
+};
 
 actions!(vim, [Substitute, SubstituteLine]);
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    Vim::action(editor, cx, |vim, _: &Substitute, cx| {
+pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
+    Vim::action(editor, cx, |vim, _: &Substitute, window, cx| {
         vim.start_recording(cx);
         let count = Vim::take_count(cx);
-        vim.substitute(count, vim.mode == Mode::VisualLine, cx);
+        Vim::take_forced_motion(cx);
+        vim.substitute(count, vim.mode == Mode::VisualLine, window, cx);
     });
 
-    Vim::action(editor, cx, |vim, _: &SubstituteLine, cx| {
+    Vim::action(editor, cx, |vim, _: &SubstituteLine, window, cx| {
         vim.start_recording(cx);
         if matches!(vim.mode, Mode::VisualBlock | Mode::Visual) {
-            vim.switch_mode(Mode::VisualLine, false, cx)
+            vim.switch_mode(Mode::VisualLine, false, window, cx)
         }
         let count = Vim::take_count(cx);
-        vim.substitute(count, true, cx)
+        Vim::take_forced_motion(cx);
+        vim.substitute(count, true, window, cx)
     });
 }
 
@@ -28,22 +33,23 @@ impl Vim {
         &mut self,
         count: Option<usize>,
         line_mode: bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        self.store_visual_marks(cx);
-        self.update_editor(cx, |vim, editor, cx| {
+        self.store_visual_marks(window, cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            editor.transact(cx, |editor, cx| {
-                let text_layout_details = editor.text_layout_details(cx);
-                editor.change_selections(None, cx, |s| {
+            editor.transact(window, cx, |editor, window, cx| {
+                let text_layout_details = editor.text_layout_details(window);
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         if selection.start == selection.end {
                             Motion::Right.expand_selection(
                                 map,
                                 selection,
                                 count,
-                                true,
                                 &text_layout_details,
+                                false,
                             );
                         }
                         if line_mode {
@@ -56,8 +62,8 @@ impl Vim {
                                 map,
                                 selection,
                                 None,
-                                false,
                                 &text_layout_details,
+                                false,
                             );
                             if let Some((point, _)) = (Motion::FirstNonWhitespace {
                                 display_lines: false,
@@ -74,13 +80,18 @@ impl Vim {
                         }
                     })
                 });
-                vim.copy_selections_content(editor, line_mode, cx);
+                let kind = if line_mode {
+                    MotionKind::Linewise
+                } else {
+                    MotionKind::Exclusive
+                };
+                vim.copy_selections_content(editor, kind, window, cx);
                 let selections = editor.selections.all::<Point>(cx).into_iter();
                 let edits = selections.map(|selection| (selection.start..selection.end, ""));
                 editor.edit(edits, cx);
             });
         });
-        self.switch_mode(Mode::Insert, true, cx);
+        self.switch_mode(Mode::Insert, true, window, cx);
     }
 }
 

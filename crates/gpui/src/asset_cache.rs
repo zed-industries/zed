@@ -1,4 +1,4 @@
-use crate::{AppContext, SharedString, SharedUri};
+use crate::{App, SharedString, SharedUri};
 use futures::Future;
 
 use std::fmt::Debug;
@@ -47,7 +47,7 @@ pub trait Asset: 'static {
     /// Load the asset asynchronously
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static;
 }
 
@@ -66,7 +66,7 @@ impl<R: Clone + Send, E: Clone + Send + std::error::Error, T: Asset<Output = Res
 
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let load = T::load(source, cx);
         async {

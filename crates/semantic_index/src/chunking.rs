@@ -1,4 +1,4 @@
-use language::{with_parser, with_query_cursor, Language};
+use language::{Language, with_parser, with_query_cursor};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -7,6 +7,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+use streaming_iterator::StreamingIterator;
 use tree_sitter::QueryCapture;
 use util::ResultExt as _;
 
@@ -88,7 +89,7 @@ fn syntactic_ranges(
     let mut ranges = with_query_cursor(|cursor| {
         cursor
             .matches(&outline.query, tree.root_node(), text.as_bytes())
-            .filter_map(|mat| {
+            .filter_map_deref(|mat| {
                 mat.captures
                     .iter()
                     .find_map(|QueryCapture { node, index }| {
@@ -202,7 +203,7 @@ fn chunk_text_with_syntactic_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
+    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
     use unindent::Unindent as _;
 
     #[test]

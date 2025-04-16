@@ -1,20 +1,20 @@
 use crate::stdout_is_a_pty;
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
-use client::{telemetry, TelemetrySettings};
+use client::{TelemetrySettings, telemetry};
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AppContext, SemanticVersion};
+use gpui::{App, AppContext as _, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
-use release_channel::{ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{AppCommitSha, RELEASE_CHANNEL, ReleaseChannel};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     env,
-    ffi::{c_void, OsStr},
-    sync::{atomic::Ordering, Arc},
+    ffi::{OsStr, c_void},
+    sync::{Arc, atomic::Ordering},
 };
 use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::{LocationData, Panic, PanicRequest};
@@ -25,6 +25,7 @@ static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn init_panic_hook(
     app_version: SemanticVersion,
+    app_commit_sha: Option<AppCommitSha>,
     system_id: Option<String>,
     installation_id: Option<String>,
     session_id: String,
@@ -54,12 +55,22 @@ pub fn init_panic_hook(
             let location = info.location().unwrap();
             let backtrace = Backtrace::new();
             eprintln!(
-                "Thread {:?} panicked with {:?} at {}:{}:{}\n{:?}",
+                "Thread {:?} panicked with {:?} at {}:{}:{}\n{}{:?}",
                 thread_name,
                 payload,
                 location.file(),
                 location.line(),
                 location.column(),
+                match app_commit_sha.as_ref() {
+                    Some(commit_sha) => format!(
+                        "https://github.com/zed-industries/zed/blob/{}/src/{}#L{} \
+                        (may not be uploaded, line may be incorrect if files modified)\n",
+                        commit_sha.0,
+                        location.file(),
+                        location.line()
+                    ),
+                    None => "".to_string(),
+                },
                 backtrace,
             );
             std::process::exit(-1);
@@ -103,6 +114,7 @@ pub fn init_panic_hook(
                 line: location.line(),
             }),
             app_version: app_version.to_string(),
+            app_commit_sha: app_commit_sha.as_ref().map(|sha| sha.0.clone()),
             release_channel: RELEASE_CHANNEL.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
@@ -163,7 +175,7 @@ pub fn init(
     system_id: Option<String>,
     installation_id: Option<String>,
     session_id: String,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     #[cfg(target_os = "macos")]
     monitor_main_thread_hangs(http_client.clone(), installation_id.clone(), cx);
@@ -182,7 +194,7 @@ pub fn init(
         cx,
     );
 
-    cx.observe_new_models(move |project: &mut Project, cx| {
+    cx.observe_new(move |project: &mut Project, _, cx| {
         let http_client = http_client.clone();
         let panic_report_url = panic_report_url.clone();
         let session_id = session_id.clone();
@@ -193,35 +205,34 @@ pub fn init(
             ssh_client.update(cx, |client, cx| {
                 if TelemetrySettings::get_global(cx).diagnostics {
                     let request = client.proto_client().request(proto::GetPanicFiles {});
-                    cx.background_executor()
-                        .spawn(async move {
-                            let panic_files = request.await?;
-                            for file in panic_files.file_contents {
-                                let panic: Option<Panic> = serde_json::from_str(&file)
-                                    .log_err()
-                                    .or_else(|| {
-                                        file.lines()
-                                            .next()
-                                            .and_then(|line| serde_json::from_str(line).ok())
-                                    })
-                                    .unwrap_or_else(|| {
-                                        log::error!("failed to deserialize panic file {:?}", file);
-                                        None
-                                    });
+                    cx.background_spawn(async move {
+                        let panic_files = request.await?;
+                        for file in panic_files.file_contents {
+                            let panic: Option<Panic> = serde_json::from_str(&file)
+                                .log_err()
+                                .or_else(|| {
+                                    file.lines()
+                                        .next()
+                                        .and_then(|line| serde_json::from_str(line).ok())
+                                })
+                                .unwrap_or_else(|| {
+                                    log::error!("failed to deserialize panic file {:?}", file);
+                                    None
+                                });
 
-                                if let Some(mut panic) = panic {
-                                    panic.session_id = session_id.clone();
-                                    panic.system_id = system_id.clone();
-                                    panic.installation_id = installation_id.clone();
+                            if let Some(mut panic) = panic {
+                                panic.session_id = session_id.clone();
+                                panic.system_id = system_id.clone();
+                                panic.installation_id = installation_id.clone();
 
-                                    upload_panic(&http_client, &panic_report_url, panic, &mut None)
-                                        .await?;
-                                }
+                                upload_panic(&http_client, &panic_report_url, panic, &mut None)
+                                    .await?;
                             }
+                        }
 
-                            anyhow::Ok(())
-                        })
-                        .detach_and_log_err(cx);
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
                 }
             })
         }
@@ -233,7 +244,7 @@ pub fn init(
 pub fn monitor_main_thread_hangs(
     http_client: Arc<HttpClientWithUrl>,
     installation_id: Option<String>,
-    cx: &AppContext,
+    cx: &App,
 ) {
     // This is too noisy to ship to stable for now.
     if !matches!(
@@ -244,8 +255,9 @@ pub fn monitor_main_thread_hangs(
     }
 
     use nix::sys::signal::{
-        sigaction, SaFlags, SigAction, SigHandler, SigSet,
+        SaFlags, SigAction, SigHandler, SigSet,
         Signal::{self, SIGUSR2},
+        sigaction,
     };
 
     use parking_lot::Mutex;
@@ -253,7 +265,7 @@ pub fn monitor_main_thread_hangs(
     use http_client::Method;
     use std::{
         ffi::c_int,
-        sync::{mpsc, OnceLock},
+        sync::{OnceLock, mpsc},
         time::Duration,
     };
     use telemetry_events::{BacktraceFrame, HangReport};
@@ -435,21 +447,20 @@ fn upload_panics_and_crashes(
     http: Arc<HttpClientWithUrl>,
     panic_report_url: Url,
     installation_id: Option<String>,
-    cx: &AppContext,
+    cx: &App,
 ) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
-    cx.background_executor()
-        .spawn(async move {
-            let most_recent_panic =
-                upload_previous_panics(http.clone(), &panic_report_url, telemetry_settings)
-                    .await
-                    .log_err()
-                    .flatten();
-            upload_previous_crashes(http, most_recent_panic, installation_id, telemetry_settings)
+    cx.background_spawn(async move {
+        let most_recent_panic =
+            upload_previous_panics(http.clone(), &panic_report_url, telemetry_settings)
                 .await
                 .log_err()
-        })
-        .detach()
+                .flatten();
+        upload_previous_crashes(http, most_recent_panic, installation_id, telemetry_settings)
+            .await
+            .log_err()
+    })
+    .detach()
 }
 
 /// Uploads panics via `zed.dev`.

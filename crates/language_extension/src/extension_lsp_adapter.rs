@@ -4,20 +4,21 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
+use fs::Fs;
 use futures::{Future, FutureExt};
-use gpui::AsyncAppContext;
+use gpui::AsyncApp;
 use language::{
-    CodeLabel, HighlightId, Language, LanguageName, LanguageServerBinaryStatus,
-    LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore,
+    LspAdapter, LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
 use serde_json::Value;
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 
 use crate::LanguageServerRegistryProxy;
 
@@ -79,7 +80,7 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     fn update_language_server_status(
         &self,
         language_server_id: LanguageServerName,
-        status: LanguageServerBinaryStatus,
+        status: BinaryStatus,
     ) {
         self.language_registry
             .update_lsp_status(language_server_id, status);
@@ -118,7 +119,7 @@ impl LspAdapter for ExtensionLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        _: &'a mut AsyncAppContext,
+        _: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
             let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
@@ -224,6 +225,7 @@ impl LspAdapter for ExtensionLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
@@ -246,9 +248,10 @@ impl LspAdapter for ExtensionLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        _cx: &mut AsyncAppContext,
+        _cx: &mut AsyncApp,
     ) -> Result<Value> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options: Option<String> = self
@@ -261,6 +264,58 @@ impl LspAdapter for ExtensionLspAdapter {
             })?
         } else {
             serde_json::json!({})
+        })
+    }
+
+    async fn additional_initialization_options(
+        self: Arc<Self>,
+        target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_options: Option<String> = self
+            .extension
+            .language_server_additional_initialization_options(
+                self.language_server_id.clone(),
+                target_language_server_id.clone(),
+                delegate,
+            )
+            .await?;
+        Ok(if let Some(json_options) = json_options {
+            serde_json::from_str(&json_options).with_context(|| {
+                format!(
+                    "failed to parse additional_initialization_options from extension: {json_options}"
+                )
+            })?
+        } else {
+            None
+        })
+    }
+
+    async fn additional_workspace_configuration(
+        self: Arc<Self>,
+        target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Option<serde_json::Value>> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_options: Option<String> = self
+            .extension
+            .language_server_additional_workspace_configuration(
+                self.language_server_id.clone(),
+                target_language_server_id.clone(),
+                delegate,
+            )
+            .await?;
+        Ok(if let Some(json_options) = json_options {
+            serde_json::from_str(&json_options).with_context(|| {
+                format!("failed to parse additional_workspace_configuration from extension: {json_options}")
+            })?
+        } else {
+            None
         })
     }
 
@@ -302,13 +357,7 @@ impl LspAdapter for ExtensionLspAdapter {
             .labels_for_symbols(self.language_server_id.clone(), symbols)
             .await?;
 
-        Ok(labels_from_extension(
-            labels
-                .into_iter()
-                .map(|label| label.map(Into::into))
-                .collect(),
-            language,
-        ))
+        Ok(labels_from_extension(labels, language))
     }
 }
 

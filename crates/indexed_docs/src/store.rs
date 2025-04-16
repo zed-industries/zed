@@ -1,17 +1,17 @@
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use derive_more::{Deref, Display};
-use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt;
+use futures::future::{self, BoxFuture, Shared};
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, BackgroundExecutor, Task};
-use heed::types::SerdeBincode;
+use gpui::{App, BackgroundExecutor, Task};
 use heed::Database;
+use heed::types::SerdeBincode;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
@@ -62,7 +62,7 @@ pub struct IndexedDocsStore {
 }
 
 impl IndexedDocsStore {
-    pub fn try_global(provider: ProviderId, cx: &AppContext) -> Result<Arc<Self>> {
+    pub fn try_global(provider: ProviderId, cx: &App) -> Result<Arc<Self>> {
         let registry = IndexedDocsRegistry::global(cx);
         registry
             .get_provider_store(provider.clone())

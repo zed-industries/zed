@@ -1,14 +1,14 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use gpui::{Task, WeakView};
+use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use prompt_library::PromptStore;
+use prompt_store::PromptStore;
 use std::{
     fmt::Write,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
 use workspace::Workspace;
@@ -21,11 +21,11 @@ impl SlashCommand for DefaultSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert default prompt".into()
+        "Insert default prompt".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Default Prompt".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
@@ -36,8 +36,9 @@ impl SlashCommand for DefaultSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _workspace: Option<WeakEntity<Workspace>>,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -47,12 +48,13 @@ impl SlashCommand for DefaultSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _window: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let store = PromptStore::global(cx);
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let store = store.await?;
             let prompts = store.default_prompt_metadata();
 

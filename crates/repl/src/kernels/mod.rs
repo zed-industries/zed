@@ -1,17 +1,17 @@
 mod native_kernel;
-use std::{fmt::Debug, future::Future, path::PathBuf};
+use std::{fmt::Debug, future::Future, path::PathBuf, sync::Arc};
 
 use futures::{
     channel::mpsc::{self, Receiver},
     future::Shared,
     stream,
 };
-use gpui::{AppContext, Model, Task, WindowContext};
+use gpui::{App, Entity, Task, Window};
 use language::LanguageName;
 pub use native_kernel::*;
 
 mod remote_kernels;
-use project::{Project, WorktreeId};
+use project::{Project, ProjectPath, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
@@ -61,7 +61,7 @@ impl KernelSpecification {
         })
     }
 
-    pub fn icon(&self, cx: &AppContext) -> Icon {
+    pub fn icon(&self, cx: &App) -> Icon {
         let lang_name = match self {
             Self::Jupyter(spec) => spec.kernelspec.language.clone(),
             Self::PythonEnv(spec) => spec.kernelspec.language.clone(),
@@ -76,14 +76,19 @@ impl KernelSpecification {
 }
 
 pub fn python_env_kernel_specifications(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     worktree_id: WorktreeId,
-    cx: &mut AppContext,
-) -> impl Future<Output = Result<Vec<KernelSpecification>>> {
+    cx: &mut App,
+) -> impl Future<Output = Result<Vec<KernelSpecification>>> + use<> {
     let python_language = LanguageName::new("Python");
-    let toolchains = project
-        .read(cx)
-        .available_toolchains(worktree_id, python_language, cx);
+    let toolchains = project.read(cx).available_toolchains(
+        ProjectPath {
+            worktree_id,
+            path: Arc::from("".as_ref()),
+        },
+        python_language,
+        cx,
+    );
     let background_executor = cx.background_executor().clone();
 
     async move {
@@ -148,7 +153,7 @@ pub trait RunningKernel: Send + Debug {
     fn set_execution_state(&mut self, state: ExecutionState);
     fn kernel_info(&self) -> Option<&KernelInfoReply>;
     fn set_kernel_info(&mut self, info: KernelInfoReply);
-    fn force_shutdown(&mut self, cx: &mut WindowContext) -> Task<anyhow::Result<()>>;
+    fn force_shutdown(&mut self, window: &mut Window, cx: &mut App) -> Task<anyhow::Result<()>>;
 }
 
 #[derive(Debug, Clone)]

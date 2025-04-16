@@ -1,7 +1,7 @@
 mod async_body;
 pub mod github;
 
-pub use anyhow::{anyhow, Result};
+pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
@@ -60,7 +60,7 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await.map_err(Into::into) }),
+            Ok(request) => Box::pin(async move { self.send(request).await }),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
@@ -77,7 +77,7 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await.map_err(Into::into) }),
+            Ok(request) => Box::pin(async move { self.send(request).await }),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }

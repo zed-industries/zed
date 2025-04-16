@@ -36,8 +36,10 @@ serde_json_lenient.workspace = true
 serde_repr.workspace = true
 settings.workspace = true
 strum.workspace = true
+thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

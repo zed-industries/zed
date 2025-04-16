@@ -1,14 +1,14 @@
 use std::{path::PathBuf, sync::Arc};
 
-use anyhow::{anyhow, Context as _, Result};
-use client::{proto, TypedEnvelope};
+use anyhow::{Context as _, Result, anyhow};
+use client::{TypedEnvelope, proto};
 use collections::{HashMap, HashSet};
 use extension::{
     Extension, ExtensionHostProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
     ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
@@ -40,9 +40,9 @@ impl HeadlessExtensionStore {
         extension_dir: PathBuf,
         extension_host_proxy: Arc<ExtensionHostProxy>,
         node_runtime: NodeRuntime,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
-        cx.new_model(|cx| Self {
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| Self {
             fs: fs.clone(),
             wasm_host: WasmHost::new(
                 fs.clone(),
@@ -63,7 +63,7 @@ impl HeadlessExtensionStore {
     pub fn sync_extensions(
         &mut self,
         extensions: Vec<ExtensionVersion>,
-        cx: &ModelContext<Self>,
+        cx: &Context<Self>,
     ) -> Task<Result<Vec<ExtensionVersion>>> {
         let on_client = HashSet::from_iter(extensions.iter().map(|e| e.id.as_str()));
         let to_remove: Vec<Arc<str>> = self
@@ -78,27 +78,23 @@ impl HeadlessExtensionStore {
                 if e.dev {
                     return true;
                 }
-                !self
-                    .loaded_extensions
+                self.loaded_extensions
                     .get(e.id.as_str())
-                    .is_some_and(|loaded| loaded.as_ref() == e.version.as_str())
+                    .is_none_or(|loaded| loaded.as_ref() != e.version.as_str())
             })
             .collect();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let mut missing = Vec::new();
 
             for extension_id in to_remove {
                 log::info!("removing extension: {}", extension_id);
-                this.update(&mut cx, |this, cx| {
-                    this.uninstall_extension(&extension_id, cx)
-                })?
-                .await?;
+                this.update(cx, |this, cx| this.uninstall_extension(&extension_id, cx))?
+                    .await?;
             }
 
             for extension in to_load {
-                if let Err(e) = Self::load_extension(this.clone(), extension.clone(), &mut cx).await
-                {
+                if let Err(e) = Self::load_extension(this.clone(), extension.clone(), cx).await {
                     log::info!("failed to load extension: {}, {:?}", extension.id, e);
                     missing.push(extension)
                 } else if extension.dev {
@@ -111,9 +107,9 @@ impl HeadlessExtensionStore {
     }
 
     pub async fn load_extension(
-        this: WeakModel<Self>,
+        this: WeakEntity<Self>,
         extension: ExtensionVersion,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         let (fs, wasm_host, extension_dir) = this.update(cx, |this, _cx| {
             this.loaded_extensions.insert(
@@ -198,7 +194,7 @@ impl HeadlessExtensionStore {
     fn uninstall_extension(
         &mut self,
         extension_id: &Arc<str>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.loaded_extensions.remove(extension_id);
 
@@ -219,7 +215,7 @@ impl HeadlessExtensionStore {
 
         let path = self.extension_dir.join(&extension_id.to_string());
         let fs = self.fs.clone();
-        cx.spawn(|_, _| async move {
+        cx.spawn(async move |_, _| {
             fs.remove_dir(
                 &path,
                 RemoveOptions {
@@ -235,14 +231,14 @@ impl HeadlessExtensionStore {
         &mut self,
         extension: ExtensionVersion,
         tmp_path: PathBuf,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let path = self.extension_dir.join(&extension.id);
         let fs = self.fs.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             if fs.is_dir(&path).await {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.uninstall_extension(&extension.id.clone().into(), cx)
                 })?
                 .await?;
@@ -251,14 +247,14 @@ impl HeadlessExtensionStore {
             fs.rename(&tmp_path, &path, RenameOptions::default())
                 .await?;
 
-            Self::load_extension(this, extension, &mut cx).await
+            Self::load_extension(this, extension, cx).await
         })
     }
 
     pub async fn handle_sync_extensions(
-        extension_store: Model<HeadlessExtensionStore>,
+        extension_store: Entity<HeadlessExtensionStore>,
         envelope: TypedEnvelope<proto::SyncExtensions>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::SyncExtensionsResponse> {
         let requested_extensions =
             envelope
@@ -292,9 +288,9 @@ impl HeadlessExtensionStore {
     }
 
     pub async fn handle_install_extension(
-        extensions: Model<HeadlessExtensionStore>,
+        extensions: Entity<HeadlessExtensionStore>,
         envelope: TypedEnvelope<proto::InstallExtension>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let extension = envelope
             .payload

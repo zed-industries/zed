@@ -1,11 +1,12 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Task};
+use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
+use project::Fs;
 use regex::Regex;
 use serde_json::json;
 use smol::fs;
@@ -18,12 +19,12 @@ use std::{
     process::Output,
     str,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc, LazyLock,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{ResultExt, fs::remove_matching, maybe};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -75,7 +76,7 @@ impl super::LspAdapter for GoLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
         Some(LanguageServerBinary {
@@ -88,7 +89,7 @@ impl super::LspAdapter for GoLspAdapter {
     fn will_fetch_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Option<Task<Result<()>>> {
         static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
 
@@ -96,7 +97,7 @@ impl super::LspAdapter for GoLspAdapter {
             "Could not install the Go language server `gopls`, because `go` was not found.";
 
         let delegate = delegate.clone();
-        Some(cx.spawn(|cx| async move {
+        Some(cx.spawn(async move |cx| {
             if delegate.which("go".as_ref()).await.is_none() {
                 if DID_SHOW_NOTIFICATION
                     .compare_exchange(false, true, SeqCst, SeqCst)
@@ -167,7 +168,9 @@ impl super::LspAdapter for GoLspAdapter {
                 String::from_utf8_lossy(&install_output.stderr)
             );
 
-            return Err(anyhow!("failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."));
+            return Err(anyhow!(
+                "failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."
+            ));
         }
 
         let installed_binary_path = gobin_dir.join(BINARY);
@@ -197,6 +200,7 @@ impl super::LspAdapter for GoLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
@@ -441,7 +445,7 @@ impl ContextProvider for GoContextProvider {
         location: &Location,
         _: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut gpui::AppContext,
+        cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
@@ -504,7 +508,7 @@ impl ContextProvider for GoContextProvider {
     fn associated_tasks(
         &self,
         _: Option<Arc<dyn language::File>>,
-        _: &AppContext,
+        _: &App,
     ) -> Option<TaskTemplates> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
@@ -524,7 +528,7 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-run".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value(),),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
                 ],
                 tags: vec!["go-test".to_owned()],
                 cwd: package_cwd.clone(),
@@ -557,7 +561,7 @@ impl ContextProvider for GoContextProvider {
                     "-v".into(),
                     "-run".into(),
                     format!(
-                        "^{}\\$/^{}\\$",
+                        "\\^{}\\$/\\^{}\\$",
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
@@ -576,12 +580,29 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-benchmem".into(),
-                    "-run=^$".into(),
+                    "-run='^$'".into(),
                     "-bench".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value()),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value()),
                 ],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-benchmark".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "go test {} -fuzz=Fuzz -run {}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    "-fuzz=Fuzz".into(),
+                    "-run".into(),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
+                ],
+                tags: vec!["go-fuzz".to_owned()],
+                cwd: package_cwd.clone(),
                 ..TaskTemplate::default()
             },
             TaskTemplate {

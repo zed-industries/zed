@@ -1,7 +1,7 @@
 use crate::repository::RepoPath;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, process::Stdio, sync::Arc};
+use std::{path::Path, str::FromStr, sync::Arc};
 use util::ResultExt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -54,11 +54,51 @@ impl From<TrackedStatus> for FileStatus {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StageStatus {
+    Staged,
+    Unstaged,
+    PartiallyStaged,
+}
+
+impl StageStatus {
+    pub fn is_fully_staged(&self) -> bool {
+        matches!(self, StageStatus::Staged)
+    }
+
+    pub fn is_fully_unstaged(&self) -> bool {
+        matches!(self, StageStatus::Unstaged)
+    }
+
+    pub fn has_staged(&self) -> bool {
+        matches!(self, StageStatus::Staged | StageStatus::PartiallyStaged)
+    }
+
+    pub fn has_unstaged(&self) -> bool {
+        matches!(self, StageStatus::Unstaged | StageStatus::PartiallyStaged)
+    }
+
+    pub fn as_bool(self) -> Option<bool> {
+        match self {
+            StageStatus::Staged => Some(true),
+            StageStatus::Unstaged => Some(false),
+            StageStatus::PartiallyStaged => None,
+        }
+    }
+}
+
 impl FileStatus {
     pub const fn worktree(worktree_status: StatusCode) -> Self {
         FileStatus::Tracked(TrackedStatus {
             index_status: StatusCode::Unmodified,
             worktree_status,
+        })
+    }
+
+    pub const fn index(index_status: StatusCode) -> Self {
+        FileStatus::Tracked(TrackedStatus {
+            worktree_status: StatusCode::Unmodified,
+            index_status,
         })
     }
 
@@ -99,15 +139,15 @@ impl FileStatus {
         Ok(status)
     }
 
-    pub fn is_staged(self) -> Option<bool> {
+    pub fn staging(self) -> StageStatus {
         match self {
             FileStatus::Untracked | FileStatus::Ignored | FileStatus::Unmerged { .. } => {
-                Some(false)
+                StageStatus::Unstaged
             }
             FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
-                (StatusCode::Unmodified, _) => Some(false),
-                (_, StatusCode::Unmodified) => Some(true),
-                _ => None,
+                (StatusCode::Unmodified, _) => StageStatus::Unstaged,
+                (_, StatusCode::Unmodified) => StageStatus::Staged,
+                _ => StageStatus::PartiallyStaged,
             },
         }
     }
@@ -126,6 +166,14 @@ impl FileStatus {
         }
     }
 
+    pub fn has_changes(&self) -> bool {
+        self.is_modified()
+            || self.is_created()
+            || self.is_deleted()
+            || self.is_untracked()
+            || self.is_conflicted()
+    }
+
     pub fn is_modified(self) -> bool {
         match self {
             FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
@@ -142,6 +190,7 @@ impl FileStatus {
                 (StatusCode::Added, _) | (_, StatusCode::Added) => true,
                 _ => false,
             },
+            FileStatus::Untracked => true,
             _ => false,
         }
     }
@@ -389,50 +438,16 @@ impl std::ops::Sub for GitSummary {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
 }
 
-impl GitStatus {
-    pub(crate) fn new(
-        git_binary: &Path,
-        working_directory: &Path,
-        path_prefixes: &[RepoPath],
-    ) -> Result<Self> {
-        let child = util::command::new_std_command(git_binary)
-            .current_dir(working_directory)
-            .args([
-                "--no-optional-locks",
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-                "--no-renames",
-                "-z",
-            ])
-            .args(path_prefixes.iter().map(|path_prefix| {
-                if path_prefix.0.as_ref() == Path::new("") {
-                    Path::new(".")
-                } else {
-                    path_prefix
-                }
-            }))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| anyhow!("Failed to start git status process: {e}"))?;
+impl FromStr for GitStatus {
+    type Err = anyhow::Error;
 
-        let output = child
-            .wait_with_output()
-            .map_err(|e| anyhow!("Failed to read git status output: {e}"))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("git status process failed: {stderr}"));
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut entries = stdout
+    fn from_str(s: &str) -> Result<Self> {
+        let mut entries = s
             .split('\0')
             .filter_map(|entry| {
                 let sep = entry.get(2..3)?;
@@ -447,13 +462,33 @@ impl GitStatus {
                 if path.ends_with('/') {
                     return None;
                 }
-                let status = entry[0..2].as_bytes().try_into().unwrap();
+                let status = entry.as_bytes()[0..2].try_into().unwrap();
                 let status = FileStatus::from_bytes(status).log_err()?;
                 let path = RepoPath(Path::new(path).into());
                 Some((path, status))
             })
             .collect::<Vec<_>>();
         entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
+        // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
+        // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
+        // and the other reading `??` (untracked). Merge these two into the equivalent of `DA`.
+        entries.dedup_by(|(a, a_status), (b, b_status)| {
+            const INDEX_DELETED: FileStatus = FileStatus::index(StatusCode::Deleted);
+            if a.ne(&b) {
+                return false;
+            }
+            match (*a_status, *b_status) {
+                (INDEX_DELETED, FileStatus::Untracked) | (FileStatus::Untracked, INDEX_DELETED) => {
+                    *b_status = TrackedStatus {
+                        index_status: StatusCode::Deleted,
+                        worktree_status: StatusCode::Added,
+                    }
+                    .into();
+                }
+                _ => panic!("Unexpected duplicated status entries: {a_status:?} and {b_status:?}"),
+            }
+            true
+        });
         Ok(Self {
             entries: entries.into(),
         })

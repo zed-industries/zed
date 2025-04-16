@@ -1,9 +1,9 @@
 use crate::{
-    Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit, Pixels, Style,
-    StyleRefinement, Styled, WindowContext,
+    App, Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit, Pixels,
+    Style, StyleRefinement, Styled, Window,
 };
 #[cfg(target_os = "macos")]
-use media::core_video::CVImageBuffer;
+use core_video::pixel_buffer::CVPixelBuffer;
 use refineable::Refineable;
 
 /// A source of a surface's content.
@@ -11,12 +11,12 @@ use refineable::Refineable;
 pub enum SurfaceSource {
     /// A macOS image buffer from CoreVideo
     #[cfg(target_os = "macos")]
-    Surface(CVImageBuffer),
+    Surface(CVPixelBuffer),
 }
 
 #[cfg(target_os = "macos")]
-impl From<CVImageBuffer> for SurfaceSource {
-    fn from(value: CVImageBuffer) -> Self {
+impl From<CVPixelBuffer> for SurfaceSource {
+    fn from(value: CVPixelBuffer) -> Self {
         SurfaceSource::Surface(value)
     }
 }
@@ -56,11 +56,12 @@ impl Element for Surface {
     fn request_layout(
         &mut self,
         _global_id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.refine(&self.style);
-        let layout_id = cx.request_layout(style, []);
+        let layout_id = window.request_layout(style, [], cx);
         (layout_id, ())
     }
 
@@ -69,7 +70,8 @@ impl Element for Surface {
         _global_id: Option<&GlobalElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _cx: &mut WindowContext,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Self::PrepaintState {
     }
 
@@ -79,15 +81,16 @@ impl Element for Surface {
         #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] cx: &mut WindowContext,
+        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] window: &mut Window,
+        _: &mut App,
     ) {
         match &self.source {
             #[cfg(target_os = "macos")]
             SurfaceSource::Surface(surface) => {
-                let size = crate::size(surface.width().into(), surface.height().into());
+                let size = crate::size(surface.get_width().into(), surface.get_height().into());
                 let new_bounds = self.object_fit.get_bounds(bounds, size);
                 // TODO: Add support for corner_radii
-                cx.paint_surface(new_bounds, surface.clone());
+                window.paint_surface(new_bounds, surface.clone());
             }
             #[allow(unreachable_patterns)]
             _ => {}

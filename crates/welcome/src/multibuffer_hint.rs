@@ -1,10 +1,10 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AppContext, EntityId, EventEmitter, Subscription};
-use ui::{prelude::*, ButtonLike, IconButtonShape, Tooltip};
+use gpui::{App, EntityId, EventEmitter, Subscription};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 use workspace::item::{ItemEvent, ItemHandle};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
@@ -53,11 +53,11 @@ impl MultibufferHint {
         Self::counter().load(Ordering::Relaxed)
     }
 
-    fn increment_count(cx: &mut AppContext) {
+    fn increment_count(cx: &mut App) {
         Self::set_count(Self::shown_count() + 1, cx)
     }
 
-    pub(crate) fn set_count(count: usize, cx: &mut AppContext) {
+    pub(crate) fn set_count(count: usize, cx: &mut App) {
         Self::counter().store(count, Ordering::Relaxed);
 
         db::write_and_log(cx, move || {
@@ -65,12 +65,12 @@ impl MultibufferHint {
         });
     }
 
-    fn dismiss(&mut self, cx: &mut AppContext) {
+    fn dismiss(&mut self, cx: &mut App) {
         Self::set_count(NUMBER_OF_HINTS, cx)
     }
 
     /// Determines the toolbar location for this [`MultibufferHint`].
-    fn determine_toolbar_location(&mut self, cx: &mut ViewContext<Self>) -> ToolbarItemLocation {
+    fn determine_toolbar_location(&mut self, cx: &mut Context<Self>) -> ToolbarItemLocation {
         if Self::shown_count() >= NUMBER_OF_HINTS {
             return ToolbarItemLocation::Hidden;
         }
@@ -81,6 +81,7 @@ impl MultibufferHint {
 
         if active_pane_item.is_singleton(cx)
             || active_pane_item.breadcrumbs(cx.theme(), cx).is_none()
+            || !active_pane_item.can_save(cx)
         {
             return ToolbarItemLocation::Hidden;
         }
@@ -99,7 +100,8 @@ impl ToolbarItemView for MultibufferHint {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = active_pane_item.map(|item| item.boxed_clone());
@@ -108,10 +110,11 @@ impl ToolbarItemView for MultibufferHint {
             return ToolbarItemLocation::Hidden;
         };
 
-        let this = cx.view().downgrade();
+        let this = cx.entity().downgrade();
         self.subscription = Some(active_pane_item.subscribe_to_item_events(
+            window,
             cx,
-            Box::new(move |event, cx| {
+            Box::new(move |event, _, cx| {
                 if let ItemEvent::UpdateBreadcrumbs = event {
                     this.update(cx, |this, cx| {
                         cx.notify();
@@ -128,44 +131,53 @@ impl ToolbarItemView for MultibufferHint {
 }
 
 impl Render for MultibufferHint {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .px_2()
+            .py_0p5()
             .justify_between()
-            .bg(cx.theme().status().info_background)
-            .rounded_md()
+            .bg(cx.theme().status().info_background.opacity(0.5))
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            .rounded_sm()
+            .overflow_hidden()
             .child(
                 h_flex()
-                    .gap_2()
-                    .child(Label::new(
-                        "Edit and save files directly in the results multibuffer!",
-                    ))
+                    .gap_0p5()
                     .child(
-                        ButtonLike::new("open_docs")
-                            .style(ButtonStyle::Transparent)
+                        h_flex()
+                            .gap_2()
                             .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(Label::new("Read more…"))
-                                    .child(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
                             )
-                            .on_click(move |_event, cx| {
+                            .child(Label::new(
+                                "Edit and save files directly in the results multibuffer!",
+                            )),
+                    )
+                    .child(
+                        Button::new("open_docs", "Learn More")
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .icon_position(IconPosition::End)
+                            .on_click(move |_event, _, cx| {
                                 cx.open_url("https://zed.dev/docs/multibuffers")
                             }),
                     ),
             )
             .child(
                 IconButton::new("dismiss", IconName::Close)
-                    .style(ButtonStyle::Transparent)
                     .shape(IconButtonShape::Square)
                     .icon_size(IconSize::Small)
-                    .on_click(cx.listener(|this, _event, cx| {
+                    .on_click(cx.listener(|this, _event, _, cx| {
                         this.dismiss(cx);
                         cx.emit(ToolbarItemEvent::ChangeLocation(
                             ToolbarItemLocation::Hidden,
                         ))
                     }))
-                    .tooltip(move |cx| Tooltip::text("Dismiss this hint", cx)),
+                    .tooltip(Tooltip::text("Dismiss Hint")),
             )
             .into_any_element()
     }

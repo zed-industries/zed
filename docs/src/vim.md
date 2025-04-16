@@ -72,10 +72,15 @@ The following commands use the language server to help you navigate and refactor
 
 ### Git
 
-| Command                   | Default Shortcut |
-| ------------------------- | ---------------- |
-| Go to next git change     | `] c`            |
-| Go to previous git change | `[ c`            |
+| Command                         | Default Shortcut |
+| ------------------------------- | ---------------- |
+| Go to next git change           | `] c`            |
+| Go to previous git change       | `[ c`            |
+| Expand diff hunk                | `d o`            |
+| Toggle staged                   | `d O`            |
+| Stage and next (in diff view)   | `d u`            |
+| Unstage and next (in diff view) | `d U`            |
+| Restore change                  | `d p`            |
 
 ### Treesitter
 
@@ -100,8 +105,8 @@ Treesitter is a powerful tool that Zed uses to understand the structure of your 
 | A comment                                                  | `g c`            |
 | An argument, or list item, etc.                            | `i a`            |
 | An argument, or list item, etc. (including trailing comma) | `a a`            |
-| Around an HTML-like tag                                    | `i a`            |
-| Inside an HTML-like tag                                    | `i a`            |
+| Around an HTML-like tag                                    | `a t`            |
+| Inside an HTML-like tag                                    | `i t`            |
 | The current indent level, and one line before and after    | `a I`            |
 | The current indent level, and one line before              | `a i`            |
 | The current indent level                                   | `i i`            |
@@ -159,6 +164,9 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
 - The project panel supports many shortcuts modeled after the Vim plugin `netrw`: navigation with `hjkl`, open file with `o`, open file in a new tab with `t`, etc.
 - You can add key bindings to your keymap to navigate "camelCase" names. [Head down to the Optional key bindings](#optional-key-bindings) section to learn how.
+- You can use `gr` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
+- You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
+- You can navigate to indent depths relative to your cursor with the [indent wise](https://github.com/jeetsukumaran/vim-indentwise) plugin `[-`, `]-`, `[+`, `]+`, `[=`, `]=`.
 
 ## Command palette
 
@@ -192,6 +200,7 @@ This table shows commands for managing windows, tabs, and panes. As commands don
 | `:tabn[ext]`   | Go to the next tab                                   |
 | `:tabp[rev]`   | Go to previous tab                                   |
 | `:tabc[lose]`  | Close the current tab                                |
+| `:ls`          | Show all buffers                                     |
 
 > **Note:** The `!` character is used to force the command to execute without saving changes or prompting before overwriting a file.
 
@@ -205,6 +214,7 @@ These ex commands open Zed's various panels and windows.
 | Open the collaboration panel | `:C[ollab]`      |
 | Open the chat panel          | `:Ch[at]`        |
 | Open the AI panel            | `:A[I]`          |
+| Open the git panel           | `:G[it]`         |
 | Open the notifications panel | `:No[tif]`       |
 | Open the feedback window     | `:fe[edback]`    |
 | Open the diagnostics window  | `:cl[ist]`       |
@@ -258,6 +268,16 @@ These commands help you edit text.
 | `:d[elete][l][p]` | Delete the current line                                 |
 | `:s[ort] [i]`     | Sort the current selection (with i, case-insensitively) |
 | `:y[ank]`         | Yank (copy) the current selection or line               |
+
+### Set
+
+These commands modify editor options locally for the current buffer.
+
+| Command                         | Description                                                                                   |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `:se[t] [no]wrap`               | Lines longer than the width of the window will wrap and displaying continues on the next line |
+| `:se[t] [no]nu[mber]`           | Print the line number in front of each line                                                   |
+| `:se[t] [no]r[elative]nu[mber]` | Changes the displayed number to be relative to the cursor                                     |
 
 ### Command mnemonics
 
@@ -367,10 +387,10 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 {
   "context": "Dock",
   "bindings": {
-    "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
-    "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
-    "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
-    "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"]
+    "ctrl-w h": "workspace::ActivatePaneLeft",
+    "ctrl-w l": "workspace::ActivatePaneRight",
+    "ctrl-w k": "workspace::ActivatePaneUp",
+    "ctrl-w j": "workspace::ActivatePaneDown"
     // ... or other keybindings
   }
 }
@@ -379,17 +399,15 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 Subword motion, which allows you to navigate and select individual words in camelCase or snake_case, is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json
-[
-  {
-    "context": "VimControl && !menu && vim_mode != operator",
-    "bindings": {
-      "w": "vim::NextSubwordStart",
-      "b": "vim::PreviousSubwordStart",
-      "e": "vim::NextSubwordEnd",
-      "g e": "vim::PreviousSubwordEnd"
-    }
+{
+  "context": "VimControl && !menu && vim_mode != operator",
+  "bindings": {
+    "w": "vim::NextSubwordStart",
+    "b": "vim::PreviousSubwordStart",
+    "e": "vim::NextSubwordEnd",
+    "g e": "vim::PreviousSubwordEnd"
   }
-]
+}
 ```
 
 Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
@@ -398,12 +416,23 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 {
   "context": "vim_mode == visual",
   "bindings": {
-    "shift-s": [
-      "vim::PushOperator",
-      {
-        "AddSurrounds": {}
-      }
-    ]
+    "shift-s": ["vim::PushAddSurrounds", {}]
+  }
+}
+```
+
+In non-modal text editors, cursor navigation typically wraps when moving past line ends. Zed, however, handles this behavior exactly like Vim by default: the cursor stops at line boundaries. If you prefer your cursor to wrap between lines, override these keybindings:
+
+```json
+// In VimScript, this would look like this:
+// set whichwrap+=<,>,[,],h,l
+{
+  "context": "VimControl && !menu",
+  "bindings": {
+    "left": "vim::WrappingLeft",
+    "right": "vim::WrappingRight",
+    "h": "vim::WrappingLeft",
+    "l": "vim::WrappingRight"
   }
 }
 ```
@@ -411,15 +440,24 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for quick navigation to any two-character sequence in your text. You can enable it by adding the following keybindings to your keymap. By default, the `s` key is mapped to `vim::Substitute`. Adding these bindings will override that behavior, so ensure this change aligns with your workflow preferences.
 
 ```json
-[
-  {
-    "context": "vim_mode == normal || vim_mode == visual",
-    "bindings": {
-      "s": ["vim::PushOperator", { "Sneak": {} }],
-      "S": ["vim::PushOperator", { "SneakBackward": {} }]
-    }
+{
+  "context": "vim_mode == normal || vim_mode == visual",
+  "bindings": {
+    "s": "vim::PushSneak",
+    "shift-s": "vim::PushSneakBackward"
   }
-]
+}
+```
+
+The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not have a default binding for visual mode, as the `shift-x` binding conflicts with the default `shift-x` binding for visual mode (`vim::VisualDeleteLine`). To assign the default vim-exchange binding, add the following keybinding to your keymap:
+
+```json
+{
+  "context": "vim_mode == visual",
+  "bindings": {
+    "shift-x": "vim::Exchange"
+  }
+}
 ```
 
 ### Restoring common text editing keybindings
@@ -447,6 +485,7 @@ You can change the following settings to modify vim mode's behavior:
 
 | Property                     | Description                                                                                                                                                                                   | Default Value |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| default_mode                 | The default mode to start in. One of "normal", "insert", "replace", "visual", "visual_line", "visual_block", "helix_normal".                                                                  | "normal"      |
 | use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
 | use_multiline_find           | If `true`, `f` and `t` motions extend across multiple lines.                                                                                                                                  | false         |
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
@@ -471,6 +510,7 @@ Here's an example of these settings changed:
 ```json
 {
   "vim": {
+    "default_mode": "insert",
     "use_system_clipboard": "never",
     "use_multiline_find": true,
     "use_smartcase_find": true,

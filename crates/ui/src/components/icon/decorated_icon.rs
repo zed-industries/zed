@@ -1,10 +1,8 @@
-use gpui::{IntoElement, Point};
+use gpui::{AnyElement, IntoElement, Point};
 
-use crate::{
-    prelude::*, traits::component_preview::ComponentPreview, IconDecoration, IconDecorationKind,
-};
+use crate::{IconDecoration, IconDecorationKind, prelude::*};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct DecoratedIcon {
     icon: Icon,
     decoration: Option<IconDecoration>,
@@ -17,7 +15,7 @@ impl DecoratedIcon {
 }
 
 impl RenderOnce for DecoratedIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         div()
             .relative()
             .size(self.icon.size)
@@ -26,13 +24,18 @@ impl RenderOnce for DecoratedIcon {
     }
 }
 
-impl ComponentPreview for DecoratedIcon {
-    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        let icon_1 = Icon::new(IconName::FileDoc);
-        let icon_2 = Icon::new(IconName::FileDoc);
-        let icon_3 = Icon::new(IconName::FileDoc);
-        let icon_4 = Icon::new(IconName::FileDoc);
+impl Component for DecoratedIcon {
+    fn scope() -> ComponentScope {
+        ComponentScope::Images
+    }
 
+    fn description() -> Option<&'static str> {
+        Some(
+            "An icon with an optional decoration overlay (like an X, triangle, or dot) that can be positioned relative to the icon",
+        )
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let decoration_x = IconDecoration::new(
             IconDecorationKind::X,
             cx.theme().colors().surface_background,
@@ -66,22 +69,38 @@ impl ComponentPreview for DecoratedIcon {
             y: px(-2.),
         });
 
-        let examples = vec![
-            single_example("no_decoration", DecoratedIcon::new(icon_1, None)),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_2, Some(decoration_x)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_3, Some(decoration_triangle)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_4, Some(decoration_dot)),
-            ),
-        ];
-
-        vec![example_group(examples)]
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group_with_title(
+                    "Decorations",
+                    vec![
+                        single_example(
+                            "No Decoration",
+                            DecoratedIcon::new(Icon::new(IconName::FileDoc), None)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "X Decoration",
+                            DecoratedIcon::new(Icon::new(IconName::FileDoc), Some(decoration_x))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Triangle Decoration",
+                            DecoratedIcon::new(
+                                Icon::new(IconName::FileDoc),
+                                Some(decoration_triangle),
+                            )
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Dot Decoration",
+                            DecoratedIcon::new(Icon::new(IconName::FileDoc), Some(decoration_dot))
+                                .into_any_element(),
+                        ),
+                    ],
+                )])
+                .into_any_element(),
+        )
     }
 }

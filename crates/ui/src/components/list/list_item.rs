@@ -1,11 +1,9 @@
-#![allow(missing_docs)]
-
 use std::sync::Arc;
 
-use gpui::{px, AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, Disclosure};
+use crate::{Disclosure, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -33,13 +31,15 @@ pub struct ListItem {
     end_hover_slot: Option<AnyElement>,
     toggle: Option<bool>,
     inset: bool,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
-    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
+    always_show_disclosure_icon: bool,
     outlined: bool,
+    rounded: bool,
     overflow_x: bool,
     focused: Option<bool>,
 }
@@ -64,7 +64,9 @@ impl ListItem {
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
+            always_show_disclosure_icon: false,
             outlined: false,
+            rounded: false,
             overflow_x: false,
             focused: None,
         }
@@ -80,20 +82,28 @@ impl ListItem {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    pub fn always_show_disclosure_icon(mut self, show: bool) -> Self {
+        self.always_show_disclosure_icon = show;
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
 
     pub fn on_secondary_mouse_down(
         mut self,
-        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_secondary_mouse_down = Some(Box::new(handler));
         self
     }
 
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
@@ -120,7 +130,7 @@ impl ListItem {
 
     pub fn on_toggle(
         mut self,
-        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toggle = Some(Arc::new(on_toggle));
         self
@@ -143,6 +153,11 @@ impl ListItem {
 
     pub fn outlined(mut self) -> Self {
         self.outlined = true;
+        self
+    }
+
+    pub fn rounded(mut self) -> Self {
+        self.rounded = true;
         self
     }
 
@@ -178,7 +193,7 @@ impl ParentElement for ListItem {
 }
 
 impl RenderOnce for ListItem {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .id(self.id)
             .w_full()
@@ -203,19 +218,19 @@ impl RenderOnce for ListItem {
                     .when(self.selectable, |this| {
                         this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                            .when(self.outlined, |this| this.rounded_md())
+                            .when(self.outlined, |this| this.rounded_sm())
                             .when(self.selected, |this| {
                                 this.bg(cx.theme().colors().ghost_element_selected)
                             })
                     })
             })
+            .when(self.rounded, |this| this.rounded_sm())
             .child(
                 h_flex()
                     .id("inner_list_item")
                     .group("list_item")
                     .w_full()
                     .relative()
-                    .items_center()
                     .gap_1()
                     .px(DynamicSpacing::Base06.rems(cx))
                     .map(|this| match self.spacing {
@@ -245,24 +260,25 @@ impl RenderOnce for ListItem {
                                 })
                             })
                     })
-                    .when_some(self.on_click, |this, on_click| {
-                        this.cursor_pointer().on_click(on_click)
-                    })
+                    .when_some(
+                        self.on_click.filter(|_| !self.disabled),
+                        |this, on_click| this.cursor_pointer().on_click(on_click),
+                    )
                     .when(self.outlined, |this| {
                         this.border_1()
                             .border_color(cx.theme().colors().border)
-                            .rounded_md()
+                            .rounded_sm()
                             .overflow_hidden()
                     })
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
-                        this.on_mouse_down(MouseButton::Right, move |event, cx| {
-                            (on_mouse_down)(event, cx)
+                        this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                            (on_mouse_down)(event, window, cx)
                         })
                     })
                     .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
                     .map(|this| {
                         if self.inset {
-                            this.rounded_md()
+                            this.rounded_sm()
                         } else {
                             // When an item is not inset draw the indent spacing inside of the item
                             this.ml(self.indent_level as f32 * self.indent_step_size)
@@ -273,7 +289,9 @@ impl RenderOnce for ListItem {
                             .flex()
                             .absolute()
                             .left(rems(-1.))
-                            .when(is_open, |this| this.visible_on_hover(""))
+                            .when(is_open && !self.always_show_disclosure_icon, |this| {
+                                this.visible_on_hover("")
+                            })
                             .child(Disclosure::new("toggle", is_open).on_toggle(self.on_toggle))
                     }))
                     .child(

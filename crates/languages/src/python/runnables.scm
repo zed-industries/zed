@@ -82,3 +82,39 @@
         )
     )
 )
+
+; decorated pytest class methods
+(
+    (module
+        (class_definition
+            name: (identifier) @_pytest_class_name
+            (#match? @_pytest_class_name "^Test")
+            body: (block
+                (decorated_definition
+                    (decorator)+ @_decorator
+                    definition: (function_definition
+                        name: (identifier) @run @_pytest_method_name
+                        (#match? @_pytest_method_name "^test_")
+                        )
+                    )
+            ) @_python-pytest-method
+            (#set! tag python-pytest-method)
+        )
+    )
+)
+
+; module main method
+(
+    (module
+        (if_statement
+            condition: (comparison_operator
+                (identifier) @run @_lhs
+                operators: "=="
+                (string) @_rhs
+            )
+            (#eq? @_lhs "__name__")
+            (#match? @_rhs "^[\"']__main__[\"']$")
+            (#set! tag python-module-main-method)
+        )
+    )
+)

@@ -131,7 +131,7 @@ In this example:
 
 - `intelephense` is set as the primary language server
 - `phpactor` is disabled (note the `!` prefix)
-- `...` preserves any other default language server settings
+- `...` expands to the rest of the language servers that are registered for PHP
 
 This configuration allows you to tailor the language server setup to your specific needs, ensuring that you get the most suitable functionality for your development workflow.
 
@@ -320,7 +320,7 @@ This example makes comments italic and changes the color of strings:
 
 Change your theme:
 
-1. Use the theme selector (<kbd>cmd-k cmd-t|ctrl-k ctrl-t</kbd>)
+1. Use the theme selector ({#kb theme_selector::Toggle})
 2. Or set it in your `settings.json`:
 
 ```json
@@ -335,7 +335,7 @@ Create custom themes by creating a JSON file in `~/.config/zed/themes/`. Zed wil
 
 ### Using Theme Extensions
 
-Zed supports theme extensions. Browse and install theme extensions from the Extensions panel (<kbd>cmd-shift-e|ctrl-shift-e</kbd>).
+Zed supports theme extensions. Browse and install theme extensions from the Extensions panel ({#kb zed::Extensions}).
 
 To create your own theme extension, refer to the [Developing Theme Extensions](./extensions/themes.md) guide.
 

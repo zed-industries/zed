@@ -28,6 +28,7 @@
       "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": false }], // move-beginning-of-line
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
+      "alt-m": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }], // back-to-indentation
       "alt-f": "editor::MoveToNextSubwordEnd", // forward-word
       "alt-b": "editor::MoveToPreviousSubwordStart", // backward-word
       "alt-u": "editor::ConvertToUpperCase", // upcase-word
@@ -48,6 +49,8 @@
       "ctrl-_": "editor::Undo", // undo
       "ctrl-/": "editor::Undo", // undo
       "ctrl-x u": "editor::Undo", // undo
+      "alt-{": "editor::MoveToStartOfParagraph", // backward-paragraph
+      "alt-}": "editor::MoveToEndOfParagraph", // forward-paragraph
       "ctrl-v": "editor::MovePageDown", // scroll-up
       "alt-v": "editor::MovePageUp", // scroll-down
       "ctrl-x [": "editor::MoveToBeginning", // beginning-of-buffer
@@ -119,7 +122,7 @@
     "context": "BufferSearchBar > Editor",
     "bindings": {
       "ctrl-s": "search::SelectNextMatch",
-      "ctrl-r": "search::SelectPrevMatch",
+      "ctrl-r": "search::SelectPreviousMatch",
       "ctrl-g": "buffer_search::Dismiss"
     }
   },

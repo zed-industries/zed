@@ -3,14 +3,14 @@ use crate::{
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::Bound;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fs::MTime;
-use futures::{stream::StreamExt, FutureExt as _};
+use futures::{FutureExt as _, stream::StreamExt};
 use futures_batch::ChunksTimeoutStreamExt;
-use gpui::{AppContext, Model, Task};
+use gpui::{App, AppContext as _, Entity, Task};
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
 use log;
@@ -22,7 +22,7 @@ use util::ResultExt;
 use worktree::Snapshot;
 
 pub struct EmbeddingIndex {
-    worktree: Model<Worktree>,
+    worktree: Entity<Worktree>,
     db_connection: heed::Env,
     db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
     fs: Arc<dyn Fs>,
@@ -33,7 +33,7 @@ pub struct EmbeddingIndex {
 
 impl EmbeddingIndex {
     pub fn new(
-        worktree: Model<Worktree>,
+        worktree: Entity<Worktree>,
         fs: Arc<dyn Fs>,
         db_connection: heed::Env,
         embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
@@ -58,8 +58,8 @@ impl EmbeddingIndex {
 
     pub fn index_entries_changed_on_disk(
         &self,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<()>> {
+        cx: &App,
+    ) -> impl Future<Output = Result<()>> + use<> {
         if !cx.is_staff() {
             return async move { Ok(()) }.boxed();
         }
@@ -80,8 +80,8 @@ impl EmbeddingIndex {
     pub fn index_updated_entries(
         &self,
         updated_entries: UpdatedEntriesSet,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<()>> {
+        cx: &App,
+    ) -> impl Future<Output = Result<()>> + use<> {
         if !cx.is_staff() {
             return async move { Ok(()) }.boxed();
         }
@@ -99,13 +99,13 @@ impl EmbeddingIndex {
         .boxed()
     }
 
-    fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
+    fn scan_entries(&self, worktree: Snapshot, cx: &App) -> ScanEntries {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let db_connection = self.db_connection.clone();
         let db = self.db;
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let txn = db_connection
                 .read_txn()
                 .context("failed to create read transaction")?;
@@ -183,12 +183,12 @@ impl EmbeddingIndex {
         &self,
         worktree: Snapshot,
         updated_entries: UpdatedEntriesSet,
-        cx: &AppContext,
+        cx: &App,
     ) -> ScanEntries {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let entries_being_indexed = self.entry_ids_being_indexed.clone();
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             for (path, entry_id, status) in updated_entries.iter() {
                 match status {
                     project::PathChange::Added
@@ -227,12 +227,12 @@ impl EmbeddingIndex {
         &self,
         worktree_abs_path: Arc<Path>,
         entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
-        cx: &AppContext,
+        cx: &App,
     ) -> ChunkFiles {
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
         let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
-        let task = cx.spawn(|cx| async move {
+        let task = cx.spawn(async move |cx| {
             cx.background_executor()
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {
@@ -277,11 +277,11 @@ impl EmbeddingIndex {
     pub fn embed_files(
         embedding_provider: Arc<dyn EmbeddingProvider>,
         chunked_files: channel::Receiver<ChunkedFile>,
-        cx: &AppContext,
+        cx: &App,
     ) -> EmbedFiles {
         let embedding_provider = embedding_provider.clone();
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let mut chunked_file_batches =
                 pin!(chunked_files.chunks_timeout(512, Duration::from_secs(2)));
             while let Some(chunked_files) = chunked_file_batches.next().await {
@@ -359,12 +359,12 @@ impl EmbeddingIndex {
         &self,
         deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
         embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
         let db = self.db;
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut deleted_entry_ranges = pin!(deleted_entry_ranges);
             let mut embedded_files = pin!(embedded_files);
             loop {
@@ -397,10 +397,10 @@ impl EmbeddingIndex {
         })
     }
 
-    pub fn paths(&self, cx: &AppContext) -> Task<Result<Vec<Arc<Path>>>> {
+    pub fn paths(&self, cx: &App) -> Task<Result<Vec<Arc<Path>>>> {
         let connection = self.db_connection.clone();
         let db = self.db;
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let tx = connection
                 .read_txn()
                 .context("failed to create read transaction")?;
@@ -413,14 +413,10 @@ impl EmbeddingIndex {
         })
     }
 
-    pub fn chunks_for_path(
-        &self,
-        path: Arc<Path>,
-        cx: &AppContext,
-    ) -> Task<Result<Vec<EmbeddedChunk>>> {
+    pub fn chunks_for_path(&self, path: Arc<Path>, cx: &App) -> Task<Result<Vec<EmbeddedChunk>>> {
         let connection = self.db_connection.clone();
         let db = self.db;
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let tx = connection
                 .read_txn()
                 .context("failed to create read transaction")?;

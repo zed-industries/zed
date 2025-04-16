@@ -1,6 +1,6 @@
 use client::Client;
 use futures::channel::oneshot;
-use gpui::App;
+use gpui::Application;
 use http_client::HttpClientWithUrl;
 use language::language_settings::AllLanguageSettings;
 use project::Project;
@@ -16,7 +16,7 @@ fn main() {
 
     use clock::FakeSystemClock;
 
-    App::new().run(|cx| {
+    Application::new().run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         language::init(cx);
@@ -55,18 +55,18 @@ fn main() {
             api_key,
         ));
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let semantic_index = SemanticDb::new(
                 PathBuf::from("/tmp/semantic-index-db.mdb"),
                 embedding_provider,
-                &mut cx,
+                cx,
             );
 
             let mut semantic_index = semantic_index.await.unwrap();
 
             let project_path = Path::new(&args[1]);
 
-            let project = Project::example([project_path], &mut cx).await;
+            let project = Project::example([project_path], cx).await;
 
             cx.update(|cx| {
                 let language_registry = project.read(cx).languages().clone();
@@ -113,7 +113,7 @@ fn main() {
                         let worktree = search_result.worktree.read(cx);
                         let entry_abs_path = worktree.abs_path().join(search_result.path.clone());
                         let fs = project.read(cx).fs().clone();
-                        cx.spawn(|_| async move { fs.load(&entry_abs_path).await.unwrap() })
+                        cx.spawn(async move |_| fs.load(&entry_abs_path).await.unwrap())
                     })
                     .unwrap()
                     .await;

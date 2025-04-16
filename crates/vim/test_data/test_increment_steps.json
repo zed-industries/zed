@@ -13,3 +13,13 @@
 {"Key":"g"}
 {"Key":"ctrl-x"}
 {"Get":{"state":"ˇ0\n0\n0  2\n0\n0","mode":"Normal"}}
+{"Key":"v"}
+{"Key":"shift-g"}
+{"Key":"g"}
+{"Key":"ctrl-a"}
+{"Key":"v"}
+{"Key":"shift-g"}
+{"Key":"5"}
+{"Key":"g"}
+{"Key":"ctrl-a"}
+{"Get":{"state":"ˇ6\n12\n18  2\n24\n30","mode":"Normal"}}

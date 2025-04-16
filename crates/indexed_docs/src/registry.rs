@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, UpdateGlobal};
+use gpui::{App, BackgroundExecutor, Global, ReadGlobal, UpdateGlobal};
 use parking_lot::RwLock;
 
 use crate::{IndexedDocsProvider, IndexedDocsStore, ProviderId};
@@ -16,11 +16,11 @@ pub struct IndexedDocsRegistry {
 }
 
 impl IndexedDocsRegistry {
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         GlobalIndexedDocsRegistry::global(cx).0.clone()
     }
 
-    pub(crate) fn init_global(cx: &mut AppContext) {
+    pub(crate) fn init_global(cx: &mut App) {
         GlobalIndexedDocsRegistry::set_global(
             cx,
             GlobalIndexedDocsRegistry(Arc::new(Self::new(cx.background_executor().clone()))),

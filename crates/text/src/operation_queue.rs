@@ -81,7 +81,7 @@ impl Summary for OperationSummary {
     }
 }
 
-impl<'a> Add<&'a Self> for OperationSummary {
+impl Add<&Self> for OperationSummary {
     type Output = Self;
 
     fn add(self, other: &Self) -> Self {
@@ -93,7 +93,7 @@ impl<'a> Add<&'a Self> for OperationSummary {
     }
 }
 
-impl<'a> Dimension<'a, OperationSummary> for OperationKey {
+impl Dimension<'_, OperationSummary> for OperationKey {
     fn zero(_cx: &()) -> Self {
         Default::default()
     }

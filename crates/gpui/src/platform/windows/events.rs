@@ -1,17 +1,20 @@
 use std::rc::Rc;
 
 use ::util::ResultExt;
-use anyhow::Context;
-use windows::Win32::{
-    Foundation::*,
-    Graphics::Gdi::*,
-    System::SystemServices::*,
-    UI::{
-        Controls::*,
-        HiDpi::*,
-        Input::{Ime::*, KeyboardAndMouse::*},
-        WindowsAndMessaging::*,
+use anyhow::Context as _;
+use windows::{
+    Win32::{
+        Foundation::*,
+        Graphics::Gdi::*,
+        System::SystemServices::*,
+        UI::{
+            Controls::*,
+            HiDpi::*,
+            Input::{Ime::*, KeyboardAndMouse::*},
+            WindowsAndMessaging::*,
+        },
     },
+    core::PCWSTR,
 };
 
 use crate::*;
@@ -19,6 +22,7 @@ use crate::*;
 pub(crate) const WM_GPUI_CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const WM_GPUI_CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
 pub(crate) const WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD: u32 = WM_USER + 3;
+pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -46,9 +50,8 @@ pub(crate) fn handle_msg(
         WM_CLOSE => handle_close_msg(state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
-        WM_MOUSELEAVE => handle_mouse_leave_msg(state_ptr),
+        WM_MOUSELEAVE | WM_NCMOUSELEAVE => handle_mouse_leave_msg(state_ptr),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state_ptr),
-        WM_NCMOUSELEAVE => handle_nc_mouse_leave_msg(state_ptr),
         WM_NCLBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
         }
@@ -88,8 +91,7 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
-        WM_DWMCOLORIZATIONCOLORCHANGED => handle_system_theme_changed(state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
@@ -175,7 +177,12 @@ fn handle_size_msg(
 
 fn handle_size_move_loop(handle: HWND) -> Option<isize> {
     unsafe {
-        let ret = SetTimer(handle, SIZE_MOVE_LOOP_TIMER_ID, USER_TIMER_MINIMUM, None);
+        let ret = SetTimer(
+            Some(handle),
+            SIZE_MOVE_LOOP_TIMER_ID,
+            USER_TIMER_MINIMUM,
+            None,
+        );
         if ret == 0 {
             log::error!(
                 "unable to create timer: {}",
@@ -188,7 +195,7 @@ fn handle_size_move_loop(handle: HWND) -> Option<isize> {
 
 fn handle_size_move_loop_exit(handle: HWND) -> Option<isize> {
     unsafe {
-        KillTimer(handle, SIZE_MOVE_LOOP_TIMER_ID).log_err();
+        KillTimer(Some(handle), SIZE_MOVE_LOOP_TIMER_ID).log_err();
     }
     None
 }
@@ -215,7 +222,7 @@ fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
         request_frame(Default::default());
         state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
     }
-    unsafe { ValidateRect(handle, None).ok().log_err() };
+    unsafe { ValidateRect(Some(handle), None).ok().log_err() };
     Some(0)
 }
 
@@ -225,11 +232,7 @@ fn handle_close_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
         drop(lock);
         let should_close = callback();
         state_ptr.state.borrow_mut().callbacks.should_close = Some(callback);
-        if should_close {
-            None
-        } else {
-            Some(0)
-        }
+        if should_close { None } else { Some(0) }
     } else {
         None
     }
@@ -261,26 +264,7 @@ fn handle_mouse_move_msg(
     wparam: WPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    if !lock.hovered {
-        lock.hovered = true;
-        unsafe {
-            TrackMouseEvent(&mut TRACKMOUSEEVENT {
-                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                dwFlags: TME_LEAVE,
-                hwndTrack: handle,
-                dwHoverTime: HOVER_DEFAULT,
-            })
-            .log_err()
-        };
-        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-            drop(lock);
-            callback(true);
-            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-        }
-    } else {
-        drop(lock);
-    }
+    start_tracking_mouse(handle, &state_ptr, TME_LEAVE);
 
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
@@ -314,18 +298,6 @@ fn handle_mouse_move_msg(
         return result;
     }
     Some(1)
-}
-
-fn handle_nc_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.hovered = false;
-    if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-        drop(lock);
-        callback(false);
-        state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-    }
-
-    Some(0)
 }
 
 fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -385,7 +357,7 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
+    let Some(keystroke_or_modifier) = parse_keystroke_from_vkey(wparam, false) else {
         return Some(1);
     };
     let mut lock = state_ptr.state.borrow_mut();
@@ -415,7 +387,7 @@ fn handle_keydown_msg(
 }
 
 fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
+    let Some(keystroke_or_modifier) = parse_keystroke_from_vkey(wparam, true) else {
         return Some(1);
     };
     let mut lock = state_ptr.state.borrow_mut();
@@ -805,7 +777,7 @@ fn handle_activate_msg(
     if state_ptr.hide_title_bar {
         if let Some(titlebar_rect) = state_ptr.state.borrow().get_titlebar_rect().log_err() {
             unsafe {
-                InvalidateRect(handle, Some(&titlebar_rect), FALSE)
+                InvalidateRect(Some(handle), Some(&titlebar_rect), false)
                     .ok()
                     .log_err()
             };
@@ -985,26 +957,7 @@ fn handle_nc_mouse_move_msg(
         return None;
     }
 
-    let mut lock = state_ptr.state.borrow_mut();
-    if !lock.hovered {
-        lock.hovered = true;
-        unsafe {
-            TrackMouseEvent(&mut TRACKMOUSEEVENT {
-                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                dwFlags: TME_LEAVE | TME_NONCLIENT,
-                hwndTrack: handle,
-                dwHoverTime: HOVER_DEFAULT,
-            })
-            .log_err()
-        };
-        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-            drop(lock);
-            callback(true);
-            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-        }
-    } else {
-        drop(lock);
-    }
+    start_tracking_mouse(handle, &state_ptr, TME_LEAVE | TME_NONCLIENT);
 
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
@@ -1153,7 +1106,7 @@ fn handle_nc_mouse_up_msg(
             HTCLOSE => {
                 if last_button == HTCLOSE {
                     unsafe {
-                        PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default())
+                        PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
                             .log_err()
                     };
                     handled = true;
@@ -1170,7 +1123,19 @@ fn handle_nc_mouse_up_msg(
 }
 
 fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0 as _);
+    let mut state = state_ptr.state.borrow_mut();
+    let had_cursor = state.current_cursor.is_some();
+
+    state.current_cursor = if lparam.0 == 0 {
+        None
+    } else {
+        Some(HCURSOR(lparam.0 as _))
+    };
+
+    if had_cursor != state.current_cursor.is_some() {
+        unsafe { SetCursor(state.current_cursor) };
+    }
+
     Some(0)
 }
 
@@ -1181,12 +1146,15 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     ) {
         return None;
     }
-    unsafe { SetCursor(state_ptr.state.borrow().current_cursor) };
+    unsafe {
+        SetCursor(state_ptr.state.borrow().current_cursor);
+    };
     Some(1)
 }
 
 fn handle_system_settings_changed(
     handle: HWND,
+    lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
@@ -1198,6 +1166,22 @@ fn handle_system_settings_changed(
     // window border offset
     lock.border_offset.update(handle).log_err();
     drop(lock);
+
+    // lParam is a pointer to a string that indicates the area containing the system parameter
+    // that was changed.
+    let parameter = PCWSTR::from_raw(lparam.0 as _);
+    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
+        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
+            log::info!("System settings changed: {}", parameter_string);
+            match parameter_string.as_str() {
+                "ImmersiveColorSet" => {
+                    handle_system_theme_changed(handle, state_ptr);
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
     // taskbar correctly.
     notify_frame_changed(handle);
@@ -1215,7 +1199,10 @@ fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
     None
 }
 
-fn handle_system_theme_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_system_theme_changed(
+    handle: HWND,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     let mut callback = state_ptr
         .state
         .borrow_mut()
@@ -1224,18 +1211,28 @@ fn handle_system_theme_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<i
         .take()?;
     callback();
     state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
+    configure_dwm_dark_mode(handle);
     Some(0)
 }
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     let modifiers = current_modifiers();
-    if !modifiers.alt {
-        // on Windows, F10 can trigger this event, not just the alt key
-        // and we just don't care about F10
-        return None;
-    }
-
     let vk_code = wparam.loword();
+
+    // on Windows, F10 can trigger this event, not just the alt key,
+    // so when F10 was pressed, handle only it
+    if !modifiers.alt {
+        if vk_code == VK_F10.0 {
+            let offset = vk_code - VK_F1.0;
+            return Some(Keystroke {
+                modifiers,
+                key: format!("f{}", offset + 1),
+                key_char: None,
+            });
+        } else {
+            return None;
+        }
+    }
 
     let key = match VIRTUAL_KEY(vk_code) {
         VK_BACK => "backspace",
@@ -1254,7 +1251,24 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
-        _ => return basic_vkcode_to_string(vk_code, modifiers),
+        VK_APPS => "menu",
+        _ => {
+            let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+            if basic_key.is_some() {
+                return basic_key;
+            } else {
+                if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
+                    let offset = vk_code - VK_F1.0;
+                    return Some(Keystroke {
+                        modifiers,
+                        key: format!("f{}", offset + 1),
+                        key_char: None,
+                    });
+                } else {
+                    return None;
+                }
+            }
+        }
     }
     .to_owned();
 
@@ -1270,7 +1284,7 @@ enum KeystrokeOrModifier {
     Modifier(Modifiers),
 }
 
-fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
+fn parse_keystroke_from_vkey(wparam: WPARAM, is_keyup: bool) -> Option<KeystrokeOrModifier> {
     let vk_code = wparam.loword();
 
     let modifiers = current_modifiers();
@@ -1292,12 +1306,13 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
+        VK_APPS => "menu",
         _ => {
             if is_modifier(VIRTUAL_KEY(vk_code)) {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));
             }
 
-            if modifiers.control || modifiers.alt {
+            if modifiers.control || modifiers.alt || is_keyup {
                 let basic_key = basic_vkcode_to_string(vk_code, modifiers);
                 if let Some(basic_key) = basic_key {
                     return Some(KeystrokeOrModifier::Keystroke(basic_key));
@@ -1511,6 +1526,31 @@ fn notify_frame_changed(handle: HWND) {
                 | SWP_NOZORDER,
         )
         .log_err();
+    }
+}
+
+fn start_tracking_mouse(
+    handle: HWND,
+    state_ptr: &Rc<WindowsWindowStatePtr>,
+    flags: TRACKMOUSEEVENT_FLAGS,
+) {
+    let mut lock = state_ptr.state.borrow_mut();
+    if !lock.hovered {
+        lock.hovered = true;
+        unsafe {
+            TrackMouseEvent(&mut TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: flags,
+                hwndTrack: handle,
+                dwHoverTime: HOVER_DEFAULT,
+            })
+            .log_err()
+        };
+        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+            drop(lock);
+            callback(true);
+            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        }
     }
 }
 

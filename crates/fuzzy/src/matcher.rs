@@ -1,5 +1,5 @@
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     sync::atomic::{self, AtomicBool},
 };
 
@@ -9,6 +9,8 @@ const BASE_DISTANCE_PENALTY: f64 = 0.6;
 const ADDITIONAL_DISTANCE_PENALTY: f64 = 0.05;
 const MIN_DISTANCE_PENALTY: f64 = 0.2;
 
+// TODO:
+// Use `Path` instead of `&str` for paths.
 pub struct Matcher<'a> {
     query: &'a [char],
     lowercase_query: &'a [char],
@@ -48,22 +50,24 @@ impl<'a> Matcher<'a> {
 
     /// Filter and score fuzzy match candidates. Results are returned unsorted, in the same order as
     /// the input candidates.
-    pub fn match_candidates<C: MatchCandidate, R, F>(
+    pub fn match_candidates<C, R, F, T>(
         &mut self,
         prefix: &[char],
         lowercase_prefix: &[char],
-        candidates: impl Iterator<Item = C>,
+        candidates: impl Iterator<Item = T>,
         results: &mut Vec<R>,
         cancel_flag: &AtomicBool,
         build_match: F,
     ) where
+        C: MatchCandidate,
+        T: Borrow<C>,
         F: Fn(&C, f64, &Vec<usize>) -> R,
     {
         let mut candidate_chars = Vec::new();
         let mut lowercase_candidate_chars = Vec::new();
 
         for candidate in candidates {
-            if !candidate.has_chars(self.query_char_bag) {
+            if !candidate.borrow().has_chars(self.query_char_bag) {
                 continue;
             }
 
@@ -73,7 +77,7 @@ impl<'a> Matcher<'a> {
 
             candidate_chars.clear();
             lowercase_candidate_chars.clear();
-            for c in candidate.to_string().chars() {
+            for c in candidate.borrow().to_string().chars() {
                 candidate_chars.push(c);
                 lowercase_candidate_chars.append(&mut c.to_lowercase().collect::<Vec<_>>());
             }
@@ -96,7 +100,11 @@ impl<'a> Matcher<'a> {
             );
 
             if score > 0.0 {
-                results.push(build_match(&candidate, score, &self.match_positions));
+                results.push(build_match(
+                    candidate.borrow(),
+                    score,
+                    &self.match_positions,
+                ));
             }
         }
     }
@@ -162,7 +170,6 @@ impl<'a> Matcher<'a> {
         score
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn recursive_score_match(
         &mut self,
         path: &[char],
@@ -173,6 +180,8 @@ impl<'a> Matcher<'a> {
         path_idx: usize,
         cur_score: f64,
     ) -> f64 {
+        use std::path::MAIN_SEPARATOR;
+
         if query_idx == self.query.len() {
             return 1.0;
         }
@@ -196,13 +205,19 @@ impl<'a> Matcher<'a> {
             } else {
                 path_cased[j - prefix.len()]
             };
-            let is_path_sep = path_char == '/' || path_char == '\\';
+            let is_path_sep = path_char == MAIN_SEPARATOR;
 
             if query_idx == 0 && is_path_sep {
                 last_slash = j;
             }
 
-            if query_char == path_char || (is_path_sep && query_char == '_' || query_char == '\\') {
+            #[cfg(not(target_os = "windows"))]
+            let need_to_score =
+                query_char == path_char || (is_path_sep && query_char == '_' || query_char == '\\');
+            // `query_char == '\\'` breaks `test_match_path_entries` on Windows, `\` is only used as a path separator on Windows.
+            #[cfg(target_os = "windows")]
+            let need_to_score = query_char == path_char || (is_path_sep && query_char == '_');
+            if need_to_score {
                 let curr = if j < prefix.len() {
                     prefix[j]
                 } else {
@@ -217,7 +232,7 @@ impl<'a> Matcher<'a> {
                         path[j - 1 - prefix.len()]
                     };
 
-                    if last == '/' {
+                    if last == MAIN_SEPARATOR {
                         char_score = 0.9;
                     } else if (last == '-' || last == '_' || last == ' ' || last.is_numeric())
                         || (last.is_lowercase() && curr.is_uppercase())
@@ -238,7 +253,7 @@ impl<'a> Matcher<'a> {
                 // Apply a severe penalty if the case doesn't match.
                 // This will make the exact matches have higher score than the case-insensitive and the
                 // path insensitive matches.
-                if (self.smart_case || curr == '/') && self.query[query_idx] != curr {
+                if (self.smart_case || curr == MAIN_SEPARATOR) && self.query[query_idx] != curr {
                     char_score *= 0.001;
                 }
 
@@ -322,6 +337,7 @@ mod tests {
         assert_eq!(matcher.last_positions, vec![0, 3, 4, 8]);
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_match_path_entries() {
         let paths = vec![
@@ -358,6 +374,54 @@ mod tests {
                 ("/test/tiatd", vec![6, 7, 8, 9, 10]),
                 ("/this/is/a/test/dir", vec![1, 6, 9, 11, 16]),
                 ("/////ThisIsATestDir", vec![5, 9, 11, 12, 16]),
+                ("thisisatestdir", vec![0, 2, 6, 7, 11]),
+            ]
+        );
+    }
+
+    /// todo(windows)
+    /// Now, on Windows, users can only use the backslash as a path separator.
+    /// I do want to support both the backslash and the forward slash as path separators on Windows.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_match_path_entries() {
+        let paths = vec![
+            "",
+            "a",
+            "ab",
+            "abC",
+            "abcd",
+            "alphabravocharlie",
+            "AlphaBravoCharlie",
+            "thisisatestdir",
+            "\\\\\\\\\\ThisIsATestDir",
+            "\\this\\is\\a\\test\\dir",
+            "\\test\\tiatd",
+        ];
+
+        assert_eq!(
+            match_single_path_query("abc", false, &paths),
+            vec![
+                ("abC", vec![0, 1, 2]),
+                ("abcd", vec![0, 1, 2]),
+                ("AlphaBravoCharlie", vec![0, 5, 10]),
+                ("alphabravocharlie", vec![4, 5, 10]),
+            ]
+        );
+        assert_eq!(
+            match_single_path_query("t\\i\\a\\t\\d", false, &paths),
+            vec![(
+                "\\this\\is\\a\\test\\dir",
+                vec![1, 5, 6, 8, 9, 10, 11, 15, 16]
+            ),]
+        );
+
+        assert_eq!(
+            match_single_path_query("tiatd", false, &paths),
+            vec![
+                ("\\test\\tiatd", vec![6, 7, 8, 9, 10]),
+                ("\\this\\is\\a\\test\\dir", vec![1, 6, 9, 11, 16]),
+                ("\\\\\\\\\\ThisIsATestDir", vec![5, 9, 11, 12, 16]),
                 ("thisisatestdir", vec![0, 2, 6, 7, 11]),
             ]
         );

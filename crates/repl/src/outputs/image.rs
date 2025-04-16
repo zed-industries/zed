@@ -1,12 +1,11 @@
 use anyhow::Result;
 use base64::{
-    alphabet,
+    Engine as _, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
-    Engine as _,
 };
-use gpui::{img, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, WindowContext};
+use gpui::{App, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, Window, img};
 use std::sync::Arc;
-use ui::{div, prelude::*, IntoElement, Styled};
+use ui::{IntoElement, Styled, div, prelude::*};
 
 use crate::outputs::OutputContent;
 
@@ -74,8 +73,8 @@ impl ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let line_height = cx.line_height();
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let line_height = window.line_height();
 
         let (height, width) = if self.height as f32 / line_height.0 == u8::MAX as f32 {
             let height = u8::MAX as f32 * line_height.0;
@@ -92,11 +91,11 @@ impl Render for ImageView {
 }
 
 impl OutputContent for ImageView {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
     }
 
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {
         true
     }
 }

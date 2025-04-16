@@ -2,7 +2,7 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
-use gpui::Model;
+use gpui::Entity;
 use language::{Buffer, BufferSnapshot, CharKind};
 use smol::future::yield_now;
 use std::{
@@ -15,9 +15,10 @@ use std::{
 use text::Anchor;
 use util::paths::PathMatcher;
 
+#[derive(Debug)]
 pub enum SearchResult {
     Buffer {
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         ranges: Vec<Range<Anchor>>,
     },
     LimitReached,
@@ -35,7 +36,7 @@ pub struct SearchInputs {
     query: Arc<str>,
     files_to_include: PathMatcher,
     files_to_exclude: PathMatcher,
-    buffers: Option<Vec<Model<Buffer>>>,
+    buffers: Option<Vec<Entity<Buffer>>>,
 }
 
 impl SearchInputs {
@@ -48,14 +49,14 @@ impl SearchInputs {
     pub fn files_to_exclude(&self) -> &PathMatcher {
         &self.files_to_exclude
     }
-    pub fn buffers(&self) -> &Option<Vec<Model<Buffer>>> {
+    pub fn buffers(&self) -> &Option<Vec<Entity<Buffer>>> {
         &self.buffers
     }
 }
 #[derive(Clone, Debug)]
 pub enum SearchQuery {
     Text {
-        search: Arc<AhoCorasick>,
+        search: AhoCorasick,
         replacement: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
@@ -70,6 +71,7 @@ pub enum SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        one_match_per_line: bool,
         inner: SearchInputs,
     },
 }
@@ -88,9 +90,24 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
-        buffers: Option<Vec<Model<Buffer>>>,
+        buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let query = query.to_string();
+        if !case_sensitive && !query.is_ascii() {
+            // AhoCorasickBuilder doesn't support case-insensitive search with unicode characters
+            // Fallback to regex search as recommended by
+            // https://docs.rs/aho-corasick/1.1/aho_corasick/struct.AhoCorasickBuilder.html#method.ascii_case_insensitive
+            return Self::regex(
+                regex::escape(&query),
+                whole_word,
+                case_sensitive,
+                include_ignored,
+                false,
+                files_to_include,
+                files_to_exclude,
+                buffers,
+            );
+        }
         let search = AhoCorasickBuilder::new()
             .ascii_case_insensitive(!case_sensitive)
             .build([&query])?;
@@ -101,7 +118,7 @@ impl SearchQuery {
             buffers,
         };
         Ok(Self::Text {
-            search: Arc::new(search),
+            search,
             replacement: None,
             whole_word,
             case_sensitive,
@@ -115,9 +132,10 @@ impl SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        one_match_per_line: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
-        buffers: Option<Vec<Model<Buffer>>>,
+        buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
@@ -137,7 +155,7 @@ impl SearchQuery {
             query = word_query
         }
 
-        let multiline = query.contains('\n') || query.contains("\\n") || query.contains("\\s");
+        let multiline = query.contains('\n') || query.contains("\\n");
         let regex = RegexBuilder::new(&query)
             .case_insensitive(!case_sensitive)
             .build()?;
@@ -155,6 +173,7 @@ impl SearchQuery {
             case_sensitive,
             include_ignored,
             inner,
+            one_match_per_line,
         })
     }
 
@@ -165,6 +184,7 @@ impl SearchQuery {
                 message.whole_word,
                 message.case_sensitive,
                 message.include_ignored,
+                false,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
                 None, // search opened only don't need search remote
@@ -210,14 +230,17 @@ impl SearchQuery {
         }
     }
 
-    pub fn detect<T: Read>(&self, stream: T) -> Result<bool> {
+    pub(crate) fn detect(
+        &self,
+        mut reader: BufReader<Box<dyn Read + Send + Sync>>,
+    ) -> Result<bool> {
         if self.as_str().is_empty() {
             return Ok(false);
         }
 
         match self {
             Self::Text { search, .. } => {
-                let mat = search.stream_find_iter(stream).next();
+                let mat = search.stream_find_iter(reader).next();
                 match mat {
                     Some(Ok(_)) => Ok(true),
                     Some(Err(err)) => Err(err.into()),
@@ -227,7 +250,6 @@ impl SearchQuery {
             Self::Regex {
                 regex, multiline, ..
             } => {
-                let mut reader = BufReader::new(stream);
                 if *multiline {
                     let mut text = String::new();
                     if let Err(err) = reader.read_to_string(&mut text) {
@@ -424,7 +446,7 @@ impl SearchQuery {
         self.as_inner().files_to_exclude()
     }
 
-    pub fn buffers(&self) -> Option<&Vec<Model<Buffer>>> {
+    pub fn buffers(&self) -> Option<&Vec<Entity<Buffer>>> {
         self.as_inner().buffers.as_ref()
     }
 
@@ -454,6 +476,19 @@ impl SearchQuery {
     pub fn as_inner(&self) -> &SearchInputs {
         match self {
             Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
+        }
+    }
+
+    /// Whether this search should replace only one match per line, instead of
+    /// all matches.
+    /// Returns `None` for text searches, as only regex searches support this
+    /// option.
+    pub fn one_match_per_line(&self) -> Option<bool> {
+        match self {
+            Self::Regex {
+                one_match_per_line, ..
+            } => Some(*one_match_per_line),
+            Self::Text { .. } => None,
         }
     }
 }

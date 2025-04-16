@@ -1,39 +1,42 @@
 use anyhow::Result;
 use client::UserStore;
 use copilot::{Copilot, Status};
-use editor::{scroll::Autoscroll, Editor};
-use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
+use editor::{
+    Editor,
+    actions::{ShowEditPrediction, ToggleEditPrediction},
+    scroll::Autoscroll,
+};
+use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
 use fs::Fs;
 use gpui::{
-    actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
-    AsyncWindowContext, Corner, Entity, IntoElement, Model, ParentElement, Render, Subscription,
-    View, ViewContext, WeakView, WindowContext,
+    Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, Entity, FocusHandle,
+    Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
+    pulsating_between,
 };
+use indoc::indoc;
 use language::{
-    language_settings::{
-        self, all_language_settings, AllLanguageSettings, InlineCompletionProvider,
-    },
-    File, Language,
+    EditPredictionsMode, File, Language,
+    language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
-use settings::{update_settings_file, Settings, SettingsStore};
-use std::{path::Path, sync::Arc, time::Duration};
+use regex::Regex;
+use settings::{Settings, SettingsStore, update_settings_file};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use supermaven::{AccountStatus, Supermaven};
-use ui::{prelude::*, ButtonLike, Color, Icon, IconWithIndicator, Indicator, PopoverMenuHandle};
+use ui::{
+    Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, Indicator, PopoverMenu,
+    PopoverMenuHandle, Tooltip, prelude::*,
+};
 use workspace::{
-    create_and_open_local_file,
-    item::ItemHandle,
+    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
-    ui::{
-        ButtonCommon, Clickable, ContextMenu, IconButton, IconName, IconSize, PopoverMenu, Tooltip,
-    },
-    StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zed_predict_tos::ZedPredictTos;
-use zeta::RateCompletionModal;
+use zeta::RateCompletions;
 
-actions!(zeta, [RateCompletions]);
-actions!(inline_completion, [ToggleMenu]);
+actions!(edit_prediction, [ToggleMenu]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
@@ -42,12 +45,13 @@ struct CopilotErrorToast;
 pub struct InlineCompletionButton {
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
+    editor_show_predictions: bool,
+    editor_focus_handle: Option<FocusHandle>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
-    inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
+    edit_prediction_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
-    workspace: WeakView<Workspace>,
-    user_store: Model<UserStore>,
+    user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
@@ -59,21 +63,19 @@ enum SupermavenButtonStatus {
 }
 
 impl Render for InlineCompletionButton {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let all_language_settings = all_language_settings(None, cx);
 
-        match all_language_settings.inline_completions.provider {
-            InlineCompletionProvider::None => div(),
+        match all_language_settings.edit_predictions.provider {
+            EditPredictionProvider::None => div(),
 
-            InlineCompletionProvider::Copilot => {
+            EditPredictionProvider::Copilot => {
                 let Some(copilot) = Copilot::global(cx) else {
                     return div();
                 };
                 let status = copilot.read(cx).status();
 
-                let enabled = self.editor_enabled.unwrap_or_else(|| {
-                    all_language_settings.inline_completions_enabled(None, None, cx)
-                });
+                let enabled = self.editor_enabled.unwrap_or(false);
 
                 let icon = match status {
                     Status::Error(_) => IconName::CopilotError,
@@ -91,17 +93,17 @@ impl Render for InlineCompletionButton {
                     return div().child(
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
-                            .on_click(cx.listener(move |_, _, cx| {
-                                if let Some(workspace) = cx.window_handle().downcast::<Workspace>()
-                                {
-                                    workspace
-                                        .update(cx, |workspace, cx| {
-                                            workspace.show_toast(
-                                                Toast::new(
-                                                    NotificationId::unique::<CopilotErrorToast>(),
-                                                    format!("Copilot can't be started: {}", e),
-                                                )
-                                                .on_click("Reinstall Copilot", |cx| {
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.show_toast(
+                                            Toast::new(
+                                                NotificationId::unique::<CopilotErrorToast>(),
+                                                format!("Copilot can't be started: {}", e),
+                                            )
+                                            .on_click(
+                                                "Reinstall Copilot",
+                                                |_, cx| {
                                                     if let Some(copilot) = Copilot::global(cx) {
                                                         copilot
                                                             .update(cx, |copilot, cx| {
@@ -109,39 +111,44 @@ impl Render for InlineCompletionButton {
                                                             })
                                                             .detach();
                                                     }
-                                                }),
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
+                                                },
+                                            ),
+                                            cx,
+                                        );
+                                    });
                                 }
                             }))
-                            .tooltip(|cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)),
+                            .tooltip(|window, cx| {
+                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
+                            }),
                     );
                 }
-                let this = cx.view().clone();
+                let this = cx.entity().clone();
 
                 div().child(
                     PopoverMenu::new("copilot")
-                        .menu(move |cx| {
+                        .menu(move |window, cx| {
                             Some(match status {
-                                Status::Authorized => {
-                                    this.update(cx, |this, cx| this.build_copilot_context_menu(cx))
-                                }
-                                _ => this.update(cx, |this, cx| this.build_copilot_start_menu(cx)),
+                                Status::Authorized => this.update(cx, |this, cx| {
+                                    this.build_copilot_context_menu(window, cx)
+                                }),
+                                _ => this.update(cx, |this, cx| {
+                                    this.build_copilot_start_menu(window, cx)
+                                }),
                             })
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(
-                            IconButton::new("copilot-icon", icon).tooltip(|cx| {
-                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)
-                            }),
+                        .trigger_with_tooltip(
+                            IconButton::new("copilot-icon", icon),
+                            |window, cx| {
+                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
+                            },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
 
-            InlineCompletionProvider::Supermaven => {
+            EditPredictionProvider::Supermaven => {
                 let Some(supermaven) = Supermaven::global(cx) else {
                     return div();
                 };
@@ -171,116 +178,155 @@ impl Render for InlineCompletionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let has_menu = status.has_menu();
-                let this = cx.view().clone();
+                let this = cx.entity().clone();
                 let fs = self.fs.clone();
 
                 return div().child(
                     PopoverMenu::new("supermaven")
-                        .menu(move |cx| match &status {
+                        .menu(move |window, cx| match &status {
                             SupermavenButtonStatus::NeedsActivation(activate_url) => {
-                                Some(ContextMenu::build(cx, |menu, _| {
+                                Some(ContextMenu::build(window, cx, |menu, _, _| {
                                     let fs = fs.clone();
                                     let activate_url = activate_url.clone();
-                                    menu.entry("Sign In", None, move |cx| {
+                                    menu.entry("Sign In", None, move |_, cx| {
                                         cx.open_url(activate_url.as_str())
                                     })
                                     .entry(
                                         "Use Copilot",
                                         None,
-                                        move |cx| {
+                                        move |_, cx| {
                                             set_completion_provider(
                                                 fs.clone(),
                                                 cx,
-                                                InlineCompletionProvider::Copilot,
+                                                EditPredictionProvider::Copilot,
                                             )
                                         },
                                     )
                                 }))
                             }
-                            SupermavenButtonStatus::Ready => Some(
-                                this.update(cx, |this, cx| this.build_supermaven_context_menu(cx)),
-                            ),
+                            SupermavenButtonStatus::Ready => Some(this.update(cx, |this, cx| {
+                                this.build_supermaven_context_menu(window, cx)
+                            })),
                             _ => None,
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(IconButton::new("supermaven-icon", icon).tooltip(move |cx| {
-                            if has_menu {
-                                Tooltip::for_action(tooltip_text.clone(), &ToggleMenu, cx)
-                            } else {
-                                Tooltip::text(tooltip_text.clone(), cx)
-                            }
-                        }))
+                        .trigger_with_tooltip(
+                            IconButton::new("supermaven-icon", icon),
+                            move |window, cx| {
+                                if has_menu {
+                                    Tooltip::for_action(
+                                        tooltip_text.clone(),
+                                        &ToggleMenu,
+                                        window,
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::text(tooltip_text.clone())(window, cx)
+                                }
+                            },
+                        )
                         .with_handle(self.popover_menu_handle.clone()),
                 );
             }
 
-            InlineCompletionProvider::Zed => {
-                if !cx.has_flag::<PredictEditsFeatureFlag>() {
-                    return div();
-                }
+            EditPredictionProvider::Zed => {
+                let enabled = self.editor_enabled.unwrap_or(true);
 
-                if !self
-                    .user_store
-                    .read(cx)
-                    .current_user_has_accepted_terms()
-                    .unwrap_or(false)
-                {
-                    let workspace = self.workspace.clone();
-                    let user_store = self.user_store.clone();
+                let zeta_icon = if enabled {
+                    IconName::ZedPredict
+                } else {
+                    IconName::ZedPredictDisabled
+                };
+
+                let current_user_terms_accepted =
+                    self.user_store.read(cx).current_user_has_accepted_terms();
+
+                if !current_user_terms_accepted.unwrap_or(false) {
+                    let signed_in = current_user_terms_accepted.is_some();
+                    let tooltip_meta = if signed_in {
+                        "Read Terms of Service"
+                    } else {
+                        "Sign in to use"
+                    };
 
                     return div().child(
-                        ButtonLike::new("zeta-pending-tos-icon")
-                            .child(
-                                IconWithIndicator::new(
-                                    Icon::new(IconName::ZedPredict),
-                                    Some(Indicator::dot().color(Color::Error)),
-                                )
-                                .indicator_border_color(Some(
-                                    cx.theme().colors().status_bar_background,
-                                ))
-                                .into_any_element(),
-                            )
-                            .tooltip(|cx| {
+                        IconButton::new("zed-predict-pending-button", zeta_icon)
+                            .shape(IconButtonShape::Square)
+                            .indicator(Indicator::dot().color(Color::Muted))
+                            .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                            .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     "Edit Predictions",
                                     None,
-                                    "Read Terms of Service",
+                                    tooltip_meta,
+                                    window,
                                     cx,
                                 )
                             })
-                            .on_click(cx.listener(move |_, _, cx| {
-                                let user_store = user_store.clone();
-
-                                if let Some(workspace) = workspace.upgrade() {
-                                    ZedPredictTos::toggle(workspace, user_store, cx);
-                                }
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                telemetry::event!(
+                                    "Pending ToS Clicked",
+                                    source = "Edit Prediction Status Button"
+                                );
+                                window.dispatch_action(
+                                    zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                                    cx,
+                                );
                             })),
                     );
                 }
 
-                let this = cx.view().clone();
-                let button = IconButton::new("zeta", IconName::ZedPredict).when(
-                    !self.popover_menu_handle.is_deployed(),
-                    |button| {
-                        button.tooltip(|cx| Tooltip::for_action("Edit Prediction", &ToggleMenu, cx))
-                    },
-                );
+                let show_editor_predictions = self.editor_show_predictions;
 
-                let is_refreshing = self
-                    .inline_completion_provider
-                    .as_ref()
-                    .map_or(false, |provider| provider.is_refreshing(cx));
+                let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
+                    .shape(IconButtonShape::Square)
+                    .when(enabled && !show_editor_predictions, |this| {
+                        this.indicator(Indicator::dot().color(Color::Muted))
+                            .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                    })
+                    .when(!self.popover_menu_handle.is_deployed(), |element| {
+                        element.tooltip(move |window, cx| {
+                            if enabled {
+                                if show_editor_predictions {
+                                    Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
+                                } else {
+                                    Tooltip::with_meta(
+                                        "Edit Prediction",
+                                        Some(&ToggleMenu),
+                                        "Hidden For This File",
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            } else {
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    "Disabled For This File",
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
+                    });
+
+                let this = cx.entity().clone();
 
                 let mut popover_menu = PopoverMenu::new("zeta")
-                    .menu(move |cx| {
-                        Some(this.update(cx, |this, cx| this.build_zeta_context_menu(cx)))
+                    .menu(move |window, cx| {
+                        Some(this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx)))
                     })
                     .anchor(Corner::BottomRight)
                     .with_handle(self.popover_menu_handle.clone());
 
+                let is_refreshing = self
+                    .edit_prediction_provider
+                    .as_ref()
+                    .map_or(false, |provider| provider.is_refreshing(cx));
+
                 if is_refreshing {
                     popover_menu = popover_menu.trigger(
-                        button.with_animation(
+                        icon_button.with_animation(
                             "pulsating-label",
                             Animation::new(Duration::from_secs(2))
                                 .repeat()
@@ -289,7 +335,7 @@ impl Render for InlineCompletionButton {
                         ),
                     );
                 } else {
-                    popover_menu = popover_menu.trigger(button);
+                    popover_menu = popover_menu.trigger(icon_button);
                 }
 
                 div().child(popover_menu.into_any_element())
@@ -300,11 +346,10 @@ impl Render for InlineCompletionButton {
 
 impl InlineCompletionButton {
     pub fn new(
-        workspace: WeakView<Workspace>,
         fs: Arc<dyn Fs>,
-        user_store: Model<UserStore>,
+        user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
@@ -316,32 +361,33 @@ impl InlineCompletionButton {
         Self {
             editor_subscription: None,
             editor_enabled: None,
+            editor_show_predictions: true,
+            editor_focus_handle: None,
             language: None,
             file: None,
-            inline_completion_provider: None,
+            edit_prediction_provider: None,
             popover_menu_handle,
-            workspace,
             fs,
             user_store,
         }
     }
 
-    pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    pub fn build_copilot_start_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
-        ContextMenu::build(cx, |menu, _| {
+        ContextMenu::build(window, cx, |menu, _, _| {
             menu.entry("Sign In", None, copilot::initiate_sign_in)
                 .entry("Disable Copilot", None, {
                     let fs = fs.clone();
-                    move |cx| hide_copilot(fs.clone(), cx)
+                    move |_window, cx| hide_copilot(fs.clone(), cx)
                 })
                 .entry("Use Supermaven", None, {
                     let fs = fs.clone();
-                    move |cx| {
-                        set_completion_provider(
-                            fs.clone(),
-                            cx,
-                            InlineCompletionProvider::Supermaven,
-                        )
+                    move |_window, cx| {
+                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Supermaven)
                     }
                 })
         })
@@ -350,72 +396,258 @@ impl InlineCompletionButton {
     pub fn build_language_settings_menu(
         &self,
         mut menu: ContextMenu,
-        cx: &mut WindowContext,
+        window: &Window,
+        cx: &mut App,
     ) -> ContextMenu {
         let fs = self.fs.clone();
+        let line_height = window.line_height();
 
-        if let Some(language) = self.language.clone() {
-            let fs = fs.clone();
-            let language_enabled =
+        menu = menu.header("Show Edit Predictions For");
+
+        let language_state = self.language.as_ref().map(|language| {
+            (
+                language.clone(),
                 language_settings::language_settings(Some(language.name()), None, cx)
-                    .show_inline_completions;
+                    .show_edit_predictions,
+            )
+        });
 
-            menu = menu.entry(
-                format!(
-                    "{} Inline Completions for {}",
-                    if language_enabled { "Hide" } else { "Show" },
-                    language.name()
-                ),
+        if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
+            let entry = ContextMenuEntry::new("This Buffer")
+                .toggleable(IconPosition::Start, self.editor_show_predictions)
+                .action(Box::new(ToggleEditPrediction))
+                .handler(move |window, cx| {
+                    editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
+                });
+
+            match language_state.clone() {
+                Some((language, false)) => {
+                    menu = menu.item(
+                        entry
+                            .disabled(true)
+                            .documentation_aside(move |_cx| {
+                                Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
+                                    .into_any_element()
+                            })
+                    );
+                }
+                Some(_) | None => menu = menu.item(entry),
+            }
+        }
+
+        if let Some((language, language_enabled)) = language_state {
+            let fs = fs.clone();
+
+            menu = menu.toggleable_entry(
+                language.name(),
+                language_enabled,
+                IconPosition::Start,
                 None,
-                move |cx| toggle_inline_completions_for_language(language.clone(), fs.clone(), cx),
+                move |_, cx| {
+                    toggle_show_inline_completions_for_language(language.clone(), fs.clone(), cx)
+                },
             );
         }
 
         let settings = AllLanguageSettings::get_global(cx);
 
-        if let Some(file) = &self.file {
-            let path = file.path().clone();
-            let path_enabled = settings.inline_completions_enabled_for_path(&path);
+        let globally_enabled = settings.show_edit_predictions(None, cx);
+        menu = menu.toggleable_entry("All Files", globally_enabled, IconPosition::Start, None, {
+            let fs = fs.clone();
+            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx)
+        });
 
-            menu = menu.entry(
-                format!(
-                    "{} Inline Completions for This Path",
-                    if path_enabled { "Hide" } else { "Show" }
-                ),
-                None,
-                move |cx| {
-                    if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
-                        if let Ok(workspace) = workspace.root_view(cx) {
-                            let workspace = workspace.downgrade();
-                            cx.spawn(|cx| {
-                                configure_disabled_globs(
-                                    workspace,
-                                    path_enabled.then_some(path.clone()),
-                                    cx,
+        let provider = settings.edit_predictions.provider;
+        let current_mode = settings.edit_predictions_mode();
+        let subtle_mode = matches!(current_mode, EditPredictionsMode::Subtle);
+        let eager_mode = matches!(current_mode, EditPredictionsMode::Eager);
+
+        if matches!(provider, EditPredictionProvider::Zed) {
+            menu = menu
+                .separator()
+                .header("Display Modes")
+                .item(
+                    ContextMenuEntry::new("Eager")
+                        .toggleable(IconPosition::Start, eager_mode)
+                        .documentation_aside(move |_| {
+                            Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
+                        })
+                        .handler({
+                            let fs = fs.clone();
+                            move |_, cx| {
+                                toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Eager, cx)
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Subtle")
+                        .toggleable(IconPosition::Start, subtle_mode)
+                        .documentation_aside(move |_| {
+                            Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
+                        })
+                        .handler({
+                            let fs = fs.clone();
+                            move |_, cx| {
+                                toggle_edit_prediction_mode(fs.clone(), EditPredictionsMode::Subtle, cx)
+                            }
+                        }),
+                );
+        }
+
+        menu = menu.separator().header("Privacy Settings");
+        if let Some(provider) = &self.edit_prediction_provider {
+            let data_collection = provider.data_collection_state(cx);
+            if data_collection.is_supported() {
+                let provider = provider.clone();
+                let enabled = data_collection.is_enabled();
+                let is_open_source = data_collection.is_project_open_source();
+                let is_collecting = data_collection.is_enabled();
+                let (icon_name, icon_color) = if is_open_source && is_collecting {
+                    (IconName::Check, Color::Success)
+                } else {
+                    (IconName::Check, Color::Accent)
+                };
+
+                menu = menu.item(
+                    ContextMenuEntry::new("Training Data Collection")
+                        .toggleable(IconPosition::Start, data_collection.is_enabled())
+                        .icon(icon_name)
+                        .icon_color(icon_color)
+                        .documentation_aside(move |cx| {
+                            let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
+                                (true, true) => (
+                                    "Project identified as open source, and you're sharing data.",
+                                    Color::Default,
+                                    IconName::Check,
+                                    Color::Success,
+                                ),
+                                (true, false) => (
+                                    "Project identified as open source, but you're not sharing data.",
+                                    Color::Muted,
+                                    IconName::Close,
+                                    Color::Muted,
+                                ),
+                                (false, true) => (
+                                    "Project not identified as open source. No data captured.",
+                                    Color::Muted,
+                                    IconName::Close,
+                                    Color::Muted,
+                                ),
+                                (false, false) => (
+                                    "Project not identified as open source, and setting turned off.",
+                                    Color::Muted,
+                                    IconName::Close,
+                                    Color::Muted,
+                                ),
+                            };
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    Label::new(indoc!{
+                                        "Help us improve our open dataset model by sharing data from open source repositories. \
+                                        Zed must detect a license file in your repo for this setting to take effect."
+                                    })
                                 )
+                                .child(
+                                    h_flex()
+                                        .items_start()
+                                        .pt_2()
+                                        .flex_1()
+                                        .gap_1p5()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .child(h_flex().flex_shrink_0().h(line_height).child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color)))
+                                        .child(div().child(msg).w_full().text_sm().text_color(label_color.color(cx)))
+                                )
+                                .into_any_element()
+                        })
+                        .handler(move |_, cx| {
+                            provider.toggle_data_collection(cx);
+
+                            if !enabled {
+                                telemetry::event!(
+                                    "Data Collection Enabled",
+                                    source = "Edit Prediction Status Menu"
+                                );
+                            } else {
+                                telemetry::event!(
+                                    "Data Collection Disabled",
+                                    source = "Edit Prediction Status Menu"
+                                );
+                            }
+                        })
+                );
+
+                if is_collecting && !is_open_source {
+                    menu = menu.item(
+                        ContextMenuEntry::new("No data captured.")
+                            .disabled(true)
+                            .icon(IconName::Close)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small),
+                    );
+                }
+            }
+        }
+
+        menu = menu.item(
+            ContextMenuEntry::new("Configure Excluded Files")
+                .icon(IconName::LockOutlined)
+                .icon_color(Color::Muted)
+                .documentation_aside(|_| {
+                    Label::new(indoc!{"
+                        Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
+                })
+                .handler(move |window, cx| {
+                    if let Some(workspace) = window.root().flatten() {
+                        let workspace = workspace.downgrade();
+                        window
+                            .spawn(cx, async |cx| {
+                                open_disabled_globs_setting_in_editor(
+                                    workspace,
+                                    cx,
+                                ).await
                             })
                             .detach_and_log_err(cx);
-                        }
                     }
-                },
+                }),
+        );
+
+        if !self.editor_enabled.unwrap_or(true) {
+            menu = menu.item(
+                ContextMenuEntry::new("This file is excluded.")
+                    .disabled(true)
+                    .icon(IconName::ZedPredictDisabled)
+                    .icon_size(IconSize::Small),
             );
         }
 
-        let globally_enabled = settings.inline_completions_enabled(None, None, cx);
-        menu.entry(
-            if globally_enabled {
-                "Hide Inline Completions for All Files"
-            } else {
-                "Show Inline Completions for All Files"
-            },
-            None,
-            move |cx| toggle_inline_completions_globally(fs.clone(), cx),
-        )
+        if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
+            menu = menu
+                .separator()
+                .entry(
+                    "Predict Edit at Cursor",
+                    Some(Box::new(ShowEditPrediction)),
+                    {
+                        let editor_focus_handle = editor_focus_handle.clone();
+                        move |window, cx| {
+                            editor_focus_handle.dispatch_action(&ShowEditPrediction, window, cx);
+                        }
+                    },
+                )
+                .context(editor_focus_handle);
+        }
+
+        menu
     }
 
-    fn build_copilot_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, cx| {
-            self.build_language_settings_menu(menu, cx)
+    fn build_copilot_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .link(
                     "Go to Copilot Settings",
@@ -428,34 +660,32 @@ impl InlineCompletionButton {
         })
     }
 
-    fn build_supermaven_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, cx| {
-            self.build_language_settings_menu(menu, cx)
+    fn build_supermaven_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .action("Sign Out", supermaven::SignOut.boxed_clone())
         })
     }
 
-    fn build_zeta_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
-        let workspace = self.workspace.clone();
-        ContextMenu::build(cx, |menu, cx| {
-            self.build_language_settings_menu(menu, cx)
-                .separator()
-                .entry(
-                    "Rate Completions",
-                    Some(RateCompletions.boxed_clone()),
-                    move |cx| {
-                        workspace
-                            .update(cx, |workspace, cx| {
-                                RateCompletionModal::toggle(workspace, cx)
-                            })
-                            .ok();
-                    },
-                )
+    fn build_zeta_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx).when(
+                cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
+                |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
+            )
         })
     }
 
-    pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    pub fn update_enabled(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let suggestion_anchor = editor.selections.newest_anchor().start;
@@ -464,28 +694,34 @@ impl InlineCompletionButton {
         self.editor_enabled = {
             let file = file.as_ref();
             Some(
-                file.map(|file| !file.is_private()).unwrap_or(true)
-                    && all_language_settings(file, cx).inline_completions_enabled(
-                        language,
-                        file.map(|file| file.path().as_ref()),
-                        cx,
-                    ),
+                file.map(|file| {
+                    all_language_settings(Some(file), cx)
+                        .edit_predictions_enabled_for_file(file, cx)
+                })
+                .unwrap_or(true),
             )
         };
-        self.inline_completion_provider = editor.inline_completion_provider();
+        self.editor_show_predictions = editor.edit_predictions_enabled();
+        self.edit_prediction_provider = editor.edit_prediction_provider();
         self.language = language.cloned();
         self.file = file;
+        self.editor_focus_handle = Some(editor.focus_handle(cx));
 
-        cx.notify()
+        cx.notify();
     }
 
-    pub fn toggle_menu(&mut self, cx: &mut ViewContext<Self>) {
-        self.popover_menu_handle.toggle(cx);
+    pub fn toggle_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.popover_menu_handle.toggle(window, cx);
     }
 }
 
 impl StatusItemView for InlineCompletionButton {
-    fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
+    fn set_active_pane_item(
+        &mut self,
+        item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
             self.editor_subscription = Some((
                 cx.observe(&editor, Self::update_enabled),
@@ -528,14 +764,13 @@ impl SupermavenButtonStatus {
     }
 }
 
-async fn configure_disabled_globs(
-    workspace: WeakView<Workspace>,
-    path_to_disable: Option<Arc<Path>>,
-    mut cx: AsyncWindowContext,
+async fn open_disabled_globs_setting_in_editor(
+    workspace: WeakEntity<Workspace>,
+    cx: &mut AsyncWindowContext,
 ) -> Result<()> {
     let settings_editor = workspace
-        .update(&mut cx, |_, cx| {
-            create_and_open_local_file(paths::settings_file(), cx, || {
+        .update_in(cx, |_, window, cx| {
+            create_and_open_local_file(paths::settings_file(), window, cx, || {
                 settings::initial_user_settings_content().as_ref().into()
             })
         })?
@@ -543,83 +778,99 @@ async fn configure_disabled_globs(
         .downcast::<Editor>()
         .unwrap();
 
-    settings_editor.downgrade().update(&mut cx, |item, cx| {
-        let text = item.buffer().read(cx).snapshot(cx).text();
+    settings_editor
+        .downgrade()
+        .update_in(cx, |item, window, cx| {
+            let text = item.buffer().read(cx).snapshot(cx).text();
 
-        let settings = cx.global::<SettingsStore>();
-        let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-            let copilot = file.inline_completions.get_or_insert_with(Default::default);
-            let globs = copilot.disabled_globs.get_or_insert_with(|| {
-                settings
-                    .get::<AllLanguageSettings>(None)
-                    .inline_completions
+            let settings = cx.global::<SettingsStore>();
+
+            // Ensure that we always have "inline_completions { "disabled_globs": [] }"
+            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
+                file.edit_predictions
+                    .get_or_insert_with(Default::default)
                     .disabled_globs
-                    .iter()
-                    .map(|glob| glob.glob().to_string())
-                    .collect()
+                    .get_or_insert_with(Vec::new);
             });
 
-            if let Some(path_to_disable) = &path_to_disable {
-                globs.push(path_to_disable.to_string_lossy().into_owned());
-            } else {
-                globs.clear();
-            }
-        });
-
-        if !edits.is_empty() {
-            item.change_selections(Some(Autoscroll::newest()), cx, |selections| {
-                selections.select_ranges(edits.iter().map(|e| e.0.clone()));
-            });
-
-            // When *enabling* a path, don't actually perform an edit, just select the range.
-            if path_to_disable.is_some() {
+            if !edits.is_empty() {
                 item.edit(edits.iter().cloned(), cx);
             }
-        }
-    })?;
+
+            let text = item.buffer().read(cx).snapshot(cx).text();
+
+            static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+                Regex::new(r#""disabled_globs":\s*\[\s*(?P<content>(?:.|\n)*?)\s*\]"#).unwrap()
+            });
+            // Only capture [...]
+            let range = DISABLED_GLOBS_REGEX.captures(&text).and_then(|captures| {
+                captures
+                    .name("content")
+                    .map(|inner_match| inner_match.start()..inner_match.end())
+            });
+            if let Some(range) = range {
+                item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
+                    selections.select_ranges(vec![range]);
+                });
+            }
+        })?;
 
     anyhow::Ok(())
 }
 
-fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(None, None, cx);
+fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
+    let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.defaults.show_inline_completions = Some(!show_inline_completions)
+        file.defaults.show_edit_predictions = Some(!show_edit_predictions)
     });
 }
 
-fn set_completion_provider(
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-    provider: InlineCompletionProvider,
-) {
+fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredictionProvider) {
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.features
             .get_or_insert(Default::default())
-            .inline_completion_provider = Some(provider);
+            .edit_prediction_provider = Some(provider);
     });
 }
 
-fn toggle_inline_completions_for_language(
+fn toggle_show_inline_completions_for_language(
     language: Arc<Language>,
     fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
-    let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(Some(&language), None, cx);
+    let show_edit_predictions =
+        all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())
             .or_default()
-            .show_inline_completions = Some(!show_inline_completions);
+            .show_edit_predictions = Some(!show_edit_predictions);
     });
 }
 
-fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.features
             .get_or_insert(Default::default())
-            .inline_completion_provider = Some(InlineCompletionProvider::None);
+            .edit_prediction_provider = Some(EditPredictionProvider::None);
     });
+}
+
+fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &mut App) {
+    let settings = AllLanguageSettings::get_global(cx);
+    let current_mode = settings.edit_predictions_mode();
+
+    if current_mode != mode {
+        update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _cx| {
+            if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
+                edit_predictions.mode = mode;
+            } else {
+                settings.edit_predictions =
+                    Some(language_settings::EditPredictionSettingsContent {
+                        mode,
+                        ..Default::default()
+                    });
+            }
+        });
+    }
 }

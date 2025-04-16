@@ -1,23 +1,23 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{
-    Appearance, IconTheme, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent,
-    DEFAULT_ICON_THEME_NAME,
+    Appearance, DEFAULT_ICON_THEME_NAME, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme,
+    ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    WindowContext,
+    App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
+    Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
+    r#gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{add_references_to_properties, Settings, SettingsJsonSchemaParams, SettingsSources};
+use settings::{Settings, SettingsJsonSchemaParams, SettingsSources, add_references_to_properties};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -95,13 +95,13 @@ pub struct ThemeSettings {
     /// as well as the size of a [gpui::Rems] unit.
     ///
     /// Changing this will impact the size of all UI elements.
-    pub ui_font_size: Pixels,
+    ui_font_size: Pixels,
     /// The font used for UI elements.
     pub ui_font: Font,
     /// The font size used for buffers, and the terminal.
     ///
     /// The terminal font size can be overridden using it's own setting.
-    pub buffer_font_size: Pixels,
+    buffer_font_size: Pixels,
     /// The font used for buffers, and the terminal.
     ///
     /// The terminal font family can be overridden using it's own setting.
@@ -113,7 +113,6 @@ pub struct ThemeSettings {
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_line_height: BufferLineHeight,
     /// The current theme selection.
-    /// TODO: Document this further
     pub theme_selection: Option<ThemeSelection>,
     /// The active theme.
     pub active_theme: Arc<Theme>,
@@ -121,6 +120,8 @@ pub struct ThemeSettings {
     ///
     /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
     pub theme_overrides: Option<ThemeStyleContent>,
+    /// The current icon theme selection.
+    pub icon_theme_selection: Option<IconThemeSelection>,
     /// The active icon theme.
     pub active_icon_theme: Arc<IconTheme>,
     /// The density of the UI.
@@ -146,7 +147,7 @@ impl ThemeSettings {
     ///
     /// Reads the [`ThemeSettings`] to know which theme should be loaded,
     /// taking into account the current [`SystemAppearance`].
-    pub fn reload_current_theme(cx: &mut AppContext) {
+    pub fn reload_current_theme(cx: &mut App) {
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
         let system_appearance = SystemAppearance::global(cx);
 
@@ -156,11 +157,44 @@ impl ThemeSettings {
             // If the selected theme doesn't exist, fall back to a default theme
             // based on the system appearance.
             let theme_registry = ThemeRegistry::global(cx);
-            if theme_registry.get(theme_name).ok().is_none() {
+            if let Err(err @ ThemeNotFoundError(_)) = theme_registry.get(theme_name) {
+                if theme_registry.extensions_loaded() {
+                    log::error!("{err}");
+                }
+
                 theme_name = Self::default_theme(*system_appearance);
             };
 
             if let Some(_theme) = theme_settings.switch_theme(theme_name, cx) {
+                ThemeSettings::override_global(theme_settings, cx);
+            }
+        }
+    }
+
+    /// Reloads the current icon theme.
+    ///
+    /// Reads the [`ThemeSettings`] to know which icon theme should be loaded,
+    /// taking into account the current [`SystemAppearance`].
+    pub fn reload_current_icon_theme(cx: &mut App) {
+        let mut theme_settings = ThemeSettings::get_global(cx).clone();
+        let system_appearance = SystemAppearance::global(cx);
+
+        if let Some(icon_theme_selection) = theme_settings.icon_theme_selection.clone() {
+            let mut icon_theme_name = icon_theme_selection.icon_theme(*system_appearance);
+
+            // If the selected icon theme doesn't exist, fall back to the default theme.
+            let theme_registry = ThemeRegistry::global(cx);
+            if let Err(err @ IconThemeNotFoundError(_)) =
+                theme_registry.get_icon_theme(icon_theme_name)
+            {
+                if theme_registry.extensions_loaded() {
+                    log::error!("{err}");
+                }
+
+                icon_theme_name = DEFAULT_ICON_THEME_NAME;
+            };
+
+            if let Some(_theme) = theme_settings.switch_icon_theme(icon_theme_name, cx) {
                 ThemeSettings::override_global(theme_settings, cx);
             }
         }
@@ -184,7 +218,7 @@ impl Global for GlobalSystemAppearance {}
 
 impl SystemAppearance {
     /// Initializes the [`SystemAppearance`] for the application.
-    pub fn init(cx: &mut AppContext) {
+    pub fn init(cx: &mut App) {
         *cx.default_global::<GlobalSystemAppearance>() =
             GlobalSystemAppearance(SystemAppearance(cx.window_appearance().into()));
     }
@@ -192,20 +226,30 @@ impl SystemAppearance {
     /// Returns the global [`SystemAppearance`].
     ///
     /// Inserts a default [`SystemAppearance`] if one does not yet exist.
-    pub(crate) fn default_global(cx: &mut AppContext) -> Self {
+    pub(crate) fn default_global(cx: &mut App) -> Self {
         cx.default_global::<GlobalSystemAppearance>().0
     }
 
     /// Returns the global [`SystemAppearance`].
-    pub fn global(cx: &AppContext) -> Self {
+    pub fn global(cx: &App) -> Self {
         cx.global::<GlobalSystemAppearance>().0
     }
 
     /// Returns a mutable reference to the global [`SystemAppearance`].
-    pub fn global_mut(cx: &mut AppContext) -> &mut Self {
+    pub fn global_mut(cx: &mut App) -> &mut Self {
         cx.global_mut::<GlobalSystemAppearance>()
     }
 }
+
+#[derive(Default)]
+struct BufferFontSize(Pixels);
+
+impl Global for BufferFontSize {}
+
+#[derive(Default)]
+pub(crate) struct UiFontSize(Pixels);
+
+impl Global for UiFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -276,6 +320,55 @@ impl ThemeSelection {
     }
 }
 
+fn icon_theme_name_ref(_: &mut SchemaGenerator) -> Schema {
+    Schema::new_ref("#/definitions/IconThemeName".into())
+}
+
+/// Represents the selection of an icon theme, which can be either static or dynamic.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum IconThemeSelection {
+    /// A static icon theme selection, represented by a single icon theme name.
+    Static(#[schemars(schema_with = "icon_theme_name_ref")] String),
+    /// A dynamic icon theme selection, which can change based on the [`ThemeMode`].
+    Dynamic {
+        /// The mode used to determine which theme to use.
+        #[serde(default)]
+        mode: ThemeMode,
+        /// The icon theme to use for light mode.
+        #[schemars(schema_with = "icon_theme_name_ref")]
+        light: String,
+        /// The icon theme to use for dark mode.
+        #[schemars(schema_with = "icon_theme_name_ref")]
+        dark: String,
+    },
+}
+
+impl IconThemeSelection {
+    /// Returns the icon theme name based on the given [`Appearance`].
+    pub fn icon_theme(&self, system_appearance: Appearance) -> &str {
+        match self {
+            Self::Static(theme) => theme,
+            Self::Dynamic { mode, light, dark } => match mode {
+                ThemeMode::Light => light,
+                ThemeMode::Dark => dark,
+                ThemeMode::System => match system_appearance {
+                    Appearance::Light => light,
+                    Appearance::Dark => dark,
+                },
+            },
+        }
+    }
+
+    /// Returns the [`ThemeMode`] for the [`IconThemeSelection`].
+    pub fn mode(&self) -> Option<ThemeMode> {
+        match self {
+            IconThemeSelection::Static(_) => None,
+            IconThemeSelection::Dynamic { mode, .. } => Some(*mode),
+        }
+    }
+}
+
 /// Settings for rendering text in UI and text buffers.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
@@ -320,11 +413,8 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.
-    ///
-    /// Currently not exposed to the user.
-    #[serde(skip)]
     #[serde(default)]
-    pub icon_theme: Option<String>,
+    pub icon_theme: Option<IconThemeSelection>,
 
     /// UNSTABLE: Expect many elements to be broken.
     ///
@@ -373,6 +463,27 @@ impl ThemeSettingsContent {
         }
     }
 
+    /// Sets the icon theme for the given appearance to the icon theme with the specified name.
+    pub fn set_icon_theme(&mut self, icon_theme_name: String, appearance: Appearance) {
+        if let Some(selection) = self.icon_theme.as_mut() {
+            let icon_theme_to_update = match selection {
+                IconThemeSelection::Static(theme) => theme,
+                IconThemeSelection::Dynamic { mode, light, dark } => match mode {
+                    ThemeMode::Light => light,
+                    ThemeMode::Dark => dark,
+                    ThemeMode::System => match appearance {
+                        Appearance::Light => light,
+                        Appearance::Dark => dark,
+                    },
+                },
+            };
+
+            *icon_theme_to_update = icon_theme_name.to_string();
+        } else {
+            self.icon_theme = Some(IconThemeSelection::Static(icon_theme_name.to_string()));
+        }
+    }
+
     /// Sets the mode for the theme.
     pub fn set_mode(&mut self, mode: ThemeMode) {
         if let Some(selection) = self.theme.as_mut() {
@@ -398,6 +509,27 @@ impl ThemeSettingsContent {
                 light: ThemeSettings::DEFAULT_LIGHT_THEME.into(),
                 dark: ThemeSettings::DEFAULT_DARK_THEME.into(),
             });
+        }
+
+        if let Some(selection) = self.icon_theme.as_mut() {
+            match selection {
+                IconThemeSelection::Static(icon_theme) => {
+                    // If the icon theme was previously set to a single static
+                    // theme, we don't know whether it was a light or dark
+                    // theme, so we just use it for both.
+                    self.icon_theme = Some(IconThemeSelection::Dynamic {
+                        mode,
+                        light: icon_theme.clone(),
+                        dark: icon_theme.clone(),
+                    });
+                }
+                IconThemeSelection::Dynamic {
+                    mode: mode_to_update,
+                    ..
+                } => *mode_to_update = mode,
+            }
+        } else {
+            self.icon_theme = Some(IconThemeSelection::Static(DEFAULT_ICON_THEME_NAME.into()));
         }
     }
 }
@@ -429,14 +561,38 @@ impl BufferLineHeight {
 }
 
 impl ThemeSettings {
-    /// Returns the [AdjustedBufferFontSize].
-    pub fn buffer_font_size(&self) -> Pixels {
-        Self::clamp_font_size(self.buffer_font_size)
+    /// Returns the buffer font size.
+    pub fn buffer_font_size(&self, cx: &App) -> Pixels {
+        let font_size = cx
+            .try_global::<BufferFontSize>()
+            .map(|size| size.0)
+            .unwrap_or(self.buffer_font_size);
+        clamp_font_size(font_size)
     }
 
-    /// Ensures that the font size is within the valid range.
-    pub fn clamp_font_size(size: Pixels) -> Pixels {
-        size.max(MIN_FONT_SIZE)
+    /// Returns the UI font size.
+    pub fn ui_font_size(&self, cx: &App) -> Pixels {
+        let font_size = cx
+            .try_global::<UiFontSize>()
+            .map(|size| size.0)
+            .unwrap_or(self.ui_font_size);
+        clamp_font_size(font_size)
+    }
+
+    /// Returns the buffer font size, read from the settings.
+    ///
+    /// The real buffer font size is stored in-memory, to support temporary font size changes.
+    /// Use [`Self::buffer_font_size`] to get the real font size.
+    pub fn buffer_font_size_settings(&self) -> Pixels {
+        self.buffer_font_size
+    }
+
+    /// Returns the UI font size, read from the settings.
+    ///
+    /// The real UI font size is stored in-memory, to support temporary font size changes.
+    /// Use [`Self::ui_font_size`] to get the real font size.
+    pub fn ui_font_size_settings(&self) -> Pixels {
+        self.ui_font_size
     }
 
     // TODO: Rename: `line_height` -> `buffer_line_height`
@@ -449,14 +605,19 @@ impl ThemeSettings {
     ///
     /// Returns a `Some` containing the new theme if it was successful.
     /// Returns `None` otherwise.
-    pub fn switch_theme(&mut self, theme: &str, cx: &mut AppContext) -> Option<Arc<Theme>> {
+    pub fn switch_theme(&mut self, theme: &str, cx: &mut App) -> Option<Arc<Theme>> {
         let themes = ThemeRegistry::default_global(cx);
 
         let mut new_theme = None;
 
-        if let Some(theme) = themes.get(theme).log_err() {
-            self.active_theme = theme.clone();
-            new_theme = Some(theme);
+        match themes.get(theme) {
+            Ok(theme) => {
+                self.active_theme = theme.clone();
+                new_theme = Some(theme);
+            }
+            Err(err @ ThemeNotFoundError(_)) => {
+                log::error!("{err}");
+            }
         }
 
         self.apply_theme_overrides();
@@ -491,19 +652,103 @@ impl ThemeSettings {
             self.active_theme = Arc::new(base_theme);
         }
     }
+
+    /// Switches to the icon theme with the given name, if it exists.
+    ///
+    /// Returns a `Some` containing the new icon theme if it was successful.
+    /// Returns `None` otherwise.
+    pub fn switch_icon_theme(&mut self, icon_theme: &str, cx: &mut App) -> Option<Arc<IconTheme>> {
+        let themes = ThemeRegistry::default_global(cx);
+
+        let mut new_icon_theme = None;
+
+        if let Some(icon_theme) = themes.get_icon_theme(icon_theme).log_err() {
+            self.active_icon_theme = icon_theme.clone();
+            new_icon_theme = Some(icon_theme);
+            cx.refresh_windows();
+        }
+
+        new_icon_theme
+    }
+}
+
+/// Observe changes to the adjusted buffer font size.
+pub fn observe_buffer_font_size_adjustment<V: 'static>(
+    cx: &mut Context<V>,
+    f: impl 'static + Fn(&mut V, &mut Context<V>),
+) -> Subscription {
+    cx.observe_global::<BufferFontSize>(f)
+}
+
+/// Gets the font size, adjusted by the difference between the current buffer font size and the one set in the settings.
+pub fn adjusted_font_size(size: Pixels, cx: &App) -> Pixels {
+    let adjusted_font_size =
+        if let Some(BufferFontSize(adjusted_size)) = cx.try_global::<BufferFontSize>() {
+            let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+            let delta = *adjusted_size - buffer_font_size;
+            size + delta
+        } else {
+            size
+        };
+    clamp_font_size(adjusted_font_size)
+}
+
+/// Adjusts the buffer font size.
+pub fn adjust_buffer_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+    let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+    let mut adjusted_size = cx
+        .try_global::<BufferFontSize>()
+        .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
+
+    f(&mut adjusted_size);
+    cx.set_global(BufferFontSize(clamp_font_size(adjusted_size)));
+    cx.refresh_windows();
+}
+
+/// Resets the buffer font size to the default value.
+pub fn reset_buffer_font_size(cx: &mut App) {
+    if cx.has_global::<BufferFontSize>() {
+        cx.remove_global::<BufferFontSize>();
+        cx.refresh_windows();
+    }
 }
 
 // TODO: Make private, change usages to use `get_ui_font_size` instead.
 #[allow(missing_docs)]
-pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
+pub fn setup_ui_font(window: &mut Window, cx: &mut App) -> gpui::Font {
     let (ui_font, ui_font_size) = {
         let theme_settings = ThemeSettings::get_global(cx);
         let font = theme_settings.ui_font.clone();
-        (font, theme_settings.ui_font_size)
+        (font, theme_settings.ui_font_size(cx))
     };
 
-    cx.set_rem_size(ui_font_size);
+    window.set_rem_size(ui_font_size);
     ui_font
+}
+
+/// Sets the adjusted UI font size.
+pub fn adjust_ui_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+    let mut adjusted_size = cx
+        .try_global::<UiFontSize>()
+        .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
+
+    f(&mut adjusted_size);
+    cx.set_global(UiFontSize(clamp_font_size(adjusted_size)));
+    cx.refresh_windows();
+}
+
+/// Resets the UI font size to the default value.
+pub fn reset_ui_font_size(cx: &mut App) {
+    if cx.has_global::<UiFontSize>() {
+        cx.remove_global::<UiFontSize>();
+        cx.refresh_windows();
+    }
+}
+
+/// Ensures font size is within the valid range.
+pub fn clamp_font_size(size: Pixels) -> Pixels {
+    size.max(MIN_FONT_SIZE)
 }
 
 fn clamp_font_weight(weight: f32) -> FontWeight {
@@ -515,7 +760,7 @@ impl settings::Settings for ThemeSettings {
 
     type FileContent = ThemeSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, cx: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self> {
         let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);
 
@@ -550,10 +795,15 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             theme_overrides: None,
+            icon_theme_selection: defaults.icon_theme.clone(),
             active_icon_theme: defaults
                 .icon_theme
                 .as_ref()
-                .and_then(|name| themes.get_icon_theme(name).ok())
+                .and_then(|selection| {
+                    themes
+                        .get_icon_theme(selection.icon_theme(*system_appearance))
+                        .ok()
+                })
                 .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_NAME).unwrap()),
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
@@ -600,8 +850,15 @@ impl settings::Settings for ThemeSettings {
 
                 let theme_name = value.theme(*system_appearance);
 
-                if let Some(theme) = themes.get(theme_name).log_err() {
-                    this.active_theme = theme;
+                match themes.get(theme_name) {
+                    Ok(theme) => {
+                        this.active_theme = theme;
+                    }
+                    Err(err @ ThemeNotFoundError(_)) => {
+                        if themes.extensions_loaded() {
+                            log::error!("{err}");
+                        }
+                    }
                 }
             }
 
@@ -609,8 +866,19 @@ impl settings::Settings for ThemeSettings {
             this.apply_theme_overrides();
 
             if let Some(value) = &value.icon_theme {
-                if let Some(icon_theme) = themes.get_icon_theme(value).log_err() {
-                    this.active_icon_theme = icon_theme.clone();
+                this.icon_theme_selection = Some(value.clone());
+
+                let icon_theme_name = value.icon_theme(*system_appearance);
+
+                match themes.get_icon_theme(icon_theme_name) {
+                    Ok(icon_theme) => {
+                        this.active_icon_theme = icon_theme;
+                    }
+                    Err(err @ IconThemeNotFoundError(_)) => {
+                        if themes.extensions_loaded() {
+                            log::error!("{err}");
+                        }
+                    }
                 }
             }
 
@@ -636,7 +904,7 @@ impl settings::Settings for ThemeSettings {
     fn json_schema(
         generator: &mut SchemaGenerator,
         params: &SettingsJsonSchemaParams,
-        cx: &AppContext,
+        cx: &App,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
         let theme_names = ThemeRegistry::global(cx)
@@ -651,8 +919,21 @@ impl settings::Settings for ThemeSettings {
             ..Default::default()
         };
 
+        let icon_theme_names = ThemeRegistry::global(cx)
+            .list_icon_themes()
+            .into_iter()
+            .map(|icon_theme| Value::String(icon_theme.name.to_string()))
+            .collect();
+
+        let icon_theme_name_schema = SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            enum_values: Some(icon_theme_names),
+            ..Default::default()
+        };
+
         root_schema.definitions.extend([
             ("ThemeName".into(), theme_name_schema.into()),
+            ("IconThemeName".into(), icon_theme_name_schema.into()),
             ("FontFamilies".into(), params.font_family_schema()),
             ("FontFallbacks".into(), params.font_fallback_schema()),
         ]);

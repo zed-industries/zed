@@ -31,6 +31,7 @@ pub enum EntrySpacing {
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
     pub button: bool,
+    pub hide_gitignore: bool,
     pub default_width: Pixels,
     pub dock: ProjectPanelDockPosition,
     pub entry_spacing: EntrySpacing,
@@ -93,6 +94,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub button: Option<bool>,
+    /// Whether to hide gitignore files in the project panel.
+    ///
+    /// Default: false
+    pub hide_gitignore: Option<bool>,
     /// Customize default width (in pixels) taken by project panel
     ///
     /// Default: 240
@@ -149,7 +154,7 @@ impl Settings for ProjectPanelSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }

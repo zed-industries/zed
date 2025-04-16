@@ -5,7 +5,6 @@ use objc::{class, msg_send, sel, sel_impl};
 /// The `cocoa` crate does not define NSAttributedString (and related Cocoa classes),
 /// which are needed for copying rich text (that is, text intermingled with images)
 /// to the clipboard. This adds access to those APIs.
-
 #[allow(non_snake_case)]
 pub trait NSAttributedString: Sized {
     unsafe fn alloc(_: Self) -> id {

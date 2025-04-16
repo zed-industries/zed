@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context as _, Result, anyhow};
 use smallvec::SmallVec;
 use std::{collections::BTreeMap, ops::Range};
 

@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       danger:
-        specifier: 12.3.3
-        version: 12.3.3
+        specifier: 12.3.4
+        version: 12.3.4
       danger-plugin-pr-hygiene:
         specifier: 0.5.0
         version: 0.5.0
@@ -122,8 +122,8 @@ packages:
   danger-plugin-pr-hygiene@0.5.0:
     resolution: {integrity: sha512-5z8vImexNVLG0V3LpGMp4RbMoU5Unjn9Na0Dv79gozYqgKJgIlaVRfxGTWxdJP0/TXO8NwDAQYdlwy+vqvfTsg==}
 
-  danger@12.3.3:
-    resolution: {integrity: sha512-nZKzpgXN21rr4dwa6bFhM7G2JEa79dZRJiT3RVRSyi4yk1/hgZ2f8HDGoa7tMladTmu8WjJFyE3LpBIihh+aDw==}
+  danger@12.3.4:
+    resolution: {integrity: sha512-esr6iowAryWjWkMzOKyOmMRkamPkDRhC6OAj2tO48i0oobObdP0d8I/YE+qSj9m+/RRcrhaKnysvPL51eW1m3w==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -601,7 +601,7 @@ snapshots:
       fp-ts: 2.12.2
       io-ts: 2.2.17(fp-ts@2.12.2)
 
-  danger@12.3.3:
+  danger@12.3.4:
     dependencies:
       '@gitbeaker/rest': 38.12.1
       '@octokit/rest': 18.12.0

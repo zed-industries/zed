@@ -7,12 +7,12 @@ use std::{
 use calloop::{LoopHandle, PostAction};
 use filedescriptor::Pipe;
 use strum::IntoEnumIterator;
-use wayland_client::{protocol::wl_data_offer::WlDataOffer, Connection};
+use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
 use crate::{
-    hash, platform::linux::platform::read_fd, ClipboardEntry, ClipboardItem, Image, ImageFormat,
-    WaylandClientStatePtr,
+    ClipboardEntry, ClipboardItem, Image, ImageFormat, WaylandClientStatePtr, hash,
+    platform::linux::platform::read_fd,
 };
 
 pub(crate) const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
@@ -256,7 +256,7 @@ impl Clipboard {
                             }
                             Ok(n) => written += n,
                             Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                                break Ok(PostAction::Continue)
+                                break Ok(PostAction::Continue);
                             }
                             Err(_) => break Ok(PostAction::Remove),
                         }

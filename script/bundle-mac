@@ -70,10 +70,9 @@ export ZED_RELEASE_CHANNEL="${channel}"
 popd
 
 export ZED_BUNDLE=true
-export MACOSX_DEPLOYMENT_TARGET=10.15.7
 
 cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
-if [ "$cargo_bundle_version" != "cargo-bundle v0.6.0-zed" ]; then
+if [ "$cargo_bundle_version" != "cargo-bundle v0.6.1-zed" ]; then
     cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
 fi
 
@@ -118,7 +117,7 @@ mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
 
-if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_USERNAME:-}" && -n "${APPLE_NOTARIZATION_PASSWORD:-}" ]]; then
+if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_KEY:-}" && -n "${APPLE_NOTARIZATION_KEY_ID:-}" && -n "${APPLE_NOTARIZATION_ISSUER_ID:-}" ]]; then
     can_code_sign=true
 
     echo "Setting up keychain for code signing..."
@@ -192,11 +191,13 @@ function prepare_binaries() {
     local app_path=$2
 
     echo "Unpacking dSYMs for $architecture"
-    if ! dsymutil --flat target/${architecture}/${target_dir}/Zed 2> target/dsymutil.log; then
+    exe_path="target/${architecture}/${target_dir}/Zed"
+    if ! dsymutil --flat "${exe_path}" 2> target/dsymutil.log; then
         echo "dsymutil failed"
         cat target/dsymutil.log
         exit 1
     fi
+    uuid=$(dwarfdump --uuid "${exe_path}" | cut -d ' ' -f 2 | tr 'A-F' 'a-f')
     version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
     if [ "$channel" == "nightly" ]; then
         version="$version-$(git rev-parse --short HEAD)"
@@ -208,11 +209,11 @@ function prepare_binaries() {
     echo "Gzipping dSYMs for $architecture"
     gzip -f target/${architecture}/${target_dir}/Zed.dwarf
 
-    echo "Uploading dSYMs for $architecture"
+    echo "Uploading dSYMs${architecture} for $architecture to by-uuid/${uuid}.dwarf.gz"
     upload_to_blob_store_public \
         "zed-debug-symbols" \
         target/${architecture}/${target_dir}/Zed.dwarf.gz \
-        "$channel/Zed-$version-${architecture}.dwarf.gz"
+        "by-uuid/${uuid}.dwarf.gz"
 
     cp target/${architecture}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
     cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
@@ -222,13 +223,9 @@ function sign_app_binaries() {
     local app_path=$1
     local architecture=$2
     local architecture_dir=$3
-    echo "Copying WebRTC.framework into the frameworks folder"
     rm -rf "${app_path}/Contents/Frameworks"
     mkdir -p "${app_path}/Contents/Frameworks"
-    if [ "$local_arch" = false ]; then
-        cp -R target/${local_target_triple}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
-    else
-        cp -R target/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
+    if [ "$local_arch" = true ]; then
         cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
     fi
 
@@ -241,13 +238,12 @@ function sign_app_binaries() {
     if [[ $can_code_sign = true ]]; then
         echo "Code signing binaries"
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
-        /usr/bin/codesign --deep --force --timestamp --sign "$IDENTITY" "${app_path}/Contents/Frameworks/WebRTC.framework" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/zed" -v
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
     else
-        echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
+        echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_KEY, APPLE_NOTARIZATION_KEY_ID, APPLE_NOTARIZATION_ISSUER_ID"
         if [[ "$local_only" = false ]]; then
             echo "To create a self-signed local build use ./scripts/build.sh -ldf"
             exit 1
@@ -311,23 +307,7 @@ function sign_app_binaries() {
         rm -rf ${dmg_source_directory}
         mkdir -p ${dmg_source_directory}
         mv "${app_path}" "${dmg_source_directory}"
-
-        if [[ $can_code_sign = true ]]; then
-            echo "Creating temporary DMG at ${dmg_file_path} using ${dmg_source_directory} to notarize app bundle"
-            hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
-
-            echo "Code-signing DMG"
-            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
-
-            echo "Notarizing DMG with Apple"
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTARIZATION_TEAM" "${dmg_file_path}"
-
-            echo "Removing temporary DMG (used only for notarization)"
-            rm "${dmg_file_path}"
-
-            echo "Stapling notarization ticket to ${dmg_source_directory}/${bundle_name}"
-            "${xcode_bin_dir_path}/stapler" staple "${dmg_source_directory}/${bundle_name}"
-        fi
+        notarization_key_file=$(mktemp)
 
         echo "Adding symlink to /Applications to ${dmg_source_directory}"
         ln -s /Applications ${dmg_source_directory}
@@ -347,7 +327,9 @@ function sign_app_binaries() {
         if [[ $can_code_sign = true ]]; then
             echo "Notarizing DMG with Apple"
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTARIZATION_TEAM" "${dmg_file_path}"
+            echo "$APPLE_NOTARIZATION_KEY" > "$notarization_key_file"
+            "${xcode_bin_dir_path}/notarytool" submit --wait --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
+            rm "$notarization_key_file"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
         fi
 

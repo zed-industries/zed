@@ -1,6 +1,6 @@
 mod archive;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -10,6 +10,7 @@ use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
+use std::env;
 use std::ffi::OsString;
 use std::io;
 use std::process::{Output, Stdio};
@@ -19,6 +20,8 @@ use std::{
     sync::Arc,
 };
 use util::ResultExt;
+
+const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeBinaryOptions {
@@ -276,10 +279,12 @@ impl ManagedNodeRuntime {
 
     async fn node_environment_path(&self) -> Result<OsString> {
         let node_binary = self.installation_path.join(Self::NODE_PATH);
-        let mut env_path = vec![node_binary
-            .parent()
-            .expect("invalid node binary path")
-            .to_path_buf()];
+        let mut env_path = vec![
+            node_binary
+                .parent()
+                .expect("invalid node binary path")
+                .to_path_buf(),
+        ];
 
         if let Some(existing_path) = std::env::var_os("PATH") {
             let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
@@ -307,13 +312,15 @@ impl ManagedNodeRuntime {
 
         let version = Self::VERSION;
         let folder_name = format!("node-{version}-{os}-{arch}");
-        let node_containing_dir = paths::support_dir().join("node");
+        let node_containing_dir = paths::data_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
+        let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
         let result = util::command::new_smol_command(&node_binary)
             .env_clear()
+            .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(npm_file)
             .arg("--version")
             .stdin(Stdio::null())
@@ -404,9 +411,12 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
                 return Err(anyhow!("missing npm file"));
             }
 
+            let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
+
             let mut command = util::command::new_smol_command(node_binary);
             command.env_clear();
             command.env("PATH", env_path);
+            command.env(NODE_CA_CERTS_ENV_VAR, node_ca_certs);
             command.arg(npm_file).arg(subcommand);
             command.args(["--cache".into(), self.installation_path.join("cache")]);
             command.args([
@@ -463,7 +473,7 @@ pub struct SystemNodeRuntime {
 }
 
 impl SystemNodeRuntime {
-    const MIN_VERSION: semver::Version = Version::new(18, 0, 0);
+    const MIN_VERSION: semver::Version = Version::new(20, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Box<dyn NodeRuntimeTrait>> {
         let output = util::command::new_smol_command(&node)
             .arg("--version")
@@ -488,15 +498,9 @@ impl SystemNodeRuntime {
             )
         }
 
-        let scratch_dir = paths::support_dir().join("node");
+        let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         fs::create_dir(scratch_dir.join("cache")).await.ok();
-        fs::write(scratch_dir.join("blank_user_npmrc"), [])
-            .await
-            .ok();
-        fs::write(scratch_dir.join("blank_global_npmrc"), [])
-            .await
-            .ok();
 
         let mut this = Self {
             node,
@@ -535,20 +539,14 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
+        let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
         let mut command = util::command::new_smol_command(self.npm.clone());
         command
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
             .args(["--cache".into(), self.scratch_dir.join("cache")])
-            .args([
-                "--userconfig".into(),
-                self.scratch_dir.join("blank_user_npmrc"),
-            ])
-            .args([
-                "--globalconfig".into(),
-                self.scratch_dir.join("blank_global_npmrc"),
-            ])
             .args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;

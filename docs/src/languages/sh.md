@@ -2,7 +2,7 @@
 
 Shell Scripts (bash, zsh, dash, sh) are supported natively by Zed.
 
-- Tree Sitter: [tree-sitter/tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash)
+- Tree-sitter: [tree-sitter/tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash)
 
 ## Settings
 

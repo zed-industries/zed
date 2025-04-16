@@ -1,6 +1,4 @@
-import json
 import os
-import pathlib
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
@@ -15,19 +13,7 @@ from typer import Typer
 app: Typer = typer.Typer()
 
 DATETIME_FORMAT: str = "%m/%d/%Y %I:%M %p"
-LABEL_DATA_FILE_PATH = pathlib.Path(__file__).parent.parent / "label_data.json"
-ISSUES_PER_LABEL: int = 20
-MISSING_LABEL_ERROR_MESSAGE: str = "missing core label"
-
-with open(LABEL_DATA_FILE_PATH, "r") as label_data_file:
-    label_data = json.load(label_data_file)
-    CORE_LABELS: set[str] = set(label_data["core_labels"])
-    # A set of labels for adding in labels that we want present in the final
-    # report, but that we don't want being defined as a core label, since issues
-    # with without core labels are flagged as errors.
-    ADDITIONAL_LABELS: set[str] = set(label_data["additional_labels"])
-    NEW_ISSUE_LABELS: set[str] = set(label_data["new_issue_labels"])
-    IGNORED_LABEL: str = label_data["ignored_label"]
+ISSUES_PER_LABEL: int = 50
 
 
 class IssueData:
@@ -69,31 +55,17 @@ def main(
     repo_name: str = "zed-industries/zed"
     repository: Repository = github.get_repo(repo_name)
 
-    # There has to be a nice way of adding types to tuple unpacking
-    label_to_issue_data: dict[str, list[IssueData]]
-    error_message_to_erroneous_issue_data: dict[str, list[IssueData]]
-    (
-        label_to_issue_data,
-        error_message_to_erroneous_issue_data,
-    ) = get_issue_maps(github, repository, start_date)
-
-    issue_text: str = get_issue_text(
-        label_to_issue_data,
-        error_message_to_erroneous_issue_data,
+    label_to_issue_data: dict[str, list[IssueData]] = get_issue_maps(
+        github, repository, start_date
     )
+
+    issue_text: str = get_issue_text(label_to_issue_data)
 
     if issue_reference_number:
         top_ranking_issues_issue: Issue = repository.get_issue(issue_reference_number)
         top_ranking_issues_issue.edit(body=issue_text)
     else:
         print(issue_text)
-
-    for error_message, issue_data in error_message_to_erroneous_issue_data.items():
-        if error_message == MISSING_LABEL_ERROR_MESSAGE:
-            for issue in issue_data:
-                # Used as a dry-run flag
-                if issue_reference_number:
-                    issue._issue.add_to_labels(*NEW_ISSUE_LABELS)
 
     remaining_requests_after: int = github.rate_limiting[0]
     print(f"Remaining requests after: {remaining_requests_after}")
@@ -107,7 +79,7 @@ def get_issue_maps(
     github: Github,
     repository: Repository,
     start_date: datetime | None = None,
-) -> tuple[dict[str, list[IssueData]], dict[str, list[IssueData]]]:
+) -> dict[str, list[IssueData]]:
     label_to_issues: defaultdict[str, list[Issue]] = get_label_to_issues(
         github,
         repository,
@@ -115,13 +87,6 @@ def get_issue_maps(
     )
     label_to_issue_data: dict[str, list[IssueData]] = get_label_to_issue_data(
         label_to_issues
-    )
-
-    error_message_to_erroneous_issues: defaultdict[str, list[Issue]] = (
-        get_error_message_to_erroneous_issues(github, repository)
-    )
-    error_message_to_erroneous_issue_data: dict[str, list[IssueData]] = (
-        get_error_message_to_erroneous_issue_data(error_message_to_erroneous_issues)
     )
 
     # Create a new dictionary with labels ordered by the summation the of likes on the associated issues
@@ -136,10 +101,7 @@ def get_issue_maps(
 
     label_to_issue_data = {label: label_to_issue_data[label] for label in labels}
 
-    return (
-        label_to_issue_data,
-        error_message_to_erroneous_issue_data,
-    )
+    return label_to_issue_data
 
 
 def get_label_to_issues(
@@ -147,22 +109,41 @@ def get_label_to_issues(
     repository: Repository,
     start_date: datetime | None = None,
 ) -> defaultdict[str, list[Issue]]:
-    label_to_issues: defaultdict[str, list[Issue]] = defaultdict(list)
+    common_filters = [
+        f"repo:{repository.full_name}",
+        "is:open",
+        "is:issue",
+        '-label:"ignore top-ranking issues"',
+        "sort:reactions-+1-desc",
+    ]
 
-    labels: set[str] = CORE_LABELS | ADDITIONAL_LABELS
-
-    date_query: str = (
-        f"created:>={start_date.strftime('%Y-%m-%d')}" if start_date else ""
+    date_query: str | None = (
+        f"created:>={start_date.strftime('%Y-%m-%d')}" if start_date else None
     )
 
-    for label in labels:
-        query: str = f'repo:{repository.full_name} is:open is:issue {date_query} label:"{label}" -label:"{IGNORED_LABEL}" sort:reactions-+1-desc'
+    if date_query:
+        common_filters.append(date_query)
 
-        issues = github.search_issues(query)
+    common_filter_string = " ".join(common_filters)
+
+    section_queries = {
+        "bug": "label:bug,type:Bug",
+        "crash": "label:crash,type:Crash",
+        "feature": "label:feature",
+        "meta": "type:Meta",
+        "unlabeled": "no:label no:type",
+    }
+
+    label_to_issues: defaultdict[str, list[Issue]] = defaultdict(list)
+
+    for section, section_query in section_queries.items():
+        label_query: str = f"{common_filter_string} {section_query}"
+
+        issues = github.search_issues(label_query)
 
         if issues.totalCount > 0:
             for issue in issues[0:ISSUES_PER_LABEL]:
-                label_to_issues[label].append(issue)
+                label_to_issues[section].append(issue)
 
     return label_to_issues
 
@@ -188,38 +169,8 @@ def get_label_to_issue_data(
     return label_to_issue_data
 
 
-def get_error_message_to_erroneous_issues(
-    github: Github, repository: Repository
-) -> defaultdict[str, list[Issue]]:
-    error_message_to_erroneous_issues: defaultdict[str, list[Issue]] = defaultdict(list)
-
-    # Query for all open issues that don't have either a core or the ignored label and mark those as erroneous
-    filter_labels: set[str] = CORE_LABELS | {IGNORED_LABEL}
-    filter_labels_text: str = " ".join([f'-label:"{label}"' for label in filter_labels])
-    query: str = f"repo:{repository.full_name} is:open is:issue {filter_labels_text}"
-
-    for issue in github.search_issues(query):
-        error_message_to_erroneous_issues[MISSING_LABEL_ERROR_MESSAGE].append(issue)
-
-    return error_message_to_erroneous_issues
-
-
-def get_error_message_to_erroneous_issue_data(
-    error_message_to_erroneous_issues: defaultdict[str, list[Issue]],
-) -> dict[str, list[IssueData]]:
-    error_message_to_erroneous_issue_data: dict[str, list[IssueData]] = {}
-
-    for label in error_message_to_erroneous_issues:
-        issues: list[Issue] = error_message_to_erroneous_issues[label]
-        issue_data: list[IssueData] = [IssueData(issue) for issue in issues]
-        error_message_to_erroneous_issue_data[label] = issue_data
-
-    return error_message_to_erroneous_issue_data
-
-
 def get_issue_text(
     label_to_issue_data: dict[str, list[IssueData]],
-    error_message_to_erroneous_issue_data: dict[str, list[IssueData]],
 ) -> str:
     tz = timezone("america/new_york")
     current_datetime: str = datetime.now(tz).strftime(f"{DATETIME_FORMAT} (%Z)")
@@ -231,38 +182,9 @@ def get_issue_text(
     issue_text_lines: list[str] = [
         f"*Updated on {current_datetime}*",
         *highest_ranking_issues_lines,
-        "",
-        "---\n",
+        "\n---\n",
+        "*For details on how this issue is generated, [see the script](https://github.com/zed-industries/zed/blob/main/script/update_top_ranking_issues/main.py)*",
     ]
-
-    erroneous_issues_lines: list[str] = get_erroneous_issues_lines(
-        error_message_to_erroneous_issue_data
-    )
-
-    if erroneous_issues_lines:
-        core_labels_text: str = ", ".join(
-            f'"{core_label}"' for core_label in CORE_LABELS
-        )
-
-        issue_text_lines.extend(
-            [
-                "## errors with issues (this section only shows when there are errors with issues)\n",
-                f"This script expects every issue to have at least one of the following core labels: {core_labels_text}",
-                f"This script currently ignores issues that have the following label: {IGNORED_LABEL}\n",
-                "### what to do?\n",
-                "- Adjust the core labels on an issue to put it into a correct state or add a currently-ignored label to the issue",
-                "- Adjust the core and ignored labels registered in this script",
-                *erroneous_issues_lines,
-                "",
-                "---\n",
-            ]
-        )
-
-    issue_text_lines.extend(
-        [
-            "*For details on how this issue is generated, [see the script](https://github.com/zed-industries/zed/blob/main/script/update_top_ranking_issues/main.py)*",
-        ]
-    )
 
     return "\n".join(issue_text_lines)
 
@@ -285,24 +207,6 @@ def get_highest_ranking_issues_lines(
                 highest_ranking_issues_lines.append(markdown_bullet_point)
 
     return highest_ranking_issues_lines
-
-
-def get_erroneous_issues_lines(
-    error_message_to_erroneous_issue_data,
-) -> list[str]:
-    erroneous_issues_lines: list[str] = []
-
-    if error_message_to_erroneous_issue_data:
-        for (
-            error_message,
-            erroneous_issue_data,
-        ) in error_message_to_erroneous_issue_data.items():
-            erroneous_issues_lines.append(f"\n#### {error_message}\n")
-
-            for erroneous_issue_data in erroneous_issue_data:
-                erroneous_issues_lines.append(f"- {erroneous_issue_data.url}")
-
-    return erroneous_issues_lines
 
 
 if __name__ == "__main__":

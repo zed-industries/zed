@@ -1,6 +1,6 @@
 use anyhow::Result;
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -12,6 +12,8 @@ pub struct ExtensionSettings {
     ///
     /// This is used to make functionality provided by extensions (e.g., language support)
     /// available out-of-the-box.
+    ///
+    /// Default: { "html": true }
     #[serde(default)]
     pub auto_install_extensions: HashMap<Arc<str>, bool>,
     #[serde(default)]
@@ -40,7 +42,7 @@ impl Settings for ExtensionSettings {
 
     type FileContent = Self;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> Result<Self> {
         SettingsSources::<Self::FileContent>::json_merge_with(
             [sources.default]
                 .into_iter()

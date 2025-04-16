@@ -4,18 +4,18 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{
+    FutureExt,
     future::{self, Shared},
     stream::FuturesUnordered,
-    FutureExt,
 };
-use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, Task, WeakModel};
+use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
-    language_settings::{Formatter, LanguageSettings, SelectedFormatter},
     Buffer, LanguageRegistry, LocalFile,
+    language_settings::{Formatter, LanguageSettings, SelectedFormatter},
 };
 use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -25,22 +25,22 @@ use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
-    lsp_store::WorktreeId, worktree_store::WorktreeStore, File, PathChange, ProjectEntryId,
-    Worktree,
+    File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
+    worktree_store::WorktreeStore,
 };
 
 pub struct PrettierStore {
     node: NodeRuntime,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
-    worktree_store: Model<WorktreeStore>,
+    worktree_store: Entity<WorktreeStore>,
     default_prettier: DefaultPrettier,
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_ignores_per_worktree: HashMap<WorktreeId, HashSet<PathBuf>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
 }
 
-pub enum PrettierStoreEvent {
+pub(crate) enum PrettierStoreEvent {
     LanguageServerRemoved(LanguageServerId),
     LanguageServerAdded {
         new_server_id: LanguageServerId,
@@ -56,8 +56,8 @@ impl PrettierStore {
         node: NodeRuntime,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
-        worktree_store: Model<WorktreeStore>,
-        _: &mut ModelContext<Self>,
+        worktree_store: Entity<WorktreeStore>,
+        _: &mut Context<Self>,
     ) -> Self {
         Self {
             node,
@@ -71,7 +71,7 @@ impl PrettierStore {
         }
     }
 
-    pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+    pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut Context<Self>) {
         self.prettier_ignores_per_worktree.remove(&id_to_remove);
         let mut prettier_instances_to_clean = FuturesUnordered::new();
         if let Some(prettier_paths) = self.prettiers_per_worktree.remove(&id_to_remove) {
@@ -86,11 +86,11 @@ impl PrettierStore {
                 }
             }
         }
-        cx.spawn(|prettier_store, mut cx| async move {
+        cx.spawn(async move |prettier_store, cx| {
             while let Some(prettier_server_id) = prettier_instances_to_clean.next().await {
                 if let Some(prettier_server_id) = prettier_server_id {
                     prettier_store
-                        .update(&mut cx, |_, cx| {
+                        .update(cx, |_, cx| {
                             cx.emit(PrettierStoreEvent::LanguageServerRemoved(
                                 prettier_server_id,
                             ));
@@ -104,8 +104,8 @@ impl PrettierStore {
 
     fn prettier_instance_for_buffer(
         &mut self,
-        buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
     ) -> Task<Option<(Option<PathBuf>, PrettierTask)>> {
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
@@ -119,10 +119,9 @@ impl PrettierStore {
             Some((worktree_id, buffer_path)) => {
                 let fs = Arc::clone(&self.fs);
                 let installed_prettiers = self.prettier_instances.keys().cloned().collect();
-                cx.spawn(|lsp_store, mut cx| async move {
+                cx.spawn(async move |lsp_store, cx| {
                     match cx
-                        .background_executor()
-                        .spawn(async move {
+                        .background_spawn(async move {
                             Prettier::locate_prettier_installation(
                                 fs.as_ref(),
                                 &installed_prettiers,
@@ -135,7 +134,7 @@ impl PrettierStore {
                         Ok(ControlFlow::Break(())) => None,
                         Ok(ControlFlow::Continue(None)) => {
                             let default_instance = lsp_store
-                                .update(&mut cx, |lsp_store, cx| {
+                                .update(cx, |lsp_store, cx| {
                                     lsp_store
                                         .prettiers_per_worktree
                                         .entry(worktree_id)
@@ -152,7 +151,7 @@ impl PrettierStore {
                         }
                         Ok(ControlFlow::Continue(Some(prettier_dir))) => {
                             lsp_store
-                                .update(&mut cx, |lsp_store, _| {
+                                .update(cx, |lsp_store, _| {
                                     lsp_store
                                         .prettiers_per_worktree
                                         .entry(worktree_id)
@@ -161,7 +160,7 @@ impl PrettierStore {
                                 })
                                 .ok()?;
                             if let Some(prettier_task) = lsp_store
-                                .update(&mut cx, |lsp_store, cx| {
+                                .update(cx, |lsp_store, cx| {
                                     lsp_store.prettier_instances.get_mut(&prettier_dir).map(
                                         |existing_instance| {
                                             existing_instance.prettier_task(
@@ -181,7 +180,7 @@ impl PrettierStore {
 
                             log::info!("Found prettier in {prettier_dir:?}, starting.");
                             let new_prettier_task = lsp_store
-                                .update(&mut cx, |lsp_store, cx| {
+                                .update(cx, |lsp_store, cx| {
                                     let new_prettier_task = Self::start_prettier(
                                         node,
                                         prettier_dir.clone(),
@@ -209,15 +208,15 @@ impl PrettierStore {
             }
             None => {
                 let new_task = self.default_prettier.prettier_task(&node, None, cx);
-                cx.spawn(|_, _| async move { Some((None, new_task?.log_err().await?)) })
+                cx.spawn(async move |_, _| Some((None, new_task?.log_err().await?)))
             }
         }
     }
 
     fn prettier_ignore_for_buffer(
         &mut self,
-        buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
     ) -> Task<Option<PathBuf>> {
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
@@ -232,10 +231,9 @@ impl PrettierStore {
                     .get(&worktree_id)
                     .cloned()
                     .unwrap_or_default();
-                cx.spawn(|lsp_store, mut cx| async move {
+                cx.spawn(async move |lsp_store, cx| {
                     match cx
-                        .background_executor()
-                        .spawn(async move {
+                        .background_spawn(async move {
                             Prettier::locate_prettier_ignore(
                                 fs.as_ref(),
                                 &prettier_ignores,
@@ -250,7 +248,7 @@ impl PrettierStore {
                         Ok(ControlFlow::Continue(Some(ignore_dir))) => {
                             log::debug!("Found prettier ignore in {ignore_dir:?}");
                             lsp_store
-                                .update(&mut cx, |store, _| {
+                                .update(cx, |store, _| {
                                     store
                                         .prettier_ignores_per_worktree
                                         .entry(worktree_id)
@@ -277,11 +275,11 @@ impl PrettierStore {
         node: NodeRuntime,
         prettier_dir: PathBuf,
         worktree_id: Option<WorktreeId>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> PrettierTask {
-        cx.spawn(|prettier_store, mut cx| async move {
+        cx.spawn(async move |prettier_store, cx| {
             log::info!("Starting prettier at path {prettier_dir:?}");
-            let new_server_id = prettier_store.update(&mut cx, |prettier_store, _| {
+            let new_server_id = prettier_store.update(cx, |prettier_store, _| {
                 prettier_store.languages.next_language_server_id()
             })?;
 
@@ -295,7 +293,7 @@ impl PrettierStore {
                 &new_prettier,
                 worktree_id,
                 new_server_id,
-                &mut cx,
+                cx,
             );
             Ok(new_prettier)
         })
@@ -305,10 +303,10 @@ impl PrettierStore {
     fn start_default_prettier(
         node: NodeRuntime,
         worktree_id: Option<WorktreeId>,
-        cx: &mut ModelContext<PrettierStore>,
+        cx: &mut Context<PrettierStore>,
     ) -> Task<anyhow::Result<PrettierTask>> {
-        cx.spawn(|prettier_store, mut cx| async move {
-            let installation_task = prettier_store.update(&mut cx, |prettier_store, _| {
+        cx.spawn(async move |prettier_store, cx| {
+            let installation_task = prettier_store.update(cx, |prettier_store, _| {
                 match &prettier_store.default_prettier.prettier {
                     PrettierInstallation::NotInstalled {
                         installation_task, ..
@@ -325,7 +323,7 @@ impl PrettierStore {
                 ControlFlow::Continue(Some(installation_task)) => {
                     log::info!("Waiting for default prettier to install");
                     if let Err(e) = installation_task.await {
-                        prettier_store.update(&mut cx, |project, _| {
+                        prettier_store.update(cx, |project, _| {
                             if let PrettierInstallation::NotInstalled {
                                 installation_task,
                                 attempts,
@@ -341,7 +339,7 @@ impl PrettierStore {
                         );
                     }
                     let new_default_prettier =
-                        prettier_store.update(&mut cx, |prettier_store, cx| {
+                        prettier_store.update(cx, |prettier_store, cx| {
                             let new_default_prettier = Self::start_prettier(
                                 node,
                                 default_prettier_dir().clone(),
@@ -361,7 +359,7 @@ impl PrettierStore {
                     Some(instance) => Ok(instance),
                     None => {
                         let new_default_prettier =
-                            prettier_store.update(&mut cx, |prettier_store, cx| {
+                            prettier_store.update(cx, |prettier_store, cx| {
                                 let new_default_prettier = Self::start_prettier(
                                     node,
                                     default_prettier_dir().clone(),
@@ -383,11 +381,11 @@ impl PrettierStore {
     }
 
     fn register_new_prettier(
-        prettier_store: &WeakModel<Self>,
+        prettier_store: &WeakEntity<Self>,
         prettier: &Prettier,
         worktree_id: Option<WorktreeId>,
         new_server_id: LanguageServerId,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) {
         let prettier_dir = prettier.prettier_dir();
         let is_default = prettier.is_default();
@@ -442,9 +440,9 @@ impl PrettierStore {
 
     pub fn update_prettier_settings(
         &self,
-        worktree: &Model<Worktree>,
+        worktree: &Entity<Worktree>,
         changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let prettier_config_files = Prettier::CONFIG_FILE_NAMES
             .iter()
@@ -483,31 +481,30 @@ impl PrettierStore {
                     }))
                     .collect::<Vec<_>>();
 
-            cx.background_executor()
-                .spawn(async move {
-                    let _: Vec<()> = future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_instance)| {
-                        async move {
-                            if let Some(instance) = prettier_instance.prettier {
-                                match instance.await {
-                                    Ok(prettier) => {
-                                        prettier.clear_cache().log_err().await;
-                                    },
-                                    Err(e) => {
-                                        match prettier_path {
-                                            Some(prettier_path) => log::error!(
-                                                "Failed to clear prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
-                                            ),
-                                            None => log::error!(
-                                                "Failed to clear default prettier cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
-                                            ),
-                                        }
-                                    },
-                                }
+            cx.background_spawn(async move {
+                let _: Vec<()> = future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_instance)| {
+                    async move {
+                        if let Some(instance) = prettier_instance.prettier {
+                            match instance.await {
+                                Ok(prettier) => {
+                                    prettier.clear_cache().log_err().await;
+                                },
+                                Err(e) => {
+                                    match prettier_path {
+                                        Some(prettier_path) => log::error!(
+                                            "Failed to clear prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
+                                        ),
+                                        None => log::error!(
+                                            "Failed to clear default prettier cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
+                                        ),
+                                    }
+                                },
                             }
                         }
-                    }))
-                    .await;
-                })
+                    }
+                }))
+                .await;
+            })
                 .detach();
         }
     }
@@ -516,7 +513,7 @@ impl PrettierStore {
         &mut self,
         worktree: Option<WorktreeId>,
         plugins: impl Iterator<Item = Arc<str>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if cfg!(any(test, feature = "test-support")) {
             self.default_prettier.installed_plugins.extend(plugins);
@@ -539,7 +536,7 @@ impl PrettierStore {
         }) {
             Some(locate_from) => {
                 let installed_prettiers = self.prettier_instances.keys().cloned().collect();
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     Prettier::locate_prettier_installation(
                         fs.as_ref(),
                         &installed_prettiers,
@@ -581,7 +578,7 @@ impl PrettierStore {
         let plugins_to_install = new_plugins.clone();
         let fs = Arc::clone(&self.fs);
         let new_installation_task = cx
-            .spawn(|project, mut cx| async move {
+            .spawn(async move  |project, cx| {
                 match locate_prettier_installation
                     .await
                     .context("locate prettier installation")
@@ -596,7 +593,7 @@ impl PrettierStore {
                         if let Some(previous_installation_task) = previous_installation_task {
                             if let Err(e) = previous_installation_task.await {
                                 log::error!("Failed to install default prettier: {e:#}");
-                                project.update(&mut cx, |project, _| {
+                                project.update(cx, |project, _| {
                                     if let PrettierInstallation::NotInstalled { attempts, not_installed_plugins, .. } = &mut project.default_prettier.prettier {
                                         *attempts += 1;
                                         new_plugins.extend(not_installed_plugins.iter().cloned());
@@ -607,7 +604,7 @@ impl PrettierStore {
                             }
                         };
                         if installation_attempt > prettier::FAIL_THRESHOLD {
-                            project.update(&mut cx, |project, _| {
+                            project.update(cx, |project, _| {
                                 if let PrettierInstallation::NotInstalled { installation_task, .. } = &mut project.default_prettier.prettier {
                                     *installation_task = None;
                                 };
@@ -617,7 +614,7 @@ impl PrettierStore {
                             );
                             return Ok(());
                         }
-                        project.update(&mut cx, |project, _| {
+                        project.update(cx, |project, _| {
                             new_plugins.retain(|plugin| {
                                 !project.default_prettier.installed_plugins.contains(plugin)
                             });
@@ -631,18 +628,17 @@ impl PrettierStore {
                         })?;
                         if needs_install {
                             let installed_plugins = new_plugins.clone();
-                            cx.background_executor()
-                                .spawn(async move {
-                                    install_prettier_packages(fs.as_ref(), new_plugins, node).await?;
-                                    // Save the server file last, so the reinstall need could be determined by the absence of the file.
-                                    save_prettier_server_file(fs.as_ref()).await?;
-                                    anyhow::Ok(())
-                                })
+                            cx.background_spawn(async move {
+                                install_prettier_packages(fs.as_ref(), new_plugins, node).await?;
+                                // Save the server file last, so the reinstall need could be determined by the absence of the file.
+                                save_prettier_server_file(fs.as_ref()).await?;
+                                anyhow::Ok(())
+                            })
                                 .await
                                 .context("prettier & plugins install")
                                 .map_err(Arc::new)?;
                             log::info!("Initialized prettier with plugins: {installed_plugins:?}");
-                            project.update(&mut cx, |project, _| {
+                            project.update(cx, |project, _| {
                                 project.default_prettier.prettier =
                                     PrettierInstallation::Installed(PrettierInstance {
                                         attempt: 0,
@@ -668,7 +664,7 @@ impl PrettierStore {
     pub fn on_settings_changed(
         &mut self,
         language_formatters_to_check: Vec<(Option<WorktreeId>, LanguageSettings)>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language_settings) in language_formatters_to_check {
@@ -705,10 +701,10 @@ pub fn prettier_plugins_for_language(
 }
 
 pub(super) async fn format_with_prettier(
-    prettier_store: &WeakModel<PrettierStore>,
-    buffer: &Model<Buffer>,
-    cx: &mut AsyncAppContext,
-) -> Option<Result<crate::lsp_store::FormatOperation>> {
+    prettier_store: &WeakEntity<PrettierStore>,
+    buffer: &Entity<Buffer>,
+    cx: &mut AsyncApp,
+) -> Option<Result<language::Diff>> {
     let prettier_instance = prettier_store
         .update(cx, |prettier_store, cx| {
             prettier_store.prettier_instance_for_buffer(buffer, cx)
@@ -742,7 +738,6 @@ pub(super) async fn format_with_prettier(
             let format_result = prettier
                 .format(buffer, buffer_path, ignore_dir, cx)
                 .await
-                .map(crate::lsp_store::FormatOperation::Prettier)
                 .with_context(|| format!("{} failed to format buffer", prettier_description));
 
             Some(format_result)
@@ -822,7 +817,7 @@ impl DefaultPrettier {
         &mut self,
         node: &NodeRuntime,
         worktree_id: Option<WorktreeId>,
-        cx: &mut ModelContext<PrettierStore>,
+        cx: &mut Context<PrettierStore>,
     ) -> Option<Task<anyhow::Result<PrettierTask>>> {
         match &mut self.prettier {
             PrettierInstallation::NotInstalled { .. } => Some(
@@ -841,7 +836,7 @@ impl PrettierInstance {
         node: &NodeRuntime,
         prettier_dir: Option<&Path>,
         worktree_id: Option<WorktreeId>,
-        cx: &mut ModelContext<PrettierStore>,
+        cx: &mut Context<PrettierStore>,
     ) -> Option<Task<anyhow::Result<PrettierTask>>> {
         if self.attempt > prettier::FAIL_THRESHOLD {
             match prettier_dir {
@@ -869,9 +864,9 @@ impl PrettierInstance {
                 None => {
                     self.attempt += 1;
                     let node = node.clone();
-                    cx.spawn(|prettier_store, mut cx| async move {
+                    cx.spawn(async move |prettier_store, cx| {
                         prettier_store
-                            .update(&mut cx, |_, cx| {
+                            .update(cx, |_, cx| {
                                 PrettierStore::start_default_prettier(node, worktree_id, cx)
                             })?
                             .await

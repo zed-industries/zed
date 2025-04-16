@@ -1,22 +1,23 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
+use buffer_diff::BufferDiff;
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
-use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task, View};
+use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
-use project::{buffer_store::BufferChangeSet, Project};
+use project::Project;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
-use ui::{prelude::*, ButtonLike, KeyBinding};
+use ui::{ButtonLike, KeyBinding, prelude::*};
 use workspace::{
-    searchable::SearchableItemHandle, Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace,
+    Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    searchable::SearchableItemHandle,
 };
 
 pub struct ProposedChangesEditor {
-    editor: View<Editor>,
-    multibuffer: Model<MultiBuffer>,
+    editor: Entity<Editor>,
+    multibuffer: Entity<MultiBuffer>,
     title: SharedString,
     buffer_entries: Vec<BufferEntry>,
     _recalculate_diffs_task: Task<Option<()>>,
@@ -24,22 +25,22 @@ pub struct ProposedChangesEditor {
 }
 
 pub struct ProposedChangeLocation<T> {
-    pub buffer: Model<Buffer>,
+    pub buffer: Entity<Buffer>,
     pub ranges: Vec<Range<T>>,
 }
 
 struct BufferEntry {
-    base: Model<Buffer>,
-    branch: Model<Buffer>,
+    base: Entity<Buffer>,
+    branch: Entity<Buffer>,
     _subscription: Subscription,
 }
 
 pub struct ProposedChangesEditorToolbar {
-    current_editor: Option<View<ProposedChangesEditor>>,
+    current_editor: Option<Entity<ProposedChangesEditor>>,
 }
 
 struct RecalculateDiff {
-    buffer: Model<Buffer>,
+    buffer: Entity<Buffer>,
     debounce: bool,
 }
 
@@ -50,18 +51,19 @@ struct RecalculateDiff {
 struct BranchBufferSemanticsProvider(Rc<dyn SemanticsProvider>);
 
 impl ProposedChangesEditor {
-    pub fn new<T: ToOffset>(
+    pub fn new<T: Clone + ToOffset>(
         title: impl Into<SharedString>,
         locations: Vec<ProposedChangeLocation<T>>,
-        project: Option<Model<Project>>,
-        cx: &mut ViewContext<Self>,
+        project: Option<Entity<Project>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
-            editor: cx.new_view(|cx| {
-                let mut editor = Editor::for_multibuffer(multibuffer.clone(), project, true, cx);
-                editor.set_expand_all_diff_hunks();
+            editor: cx.new(|cx| {
+                let mut editor = Editor::for_multibuffer(multibuffer.clone(), project, window, cx);
+                editor.set_expand_all_diff_hunks(cx);
                 editor.set_completion_provider(None);
                 editor.clear_code_action_providers();
                 editor.set_semantics_provider(
@@ -75,7 +77,7 @@ impl ProposedChangesEditor {
             title: title.into(),
             buffer_entries: Vec::new(),
             recalculate_diffs_tx,
-            _recalculate_diffs_task: cx.spawn(|this, mut cx| async move {
+            _recalculate_diffs_task: cx.spawn_in(window, async move |this, cx| {
                 let mut buffers_to_diff = HashSet::default();
                 while let Some(mut recalculate_diff) = recalculate_diffs_rx.next().await {
                     buffers_to_diff.insert(recalculate_diff.buffer);
@@ -97,29 +99,17 @@ impl ProposedChangesEditor {
                     }
 
                     let recalculate_diff_futures = this
-                        .update(&mut cx, |this, cx| {
+                        .update(cx, |this, cx| {
                             buffers_to_diff
                                 .drain()
                                 .filter_map(|buffer| {
                                     let buffer = buffer.read(cx);
                                     let base_buffer = buffer.base_buffer()?;
                                     let buffer = buffer.text_snapshot();
-                                    let change_set = this.editor.update(cx, |editor, _| {
-                                        Some(
-                                            editor
-                                                .diff_map
-                                                .diff_bases
-                                                .get(&buffer.remote_id())?
-                                                .change_set
-                                                .clone(),
-                                        )
-                                    })?;
-                                    Some(change_set.update(cx, |change_set, cx| {
-                                        change_set.set_base_text(
-                                            base_buffer.read(cx).text(),
-                                            buffer,
-                                            cx,
-                                        )
+                                    let diff =
+                                        this.multibuffer.read(cx).diff_for(buffer.remote_id())?;
+                                    Some(diff.update(cx, |diff, cx| {
+                                        diff.set_base_text_buffer(base_buffer.clone(), buffer, cx)
                                     }))
                                 })
                                 .collect::<Vec<_>>()
@@ -131,11 +121,11 @@ impl ProposedChangesEditor {
                 None
             }),
         };
-        this.reset_locations(locations, cx);
+        this.reset_locations(locations, window, cx);
         this
     }
 
-    pub fn branch_buffer_for_base(&self, base_buffer: &Model<Buffer>) -> Option<Model<Buffer>> {
+    pub fn branch_buffer_for_base(&self, base_buffer: &Entity<Buffer>) -> Option<Entity<Buffer>> {
         self.buffer_entries.iter().find_map(|entry| {
             if &entry.base == base_buffer {
                 Some(entry.branch.clone())
@@ -145,15 +135,16 @@ impl ProposedChangesEditor {
         })
     }
 
-    pub fn set_title(&mut self, title: SharedString, cx: &mut ViewContext<Self>) {
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
         self.title = title;
         cx.notify();
     }
 
-    pub fn reset_locations<T: ToOffset>(
+    pub fn reset_locations<T: Clone + ToOffset>(
         &mut self,
         locations: Vec<ProposedChangeLocation<T>>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         // Undo all branch changes
         for entry in &self.buffer_entries {
@@ -179,7 +170,7 @@ impl ProposedChangesEditor {
         });
 
         let mut buffer_entries = Vec::new();
-        let mut new_change_sets = Vec::new();
+        let mut new_diffs = Vec::new();
         for location in locations {
             let branch_buffer;
             if let Some(ix) = self
@@ -192,14 +183,14 @@ impl ProposedChangesEditor {
                 buffer_entries.push(entry);
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-                new_change_sets.push(cx.new_model(|cx| {
-                    let mut change_set = BufferChangeSet::new(branch_buffer.read(cx));
-                    let _ = change_set.set_base_text(
-                        location.buffer.read(cx).text(),
+                new_diffs.push(cx.new(|cx| {
+                    let mut diff = BufferDiff::new(&branch_buffer.read(cx).snapshot(), cx);
+                    let _ = diff.set_base_text_buffer(
+                        location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),
                         cx,
                     );
-                    change_set
+                    diff
                 }));
                 buffer_entries.push(BufferEntry {
                     branch: branch_buffer.clone(),
@@ -211,10 +202,10 @@ impl ProposedChangesEditor {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.push_excerpts(
                     branch_buffer,
-                    location.ranges.into_iter().map(|range| ExcerptRange {
-                        context: range,
-                        primary: None,
-                    }),
+                    location
+                        .ranges
+                        .into_iter()
+                        .map(|range| ExcerptRange::new(range)),
                     cx,
                 );
             });
@@ -222,10 +213,12 @@ impl ProposedChangesEditor {
 
         self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, cx| {
-            editor.change_selections(None, cx, |selections| selections.refresh());
-            for change_set in new_change_sets {
-                editor.diff_map.add_change_set(change_set, cx)
-            }
+            editor.change_selections(None, window, cx, |selections| selections.refresh());
+            editor.buffer.update(cx, |buffer, cx| {
+                for diff in new_diffs {
+                    buffer.add_diff(diff, cx)
+                }
+            })
         });
     }
 
@@ -242,9 +235,9 @@ impl ProposedChangesEditor {
 
     fn on_buffer_event(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         event: &BufferEvent,
-        _cx: &mut ViewContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
         match event {
             BufferEvent::Operation { .. } => {
@@ -269,7 +262,7 @@ impl ProposedChangesEditor {
 }
 
 impl Render for ProposedChangesEditor {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .key_context("ProposedChangesEditor")
@@ -277,8 +270,8 @@ impl Render for ProposedChangesEditor {
     }
 }
 
-impl FocusableView for ProposedChangesEditor {
-    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+impl Focusable for ProposedChangesEditor {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
@@ -288,23 +281,23 @@ impl EventEmitter<EditorEvent> for ProposedChangesEditor {}
 impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
-    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff))
     }
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some(self.title.clone())
     }
 
-    fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
-        self_handle: &'a View<Self>,
-        _: &'a AppContext,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
     ) -> Option<gpui::AnyView> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.to_any())
@@ -315,43 +308,57 @@ impl Item for ProposedChangesEditor {
         }
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.editor.update(cx, |editor, cx| {
-            Item::added_to_workspace(editor, workspace, cx)
+            Item::added_to_workspace(editor, workspace, window, cx)
         });
     }
 
-    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor.update(cx, Item::deactivated);
+    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        data: Box<dyn std::any::Any>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         self.editor
-            .update(cx, |editor, cx| Item::navigate(editor, data, cx))
+            .update(cx, |editor, cx| Item::navigate(editor, data, window, cx))
     }
 
     fn set_nav_history(
         &mut self,
         nav_history: workspace::ItemNavHistory,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            Item::set_nav_history(editor, nav_history, cx)
+            Item::set_nav_history(editor, nav_history, window, cx)
         });
     }
 
-    fn can_save(&self, cx: &AppContext) -> bool {
+    fn can_save(&self, cx: &App) -> bool {
         self.editor.read(cx).can_save(cx)
     }
 
     fn save(
         &mut self,
         format: bool,
-        project: Model<Project>,
-        cx: &mut ViewContext<Self>,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
-        self.editor
-            .update(cx, |editor, cx| Item::save(editor, format, project, cx))
+        self.editor.update(cx, |editor, cx| {
+            Item::save(editor, format, project, window, cx)
+        })
     }
 }
 
@@ -372,17 +379,20 @@ impl ProposedChangesEditorToolbar {
 }
 
 impl Render for ProposedChangesEditorToolbar {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
 
         match &self.current_editor {
             Some(editor) => {
                 let focus_handle = editor.focus_handle(cx);
-                let keybinding = KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, cx)
-                    .map(|binding| binding.into_any_element());
+                let keybinding =
+                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window, cx)
+                        .map(|binding| binding.into_any_element());
 
                 button_like.children(keybinding).on_click({
-                    move |_event, cx| focus_handle.dispatch_action(&ApplyAllDiffHunks, cx)
+                    move |_event, window, cx| {
+                        focus_handle.dispatch_action(&ApplyAllDiffHunks, window, cx)
+                    }
                 })
             }
             None => button_like.disabled(true),
@@ -396,7 +406,8 @@ impl ToolbarItemView for ProposedChangesEditorToolbar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,
-        _cx: &mut ViewContext<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> workspace::ToolbarItemLocation {
         self.current_editor =
             active_pane_item.and_then(|item| item.downcast::<ProposedChangesEditor>());
@@ -407,10 +418,10 @@ impl ToolbarItemView for ProposedChangesEditorToolbar {
 impl BranchBufferSemanticsProvider {
     fn to_base(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         positions: &[text::Anchor],
-        cx: &AppContext,
-    ) -> Option<Model<Buffer>> {
+        cx: &App,
+    ) -> Option<Entity<Buffer>> {
         let base_buffer = buffer.read(cx).base_buffer()?;
         let version = base_buffer.read(cx).version();
         if positions
@@ -426,9 +437,9 @@ impl BranchBufferSemanticsProvider {
 impl SemanticsProvider for BranchBufferSemanticsProvider {
     fn hover(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: text::Anchor,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<Vec<project::Hover>>> {
         let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.hover(&buffer, position, cx)
@@ -436,9 +447,9 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn inlay_hints(
         &self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
         let buffer = self.to_base(&buffer, &[range.start, range.end], cx)?;
         self.0.inlay_hints(buffer, range, cx)
@@ -447,15 +458,15 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     fn resolve_inlay_hint(
         &self,
         hint: project::InlayHint,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         server_id: lsp::LanguageServerId,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<anyhow::Result<project::InlayHint>>> {
         let buffer = self.to_base(&buffer, &[], cx)?;
         self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
     }
 
-    fn supports_inlay_hints(&self, buffer: &Model<Buffer>, cx: &AppContext) -> bool {
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         if let Some(buffer) = self.to_base(&buffer, &[], cx) {
             self.0.supports_inlay_hints(&buffer, cx)
         } else {
@@ -465,9 +476,9 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn document_highlights(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: text::Anchor,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<gpui::Result<Vec<project::DocumentHighlight>>>> {
         let buffer = self.to_base(&buffer, &[position], cx)?;
         self.0.document_highlights(&buffer, position, cx)
@@ -475,10 +486,10 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn definitions(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: text::Anchor,
         kind: crate::GotoDefinitionKind,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<gpui::Result<Vec<project::LocationLink>>>> {
         let buffer = self.to_base(&buffer, &[position], cx)?;
         self.0.definitions(&buffer, position, kind, cx)
@@ -486,19 +497,19 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn range_for_rename(
         &self,
-        _: &Model<Buffer>,
+        _: &Entity<Buffer>,
         _: text::Anchor,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> Option<Task<gpui::Result<Option<Range<text::Anchor>>>>> {
         None
     }
 
     fn perform_rename(
         &self,
-        _: &Model<Buffer>,
+        _: &Entity<Buffer>,
         _: text::Anchor,
         _: String,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> Option<Task<gpui::Result<project::ProjectTransaction>>> {
         None
     }

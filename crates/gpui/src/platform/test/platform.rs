@@ -1,7 +1,8 @@
 use crate::{
-    px, size, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    Keymap, Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource,
-    ScreenCaptureStream, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams,
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
+    ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformTextSystem,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task, TestDisplay,
+    TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -16,7 +17,7 @@ use std::{
 #[cfg(target_os = "windows")]
 use windows::Win32::{
     Graphics::Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
-    System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
+    System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
 };
 
 /// TestPlatform implements the Platform trait for use in tests.
@@ -46,13 +47,14 @@ pub struct TestScreenCaptureSource {}
 pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
-    fn resolution(&self) -> Result<crate::Size<crate::Pixels>> {
-        Ok(size(px(1.), px(1.)))
+    fn resolution(&self) -> Result<Size<DevicePixels>> {
+        Ok(size(DevicePixels(1), DevicePixels(1)))
     }
 
     fn stream(
         &self,
-        _frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        _foreground_executor: &ForegroundExecutor,
+        _frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         let (mut tx, rx) = oneshot::channel();
         let stream = TestScreenCaptureStream {};
@@ -64,9 +66,16 @@ impl ScreenCaptureSource for TestScreenCaptureSource {
 
 impl ScreenCaptureStream for TestScreenCaptureStream {}
 
+struct TestPrompt {
+    msg: String,
+    detail: Option<String>,
+    answers: Vec<String>,
+    tx: oneshot::Sender<usize>,
+}
+
 #[derive(Default)]
 pub(crate) struct TestPrompts {
-    multiple_choice: VecDeque<oneshot::Sender<usize>>,
+    multiple_choice: VecDeque<TestPrompt>,
     new_path: VecDeque<(PathBuf, oneshot::Sender<Result<Option<PathBuf>>>)>,
 }
 
@@ -82,17 +91,7 @@ impl TestPlatform {
             )
         };
 
-        #[cfg(target_os = "macos")]
-        let text_system = Arc::new(crate::platform::mac::MacTextSystem::new());
-
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let text_system = Arc::new(crate::platform::linux::CosmicTextSystem::new());
-
-        #[cfg(target_os = "windows")]
-        let text_system = Arc::new(
-            crate::platform::windows::DirectWriteTextSystem::new(&bitmap_factory)
-                .expect("Unable to initialize direct write."),
-        );
+        let text_system = Arc::new(NoopTextSystem);
 
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
@@ -123,33 +122,64 @@ impl TestPlatform {
             .new_path
             .pop_front()
             .expect("no pending new path prompt");
+        self.background_executor().set_waiting_hint(None);
         tx.send(Ok(select_path(&path))).ok();
     }
 
-    pub(crate) fn simulate_prompt_answer(&self, response_ix: usize) {
-        let tx = self
+    #[track_caller]
+    pub(crate) fn simulate_prompt_answer(&self, response: &str) {
+        let prompt = self
             .prompts
             .borrow_mut()
             .multiple_choice
             .pop_front()
             .expect("no pending multiple choice prompt");
         self.background_executor().set_waiting_hint(None);
-        tx.send(response_ix).ok();
+        let Some(ix) = prompt.answers.iter().position(|a| a == response) else {
+            panic!(
+                "PROMPT: {}\n{:?}\n{:?}\nCannot respond with {}",
+                prompt.msg, prompt.detail, prompt.answers, response
+            )
+        };
+        prompt.tx.send(ix).ok();
     }
 
     pub(crate) fn has_pending_prompt(&self) -> bool {
         !self.prompts.borrow().multiple_choice.is_empty()
     }
 
+    pub(crate) fn pending_prompt(&self) -> Option<(String, String)> {
+        let prompts = self.prompts.borrow();
+        let prompt = prompts.multiple_choice.front()?;
+        Some((
+            prompt.msg.clone(),
+            prompt.detail.clone().unwrap_or_default(),
+        ))
+    }
+
     pub(crate) fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
         *self.screen_capture_sources.borrow_mut() = sources;
     }
 
-    pub(crate) fn prompt(&self, msg: &str, detail: Option<&str>) -> oneshot::Receiver<usize> {
+    pub(crate) fn prompt(
+        &self,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
         let (tx, rx) = oneshot::channel();
+        let answers: Vec<String> = answers.iter().map(|&s| s.to_string()).collect();
         self.background_executor()
             .set_waiting_hint(Some(format!("PROMPT: {:?} {:?}", msg, detail)));
-        self.prompts.borrow_mut().multiple_choice.push_back(tx);
+        self.prompts
+            .borrow_mut()
+            .multiple_choice
+            .push_back(TestPrompt {
+                msg: msg.to_string(),
+                detail: detail.map(|s| s.to_string()),
+                answers: answers.clone(),
+                tx,
+            });
         rx
     }
 
@@ -233,6 +263,10 @@ impl Platform for TestPlatform {
         Some(self.active_display.clone())
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        true
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
@@ -292,6 +326,8 @@ impl Platform for TestPlatform {
         directory: &std::path::Path,
     ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
         let (tx, rx) = oneshot::channel();
+        self.background_executor()
+            .set_waiting_hint(Some(format!("PROMPT FOR PATH: {:?}", directory)));
         self.prompts
             .borrow_mut()
             .new_path

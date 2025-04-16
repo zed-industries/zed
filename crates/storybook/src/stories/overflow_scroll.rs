@@ -6,7 +6,7 @@ use ui::prelude::*;
 pub struct OverflowScrollStory;
 
 impl Render for OverflowScrollStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title("Overflow Scroll"))
             .child(Story::label("`overflow_x_scroll`"))

@@ -26,14 +26,16 @@ test-support = [
 ]
 
 [dependencies]
-anyhow.workspace = true
 any_vec.workspace = true
+anyhow.workspace = true
 async-recursion.workspace = true
 bincode = "1.2.1"
 call.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
+component.workspace = true
+dap.workspace = true
 db.workspace = true
 derive_more.workspace = true
 fs.workspace = true
@@ -47,7 +49,6 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
-task.workspace = true
 remote.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -56,15 +57,23 @@ session.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 sqlez.workspace = true
+strum.workspace = true
+task.workspace = true
+telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
-strum.workspace = true
+zed_actions.workspace = true
+workspace-hack.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
+dap = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
@@ -72,5 +81,5 @@ gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-http_client =  { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

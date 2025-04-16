@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayString;
 use fs::{Fs, MTime};
-use futures::{stream::StreamExt, TryFutureExt};
+use futures::{TryFutureExt, stream::StreamExt};
 use futures_batch::ChunksTimeoutStreamExt;
-use gpui::{AppContext, Model, Task};
+use gpui::{App, AppContext as _, Entity, Task};
 use heed::{
-    types::{SerdeBincode, Str},
     RoTxn,
+    types::{SerdeBincode, Str},
 };
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
@@ -79,7 +79,7 @@ struct SummarizeFiles {
 }
 
 pub struct SummaryIndex {
-    worktree: Model<Worktree>,
+    worktree: Entity<Worktree>,
     fs: Arc<dyn Fs>,
     db_connection: heed::Env,
     file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>, // Key: file path. Val: BLAKE3 digest of its contents.
@@ -100,7 +100,7 @@ struct MightNeedSummaryFiles {
 
 impl SummaryIndex {
     pub fn new(
-        worktree: Model<Worktree>,
+        worktree: Entity<Worktree>,
         fs: Arc<dyn Fs>,
         db_connection: heed::Env,
         file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>,
@@ -129,8 +129,8 @@ impl SummaryIndex {
     pub fn index_entries_changed_on_disk(
         &self,
         is_auto_available: bool,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<()>> {
+        cx: &App,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let start = Instant::now();
         let backlogged;
         let digest;
@@ -192,8 +192,8 @@ impl SummaryIndex {
         &mut self,
         updated_entries: UpdatedEntriesSet,
         is_auto_available: bool,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<()>> {
+        cx: &App,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let start = Instant::now();
         let backlogged;
         let digest;
@@ -249,12 +249,12 @@ impl SummaryIndex {
     fn check_summary_cache(
         &self,
         might_need_summary: channel::Receiver<UnsummarizedFile>,
-        cx: &AppContext,
+        cx: &App,
     ) -> NeedsSummary {
         let db_connection = self.db_connection.clone();
         let db = self.summary_db;
         let (needs_summary_tx, needs_summary_rx) = channel::bounded(512);
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let mut might_need_summary = pin!(might_need_summary);
             while let Some(file) = might_need_summary.next().await {
                 let tx = db_connection
@@ -286,12 +286,12 @@ impl SummaryIndex {
         }
     }
 
-    fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> Backlogged {
+    fn scan_entries(&self, worktree: Snapshot, cx: &App) -> Backlogged {
         let (tx, rx) = channel::bounded(512);
         let db_connection = self.db_connection.clone();
         let digest_db = self.file_digest_db;
         let backlog = Arc::clone(&self.backlog);
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let txn = db_connection
                 .read_txn()
                 .context("failed to create read transaction")?;
@@ -360,7 +360,7 @@ impl SummaryIndex {
         &self,
         worktree: Snapshot,
         updated_entries: UpdatedEntriesSet,
-        cx: &AppContext,
+        cx: &App,
     ) -> Backlogged {
         log::info!("Scanning for updated entries that might need summarization...");
         let (tx, rx) = channel::bounded(512);
@@ -368,7 +368,7 @@ impl SummaryIndex {
         let db_connection = self.db_connection.clone();
         let digest_db = self.file_digest_db;
         let backlog = Arc::clone(&self.backlog);
-        let task = cx.background_executor().spawn(async move {
+        let task = cx.background_spawn(async move {
             let txn = db_connection
                 .read_txn()
                 .context("failed to create read transaction")?;
@@ -418,11 +418,11 @@ impl SummaryIndex {
         &self,
         paths: channel::Receiver<Vec<(Arc<Path>, Option<MTime>)>>,
         worktree_abs_path: Arc<Path>,
-        cx: &AppContext,
+        cx: &App,
     ) -> MightNeedSummaryFiles {
         let fs = self.fs.clone();
         let (rx, tx) = channel::bounded(2048);
-        let task = cx.spawn(|cx| async move {
+        let task = cx.spawn(async move |cx| {
             cx.background_executor()
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {
@@ -487,10 +487,10 @@ impl SummaryIndex {
     fn summarize_files(
         &self,
         unsummarized_files: channel::Receiver<UnsummarizedFile>,
-        cx: &AppContext,
+        cx: &App,
     ) -> SummarizeFiles {
         let (summarized_tx, summarized_rx) = channel::bounded(512);
-        let task = cx.spawn(|cx| async move {
+        let task = cx.spawn(async move |cx| {
             while let Ok(file) = unsummarized_files.recv().await {
                 log::debug!("Summarizing {:?}", file);
                 let summary = cx
@@ -531,8 +531,8 @@ impl SummaryIndex {
     fn summarize_code(
         code: &str,
         path: &Path,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<String>> {
+        cx: &App,
+    ) -> impl Future<Output = Result<String>> + use<> {
         let start = Instant::now();
         let (summary_model_id, use_cache): (LanguageModelId, bool) = (
             "Qwen/Qwen2-7B-Instruct".to_string().into(), // TODO read this from the user's settings.
@@ -542,7 +542,7 @@ impl SummaryIndex {
             .available_models(cx)
             .find(|model| &model.id() == &summary_model_id)
         else {
-            return cx.background_executor().spawn(async move {
+            return cx.background_spawn(async move {
                 Err(anyhow!("Couldn't find the preferred summarization model ({:?}) in the language registry's available models", summary_model_id))
             });
         };
@@ -568,33 +568,32 @@ impl SummaryIndex {
         };
 
         let code_len = code.len();
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let stream = model.stream_completion(request, &cx);
-            cx.background_executor()
-                .spawn(async move {
-                    let answer: String = stream
-                        .await?
-                        .filter_map(|event| async {
-                            if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
-                                Some(text)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                        .await;
+            cx.background_spawn(async move {
+                let answer: String = stream
+                    .await?
+                    .filter_map(|event| async {
+                        if let Ok(LanguageModelCompletionEvent::Text(text)) = event {
+                            Some(text)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+                    .await;
 
-                    log::info!(
-                        "It took {:?} to summarize {:?} bytes of code.",
-                        start.elapsed(),
-                        code_len
-                    );
+                log::info!(
+                    "It took {:?} to summarize {:?} bytes of code.",
+                    start.elapsed(),
+                    code_len
+                );
 
-                    log::debug!("Summary was: {:?}", &answer);
+                log::debug!("Summary was: {:?}", &answer);
 
-                    Ok(answer)
-                })
-                .await
+                Ok(answer)
+            })
+            .await
 
             // TODO if summarization failed, put it back in the backlog!
         })
@@ -603,12 +602,12 @@ impl SummaryIndex {
     fn persist_summaries(
         &self,
         summaries: channel::Receiver<SummarizedFile>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
         let digest_db = self.file_digest_db;
         let summary_db = self.summary_db;
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut summaries = pin!(summaries.chunks_timeout(4096, Duration::from_secs(2)));
             while let Some(summaries) = summaries.next().await {
                 let mut txn = db_connection.write_txn()?;
@@ -643,8 +642,8 @@ impl SummaryIndex {
     pub(crate) fn flush_backlog(
         &self,
         worktree_abs_path: Arc<Path>,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<()>> {
+        cx: &App,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let start = Instant::now();
         let backlogged = {
             let (tx, rx) = channel::bounded(512);
@@ -654,7 +653,7 @@ impl SummaryIndex {
                 backlog.drain().collect()
             };
 
-            let task = cx.background_executor().spawn(async move {
+            let task = cx.background_spawn(async move {
                 tx.send(needs_summary).await?;
                 Ok(())
             });

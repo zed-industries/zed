@@ -1,23 +1,23 @@
 pub use crate::{
+    Grammar, Language, LanguageRegistry,
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    markdown::ParsedMarkdown,
-    proto, Grammar, Language, LanguageRegistry,
+    proto,
 };
 use crate::{
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
-    markdown::parse_markdown,
+    language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
         SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
-    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
-    TreeSitterOptions,
+    text_diff::text_diff,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
@@ -25,16 +25,15 @@ use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
-    AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
-    Pixels, Task, TaskLabel, WindowContext,
+    App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
+    Task, TaskLabel, TextStyle,
 };
-use lsp::LanguageServerId;
+use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::WorktreeId;
-use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -44,14 +43,13 @@ use std::{
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
-    fmt,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, Range},
     path::{Path, PathBuf},
-    str,
+    rc,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
     vec,
@@ -65,10 +63,10 @@ pub use text::{
     Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
     Transaction, TransactionId, Unclipped,
 };
-use theme::SyntaxTheme;
+use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{debug_panic, maybe, RangeExt};
+use util::{RangeExt, debug_panic, maybe};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -112,7 +110,7 @@ pub struct Buffer {
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
-    parsing_in_background: bool,
+    reparse: Option<Task<()>>,
     parse_status: (watch::Sender<ParseStatus>, watch::Receiver<ParseStatus>),
     non_text_state_update_count: usize,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -127,6 +125,7 @@ pub struct Buffer {
     /// Memoize calls to has_changes_since(saved_version).
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
+    change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -137,14 +136,14 @@ pub enum ParseStatus {
 }
 
 struct BufferBranchState {
-    base_buffer: Model<Buffer>,
+    base_buffer: Entity<Buffer>,
     merged_operations: Vec<Lamport>,
 }
 
 /// An immutable, cheaply cloneable representation of a fixed
 /// state of a buffer.
 pub struct BufferSnapshot {
-    text: text::BufferSnapshot,
+    pub text: text::BufferSnapshot,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -197,12 +196,12 @@ struct SelectionSet {
 }
 
 /// A diagnostic associated with a certain range of a buffer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
     /// The name of the service that produced this diagnostic.
     pub source: Option<String>,
     /// A machine-readable code that identifies this diagnostic.
-    pub code: Option<String>,
+    pub code: Option<NumberOrString>,
     /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.
@@ -229,51 +228,6 @@ pub struct Diagnostic {
     pub is_unnecessary: bool,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
     pub data: Option<Value>,
-}
-
-/// TODO - move this into the `project` crate and make it private.
-pub async fn prepare_completion_documentation(
-    documentation: &lsp::Documentation,
-    language_registry: &Arc<LanguageRegistry>,
-    language: Option<Arc<Language>>,
-) -> Documentation {
-    match documentation {
-        lsp::Documentation::String(text) => {
-            if text.lines().count() <= 1 {
-                Documentation::SingleLine(text.clone())
-            } else {
-                Documentation::MultiLinePlainText(text.clone())
-            }
-        }
-
-        lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
-            lsp::MarkupKind::PlainText => {
-                if value.lines().count() <= 1 {
-                    Documentation::SingleLine(value.clone())
-                } else {
-                    Documentation::MultiLinePlainText(value.clone())
-                }
-            }
-
-            lsp::MarkupKind::Markdown => {
-                let parsed = parse_markdown(value, Some(language_registry), language).await;
-                Documentation::MultiLineMarkdown(parsed)
-            }
-        },
-    }
-}
-
-/// Documentation associated with a [`Completion`].
-#[derive(Clone, Debug)]
-pub enum Documentation {
-    /// There is no documentation for this completion.
-    Undocumented,
-    /// A single line of documentation.
-    SingleLine(String),
-    /// Multiple lines of plain text documentation.
-    MultiLinePlainText(String),
-    /// Markdown documentation.
-    MultiLineMarkdown(ParsedMarkdown),
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
@@ -352,7 +306,7 @@ pub enum BufferEvent {
 }
 
 /// The file associated with a buffer.
-pub trait File: Send + Sync {
+pub trait File: Send + Sync + Any {
     /// Returns the [`LocalFile`] associated with this file, if the
     /// file is local.
     fn as_local(&self) -> Option<&dyn LocalFile>;
@@ -371,22 +325,19 @@ pub trait File: Send + Sync {
 
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
-    fn full_path(&self, cx: &AppContext) -> PathBuf;
+    fn full_path(&self, cx: &App) -> PathBuf;
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &'a AppContext) -> &'a OsStr;
+    fn file_name<'a>(&'a self, cx: &'a App) -> &'a OsStr;
 
     /// Returns the id of the worktree to which this file belongs.
     ///
     /// This is needed for looking up project-specific settings.
-    fn worktree_id(&self, cx: &AppContext) -> WorktreeId;
-
-    /// Converts this file into an [`Any`] trait object.
-    fn as_any(&self) -> &dyn Any;
+    fn worktree_id(&self, cx: &App) -> WorktreeId;
 
     /// Converts this file into a protobuf message.
-    fn to_proto(&self, cx: &AppContext) -> rpc::proto::File;
+    fn to_proto(&self, cx: &App) -> rpc::proto::File;
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
@@ -415,18 +366,26 @@ impl DiskState {
             DiskState::Deleted => None,
         }
     }
+
+    pub fn exists(&self) -> bool {
+        match self {
+            DiskState::New => false,
+            DiskState::Present { .. } => true,
+            DiskState::Deleted => false,
+        }
+    }
 }
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
 pub trait LocalFile: File {
     /// Returns the absolute path of this file
-    fn abs_path(&self, cx: &AppContext) -> PathBuf;
+    fn abs_path(&self, cx: &App) -> PathBuf;
 
     /// Loads the file contents from disk and returns them as a UTF-8 encoded string.
-    fn load(&self, cx: &AppContext) -> Task<Result<String>>;
+    fn load(&self, cx: &App) -> Task<Result<String>>;
 
     /// Loads the file's contents from disk.
-    fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>>;
+    fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>>;
 }
 
 /// The auto-indent behavior associated with an editing operation.
@@ -440,9 +399,16 @@ pub enum AutoindentMode {
     /// Apply the same indentation adjustment to all of the lines
     /// in a given insertion.
     Block {
-        /// The original indentation level of the first line of each
+        /// The original indentation column of the first line of each
         /// insertion, if it has been copied.
-        original_indent_columns: Vec<u32>,
+        ///
+        /// Knowing this makes it possible to preserve the relative indentation
+        /// of every line in the insertion from when it was copied.
+        ///
+        /// If the original indent column is `a`, and the first line of insertion
+        /// is then auto-indented to column `b`, then every other line of
+        /// the insertion will be auto-indented to column `b - a`
+        original_indent_columns: Vec<Option<u32>>,
     },
 }
 
@@ -513,51 +479,13 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// An optional recipe for how the chunk should be presented.
-    pub renderer: Option<ChunkRenderer>,
-}
-
-/// A recipe for how the chunk should be presented.
-#[derive(Clone)]
-pub struct ChunkRenderer {
-    /// creates a custom element to represent this chunk.
-    pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
-    /// If true, the element is constrained to the shaped width of the text.
-    pub constrain_width: bool,
-}
-
-pub struct ChunkRendererContext<'a, 'b> {
-    pub context: &'a mut WindowContext<'b>,
-    pub max_width: Pixels,
-}
-
-impl fmt::Debug for ChunkRenderer {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ChunkRenderer")
-            .field("constrain_width", &self.constrain_width)
-            .finish()
-    }
-}
-
-impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
-    type Target = WindowContext<'b>;
-
-    fn deref(&self) -> &Self::Target {
-        self.context
-    }
-}
-
-impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.context
-    }
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
 #[derive(Debug)]
 pub struct Diff {
-    pub(crate) base_version: clock::Global,
-    line_ending: LineEnding,
+    pub base_version: clock::Global,
+    pub line_ending: LineEnding,
     pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
@@ -587,25 +515,257 @@ pub struct Runnable {
     pub buffer: BufferId,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct IndentGuide {
-    pub buffer_id: BufferId,
-    pub start_row: BufferRow,
-    pub end_row: BufferRow,
-    pub depth: u32,
-    pub tab_size: u32,
-    pub settings: IndentGuideSettings,
+#[derive(Default, Clone, Debug)]
+pub struct HighlightedText {
+    pub text: SharedString,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
-impl IndentGuide {
-    pub fn indent_level(&self) -> u32 {
-        self.depth * self.tab_size
+#[derive(Default, Debug)]
+struct HighlightedTextBuilder {
+    pub text: String,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+impl HighlightedText {
+    pub fn from_buffer_range<T: ToOffset>(
+        range: Range<T>,
+        snapshot: &text::BufferSnapshot,
+        syntax_snapshot: &SyntaxSnapshot,
+        override_style: Option<HighlightStyle>,
+        syntax_theme: &SyntaxTheme,
+    ) -> Self {
+        let mut highlighted_text = HighlightedTextBuilder::default();
+        highlighted_text.add_text_from_buffer_range(
+            range,
+            snapshot,
+            syntax_snapshot,
+            override_style,
+            syntax_theme,
+        );
+        highlighted_text.build()
     }
+
+    pub fn to_styled_text(&self, default_style: &TextStyle) -> StyledText {
+        gpui::StyledText::new(self.text.clone())
+            .with_default_highlights(default_style, self.highlights.iter().cloned())
+    }
+
+    /// Returns the first line without leading whitespace unless highlighted
+    /// and a boolean indicating if there are more lines after
+    pub fn first_line_preview(self) -> (Self, bool) {
+        let newline_ix = self.text.find('\n').unwrap_or(self.text.len());
+        let first_line = &self.text[..newline_ix];
+
+        // Trim leading whitespace, unless an edit starts prior to it.
+        let mut preview_start_ix = first_line.len() - first_line.trim_start().len();
+        if let Some((first_highlight_range, _)) = self.highlights.first() {
+            preview_start_ix = preview_start_ix.min(first_highlight_range.start);
+        }
+
+        let preview_text = &first_line[preview_start_ix..];
+        let preview_highlights = self
+            .highlights
+            .into_iter()
+            .take_while(|(range, _)| range.start < newline_ix)
+            .filter_map(|(mut range, highlight)| {
+                range.start = range.start.saturating_sub(preview_start_ix);
+                range.end = range.end.saturating_sub(preview_start_ix).min(newline_ix);
+                if range.is_empty() {
+                    None
+                } else {
+                    Some((range, highlight))
+                }
+            });
+
+        let preview = Self {
+            text: SharedString::new(preview_text),
+            highlights: preview_highlights.collect(),
+        };
+
+        (preview, self.text.len() > newline_ix)
+    }
+}
+
+impl HighlightedTextBuilder {
+    pub fn build(self) -> HighlightedText {
+        HighlightedText {
+            text: self.text.into(),
+            highlights: self.highlights,
+        }
+    }
+
+    pub fn add_text_from_buffer_range<T: ToOffset>(
+        &mut self,
+        range: Range<T>,
+        snapshot: &text::BufferSnapshot,
+        syntax_snapshot: &SyntaxSnapshot,
+        override_style: Option<HighlightStyle>,
+        syntax_theme: &SyntaxTheme,
+    ) {
+        let range = range.to_offset(snapshot);
+        for chunk in Self::highlighted_chunks(range, snapshot, syntax_snapshot) {
+            let start = self.text.len();
+            self.text.push_str(chunk.text);
+            let end = self.text.len();
+
+            if let Some(mut highlight_style) = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(syntax_theme))
+            {
+                if let Some(override_style) = override_style {
+                    highlight_style.highlight(override_style);
+                }
+                self.highlights.push((start..end, highlight_style));
+            } else if let Some(override_style) = override_style {
+                self.highlights.push((start..end, override_style));
+            }
+        }
+    }
+
+    fn highlighted_chunks<'a>(
+        range: Range<usize>,
+        snapshot: &'a text::BufferSnapshot,
+        syntax_snapshot: &'a SyntaxSnapshot,
+    ) -> BufferChunks<'a> {
+        let captures = syntax_snapshot.captures(range.clone(), snapshot, |grammar| {
+            grammar.highlights_query.as_ref()
+        });
+
+        let highlight_maps = captures
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.highlight_map())
+            .collect();
+
+        BufferChunks::new(
+            snapshot.as_rope(),
+            range,
+            Some((captures, highlight_maps)),
+            false,
+            None,
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct EditPreview {
+    old_snapshot: text::BufferSnapshot,
+    applied_edits_snapshot: text::BufferSnapshot,
+    syntax_snapshot: SyntaxSnapshot,
+}
+
+impl EditPreview {
+    pub fn highlight_edits(
+        &self,
+        current_snapshot: &BufferSnapshot,
+        edits: &[(Range<Anchor>, String)],
+        include_deletions: bool,
+        cx: &App,
+    ) -> HighlightedText {
+        let Some(visible_range_in_preview_snapshot) = self.compute_visible_range(edits) else {
+            return HighlightedText::default();
+        };
+
+        let mut highlighted_text = HighlightedTextBuilder::default();
+
+        let mut offset_in_preview_snapshot = visible_range_in_preview_snapshot.start;
+
+        let insertion_highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().status().created_background),
+            ..Default::default()
+        };
+        let deletion_highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().status().deleted_background),
+            ..Default::default()
+        };
+        let syntax_theme = cx.theme().syntax();
+
+        for (range, edit_text) in edits {
+            let edit_new_end_in_preview_snapshot = range
+                .end
+                .bias_right(&self.old_snapshot)
+                .to_offset(&self.applied_edits_snapshot);
+            let edit_start_in_preview_snapshot = edit_new_end_in_preview_snapshot - edit_text.len();
+
+            let unchanged_range_in_preview_snapshot =
+                offset_in_preview_snapshot..edit_start_in_preview_snapshot;
+            if !unchanged_range_in_preview_snapshot.is_empty() {
+                highlighted_text.add_text_from_buffer_range(
+                    unchanged_range_in_preview_snapshot,
+                    &self.applied_edits_snapshot,
+                    &self.syntax_snapshot,
+                    None,
+                    &syntax_theme,
+                );
+            }
+
+            let range_in_current_snapshot = range.to_offset(current_snapshot);
+            if include_deletions && !range_in_current_snapshot.is_empty() {
+                highlighted_text.add_text_from_buffer_range(
+                    range_in_current_snapshot,
+                    &current_snapshot.text,
+                    &current_snapshot.syntax,
+                    Some(deletion_highlight_style),
+                    &syntax_theme,
+                );
+            }
+
+            if !edit_text.is_empty() {
+                highlighted_text.add_text_from_buffer_range(
+                    edit_start_in_preview_snapshot..edit_new_end_in_preview_snapshot,
+                    &self.applied_edits_snapshot,
+                    &self.syntax_snapshot,
+                    Some(insertion_highlight_style),
+                    &syntax_theme,
+                );
+            }
+
+            offset_in_preview_snapshot = edit_new_end_in_preview_snapshot;
+        }
+
+        highlighted_text.add_text_from_buffer_range(
+            offset_in_preview_snapshot..visible_range_in_preview_snapshot.end,
+            &self.applied_edits_snapshot,
+            &self.syntax_snapshot,
+            None,
+            &syntax_theme,
+        );
+
+        highlighted_text.build()
+    }
+
+    fn compute_visible_range(&self, edits: &[(Range<Anchor>, String)]) -> Option<Range<usize>> {
+        let (first, _) = edits.first()?;
+        let (last, _) = edits.last()?;
+
+        let start = first
+            .start
+            .bias_left(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
+        let end = last
+            .end
+            .bias_right(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
+
+        // Ensure that the first line of the first edit and the last line of the last edit are always fully visible
+        let range = Point::new(start.row, 0)
+            ..Point::new(end.row, self.applied_edits_snapshot.line_len(end.row));
+
+        Some(range.to_offset(&self.applied_edits_snapshot))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BracketMatch {
+    pub open_range: Range<usize>,
+    pub close_range: Range<usize>,
+    pub newline_only: bool,
 }
 
 impl Buffer {
     /// Create a new buffer with the given base text.
-    pub fn local<T: Into<String>>(base_text: T, cx: &ModelContext<Self>) -> Self {
+    pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
         Self::build(
             TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
             None,
@@ -617,7 +777,7 @@ impl Buffer {
     pub fn local_normalized(
         base_text_normalized: Rope,
         line_ending: LineEnding,
-        cx: &ModelContext<Self>,
+        cx: &Context<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new_normalized(
@@ -667,7 +827,7 @@ impl Buffer {
     }
 
     /// Serialize the buffer's state to a protobuf message.
-    pub fn to_proto(&self, cx: &AppContext) -> proto::BufferState {
+    pub fn to_proto(&self, cx: &App) -> proto::BufferState {
         proto::BufferState {
             id: self.remote_id().into(),
             file: self.file.as_ref().map(|f| f.to_proto(cx)),
@@ -682,7 +842,7 @@ impl Buffer {
     pub fn serialize_ops(
         &self,
         since: Option<clock::Global>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Vec<proto::Operation>> {
         let mut operations = Vec::new();
         operations.extend(self.deferred_ops.iter().map(proto::serialize_operation));
@@ -715,7 +875,7 @@ impl Buffer {
         }
 
         let text_operations = self.text.operations().clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let since = since.unwrap_or_default();
             operations.extend(
                 text_operations
@@ -729,7 +889,7 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer, returning the buffer.
-    pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn with_language(mut self, language: Arc<Language>, cx: &mut Context<Self>) -> Self {
         self.set_language(Some(language), cx);
         self
     }
@@ -762,7 +922,7 @@ impl Buffer {
             file,
             capability,
             syntax_map,
-            parsing_in_background: false,
+            reparse: None,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
             parse_status: async_watch::channel(ParseStatus::Idle),
@@ -777,7 +937,83 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
+            change_bits: Default::default(),
             _subscriptions: Vec::new(),
+        }
+    }
+
+    pub fn build_snapshot(
+        text: Rope,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut App,
+    ) -> impl Future<Output = BufferSnapshot> + use<> {
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        async move {
+            let text =
+                TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+            let mut syntax = SyntaxMap::new(&text).snapshot();
+            if let Some(language) = language.clone() {
+                let text = text.clone();
+                let language = language.clone();
+                let language_registry = language_registry.clone();
+                syntax.reparse(&text, language_registry, language);
+            }
+            BufferSnapshot {
+                text,
+                syntax,
+                file: None,
+                diagnostics: Default::default(),
+                remote_selections: Default::default(),
+                language,
+                non_text_state_update_count: 0,
+            }
+        }
+    }
+
+    pub fn build_empty_snapshot(cx: &mut App) -> BufferSnapshot {
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        let text =
+            TextBuffer::new_normalized(0, buffer_id, Default::default(), Rope::new()).snapshot();
+        let syntax = SyntaxMap::new(&text).snapshot();
+        BufferSnapshot {
+            text,
+            syntax,
+            file: None,
+            diagnostics: Default::default(),
+            remote_selections: Default::default(),
+            language: None,
+            non_text_state_update_count: 0,
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn build_snapshot_sync(
+        text: Rope,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut App,
+    ) -> BufferSnapshot {
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+        let mut syntax = SyntaxMap::new(&text).snapshot();
+        if let Some(language) = language.clone() {
+            let text = text.clone();
+            let language = language.clone();
+            let language_registry = language_registry.clone();
+            syntax.reparse(&text, language_registry, language);
+        }
+        BufferSnapshot {
+            text,
+            syntax,
+            file: None,
+            diagnostics: Default::default(),
+            remote_selections: Default::default(),
+            language,
+            non_text_state_update_count: 0,
         }
     }
 
@@ -800,9 +1036,9 @@ impl Buffer {
         }
     }
 
-    pub fn branch(&mut self, cx: &mut ModelContext<Self>) -> Model<Self> {
-        let this = cx.handle();
-        cx.new_model(|cx| {
+    pub fn branch(&mut self, cx: &mut Context<Self>) -> Entity<Self> {
+        let this = cx.entity();
+        cx.new(|cx| {
             let mut branch = Self {
                 branch_state: Some(BufferBranchState {
                     base_buffer: this.clone(),
@@ -825,12 +1061,44 @@ impl Buffer {
         })
     }
 
+    pub fn preview_edits(
+        &self,
+        edits: Arc<[(Range<Anchor>, String)]>,
+        cx: &App,
+    ) -> Task<EditPreview> {
+        let registry = self.language_registry();
+        let language = self.language().cloned();
+        let old_snapshot = self.text.snapshot();
+        let mut branch_buffer = self.text.branch();
+        let mut syntax_snapshot = self.syntax_map.lock().snapshot();
+        cx.background_spawn(async move {
+            if !edits.is_empty() {
+                if let Some(language) = language.clone() {
+                    syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
+                }
+
+                branch_buffer.edit(edits.iter().cloned());
+                let snapshot = branch_buffer.snapshot();
+                syntax_snapshot.interpolate(&snapshot);
+
+                if let Some(language) = language {
+                    syntax_snapshot.reparse(&snapshot, registry, language);
+                }
+            }
+            EditPreview {
+                old_snapshot,
+                applied_edits_snapshot: branch_buffer.snapshot(),
+                syntax_snapshot,
+            }
+        })
+    }
+
     /// Applies all of the changes in this buffer that intersect any of the
     /// given `ranges` to its base buffer.
     ///
     /// If `ranges` is empty, then all changes will be applied. This buffer must
     /// be a branch buffer to call this method.
-    pub fn merge_into_base(&mut self, ranges: Vec<Range<usize>>, cx: &mut ModelContext<Self>) {
+    pub fn merge_into_base(&mut self, ranges: Vec<Range<usize>>, cx: &mut Context<Self>) {
         let Some(base_buffer) = self.base_buffer() else {
             debug_panic!("not a branch buffer");
             return;
@@ -883,9 +1151,9 @@ impl Buffer {
 
     fn on_base_buffer_event(
         &mut self,
-        _: Model<Buffer>,
+        _: Entity<Buffer>,
         event: &BufferEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let BufferEvent::Operation { operation, .. } = event else {
             return;
@@ -940,10 +1208,11 @@ impl Buffer {
     }
 
     /// Assign a language to the buffer.
-    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().clear(&self.text);
         self.language = language;
+        self.was_changed();
         self.reparse(cx);
         cx.emit(BufferEvent::LanguageChanged);
     }
@@ -961,7 +1230,7 @@ impl Buffer {
     }
 
     /// Assign the buffer a new [`Capability`].
-    pub fn set_capability(&mut self, capability: Capability, cx: &mut ModelContext<Self>) {
+    pub fn set_capability(&mut self, capability: Capability, cx: &mut Context<Self>) {
         self.capability = capability;
         cx.emit(BufferEvent::CapabilityChanged)
     }
@@ -971,30 +1240,32 @@ impl Buffer {
         &mut self,
         version: clock::Global,
         mtime: Option<MTime>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.saved_version = version;
         self.has_unsaved_edits
             .set((self.saved_version().clone(), false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
+        self.was_changed();
         cx.emit(BufferEvent::Saved);
         cx.notify();
     }
 
     /// This method is called to signal that the buffer has been discarded.
-    pub fn discarded(&self, cx: &mut ModelContext<Self>) {
+    pub fn discarded(&self, cx: &mut Context<Self>) {
         cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
     /// Reloads the contents of the buffer from disk.
-    pub fn reload(&mut self, cx: &ModelContext<Self>) -> oneshot::Receiver<Option<Transaction>> {
+    pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
-        self.reload_task = Some(cx.spawn(|this, mut cx| async move {
-            let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
+        self.reload_task = Some(cx.spawn(async move |this, cx| {
+            let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
+
                 Some((file.disk_state().mtime(), file.load(cx)))
             })?
             else {
@@ -1003,9 +1274,9 @@ impl Buffer {
 
             let new_text = new_text.await?;
             let diff = this
-                .update(&mut cx, |this, cx| this.diff(new_text.clone(), cx))?
+                .update(cx, |this, cx| this.diff(new_text.clone(), cx))?
                 .await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
                     this.apply_diff(diff, cx);
@@ -1037,7 +1308,7 @@ impl Buffer {
         version: clock::Global,
         line_ending: LineEnding,
         mtime: Option<MTime>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.saved_version = version;
         self.has_unsaved_edits
@@ -1050,7 +1321,7 @@ impl Buffer {
 
     /// Updates the [`File`] backing this buffer. This should be called when
     /// the file has changed or has been deleted.
-    pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
+    pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut Context<Self>) {
         let was_dirty = self.is_dirty();
         let mut file_changed = false;
 
@@ -1073,6 +1344,7 @@ impl Buffer {
 
         self.file = Some(new_file);
         if file_changed {
+            self.was_changed();
             self.non_text_state_update_count += 1;
             if was_dirty != self.is_dirty() {
                 cx.emit(BufferEvent::DirtyChanged);
@@ -1082,7 +1354,7 @@ impl Buffer {
         }
     }
 
-    pub fn base_buffer(&self) -> Option<Model<Self>> {
+    pub fn base_buffer(&self) -> Option<Entity<Self>> {
         Some(self.branch_state.as_ref()?.base_buffer.clone())
     }
 
@@ -1102,6 +1374,25 @@ impl Buffer {
             .or_else(|| self.language.clone())
     }
 
+    /// Returns each [`Language`] for the active syntax layers at the given location.
+    pub fn languages_at<D: ToOffset>(&self, position: D) -> Vec<Arc<Language>> {
+        let offset = position.to_offset(self);
+        let mut languages: Vec<Arc<Language>> = self
+            .syntax_map
+            .lock()
+            .layers_for_range(offset..offset, &self.text, false)
+            .map(|info| info.language.clone())
+            .collect();
+
+        if languages.is_empty() {
+            if let Some(buffer_language) = self.language() {
+                languages.push(buffer_language.clone());
+            }
+        }
+
+        languages
+    }
+
     /// An integer version number that accounts for all updates besides
     /// the buffer's text itself (which is versioned via a version vector).
     pub fn non_text_state_update_count(&self) -> usize {
@@ -1111,7 +1402,7 @@ impl Buffer {
     /// Whether the buffer is being parsed in the background.
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
-        self.parsing_in_background
+        self.reparse.is_some()
     }
 
     /// Indicates whether the buffer contains any regions that may be
@@ -1148,8 +1439,8 @@ impl Buffer {
     /// initiate an additional reparse recursively. To avoid concurrent parses
     /// for the same buffer, we only initiate a new parse if we are not already
     /// parsing in the background.
-    pub fn reparse(&mut self, cx: &mut ModelContext<Self>) {
-        if self.parsing_in_background {
+    pub fn reparse(&mut self, cx: &mut Context<Self>) {
+        if self.reparse.is_some() {
             return;
         }
         let language = if let Some(language) = self.language.clone() {
@@ -1167,7 +1458,7 @@ impl Buffer {
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
 
-        let parse_task = cx.background_executor().spawn({
+        let parse_task = cx.background_spawn({
             let language = language.clone();
             let language_registry = language_registry.clone();
             async move {
@@ -1183,12 +1474,12 @@ impl Buffer {
         {
             Ok(new_syntax_snapshot) => {
                 self.did_finish_parsing(new_syntax_snapshot, cx);
+                self.reparse = None;
             }
             Err(parse_task) => {
-                self.parsing_in_background = true;
-                cx.spawn(move |this, mut cx| async move {
+                self.reparse = Some(cx.spawn(async move |this, cx| {
                     let new_syntax_map = parse_task.await;
-                    this.update(&mut cx, move |this, cx| {
+                    this.update(cx, move |this, cx| {
                         let grammar_changed =
                             this.language.as_ref().map_or(true, |current_language| {
                                 !Arc::ptr_eq(&language, current_language)
@@ -1202,19 +1493,19 @@ impl Buffer {
                             || grammar_changed
                             || this.version.changed_since(&parsed_version);
                         this.did_finish_parsing(new_syntax_map, cx);
-                        this.parsing_in_background = false;
+                        this.reparse = None;
                         if parse_again {
                             this.reparse(cx);
                         }
                     })
                     .ok();
-                })
-                .detach();
+                }));
             }
         }
     }
 
-    fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut ModelContext<Self>) {
+    fn did_finish_parsing(&mut self, syntax_snapshot: SyntaxSnapshot, cx: &mut Context<Self>) {
+        self.was_changed();
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.request_autoindent(cx);
@@ -1232,7 +1523,7 @@ impl Buffer {
         &mut self,
         server_id: LanguageServerId,
         diagnostics: DiagnosticSet,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
         let op = Operation::UpdateDiagnostics {
@@ -1244,18 +1535,25 @@ impl Buffer {
         self.send_operation(op, true, cx);
     }
 
-    fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn get_diagnostics(&self, server_id: LanguageServerId) -> Option<&DiagnosticSet> {
+        let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
+            return None;
+        };
+        Some(&self.diagnostics[idx].1)
+    }
+
+    fn request_autoindent(&mut self, cx: &mut Context<Self>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
-            let indent_sizes = cx.background_executor().spawn(indent_sizes);
+            let indent_sizes = cx.background_spawn(indent_sizes);
             match cx
                 .background_executor()
                 .block_with_timeout(Duration::from_micros(500), indent_sizes)
             {
                 Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
                 Err(indent_sizes) => {
-                    self.pending_autoindent = Some(cx.spawn(|this, mut cx| async move {
+                    self.pending_autoindent = Some(cx.spawn(async move |this, cx| {
                         let indent_sizes = indent_sizes.await;
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             this.apply_autoindents(indent_sizes, cx);
                         })
                         .ok();
@@ -1267,7 +1565,9 @@ impl Buffer {
         }
     }
 
-    fn compute_autoindents(&self) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>>> {
+    fn compute_autoindents(
+        &self,
+    ) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>> + use<>> {
         let max_rows_between_yields = 100;
         let snapshot = self.snapshot();
         if snapshot.syntax.is_empty() || self.autoindent_requests.is_empty() {
@@ -1440,7 +1740,7 @@ impl Buffer {
     fn apply_autoindents(
         &mut self,
         indent_sizes: BTreeMap<u32, IndentSize>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.autoindent_requests.clear();
 
@@ -1498,7 +1798,7 @@ impl Buffer {
 
     /// Spawns a background task that asynchronously computes a `Diff` between the buffer's text
     /// and the given new text.
-    pub fn diff(&self, mut new_text: String, cx: &AppContext) -> Task<Diff> {
+    pub fn diff(&self, mut new_text: String, cx: &App) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
         cx.background_executor()
@@ -1506,61 +1806,7 @@ impl Buffer {
                 let old_text = old_text.to_string();
                 let line_ending = LineEnding::detect(&new_text);
                 LineEnding::normalize(&mut new_text);
-
-                let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
-                let empty: Arc<str> = Arc::default();
-
-                let mut edits = Vec::new();
-                let mut old_offset = 0;
-                let mut new_offset = 0;
-                let mut last_edit: Option<(Range<usize>, Range<usize>)> = None;
-                for change in diff.iter_all_changes().map(Some).chain([None]) {
-                    if let Some(change) = &change {
-                        let len = change.value().len();
-                        match change.tag() {
-                            ChangeTag::Equal => {
-                                old_offset += len;
-                                new_offset += len;
-                            }
-                            ChangeTag::Delete => {
-                                let old_end_offset = old_offset + len;
-                                if let Some((last_old_range, _)) = &mut last_edit {
-                                    last_old_range.end = old_end_offset;
-                                } else {
-                                    last_edit =
-                                        Some((old_offset..old_end_offset, new_offset..new_offset));
-                                }
-                                old_offset = old_end_offset;
-                            }
-                            ChangeTag::Insert => {
-                                let new_end_offset = new_offset + len;
-                                if let Some((_, last_new_range)) = &mut last_edit {
-                                    last_new_range.end = new_end_offset;
-                                } else {
-                                    last_edit =
-                                        Some((old_offset..old_offset, new_offset..new_end_offset));
-                                }
-                                new_offset = new_end_offset;
-                            }
-                        }
-                    }
-
-                    if let Some((old_range, new_range)) = &last_edit {
-                        if old_offset > old_range.end
-                            || new_offset > new_range.end
-                            || change.is_none()
-                        {
-                            let text = if new_range.is_empty() {
-                                empty.clone()
-                            } else {
-                                new_text[new_range.clone()].into()
-                            };
-                            edits.push((old_range.clone(), text));
-                            last_edit.take();
-                        }
-                    }
-                }
-
+                let edits = text_diff(&old_text, &new_text);
                 Diff {
                     base_version,
                     line_ending,
@@ -1571,11 +1817,11 @@ impl Buffer {
 
     /// Spawns a background task that searches the buffer for any whitespace
     /// at the ends of a lines, and returns a `Diff` that removes that whitespace.
-    pub fn remove_trailing_whitespace(&self, cx: &AppContext) -> Task<Diff> {
+    pub fn remove_trailing_whitespace(&self, cx: &App) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let ranges = trailing_whitespace_ranges(&old_text);
             let empty = Arc::<str>::from("");
             Diff {
@@ -1591,7 +1837,7 @@ impl Buffer {
 
     /// Ensures that the buffer ends with a single newline character, and
     /// no other whitespace.
-    pub fn ensure_final_newline(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn ensure_final_newline(&mut self, cx: &mut Context<Self>) {
         let len = self.len();
         let mut offset = len;
         for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
@@ -1613,9 +1859,7 @@ impl Buffer {
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
-    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
-        // Check for any edits to the buffer that have occurred since this diff
-        // was computed.
+    pub fn apply_diff(&mut self, diff: Diff, cx: &mut Context<Self>) -> Option<TransactionId> {
         let snapshot = self.snapshot();
         let mut edits_since = snapshot.edits_since::<usize>(&diff.base_version).peekable();
         let mut delta = 0;
@@ -1666,12 +1910,18 @@ impl Buffer {
 
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.capability != Capability::ReadOnly
-            && (self.has_conflict
-                || self.file.as_ref().map_or(false, |file| {
-                    matches!(file.disk_state(), DiskState::New | DiskState::Deleted)
-                })
-                || self.has_unsaved_edits())
+        if self.capability == Capability::ReadOnly {
+            return false;
+        }
+        if self.has_conflict {
+            return true;
+        }
+        match self.file.as_ref().map(|f| f.disk_state()) {
+            Some(DiskState::New) | Some(DiskState::Deleted) => {
+                !self.is_empty() && self.has_unsaved_edits()
+            }
+            _ => self.has_unsaved_edits(),
+        }
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
@@ -1691,13 +1941,35 @@ impl Buffer {
                 }
                 None => true,
             },
-            DiskState::Deleted => true,
+            DiskState::Deleted => false,
         }
     }
 
     /// Gets a [`Subscription`] that tracks all of the changes to the buffer's text.
     pub fn subscribe(&mut self) -> Subscription {
         self.text.subscribe()
+    }
+
+    /// Adds a bit to the list of bits that are set when the buffer's text changes.
+    ///
+    /// This allows downstream code to check if the buffer's text has changed without
+    /// waiting for an effect cycle, which would be required if using eents.
+    pub fn record_changes(&mut self, bit: rc::Weak<Cell<bool>>) {
+        if let Err(ix) = self
+            .change_bits
+            .binary_search_by_key(&rc::Weak::as_ptr(&bit), rc::Weak::as_ptr)
+        {
+            self.change_bits.insert(ix, bit);
+        }
+    }
+
+    fn was_changed(&mut self) {
+        self.change_bits.retain(|change_bit| {
+            change_bit.upgrade().map_or(false, |bit| {
+                bit.replace(true);
+                true
+            })
+        });
     }
 
     /// Starts a transaction, if one is not already in-progress. When undoing or
@@ -1719,7 +1991,7 @@ impl Buffer {
     }
 
     /// Terminates the current transaction, if this is the outermost transaction.
-    pub fn end_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn end_transaction(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
         self.end_transaction_at(Instant::now(), cx)
     }
 
@@ -1729,7 +2001,7 @@ impl Buffer {
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<TransactionId> {
         assert!(self.transaction_depth > 0);
         self.transaction_depth -= 1;
@@ -1763,33 +2035,41 @@ impl Buffer {
     }
 
     /// Manually remove a transaction from the buffer's undo history
-    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
-        self.text.forget_transaction(transaction_id);
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        self.text.forget_transaction(transaction_id)
     }
 
-    /// Manually merge two adjacent transactions in the buffer's undo history.
+    /// Retrieve a transaction from the buffer's undo history
+    pub fn get_transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.text.get_transaction(transaction_id)
+    }
+
+    /// Manually merge two transactions in the buffer's undo history.
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.text.merge_transactions(transaction, destination);
     }
 
     /// Waits for the buffer to receive operations with the given timestamps.
-    pub fn wait_for_edits(
+    pub fn wait_for_edits<It: IntoIterator<Item = clock::Lamport>>(
         &mut self,
-        edit_ids: impl IntoIterator<Item = clock::Lamport>,
-    ) -> impl Future<Output = Result<()>> {
+        edit_ids: It,
+    ) -> impl Future<Output = Result<()>> + use<It> {
         self.text.wait_for_edits(edit_ids)
     }
 
     /// Waits for the buffer to receive the operations necessary for resolving the given anchors.
-    pub fn wait_for_anchors(
+    pub fn wait_for_anchors<It: IntoIterator<Item = Anchor>>(
         &mut self,
-        anchors: impl IntoIterator<Item = Anchor>,
-    ) -> impl 'static + Future<Output = Result<()>> {
+        anchors: It,
+    ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         self.text.wait_for_anchors(anchors)
     }
 
     /// Waits for the buffer to receive operations up to the given version.
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_version(
+        &mut self,
+        version: clock::Global,
+    ) -> impl Future<Output = Result<()>> + use<> {
         self.text.wait_for_version(version)
     }
 
@@ -1805,7 +2085,7 @@ impl Buffer {
         selections: Arc<[Selection<Anchor>]>,
         line_mode: bool,
         cursor_shape: CursorShape,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
         self.remote_selections.insert(
@@ -1833,7 +2113,7 @@ impl Buffer {
 
     /// Clears the selections, so that other replicas of the buffer do not see any selections for
     /// this replica.
-    pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn remove_active_selections(&mut self, cx: &mut Context<Self>) {
         if self
             .remote_selections
             .get(&self.text.replica_id())
@@ -1844,7 +2124,7 @@ impl Buffer {
     }
 
     /// Replaces the buffer's entire text.
-    pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Lamport>
+    pub fn set_text<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>
     where
         T: Into<Arc<str>>,
     {
@@ -1865,7 +2145,7 @@ impl Buffer {
         &mut self,
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<clock::Lamport>
     where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -1874,8 +2154,10 @@ impl Buffer {
     {
         // Skip invalid edits and coalesce contiguous ones.
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+
         for (range, new_text) in edits_iter {
             let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+
             if range.start > range.end {
                 mem::swap(&mut range.start, &mut range.end);
             }
@@ -1950,13 +2232,23 @@ impl Buffer {
                         original_indent_columns,
                     } = &mode
                     {
-                        original_indent_column =
-                            Some(original_indent_columns.get(ix).copied().unwrap_or_else(|| {
-                                indent_size_for_text(
-                                    new_text[range_of_insertion_to_indent.clone()].chars(),
-                                )
-                                .len
-                            }));
+                        original_indent_column = Some(if new_text.starts_with('\n') {
+                            indent_size_for_text(
+                                new_text[range_of_insertion_to_indent.clone()].chars(),
+                            )
+                            .len
+                        } else {
+                            original_indent_columns
+                                .get(ix)
+                                .copied()
+                                .flatten()
+                                .unwrap_or_else(|| {
+                                    indent_size_for_text(
+                                        new_text[range_of_insertion_to_indent.clone()].chars(),
+                                    )
+                                    .len
+                                })
+                        });
 
                         // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
@@ -1987,18 +2279,14 @@ impl Buffer {
         Some(edit_id)
     }
 
-    fn did_edit(
-        &mut self,
-        old_version: &clock::Global,
-        was_dirty: bool,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn did_edit(&mut self, old_version: &clock::Global, was_dirty: bool, cx: &mut Context<Self>) {
+        self.was_changed();
+
         if self.edits_since::<usize>(old_version).next().is_none() {
             return;
         }
 
         self.reparse(cx);
-
         cx.emit(BufferEvent::Edited);
         if was_dirty != self.is_dirty() {
             cx.emit(BufferEvent::DirtyChanged);
@@ -2006,7 +2294,7 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn autoindent_ranges<I, T>(&mut self, ranges: I, cx: &mut ModelContext<Self>)
+    pub fn autoindent_ranges<I, T>(&mut self, ranges: I, cx: &mut Context<Self>)
     where
         I: IntoIterator<Item = Range<T>>,
         T: ToOffset + Copy,
@@ -2037,7 +2325,7 @@ impl Buffer {
         position: impl ToPoint,
         space_above: bool,
         space_below: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Point {
         let mut position = position.to_point(self);
 
@@ -2086,11 +2374,7 @@ impl Buffer {
     }
 
     /// Applies the given remote operations to the buffer.
-    pub fn apply_ops<I: IntoIterator<Item = Operation>>(
-        &mut self,
-        ops: I,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn apply_ops<I: IntoIterator<Item = Operation>>(&mut self, ops: I, cx: &mut Context<Self>) {
         self.pending_autoindent.take();
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -2121,7 +2405,7 @@ impl Buffer {
         cx.notify();
     }
 
-    fn flush_deferred_ops(&mut self, cx: &mut ModelContext<Self>) {
+    fn flush_deferred_ops(&mut self, cx: &mut Context<Self>) {
         let mut deferred_ops = Vec::new();
         for op in self.deferred_ops.drain().iter().cloned() {
             if self.can_apply_op(&op) {
@@ -2156,7 +2440,7 @@ impl Buffer {
         }
     }
 
-    fn apply_op(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
+    fn apply_op(&mut self, operation: Operation, cx: &mut Context<Self>) {
         match operation {
             Operation::Buffer(_) => {
                 unreachable!("buffer operations should never be applied at this layer")
@@ -2226,7 +2510,7 @@ impl Buffer {
         server_id: LanguageServerId,
         diagnostics: DiagnosticSet,
         lamport_timestamp: clock::Lamport,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
             let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
@@ -2248,7 +2532,8 @@ impl Buffer {
         }
     }
 
-    fn send_operation(&self, operation: Operation, is_local: bool, cx: &mut ModelContext<Self>) {
+    fn send_operation(&mut self, operation: Operation, is_local: bool, cx: &mut Context<Self>) {
+        self.was_changed();
         cx.emit(BufferEvent::Operation {
             operation,
             is_local,
@@ -2256,13 +2541,13 @@ impl Buffer {
     }
 
     /// Removes the selections for a given peer.
-    pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
+    pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut Context<Self>) {
         self.remote_selections.remove(&replica_id);
         cx.notify();
     }
 
     /// Undoes the most recent transaction.
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn undo(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
@@ -2279,7 +2564,7 @@ impl Buffer {
     pub fn undo_transaction(
         &mut self,
         transaction_id: TransactionId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -2296,7 +2581,7 @@ impl Buffer {
     pub fn undo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -2312,11 +2597,7 @@ impl Buffer {
         undone
     }
 
-    pub fn undo_operations(
-        &mut self,
-        counts: HashMap<Lamport, u32>,
-        cx: &mut ModelContext<Buffer>,
-    ) {
+    pub fn undo_operations(&mut self, counts: HashMap<Lamport, u32>, cx: &mut Context<Buffer>) {
         let was_dirty = self.is_dirty();
         let operation = self.text.undo_operations(counts);
         let old_version = self.version.clone();
@@ -2325,7 +2606,7 @@ impl Buffer {
     }
 
     /// Manually redoes a specific transaction in the buffer's redo history.
-    pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+    pub fn redo(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
@@ -2342,7 +2623,7 @@ impl Buffer {
     pub fn redo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -2363,7 +2644,7 @@ impl Buffer {
         &mut self,
         server_id: LanguageServerId,
         triggers: BTreeSet<String>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
         if triggers.is_empty() {
@@ -2417,7 +2698,7 @@ impl Buffer {
         &mut self,
         marked_string: &str,
         autoindent_mode: Option<AutoindentMode>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let edits = self.edits_for_marked_text(marked_string);
         self.edit(edits, autoindent_mode, cx);
@@ -2427,12 +2708,8 @@ impl Buffer {
         self.text.set_group_interval(group_interval);
     }
 
-    pub fn randomly_edit<T>(
-        &mut self,
-        rng: &mut T,
-        old_range_count: usize,
-        cx: &mut ModelContext<Self>,
-    ) where
+    pub fn randomly_edit<T>(&mut self, rng: &mut T, old_range_count: usize, cx: &mut Context<Self>)
+    where
         T: rand::Rng,
     {
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
@@ -2450,7 +2727,8 @@ impl Buffer {
             last_end = Some(range.end);
 
             let new_text_len = rng.gen_range(0..10);
-            let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
+            let mut new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
+            new_text = new_text.to_uppercase();
 
             edits.push((range, new_text));
         }
@@ -2458,7 +2736,7 @@ impl Buffer {
         self.edit(edits, None, cx);
     }
 
-    pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut ModelContext<Self>) {
+    pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut Context<Self>) {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
@@ -2483,13 +2761,15 @@ impl Deref for Buffer {
 }
 
 impl BufferSnapshot {
-    /// Returns [`IndentSize`] for a given line that respects user settings and /// language preferences.
+    /// Returns [`IndentSize`] for a given line that respects user settings and
+    /// language preferences.
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
         indent_size_for_line(self, row)
     }
+
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
-    pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
+    pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {
         let settings = language_settings(
             self.language_at(position).map(|l| l.name()),
             self.file(),
@@ -2594,7 +2874,7 @@ impl BufferSnapshot {
 
         let mut error_ranges = Vec::<Range<Point>>::new();
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            Some(&grammar.error_query)
+            grammar.error_query.as_ref()
         });
         while let Some(mat) = matches.peek() {
             let node = mat.captures[0].node;
@@ -2623,7 +2903,7 @@ impl BufferSnapshot {
             if let Some(range_to_truncate) = indent_ranges
                 .iter_mut()
                 .filter(|indent_range| indent_range.contains(&outdent_position))
-                .last()
+                .next_back()
             {
                 range_to_truncate.end = outdent_position;
             }
@@ -2665,12 +2945,19 @@ impl BufferSnapshot {
             let mut indent_from_prev_row = false;
             let mut outdent_from_prev_row = false;
             let mut outdent_to_row = u32::MAX;
+            let mut from_regex = false;
 
             while let Some((indent_row, delta)) = indent_changes.peek() {
                 match indent_row.cmp(&row) {
                     Ordering::Equal => match delta {
-                        Ordering::Less => outdent_from_prev_row = true,
-                        Ordering::Greater => indent_from_prev_row = true,
+                        Ordering::Less => {
+                            from_regex = true;
+                            outdent_from_prev_row = true
+                        }
+                        Ordering::Greater => {
+                            indent_from_prev_row = true;
+                            from_regex = true
+                        }
                         _ => {}
                     },
 
@@ -2703,32 +2990,32 @@ impl BufferSnapshot {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if indent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Greater,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if outdent_to_row < prev_row {
                 Some(IndentSuggestion {
                     basis_row: outdent_to_row,
                     delta: Ordering::Equal,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if outdent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Less,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
             {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else {
                 None
@@ -2778,6 +3065,21 @@ impl BufferSnapshot {
         BufferChunks::new(self.text.as_rope(), range, syntax, diagnostics, Some(self))
     }
 
+    pub fn highlighted_text_for_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        override_style: Option<HighlightStyle>,
+        syntax_theme: &SyntaxTheme,
+    ) -> HighlightedText {
+        HighlightedText::from_buffer_range(
+            range,
+            &self.text,
+            &self.syntax,
+            override_style,
+            syntax_theme,
+        )
+    }
+
     /// Invokes the given callback for each line of text in the given range of the buffer.
     /// Uses callback to avoid allocating a string for each line.
     fn for_each_line(&self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
@@ -2813,6 +3115,25 @@ impl BufferSnapshot {
             .last()
     }
 
+    pub fn smallest_syntax_layer_containing<D: ToOffset>(
+        &self,
+        range: Range<D>,
+    ) -> Option<SyntaxLayer> {
+        let range = range.to_offset(self);
+        return self
+            .syntax
+            .layers_for_range(range, &self.text, false)
+            .max_by(|a, b| {
+                if a.depth != b.depth {
+                    a.depth.cmp(&b.depth)
+                } else if a.offset.0 != b.offset.0 {
+                    a.offset.0.cmp(&b.offset.0)
+                } else {
+                    a.node().end_byte().cmp(&b.node().end_byte()).reverse()
+                }
+            });
+    }
+
     /// Returns the main [`Language`].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
@@ -2829,7 +3150,7 @@ impl BufferSnapshot {
     pub fn settings_at<'a, D: ToOffset>(
         &'a self,
         position: D,
-        cx: &'a AppContext,
+        cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
         language_settings(
             self.language_at(position).map(|l| l.name()),
@@ -3239,24 +3560,13 @@ impl BufferSnapshot {
             true,
         );
         let mut last_buffer_range_end = 0;
+
         for (buffer_range, is_name) in buffer_ranges {
-            if !text.is_empty() && buffer_range.start > last_buffer_range_end {
+            let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
+            if space_added {
                 text.push(' ');
             }
-            last_buffer_range_end = buffer_range.end;
-            if is_name {
-                let mut start = text.len();
-                let end = start + buffer_range.len();
-
-                // When multiple names are captured, then the matchable text
-                // includes the whitespace in between the names.
-                if !name_ranges.is_empty() {
-                    start -= 1;
-                }
-
-                name_ranges.push(start..end);
-            }
-
+            let before_append_len = text.len();
             let mut offset = buffer_range.start;
             chunks.seek(buffer_range.clone());
             for mut chunk in chunks.by_ref() {
@@ -3280,6 +3590,16 @@ impl BufferSnapshot {
                     break;
                 }
             }
+            if is_name {
+                let after_append_len = text.len();
+                let start = if space_added && !name_ranges.is_empty() {
+                    before_append_len - 1
+                } else {
+                    before_append_len
+                };
+                name_ranges.push(start..after_append_len);
+            }
+            last_buffer_range_end = buffer_range.end;
         }
 
         Some(OutlineItem {
@@ -3311,15 +3631,10 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
-    /// Returns bracket range pairs overlapping or adjacent to `range`
-    pub fn bracket_ranges<T: ToOffset>(
+    pub fn all_bracket_ranges(
         &self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
-        // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
-
+        range: Range<usize>,
+    ) -> impl Iterator<Item = BracketMatch> + '_ {
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.brackets_config.as_ref().map(|c| &c.query)
         });
@@ -3334,6 +3649,7 @@ impl BufferSnapshot {
                 let mut open = None;
                 let mut close = None;
                 let config = &configs[mat.grammar_index];
+                let pattern = &config.patterns[mat.pattern_index];
                 for capture in mat.captures {
                     if capture.index == config.open_capture_ix {
                         open = Some(capture.node.byte_range());
@@ -3344,19 +3660,35 @@ impl BufferSnapshot {
 
                 matches.advance();
 
-                let Some((open, close)) = open.zip(close) else {
+                let Some((open_range, close_range)) = open.zip(close) else {
                     continue;
                 };
 
-                let bracket_range = open.start..=close.end;
+                let bracket_range = open_range.start..=close_range.end;
                 if !bracket_range.overlaps(&range) {
                     continue;
                 }
 
-                return Some((open, close));
+                return Some(BracketMatch {
+                    open_range,
+                    close_range,
+                    newline_only: pattern.newline_only,
+                });
             }
             None
         })
+    }
+
+    /// Returns bracket range pairs overlapping or adjacent to `range`
+    pub fn bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = BracketMatch> + '_ {
+        // Find bracket pairs that *inclusively* contain the given range.
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+        self.all_bracket_ranges(range)
+            .filter(|pair| !pair.newline_only)
     }
 
     pub fn text_object_ranges<T: ToOffset>(
@@ -3381,47 +3713,49 @@ impl BufferSnapshot {
 
         let mut captures = Vec::<(Range<usize>, TextObject)>::new();
 
-        iter::from_fn(move || loop {
-            while let Some(capture) = captures.pop() {
-                if capture.0.overlaps(&range) {
-                    return Some(capture);
-                }
-            }
-
-            let mat = matches.peek()?;
-
-            let Some(config) = configs[mat.grammar_index].as_ref() else {
-                matches.advance();
-                continue;
-            };
-
-            for capture in mat.captures {
-                let Some(ix) = config
-                    .text_objects_by_capture_ix
-                    .binary_search_by_key(&capture.index, |e| e.0)
-                    .ok()
-                else {
-                    continue;
-                };
-                let text_object = config.text_objects_by_capture_ix[ix].1;
-                let byte_range = capture.node.byte_range();
-
-                let mut found = false;
-                for (range, existing) in captures.iter_mut() {
-                    if existing == &text_object {
-                        range.start = range.start.min(byte_range.start);
-                        range.end = range.end.max(byte_range.end);
-                        found = true;
-                        break;
+        iter::from_fn(move || {
+            loop {
+                while let Some(capture) = captures.pop() {
+                    if capture.0.overlaps(&range) {
+                        return Some(capture);
                     }
                 }
 
-                if !found {
-                    captures.push((byte_range, text_object));
-                }
-            }
+                let mat = matches.peek()?;
 
-            matches.advance();
+                let Some(config) = configs[mat.grammar_index].as_ref() else {
+                    matches.advance();
+                    continue;
+                };
+
+                for capture in mat.captures {
+                    let Some(ix) = config
+                        .text_objects_by_capture_ix
+                        .binary_search_by_key(&capture.index, |e| e.0)
+                        .ok()
+                    else {
+                        continue;
+                    };
+                    let text_object = config.text_objects_by_capture_ix[ix].1;
+                    let byte_range = capture.node.byte_range();
+
+                    let mut found = false;
+                    for (range, existing) in captures.iter_mut() {
+                        if existing == &text_object {
+                            range.start = range.start.min(byte_range.start);
+                            range.end = range.end.max(byte_range.end);
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if !found {
+                        captures.push((byte_range, text_object));
+                    }
+                }
+
+                matches.advance();
+            }
         })
     }
 
@@ -3429,11 +3763,12 @@ impl BufferSnapshot {
     pub fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
+    ) -> impl Iterator<Item = BracketMatch> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        self.bracket_ranges(range.clone())
-            .filter(move |(open, close)| open.start <= range.start && close.end >= range.end)
+        self.bracket_ranges(range.clone()).filter(move |pair| {
+            pair.open_range.start <= range.start && pair.close_range.end >= range.end
+        })
     }
 
     /// Returns the smallest enclosing bracket ranges containing the given range or None if no brackets contain range
@@ -3449,14 +3784,14 @@ impl BufferSnapshot {
         // Get the ranges of the innermost pair of brackets.
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
-        for (open, close) in self.enclosing_bracket_ranges(range.clone()) {
+        for pair in self.enclosing_bracket_ranges(range.clone()) {
             if let Some(range_filter) = range_filter {
-                if !range_filter(open.clone(), close.clone()) {
+                if !range_filter(pair.open_range.clone(), pair.close_range.clone()) {
                     continue;
                 }
             }
 
-            let len = close.end - open.start;
+            let len = pair.close_range.end - pair.open_range.start;
 
             if let Some((existing_open, existing_close)) = &result {
                 let existing_len = existing_close.end - existing_open.start;
@@ -3465,7 +3800,7 @@ impl BufferSnapshot {
                 }
             }
 
-            result = Some((open, close));
+            result = Some((pair.open_range, pair.close_range));
         }
 
         result
@@ -3547,10 +3882,8 @@ impl BufferSnapshot {
 
     pub fn runnable_ranges(
         &self,
-        range: Range<Anchor>,
+        offset_range: Range<usize>,
     ) -> impl Iterator<Item = RunnableRange> + '_ {
-        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
-
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
             grammar.runnable_config.as_ref().map(|config| &config.query)
         });
@@ -3561,332 +3894,95 @@ impl BufferSnapshot {
             .map(|grammar| grammar.runnable_config.as_ref())
             .collect::<Vec<_>>();
 
-        iter::from_fn(move || loop {
-            let mat = syntax_matches.peek()?;
+        iter::from_fn(move || {
+            loop {
+                let mat = syntax_matches.peek()?;
 
-            let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
-                let mut run_range = None;
-                let full_range = mat.captures.iter().fold(
-                    Range {
-                        start: usize::MAX,
-                        end: 0,
-                    },
-                    |mut acc, next| {
-                        let byte_range = next.node.byte_range();
-                        if acc.start > byte_range.start {
-                            acc.start = byte_range.start;
-                        }
-                        if acc.end < byte_range.end {
-                            acc.end = byte_range.end;
-                        }
-                        acc
-                    },
-                );
-                if full_range.start > full_range.end {
-                    // We did not find a full spanning range of this match.
-                    return None;
+                let test_range = test_configs[mat.grammar_index].and_then(|test_configs| {
+                    let mut run_range = None;
+                    let full_range = mat.captures.iter().fold(
+                        Range {
+                            start: usize::MAX,
+                            end: 0,
+                        },
+                        |mut acc, next| {
+                            let byte_range = next.node.byte_range();
+                            if acc.start > byte_range.start {
+                                acc.start = byte_range.start;
+                            }
+                            if acc.end < byte_range.end {
+                                acc.end = byte_range.end;
+                            }
+                            acc
+                        },
+                    );
+                    if full_range.start > full_range.end {
+                        // We did not find a full spanning range of this match.
+                        return None;
+                    }
+                    let extra_captures: SmallVec<[_; 1]> =
+                        SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
+                            test_configs
+                                .extra_captures
+                                .get(capture.index as usize)
+                                .cloned()
+                                .and_then(|tag_name| match tag_name {
+                                    RunnableCapture::Named(name) => {
+                                        Some((capture.node.byte_range(), name))
+                                    }
+                                    RunnableCapture::Run => {
+                                        let _ = run_range.insert(capture.node.byte_range());
+                                        None
+                                    }
+                                })
+                        }));
+                    let run_range = run_range?;
+                    let tags = test_configs
+                        .query
+                        .property_settings(mat.pattern_index)
+                        .iter()
+                        .filter_map(|property| {
+                            if *property.key == *"tag" {
+                                property
+                                    .value
+                                    .as_ref()
+                                    .map(|value| RunnableTag(value.to_string().into()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let extra_captures = extra_captures
+                        .into_iter()
+                        .map(|(range, name)| {
+                            (
+                                name.to_string(),
+                                self.text_for_range(range.clone()).collect::<String>(),
+                            )
+                        })
+                        .collect();
+                    // All tags should have the same range.
+                    Some(RunnableRange {
+                        run_range,
+                        full_range,
+                        runnable: Runnable {
+                            tags,
+                            language: mat.language,
+                            buffer: self.remote_id(),
+                        },
+                        extra_captures,
+                        buffer_id: self.remote_id(),
+                    })
+                });
+
+                syntax_matches.advance();
+                if test_range.is_some() {
+                    // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
+                    // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
+                    return test_range;
                 }
-                let extra_captures: SmallVec<[_; 1]> =
-                    SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
-                        test_configs
-                            .extra_captures
-                            .get(capture.index as usize)
-                            .cloned()
-                            .and_then(|tag_name| match tag_name {
-                                RunnableCapture::Named(name) => {
-                                    Some((capture.node.byte_range(), name))
-                                }
-                                RunnableCapture::Run => {
-                                    let _ = run_range.insert(capture.node.byte_range());
-                                    None
-                                }
-                            })
-                    }));
-                let run_range = run_range?;
-                let tags = test_configs
-                    .query
-                    .property_settings(mat.pattern_index)
-                    .iter()
-                    .filter_map(|property| {
-                        if *property.key == *"tag" {
-                            property
-                                .value
-                                .as_ref()
-                                .map(|value| RunnableTag(value.to_string().into()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                let extra_captures = extra_captures
-                    .into_iter()
-                    .map(|(range, name)| {
-                        (
-                            name.to_string(),
-                            self.text_for_range(range.clone()).collect::<String>(),
-                        )
-                    })
-                    .collect();
-                // All tags should have the same range.
-                Some(RunnableRange {
-                    run_range,
-                    full_range,
-                    runnable: Runnable {
-                        tags,
-                        language: mat.language,
-                        buffer: self.remote_id(),
-                    },
-                    extra_captures,
-                    buffer_id: self.remote_id(),
-                })
-            });
-
-            syntax_matches.advance();
-            if test_range.is_some() {
-                // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
-                // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
-                return test_range;
             }
         })
-    }
-
-    pub fn indent_guides_in_range(
-        &self,
-        range: Range<Anchor>,
-        ignore_disabled_for_language: bool,
-        cx: &AppContext,
-    ) -> Vec<IndentGuide> {
-        let language_settings =
-            language_settings(self.language().map(|l| l.name()), self.file.as_ref(), cx);
-        let settings = language_settings.indent_guides;
-        if !ignore_disabled_for_language && !settings.enabled {
-            return Vec::new();
-        }
-        let tab_size = language_settings.tab_size.get() as u32;
-
-        let start_row = range.start.to_point(self).row;
-        let end_row = range.end.to_point(self).row;
-        let row_range = start_row..end_row + 1;
-
-        let mut row_indents = self.line_indents_in_row_range(row_range.clone());
-
-        let mut result_vec = Vec::new();
-        let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
-
-        while let Some((first_row, mut line_indent)) = row_indents.next() {
-            let current_depth = indent_stack.len() as u32;
-
-            // When encountering empty, continue until found useful line indent
-            // then add to the indent stack with the depth found
-            let mut found_indent = false;
-            let mut last_row = first_row;
-            if line_indent.is_line_empty() {
-                let mut trailing_row = end_row;
-                while !found_indent {
-                    let (target_row, new_line_indent) =
-                        if let Some(display_row) = row_indents.next() {
-                            display_row
-                        } else {
-                            // This means we reached the end of the given range and found empty lines at the end.
-                            // We need to traverse further until we find a non-empty line to know if we need to add
-                            // an indent guide for the last visible indent.
-                            trailing_row += 1;
-
-                            const TRAILING_ROW_SEARCH_LIMIT: u32 = 25;
-                            if trailing_row > self.max_point().row
-                                || trailing_row > end_row + TRAILING_ROW_SEARCH_LIMIT
-                            {
-                                break;
-                            }
-                            let new_line_indent = self.line_indent_for_row(trailing_row);
-                            (trailing_row, new_line_indent)
-                        };
-
-                    if new_line_indent.is_line_empty() {
-                        continue;
-                    }
-                    last_row = target_row.min(end_row);
-                    line_indent = new_line_indent;
-                    found_indent = true;
-                    break;
-                }
-            } else {
-                found_indent = true
-            }
-
-            let depth = if found_indent {
-                line_indent.len(tab_size) / tab_size
-                    + ((line_indent.len(tab_size) % tab_size) > 0) as u32
-            } else {
-                current_depth
-            };
-
-            match depth.cmp(&current_depth) {
-                Ordering::Less => {
-                    for _ in 0..(current_depth - depth) {
-                        let mut indent = indent_stack.pop().unwrap();
-                        if last_row != first_row {
-                            // In this case, we landed on an empty row, had to seek forward,
-                            // and discovered that the indent we where on is ending.
-                            // This means that the last display row must
-                            // be on line that ends this indent range, so we
-                            // should display the range up to the first non-empty line
-                            indent.end_row = first_row.saturating_sub(1);
-                        }
-
-                        result_vec.push(indent)
-                    }
-                }
-                Ordering::Greater => {
-                    for next_depth in current_depth..depth {
-                        indent_stack.push(IndentGuide {
-                            buffer_id: self.remote_id(),
-                            start_row: first_row,
-                            end_row: last_row,
-                            depth: next_depth,
-                            tab_size,
-                            settings,
-                        });
-                    }
-                }
-                _ => {}
-            }
-
-            for indent in indent_stack.iter_mut() {
-                indent.end_row = last_row;
-            }
-        }
-
-        result_vec.extend(indent_stack);
-
-        result_vec
-    }
-
-    pub async fn enclosing_indent(
-        &self,
-        mut buffer_row: BufferRow,
-    ) -> Option<(Range<BufferRow>, LineIndent)> {
-        let max_row = self.max_point().row;
-        if buffer_row >= max_row {
-            return None;
-        }
-
-        let mut target_indent = self.line_indent_for_row(buffer_row);
-
-        // If the current row is at the start of an indented block, we want to return this
-        // block as the enclosing indent.
-        if !target_indent.is_line_empty() && buffer_row < max_row {
-            let next_line_indent = self.line_indent_for_row(buffer_row + 1);
-            if !next_line_indent.is_line_empty()
-                && target_indent.raw_len() < next_line_indent.raw_len()
-            {
-                target_indent = next_line_indent;
-                buffer_row += 1;
-            }
-        }
-
-        const SEARCH_ROW_LIMIT: u32 = 25000;
-        const SEARCH_WHITESPACE_ROW_LIMIT: u32 = 2500;
-        const YIELD_INTERVAL: u32 = 100;
-
-        let mut accessed_row_counter = 0;
-
-        // If there is a blank line at the current row, search for the next non indented lines
-        if target_indent.is_line_empty() {
-            let start = buffer_row.saturating_sub(SEARCH_WHITESPACE_ROW_LIMIT);
-            let end = (max_row + 1).min(buffer_row + SEARCH_WHITESPACE_ROW_LIMIT);
-
-            let mut non_empty_line_above = None;
-            for (row, indent) in self
-                .text
-                .reversed_line_indents_in_row_range(start..buffer_row)
-            {
-                accessed_row_counter += 1;
-                if accessed_row_counter == YIELD_INTERVAL {
-                    accessed_row_counter = 0;
-                    yield_now().await;
-                }
-                if !indent.is_line_empty() {
-                    non_empty_line_above = Some((row, indent));
-                    break;
-                }
-            }
-
-            let mut non_empty_line_below = None;
-            for (row, indent) in self.text.line_indents_in_row_range((buffer_row + 1)..end) {
-                accessed_row_counter += 1;
-                if accessed_row_counter == YIELD_INTERVAL {
-                    accessed_row_counter = 0;
-                    yield_now().await;
-                }
-                if !indent.is_line_empty() {
-                    non_empty_line_below = Some((row, indent));
-                    break;
-                }
-            }
-
-            let (row, indent) = match (non_empty_line_above, non_empty_line_below) {
-                (Some((above_row, above_indent)), Some((below_row, below_indent))) => {
-                    if above_indent.raw_len() >= below_indent.raw_len() {
-                        (above_row, above_indent)
-                    } else {
-                        (below_row, below_indent)
-                    }
-                }
-                (Some(above), None) => above,
-                (None, Some(below)) => below,
-                _ => return None,
-            };
-
-            target_indent = indent;
-            buffer_row = row;
-        }
-
-        let start = buffer_row.saturating_sub(SEARCH_ROW_LIMIT);
-        let end = (max_row + 1).min(buffer_row + SEARCH_ROW_LIMIT);
-
-        let mut start_indent = None;
-        for (row, indent) in self
-            .text
-            .reversed_line_indents_in_row_range(start..buffer_row)
-        {
-            accessed_row_counter += 1;
-            if accessed_row_counter == YIELD_INTERVAL {
-                accessed_row_counter = 0;
-                yield_now().await;
-            }
-            if !indent.is_line_empty() && indent.raw_len() < target_indent.raw_len() {
-                start_indent = Some((row, indent));
-                break;
-            }
-        }
-        let (start_row, start_indent_size) = start_indent?;
-
-        let mut end_indent = (end, None);
-        for (row, indent) in self.text.line_indents_in_row_range((buffer_row + 1)..end) {
-            accessed_row_counter += 1;
-            if accessed_row_counter == YIELD_INTERVAL {
-                accessed_row_counter = 0;
-                yield_now().await;
-            }
-            if !indent.is_line_empty() && indent.raw_len() < target_indent.raw_len() {
-                end_indent = (row.saturating_sub(1), Some(indent));
-                break;
-            }
-        }
-        let (end_row, end_indent_size) = end_indent;
-
-        let indent = if let Some(end_indent_size) = end_indent_size {
-            if start_indent_size.raw_len() > end_indent_size.raw_len() {
-                start_indent_size
-            } else {
-                end_indent_size
-            }
-        } else {
-            start_indent_size
-        };
-
-        Some((start_row..end_row, indent))
     }
 
     /// Returns selections for remote peers intersecting the given range.
@@ -3969,11 +4065,7 @@ impl BufferSnapshot {
                         .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
                         // and stabilize order with group_id
                         .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
-                    if reversed {
-                        cmp.reverse()
-                    } else {
-                        cmp
-                    }
+                    if reversed { cmp.reverse() } else { cmp }
                 })?;
             iterators[next_ix]
                 .next()
@@ -4043,7 +4135,7 @@ impl BufferSnapshot {
     }
 
     /// Resolves the file path (relative to the worktree root) associated with the underlying file.
-    pub fn resolve_file_path(&self, cx: &AppContext, include_root: bool) -> Option<PathBuf> {
+    pub fn resolve_file_path(&self, cx: &App, include_root: bool) -> Option<PathBuf> {
         if let Some(file) = self.file() {
             if file.path().file_name().is_none() || include_root {
                 Some(file.full_path(cx))
@@ -4054,6 +4146,72 @@ impl BufferSnapshot {
             None
         }
     }
+
+    pub fn words_in_range(&self, query: WordsQuery) -> BTreeMap<String, Range<Anchor>> {
+        let query_str = query.fuzzy_contents;
+        if query_str.map_or(false, |query| query.is_empty()) {
+            return BTreeMap::default();
+        }
+
+        let classifier = CharClassifier::new(self.language.clone().map(|language| LanguageScope {
+            language,
+            override_id: None,
+        }));
+
+        let mut query_ix = 0;
+        let query_chars = query_str.map(|query| query.chars().collect::<Vec<_>>());
+        let query_len = query_chars.as_ref().map_or(0, |query| query.len());
+
+        let mut words = BTreeMap::default();
+        let mut current_word_start_ix = None;
+        let mut chunk_ix = query.range.start;
+        for chunk in self.chunks(query.range, false) {
+            for (i, c) in chunk.text.char_indices() {
+                let ix = chunk_ix + i;
+                if classifier.is_word(c) {
+                    if current_word_start_ix.is_none() {
+                        current_word_start_ix = Some(ix);
+                    }
+
+                    if let Some(query_chars) = &query_chars {
+                        if query_ix < query_len {
+                            if c.to_lowercase().eq(query_chars[query_ix].to_lowercase()) {
+                                query_ix += 1;
+                            }
+                        }
+                    }
+                    continue;
+                } else if let Some(word_start) = current_word_start_ix.take() {
+                    if query_ix == query_len {
+                        let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
+                        let mut word_text = self.text_for_range(word_start..ix).peekable();
+                        let first_char = word_text
+                            .peek()
+                            .and_then(|first_chunk| first_chunk.chars().next());
+                        // Skip empty and "words" starting with digits as a heuristic to reduce useless completions
+                        if !query.skip_digits
+                            || first_char.map_or(true, |first_char| !first_char.is_digit(10))
+                        {
+                            words.insert(word_text.collect(), word_range);
+                        }
+                    }
+                }
+                query_ix = 0;
+            }
+            chunk_ix += chunk.text.len();
+        }
+
+        words
+    }
+}
+
+pub struct WordsQuery<'a> {
+    /// Only returns words with all chars from the fuzzy string in them.
+    pub fuzzy_contents: Option<&'a str>,
+    /// Skips words that start with a digit.
+    pub skip_digits: bool,
+    /// Buffer offset range, to look for words.
+    pub range: Range<usize>,
 }
 
 fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
@@ -4098,7 +4256,7 @@ impl Deref for BufferSnapshot {
     }
 }
 
-unsafe impl<'a> Send for BufferChunks<'a> {}
+unsafe impl Send for BufferChunks<'_> {}
 
 impl<'a> BufferChunks<'a> {
     pub(crate) fn new(
@@ -4170,7 +4328,10 @@ impl<'a> BufferChunks<'a> {
             } else {
                 // We cannot obtain new highlights for a language-aware buffer iterator, as we don't have a buffer snapshot.
                 // Seeking such BufferChunks is not supported.
-                debug_assert!(false, "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot");
+                debug_assert!(
+                    false,
+                    "Attempted to seek on a language-aware buffer iterator without associated buffer snapshot"
+                );
             }
 
             highlights.captures.set_byte_range(self.range.clone());
@@ -4210,6 +4371,10 @@ impl<'a> BufferChunks<'a> {
     /// The current byte offset in the buffer.
     pub fn offset(&self) -> usize {
         self.range.start
+    }
+
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
     }
 
     fn update_diagnostic_depths(&mut self, endpoint: DiagnosticEndpoint) {
@@ -4434,6 +4599,7 @@ impl IndentSize {
 pub struct TestFile {
     pub path: Arc<Path>,
     pub root_name: String,
+    pub local_root: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -4442,36 +4608,53 @@ impl File for TestFile {
         &self.path
     }
 
-    fn full_path(&self, _: &gpui::AppContext) -> PathBuf {
+    fn full_path(&self, _: &gpui::App) -> PathBuf {
         PathBuf::from(&self.root_name).join(self.path.as_ref())
     }
 
     fn as_local(&self) -> Option<&dyn LocalFile> {
-        None
+        if self.local_root.is_some() {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn disk_state(&self) -> DiskState {
         unimplemented!()
     }
 
-    fn file_name<'a>(&'a self, _: &'a gpui::AppContext) -> &'a std::ffi::OsStr {
+    fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a std::ffi::OsStr {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
     }
 
-    fn worktree_id(&self, _: &AppContext) -> WorktreeId {
+    fn worktree_id(&self, _: &App) -> WorktreeId {
         WorktreeId::from_usize(0)
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        unimplemented!()
-    }
-
-    fn to_proto(&self, _: &AppContext) -> rpc::proto::File {
+    fn to_proto(&self, _: &App) -> rpc::proto::File {
         unimplemented!()
     }
 
     fn is_private(&self) -> bool {
         false
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LocalFile for TestFile {
+    fn abs_path(&self, _cx: &App) -> PathBuf {
+        PathBuf::from(self.local_root.as_ref().unwrap())
+            .join(&self.root_name)
+            .join(self.path.as_ref())
+    }
+
+    fn load(&self, _cx: &App) -> Task<Result<String>> {
+        unimplemented!()
+    }
+
+    fn load_bytes(&self, _cx: &App) -> Task<Result<Vec<u8>>> {
+        unimplemented!()
     }
 }
 
@@ -4481,22 +4664,24 @@ pub(crate) fn contiguous_ranges(
 ) -> impl Iterator<Item = Range<u32>> {
     let mut values = values;
     let mut current_range: Option<Range<u32>> = None;
-    std::iter::from_fn(move || loop {
-        if let Some(value) = values.next() {
-            if let Some(range) = &mut current_range {
-                if value == range.end && range.len() < max_len {
-                    range.end += 1;
-                    continue;
+    std::iter::from_fn(move || {
+        loop {
+            if let Some(value) = values.next() {
+                if let Some(range) = &mut current_range {
+                    if value == range.end && range.len() < max_len {
+                        range.end += 1;
+                        continue;
+                    }
                 }
-            }
 
-            let prev_range = current_range.clone();
-            current_range = Some(value..(value + 1));
-            if prev_range.is_some() {
-                return prev_range;
+                let prev_range = current_range.clone();
+                current_range = Some(value..(value + 1));
+                if prev_range.is_some() {
+                    return prev_range;
+                }
+            } else {
+                return current_range.take();
             }
-        } else {
-            return current_range.take();
         }
     })
 }
@@ -4544,21 +4729,25 @@ impl CharClassifier {
     }
 
     pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
-        if c.is_whitespace() {
-            return CharKind::Whitespace;
-        } else if c.is_alphanumeric() || c == '_' {
+        if c.is_alphanumeric() || c == '_' {
             return CharKind::Word;
         }
 
         if let Some(scope) = &self.scope {
-            if let Some(characters) = scope.word_characters() {
+            let characters = if self.for_completion {
+                scope.completion_query_characters()
+            } else {
+                scope.word_characters()
+            };
+            if let Some(characters) = characters {
                 if characters.contains(&c) {
-                    if c == '-' && !self.for_completion && !ignore_punctuation {
-                        return CharKind::Punctuation;
-                    }
                     return CharKind::Word;
                 }
             }
+        }
+
+        if c.is_whitespace() {
+            return CharKind::Whitespace;
         }
 
         if ignore_punctuation {

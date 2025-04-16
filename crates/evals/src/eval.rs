@@ -4,9 +4,9 @@ use clap::Parser;
 use client::{Client, UserStore};
 use clock::RealSystemClock;
 use collections::BTreeMap;
+use dap::DapRegistry;
 use feature_flags::FeatureFlagAppExt as _;
-use git::GitHostingProviderRegistry;
-use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model};
+use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Entity};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -18,19 +18,19 @@ use semantic_index::{
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
+use smol::Timer;
 use smol::channel::bounded;
 use smol::io::AsyncReadExt;
-use smol::Timer;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::{
     fs,
     path::Path,
-    process::{exit, Stdio},
+    process::{Stdio, exit},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 
@@ -99,7 +99,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     env_logger::init();
 
-    gpui::App::headless().run(move |cx| {
+    gpui::Application::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
         let client = Arc::new(ReqwestClient::user_agent("Zed LLM evals").unwrap());
         cx.set_http_client(client.clone());
@@ -117,8 +117,8 @@ fn main() -> Result<()> {
                     .detach();
             }
             Commands::Run { repo } => {
-                cx.spawn(|mut cx| async move {
-                    if let Err(err) = run_evaluation(repo, &executor, &mut cx).await {
+                cx.spawn(async move |cx| {
+                    if let Err(err) = run_evaluation(repo, &executor, cx).await {
                         eprintln!("Error: {}", err);
                         exit(1);
                     }
@@ -252,7 +252,7 @@ struct Counts {
 async fn run_evaluation(
     only_repo: Option<String>,
     executor: &BackgroundExecutor,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<()> {
     let mut http_client = None;
     cx.update(|cx| {
@@ -274,8 +274,7 @@ async fn run_evaluation(
     let repos_dir = Path::new(EVAL_REPOS_DIR);
     let db_path = Path::new(EVAL_DB_PATH);
     let api_key = std::env::var("OPENAI_API_KEY").unwrap();
-    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let fs = Arc::new(RealFs::new(git_hosting_provider_registry, None)) as Arc<dyn Fs>;
+    let fs = Arc::new(RealFs::new(None, cx.background_executor().clone())) as Arc<dyn Fs>;
     let clock = Arc::new(RealSystemClock);
     let client = cx
         .update(|cx| {
@@ -290,9 +289,7 @@ async fn run_evaluation(
             )
         })
         .unwrap();
-    let user_store = cx
-        .new_model(|cx| UserStore::new(client.clone(), cx))
-        .unwrap();
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx)).unwrap();
     let node_runtime = NodeRuntime::unavailable();
 
     let evaluations = fs::read(&evaluations_path).expect("failed to read evaluations.json");
@@ -306,6 +303,7 @@ async fn run_evaluation(
     ));
 
     let language_registry = Arc::new(LanguageRegistry::new(executor.clone()));
+    let debug_adapters = Arc::new(DapRegistry::default());
     cx.update(|cx| languages::init(language_registry.clone(), node_runtime.clone(), cx))
         .unwrap();
 
@@ -350,6 +348,7 @@ async fn run_evaluation(
                     node_runtime.clone(),
                     user_store.clone(),
                     language_registry.clone(),
+                    debug_adapters.clone(),
                     fs.clone(),
                     None,
                     cx,
@@ -401,17 +400,16 @@ async fn run_evaluation(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_eval_project(
     evaluation_project: EvaluationProject,
-    user_store: &Model<UserStore>,
+    user_store: &Entity<UserStore>,
     repo_db_path: PathBuf,
     repo_dir: &Path,
     counts: &mut Counts,
-    project: Model<Project>,
+    project: Entity<Project>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     fs: Arc<dyn Fs>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<(), anyhow::Error> {
     let mut semantic_index = SemanticDb::new(repo_db_path, embedding_provider, cx).await?;
 
@@ -485,8 +483,8 @@ async fn run_eval_project(
             for (ix, result) in results.iter().enumerate() {
                 if result.path.as_ref() == Path::new(&expected_result.file) {
                     file_matched = true;
-                    let start_matched = result.row_range.contains(&expected_result.lines.start());
-                    let end_matched = result.row_range.contains(&expected_result.lines.end());
+                    let start_matched = result.row_range.contains(expected_result.lines.start());
+                    let end_matched = result.row_range.contains(expected_result.lines.end());
 
                     if start_matched || end_matched {
                         range_overlapped = true;
@@ -547,8 +545,8 @@ async fn run_eval_project(
 }
 
 async fn wait_for_indexing_complete(
-    project_index: &Model<ProjectIndex>,
-    cx: &mut AsyncAppContext,
+    project_index: &Entity<ProjectIndex>,
+    cx: &mut AsyncApp,
     timeout: Option<Duration>,
 ) {
     let (tx, rx) = bounded(1);

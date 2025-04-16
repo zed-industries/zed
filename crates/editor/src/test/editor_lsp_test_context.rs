@@ -11,10 +11,10 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{View, ViewContext, VisualTestContext};
+use gpui::{Context, Entity, Focusable as _, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
-    point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
+    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries, point_to_lsp,
 };
 use lsp::{notification, request};
 use multi_buffer::ToPointUtf16;
@@ -27,7 +27,7 @@ use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 pub struct EditorLspTestContext {
     pub cx: EditorTestContext,
     pub lsp: lsp::FakeLanguageServer,
-    pub workspace: View<Workspace>,
+    pub workspace: Entity<Workspace>,
     pub buffer_lsp_url: lsp::Url,
 }
 
@@ -67,11 +67,31 @@ pub(crate) fn rust_lang() -> Arc<Language> {
             ("<" @open ">" @close)
             ("\"" @open "\"" @close)
             (closure_parameters "|" @open "|" @close)"#})),
+        text_objects: Some(Cow::from(indoc! {r#"
+            (function_item
+                body: (_
+                    "{"
+                    (_)* @function.inside
+                    "}" )) @function.around
+        "#})),
         ..Default::default()
     })
     .expect("Could not parse queries");
     Arc::new(language)
 }
+
+#[cfg(test)]
+pub(crate) fn git_commit_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "Git Commit".into(),
+            line_comments: vec!["#".into()],
+            ..Default::default()
+        },
+        None,
+    ))
+}
+
 impl EditorLspTestContext {
     pub async fn new(
         language: Language,
@@ -124,9 +144,9 @@ impl EditorLspTestContext {
             )
             .await;
 
-        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let workspace = window.root_view(cx).unwrap();
+        let workspace = window.root(cx).unwrap();
 
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         project
@@ -139,16 +159,18 @@ impl EditorLspTestContext {
             .await;
         let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let item = workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.open_path(file, None, true, cx)
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_path(file, None, true, window, cx)
             })
             .await
             .expect("Could not open test file");
-        let editor = cx.update(|cx| {
+        let editor = cx.update(|_, cx| {
             item.act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
         });
-        editor.update(&mut cx, |editor, cx| editor.focus(cx));
+        editor.update_in(&mut cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx))
+        });
 
         let lsp = fake_servers.next().await.unwrap();
         Self {
@@ -206,6 +228,8 @@ impl EditorLspTestContext {
                 ("[" @open "]" @close)
                 ("{" @open "}" @close)
                 ("<" @open ">" @close)
+                ("'" @open "'" @close)
+                ("`" @open "`" @close)
                 ("\"" @open "\"" @close)"#})),
             indents: Some(Cow::from(indoc! {r#"
                 [
@@ -240,10 +264,10 @@ impl EditorLspTestContext {
                     ..Default::default()
                 },
                 block_comment: Some(("<!-- ".into(), " -->".into())),
-                word_characters: ['-'].into_iter().collect(),
+                completion_query_characters: ['-'].into_iter().collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_html::language()),
+            Some(tree_sitter_html::LANGUAGE.into()),
         )
         .with_queries(LanguageQueries {
             brackets: Some(Cow::from(indoc! {r#"
@@ -265,11 +289,11 @@ impl EditorLspTestContext {
     }
 
     pub fn to_lsp_range(&mut self, range: Range<usize>) -> lsp::Range {
-        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let start_point = range.start.to_point(&snapshot.buffer_snapshot);
         let end_point = range.end.to_point(&snapshot.buffer_snapshot);
 
-        self.editor(|editor, cx| {
+        self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
             let start = point_to_lsp(
                 buffer
@@ -291,10 +315,10 @@ impl EditorLspTestContext {
     }
 
     pub fn to_lsp(&mut self, offset: usize) -> lsp::Position {
-        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let point = offset.to_point(&snapshot.buffer_snapshot);
 
-        self.editor(|editor, cx| {
+        self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
             point_to_lsp(
                 buffer
@@ -308,23 +332,23 @@ impl EditorLspTestContext {
 
     pub fn update_workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
     {
-        self.workspace.update(&mut self.cx.cx, update)
+        self.workspace.update_in(&mut self.cx.cx, update)
     }
 
-    pub fn handle_request<T, F, Fut>(
+    pub fn set_request_handler<T, F, Fut>(
         &self,
         mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncAppContext) -> Fut,
+        F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncApp) -> Fut,
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
         let url = self.buffer_lsp_url.clone();
-        self.lsp.handle_request::<T, _, _>(move |params, cx| {
+        self.lsp.set_request_handler::<T, _, _>(move |params, cx| {
             let url = url.clone();
             handler(url, params, cx)
         })

@@ -12,11 +12,13 @@ use serde::{Deserialize, Serialize};
 pub fn init() {}
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenBrowser {
     pub url: String,
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
     pub url: String,
 }
@@ -33,22 +35,110 @@ actions!(
         Quit,
         OpenKeymap,
         About,
-        Extensions,
         OpenLicenses,
         OpenTelemetryLog,
+    ]
+);
+
+#[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionCategoryFilter {
+    Themes,
+    IconThemes,
+    Languages,
+    Grammars,
+    LanguageServers,
+    ContextServers,
+    SlashCommands,
+    IndexedDocsProviders,
+    Snippets,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct Extensions {
+    /// Filters the extensions page down to extensions that are in the specified category.
+    #[serde(default)]
+    pub category_filter: Option<ExtensionCategoryFilter>,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct DecreaseBufferFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct IncreaseBufferFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ResetBufferFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct DecreaseUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct IncreaseUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ResetUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+impl_actions!(
+    zed,
+    [
+        Extensions,
         DecreaseBufferFontSize,
         IncreaseBufferFontSize,
         ResetBufferFontSize,
         DecreaseUiFontSize,
         IncreaseUiFontSize,
-        ResetUiFontSize
+        ResetUiFontSize,
     ]
 );
 
-pub mod branches {
-    use gpui::actions;
+pub mod workspace {
+    use gpui::action_with_deprecated_aliases;
 
-    actions!(branches, [OpenRecent]);
+    action_with_deprecated_aliases!(
+        workspace,
+        CopyPath,
+        [
+            "editor::CopyPath",
+            "outline_panel::CopyPath",
+            "project_panel::CopyPath"
+        ]
+    );
+
+    action_with_deprecated_aliases!(
+        workspace,
+        CopyRelativePath,
+        [
+            "editor::CopyRelativePath",
+            "outline_panel::CopyRelativePath",
+            "project_panel::CopyRelativePath"
+        ]
+    );
+}
+
+pub mod git {
+    use gpui::{action_with_deprecated_aliases, actions};
+
+    actions!(git, [CheckoutBranch, Switch, SelectRepo]);
+    action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
 pub mod command_palette {
@@ -60,7 +150,7 @@ pub mod command_palette {
 pub mod feedback {
     use gpui::actions;
 
-    actions!(feedback, [GiveFeedback]);
+    actions!(feedback, [FileBugReport, GiveFeedback]);
 }
 
 pub mod theme_selector {
@@ -69,6 +159,7 @@ pub mod theme_selector {
     use serde::Deserialize;
 
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Toggle {
         /// A list of theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
@@ -77,14 +168,42 @@ pub mod theme_selector {
     impl_actions!(theme_selector, [Toggle]);
 }
 
-pub mod assistant {
-    use gpui::{actions, impl_actions};
+pub mod icon_theme_selector {
+    use gpui::impl_actions;
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(assistant, [ToggleFocus]);
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Toggle {
+        /// A list of icon theme names to filter the theme selector down to.
+        pub themes_filter: Option<Vec<String>>,
+    }
+
+    impl_actions!(icon_theme_selector, [Toggle]);
+}
+
+pub mod agent {
+    use gpui::actions;
+
+    actions!(agent, [OpenConfiguration]);
+}
+
+pub mod assistant {
+    use gpui::{action_with_deprecated_aliases, actions, impl_actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    actions!(assistant, [ToggleFocus, ShowConfiguration]);
+
+    action_with_deprecated_aliases!(
+        assistant,
+        OpenPromptLibrary,
+        ["assistant::DeployPromptLibrary"]
+    );
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct InlineAssist {
         pub prompt: Option<String>,
     }
@@ -93,6 +212,7 @@ pub mod assistant {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
     pub create_new_window: bool,
@@ -122,6 +242,12 @@ pub enum Spawn {
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
+    /// Spawns a task by the name given.
+    ByTag {
+        task_tag: String,
+        #[serde(default)]
+        reveal_target: Option<RevealTarget>,
+    },
     /// Spawns a task via modal's selection.
     ViaModal {
         /// Selected task's `reveal_target` property override.
@@ -140,6 +266,7 @@ impl Spawn {
 
 /// Rerun the last task.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Rerun {
     /// Controls whether the task context is reevaluated prior to execution of a task.
     /// If it is not, environment variables such as ZED_COLUMN, ZED_FILE are gonna be the same as in the last execution of a task
@@ -166,9 +293,12 @@ impl_actions!(task, [Spawn, Rerun]);
 pub mod outline {
     use std::sync::OnceLock;
 
-    use gpui::{action_as, AnyView, WindowContext};
+    use gpui::{AnyView, App, Window, action_as};
 
     action_as!(outline, ToggleOutline as Toggle);
     /// A pointer to outline::toggle function, exposed here to sewer the breadcrumbs <-> outline dependency.
-    pub static TOGGLE_OUTLINE: OnceLock<fn(AnyView, &mut WindowContext<'_>)> = OnceLock::new();
+    pub static TOGGLE_OUTLINE: OnceLock<fn(AnyView, &mut Window, &mut App)> = OnceLock::new();
 }
+
+actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
+actions!(git_onboarding, [OpenGitIntegrationOnboarding]);

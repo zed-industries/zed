@@ -1,9 +1,7 @@
-#![allow(missing_docs)]
-
 use gpui::AnyElement;
 use smallvec::SmallVec;
 
-use crate::{prelude::*, v_flex, Label, ListHeader};
+use crate::{Label, ListHeader, prelude::*, v_flex};
 
 pub enum EmptyMessage {
     Text(SharedString),
@@ -77,7 +75,7 @@ impl From<AnyElement> for EmptyMessage {
 }
 
 impl RenderOnce for List {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
             .w_full()
             .py(DynamicSpacing::Base04.rems(cx))

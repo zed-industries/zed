@@ -97,7 +97,7 @@ impl Settings for BaseKeymap {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         if let Some(Some(user_value)) = sources.user.copied() {
             return Ok(user_value);

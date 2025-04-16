@@ -1,8 +1,8 @@
 use super::{
-    fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
     Highlights,
+    fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
 };
-use language::{Chunk, Point};
+use language::Point;
 use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
@@ -272,8 +272,8 @@ impl TabSnapshot {
         }
     }
 
-    pub fn buffer_rows(&self, row: u32) -> fold_map::FoldBufferRows<'_> {
-        self.fold_snapshot.buffer_rows(row)
+    pub fn rows(&self, row: u32) -> fold_map::FoldRows<'_> {
+        self.fold_snapshot.row_infos(row)
     }
 
     #[cfg(test)]
@@ -498,7 +498,7 @@ pub struct TabChunks<'a> {
     inside_leading_tab: bool,
 }
 
-impl<'a> TabChunks<'a> {
+impl TabChunks<'_> {
     pub(crate) fn seek(&mut self, range: Range<TabPoint>) {
         let (input_start, expanded_char_column, to_next_stop) =
             self.snapshot.to_fold_point(range.start, Bias::Left);
@@ -602,13 +602,13 @@ impl<'a> Iterator for TabChunks<'a> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap},
         MultiBuffer,
+        display_map::{fold_map::FoldMap, inlay_map::InlayMap},
     };
-    use rand::{prelude::StdRng, Rng};
+    use rand::{Rng, prelude::StdRng};
 
     #[gpui::test]
-    fn test_expand_tabs(cx: &mut gpui::AppContext) {
+    fn test_expand_tabs(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -621,7 +621,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_long_lines(cx: &mut gpui::AppContext) {
+    fn test_long_lines(cx: &mut gpui::App) {
         let max_expansion_column = 12;
         let input = "A\tBC\tDEF\tG\tHI\tJ\tK\tL\tM";
         let output = "A   BC  DEF G   HI J K L M";
@@ -669,7 +669,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_long_lines_with_character_spanning_max_expansion_column(cx: &mut gpui::AppContext) {
+    fn test_long_lines_with_character_spanning_max_expansion_column(cx: &mut gpui::App) {
         let max_expansion_column = 8;
         let input = "abcdefg⋯hij";
 
@@ -684,7 +684,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_marking_tabs(cx: &mut gpui::AppContext) {
+    fn test_marking_tabs(cx: &mut gpui::App) {
         let input = "\t \thello";
 
         let buffer = MultiBuffer::build_simple(input, cx);
@@ -735,10 +735,10 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_tabs(cx: &mut gpui::AppContext, mut rng: StdRng) {
+    fn test_random_tabs(cx: &mut gpui::App, mut rng: StdRng) {
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let len = rng.gen_range(0..30);
-        let buffer = if rng.gen() {
+        let buffer = if rng.r#gen() {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();

@@ -1,14 +1,14 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
 use editor::Editor;
-use gpui::{Task, WeakView};
+use gpui::{AppContext as _, Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
-use ui::{IconName, WindowContext};
+use ui::{App, IconName, Window};
 use workspace::Workspace;
 
 pub struct OutlineSlashCommand;
@@ -34,8 +34,9 @@ impl SlashCommand for OutlineSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _workspace: Option<WeakEntity<Workspace>>,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -49,9 +50,10 @@ impl SlashCommand for OutlineSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {
             let Some(active_item) = workspace.active_item(cx) else {
@@ -67,7 +69,7 @@ impl SlashCommand for OutlineSlashCommand {
             let snapshot = buffer.read(cx).snapshot();
             let path = snapshot.resolve_file_path(cx, true);
 
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let outline = snapshot
                     .outline(None)
                     .context("no symbols for active tab")?;

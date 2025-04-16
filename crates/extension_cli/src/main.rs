@@ -1,20 +1,18 @@
-use std::{
-    collections::HashMap,
-    env, fs,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::Arc,
-};
+use std::collections::{BTreeSet, HashMap};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
 
-use ::fs::{copy_recursive, CopyOptions, Fs, RealFs};
-use anyhow::{anyhow, bail, Context, Result};
+use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
-use extension::{
-    extension_builder::{CompileExtensionOptions, ExtensionBuilder},
-    ExtensionManifest,
-};
+use extension::ExtensionManifest;
+use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
+use rpc::ExtensionProvides;
 use tree_sitter::{Language, Query, WasmStore};
 
 #[derive(Parser, Debug)]
@@ -36,7 +34,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let fs = Arc::new(RealFs::default());
+    let fs = Arc::new(RealFs::new(None, gpui::background_executor()));
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(&engine)?;
 
@@ -99,6 +97,8 @@ async fn main() -> Result<()> {
         );
     }
 
+    let extension_provides = extension_provides(&manifest);
+
     let manifest_json = serde_json::to_string(&rpc::ExtensionApiManifest {
         name: manifest.name,
         version: manifest.version,
@@ -109,11 +109,50 @@ async fn main() -> Result<()> {
             .repository
             .ok_or_else(|| anyhow!("missing repository in extension manifest"))?,
         wasm_api_version: manifest.lib.version.map(|version| version.to_string()),
+        provides: extension_provides,
     })?;
     fs::remove_dir_all(&archive_dir)?;
     fs::write(output_dir.join("manifest.json"), manifest_json.as_bytes())?;
 
     Ok(())
+}
+
+/// Returns the set of features provided by the extension.
+fn extension_provides(manifest: &ExtensionManifest) -> BTreeSet<ExtensionProvides> {
+    let mut provides = BTreeSet::default();
+    if !manifest.themes.is_empty() {
+        provides.insert(ExtensionProvides::Themes);
+    }
+
+    if !manifest.icon_themes.is_empty() {
+        provides.insert(ExtensionProvides::IconThemes);
+    }
+
+    if !manifest.languages.is_empty() {
+        provides.insert(ExtensionProvides::Languages);
+    }
+
+    if !manifest.grammars.is_empty() {
+        provides.insert(ExtensionProvides::Grammars);
+    }
+
+    if !manifest.language_servers.is_empty() {
+        provides.insert(ExtensionProvides::LanguageServers);
+    }
+
+    if !manifest.context_servers.is_empty() {
+        provides.insert(ExtensionProvides::ContextServers);
+    }
+
+    if !manifest.indexed_docs_providers.is_empty() {
+        provides.insert(ExtensionProvides::IndexedDocsProviders);
+    }
+
+    if manifest.snippets.is_some() {
+        provides.insert(ExtensionProvides::Snippets);
+    }
+
+    provides
 }
 
 async fn copy_extension_resources(
@@ -165,6 +204,38 @@ async fn copy_extension_resources(
             )
             .with_context(|| format!("failed to copy theme '{}'", theme_path.display()))?;
         }
+    }
+
+    if !manifest.icon_themes.is_empty() {
+        let output_icon_themes_dir = output_dir.join("icon_themes");
+        fs::create_dir_all(&output_icon_themes_dir)?;
+        for icon_theme_path in &manifest.icon_themes {
+            fs::copy(
+                extension_path.join(icon_theme_path),
+                output_icon_themes_dir.join(
+                    icon_theme_path
+                        .file_name()
+                        .ok_or_else(|| anyhow!("invalid icon theme path"))?,
+                ),
+            )
+            .with_context(|| {
+                format!("failed to copy icon theme '{}'", icon_theme_path.display())
+            })?;
+        }
+
+        let output_icons_dir = output_dir.join("icons");
+        fs::create_dir_all(&output_icons_dir)?;
+        copy_recursive(
+            fs.as_ref(),
+            &extension_path.join("icons"),
+            &output_icons_dir,
+            CopyOptions {
+                overwrite: true,
+                ignore_if_exists: false,
+            },
+        )
+        .await
+        .with_context(|| "failed to copy icons")?;
     }
 
     if !manifest.languages.is_empty() {
@@ -268,6 +339,20 @@ async fn test_themes(
         let theme_path = extension_path.join(relative_theme_path);
         let theme_family = theme::read_user_theme(&theme_path, fs.clone()).await?;
         log::info!("loaded theme family {}", theme_family.name);
+
+        for theme in &theme_family.themes {
+            if theme
+                .style
+                .colors
+                .deprecated_scrollbar_thumb_background
+                .is_some()
+            {
+                bail!(
+                    r#"Theme "{theme_name}" is using a deprecated style property: scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
+                    theme_name = theme.name
+                )
+            }
+        }
     }
 
     Ok(())

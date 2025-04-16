@@ -96,7 +96,7 @@ pub enum Event {
     InlineCompletion(InlineCompletionEvent),
     InlineCompletionRating(InlineCompletionRatingEvent),
     Call(CallEvent),
-    Assistant(AssistantEvent),
+    Assistant(AssistantEventData),
     Cpu(CpuEvent),
     Memory(MemoryEvent),
     App(AppEvent),
@@ -162,7 +162,7 @@ pub struct CallEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AssistantEvent {
+pub struct AssistantEventData {
     /// Unique random identifier for each assistant tab (None for inline assist)
     pub conversation_id: Option<String>,
     /// Server-generated message ID (only supported for some providers)
@@ -267,6 +267,9 @@ pub struct Panic {
     pub backtrace: Vec<String>,
     /// Zed version number
     pub app_version: String,
+    /// The Git commit SHA that Zed was built at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_commit_sha: Option<String>,
     /// Zed release channel (stable, preview, dev)
     pub release_channel: String,
     pub target: Option<String>,

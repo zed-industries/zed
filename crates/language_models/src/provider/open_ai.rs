@@ -1,30 +1,32 @@
-use anyhow::{anyhow, Result};
-use collections::BTreeMap;
+use anyhow::{Context as _, Result, anyhow};
+use collections::{BTreeMap, HashMap};
+use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::Stream;
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
-    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
-    View, WhiteSpace,
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
-use open_ai::{
-    stream_completion, FunctionDefinition, ResponseStreamEvent, ToolChoice, ToolDefinition,
-};
+use open_ai::{Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::pin::Pin;
+use std::str::FromStr as _;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, Tooltip};
-use util::ResultExt;
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use util::{ResultExt, maybe};
 
-use crate::AllLanguageModelSettings;
+use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
 const PROVIDER_ID: &str = "openai";
 const PROVIDER_NAME: &str = "OpenAI";
@@ -47,7 +49,7 @@ pub struct AvailableModel {
 
 pub struct OpenAiLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Model<State>,
+    state: gpui::Entity<State>,
 }
 
 pub struct State {
@@ -63,12 +65,18 @@ impl State {
         self.api_key.is_some()
     }
 
-    fn reset_api_key(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let delete_credentials = cx.delete_credentials(&settings.api_url);
-        cx.spawn(|this, mut cx| async move {
-            delete_credentials.await.log_err();
-            this.update(&mut cx, |this, cx| {
+    fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
+        cx.spawn(async move |this, cx| {
+            credentials_provider
+                .delete_credentials(&api_url, &cx)
+                .await
+                .log_err();
+            this.update(cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
                 cx.notify();
@@ -76,51 +84,61 @@ impl State {
         })
     }
 
-    fn set_api_key(&mut self, api_key: String, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let write_credentials =
-            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
-
-        cx.spawn(|this, mut cx| async move {
-            write_credentials.await?;
-            this.update(&mut cx, |this, cx| {
+    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
+        cx.spawn(async move |this, cx| {
+            credentials_provider
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .await
+                .log_err();
+            this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 cx.notify();
             })
         })
     }
 
-    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
-            Task::ready(Ok(()))
-        } else {
-            let api_url = AllLanguageModelSettings::get_global(cx)
-                .openai
-                .api_url
-                .clone();
-            cx.spawn(|this, mut cx| async move {
-                let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
-                    (api_key, true)
-                } else {
-                    let (_, api_key) = cx
-                        .update(|cx| cx.read_credentials(&api_url))?
-                        .await?
-                        .ok_or_else(|| anyhow!("credentials not found"))?;
-                    (String::from_utf8(api_key)?, false)
-                };
-                this.update(&mut cx, |this, cx| {
-                    this.api_key = Some(api_key);
-                    this.api_key_from_env = from_env;
-                    cx.notify();
-                })
-            })
+            return Task::ready(Ok(()));
         }
+
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
+        cx.spawn(async move |this, cx| {
+            let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
+                (api_key, true)
+            } else {
+                let (_, api_key) = credentials_provider
+                    .read_credentials(&api_url, &cx)
+                    .await?
+                    .ok_or(AuthenticateError::CredentialsNotFound)?;
+                (
+                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
+                    false,
+                )
+            };
+            this.update(cx, |this, cx| {
+                this.api_key = Some(api_key);
+                this.api_key_from_env = from_env;
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
     }
 }
 
 impl OpenAiLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
-        let state = cx.new_model(|cx| State {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
@@ -135,7 +153,7 @@ impl OpenAiLanguageModelProvider {
 impl LanguageModelProviderState for OpenAiLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -153,7 +171,18 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         IconName::AiOpenAi
     }
 
-    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = open_ai::Model::default();
+        Some(Arc::new(OpenAiLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
+    }
+
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
         // Add base models from open_ai::Model::iter()
@@ -194,20 +223,20 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             .collect()
     }
 
-    fn is_authenticated(&self, cx: &AppContext) -> bool {
+    fn is_authenticated(&self, cx: &App) -> bool {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
 
-    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.state.update(cx, |state, cx| state.reset_api_key(cx))
     }
 }
@@ -215,7 +244,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 pub struct OpenAiLanguageModel {
     id: LanguageModelId,
     model: open_ai::Model,
-    state: gpui::Model<State>,
+    state: gpui::Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -224,11 +253,11 @@ impl OpenAiLanguageModel {
     fn stream_completion(
         &self,
         request: open_ai::Request,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).openai;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
@@ -263,6 +292,10 @@ impl LanguageModel for OpenAiLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -278,7 +311,7 @@ impl LanguageModel for OpenAiLanguageModel {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
         count_open_ai_tokens(request, self.model.clone(), cx)
     }
@@ -286,101 +319,252 @@ impl LanguageModel for OpenAiLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
     > {
-        let request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
+        let request = into_open_ai(request, &self.model, self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
-        async move {
-            Ok(open_ai::extract_text_from_events(completions.await?)
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                .boxed())
-        }
-        .boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        schema: serde_json::Value,
-        cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
-        request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: None,
-                parameters: None,
-            },
-        }));
-        request.tools = vec![ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: Some(tool_description),
-                parameters: Some(schema),
-            },
-        }];
-
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                Ok(
-                    open_ai::extract_tool_args_from_events(tool_name, Box::pin(response))
-                        .await?
-                        .boxed(),
-                )
-            })
+        async move { Ok(map_to_language_model_completion_events(completions.await?).boxed()) }
             .boxed()
     }
+}
+
+pub fn into_open_ai(
+    request: LanguageModelRequest,
+    model: &Model,
+    max_output_tokens: Option<u32>,
+) -> open_ai::Request {
+    let stream = !model.id().starts_with("o1-");
+
+    let mut messages = Vec::new();
+    for message in request.messages {
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) => messages.push(match message.role {
+                    Role::User => open_ai::RequestMessage::User { content: text },
+                    Role::Assistant => open_ai::RequestMessage::Assistant {
+                        content: Some(text),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => open_ai::RequestMessage::System { content: text },
+                }),
+                MessageContent::Image(_) => {}
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = open_ai::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: open_ai::ToolCallContent::Function {
+                            function: open_ai::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(&tool_use.input)
+                                    .unwrap_or_default(),
+                            },
+                        },
+                    };
+
+                    if let Some(last_assistant_message) = messages.iter_mut().rfind(|message| {
+                        matches!(message, open_ai::RequestMessage::Assistant { .. })
+                    }) {
+                        if let open_ai::RequestMessage::Assistant { tool_calls, .. } =
+                            last_assistant_message
+                        {
+                            tool_calls.push(tool_call);
+                        }
+                    } else {
+                        messages.push(open_ai::RequestMessage::Assistant {
+                            content: None,
+                            tool_calls: vec![tool_call],
+                        });
+                    }
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    messages.push(open_ai::RequestMessage::Tool {
+                        content: tool_result.content.to_string(),
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    open_ai::Request {
+        model: model.id().into(),
+        messages,
+        stream,
+        stop: request.stop,
+        temperature: request.temperature.unwrap_or(1.0),
+        max_tokens: max_output_tokens,
+        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
+            // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
+            Some(false)
+        } else {
+            None
+        },
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| open_ai::ToolDefinition::Function {
+                function: open_ai::FunctionDefinition {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
+            })
+            .collect(),
+        tool_choice: None,
+    }
+}
+
+pub fn map_to_language_model_completion_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    #[derive(Default)]
+    struct RawToolCall {
+        id: String,
+        name: String,
+        arguments: String,
+    }
+
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+        tool_calls_by_index: HashMap<usize, RawToolCall>,
+    }
+
+    futures::stream::unfold(
+        State {
+            events,
+            tool_calls_by_index: HashMap::default(),
+        },
+        |mut state| async move {
+            if let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => {
+                        let Some(choice) = event.choices.first() else {
+                            return Some((
+                                vec![Err(anyhow!("Response contained no choices"))],
+                                state,
+                            ));
+                        };
+
+                        let mut events = Vec::new();
+                        if let Some(content) = choice.delta.content.clone() {
+                            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                        }
+
+                        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
+                            for tool_call in tool_calls {
+                                let entry = state
+                                    .tool_calls_by_index
+                                    .entry(tool_call.index)
+                                    .or_default();
+
+                                if let Some(tool_id) = tool_call.id.clone() {
+                                    entry.id = tool_id;
+                                }
+
+                                if let Some(function) = tool_call.function.as_ref() {
+                                    if let Some(name) = function.name.clone() {
+                                        entry.name = name;
+                                    }
+
+                                    if let Some(arguments) = function.arguments.clone() {
+                                        entry.arguments.push_str(&arguments);
+                                    }
+                                }
+                            }
+                        }
+
+                        match choice.finish_reason.as_deref() {
+                            Some("stop") => {
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::EndTurn,
+                                )));
+                            }
+                            Some("tool_calls") => {
+                                events.extend(state.tool_calls_by_index.drain().map(
+                                    |(_, tool_call)| {
+                                        maybe!({
+                                            Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_call.id.into(),
+                                                    name: tool_call.name.as_str().into(),
+                                                    input: serde_json::Value::from_str(
+                                                        &tool_call.arguments,
+                                                    )?,
+                                                },
+                                            ))
+                                        })
+                                    },
+                                ));
+
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::ToolUse,
+                                )));
+                            }
+                            Some(stop_reason) => {
+                                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::EndTurn,
+                                )));
+                            }
+                            None => {}
+                        }
+
+                        return Some((events, state));
+                    }
+                    Err(err) => return Some((vec![Err(err)], state)),
+                }
+            }
+
+            None
+        },
+    )
+    .flat_map(futures::stream::iter)
 }
 
 pub fn count_open_ai_tokens(
     request: LanguageModelRequest,
     model: open_ai::Model,
-    cx: &AppContext,
+    cx: &App,
 ) -> BoxFuture<'static, Result<usize>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.string_contents()),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
+    cx.background_spawn(async move {
+        let messages = request
+            .messages
+            .into_iter()
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(message.string_contents()),
+                name: None,
+                function_call: None,
+            })
+            .collect::<Vec<_>>();
 
-            match model {
-                open_ai::Model::Custom { .. } | open_ai::Model::O1Mini | open_ai::Model::O1 => {
-                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-                }
-                _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            }
-        })
-        .boxed()
+        match model {
+            open_ai::Model::Custom { .. }
+            | open_ai::Model::O1Mini
+            | open_ai::Model::O1
+            | open_ai::Model::O3Mini => tiktoken_rs::num_tokens_from_messages("gpt-4", &messages),
+            _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+        }
+    })
+    .boxed()
 }
 
 struct ConfigurationView {
-    api_key_editor: View<Editor>,
-    state: gpui::Model<State>,
+    api_key_editor: Entity<Editor>,
+    state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
-        let api_key_editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
+    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let api_key_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
             editor
         });
@@ -390,18 +574,18 @@ impl ConfigurationView {
         })
         .detach();
 
-        let load_credentials_task = Some(cx.spawn({
+        let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
@@ -416,16 +600,16 @@ impl ConfigurationView {
         }
     }
 
-    fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let api_key = self.api_key_editor.read(cx).text(cx);
         if api_key.is_empty() {
             return;
         }
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             state
-                .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
                 .await
         })
         .detach_and_log_err(cx);
@@ -433,22 +617,20 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn reset_api_key(&mut self, cx: &mut ViewContext<Self>) {
+    fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
-            state
-                .update(&mut cx, |state, cx| state.reset_api_key(cx))?
-                .await
+        cx.spawn_in(window, async move |_, cx| {
+            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
         })
         .detach_and_log_err(cx);
 
         cx.notify();
     }
 
-    fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: cx.theme().colors().text,
@@ -459,11 +641,8 @@ impl ConfigurationView {
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
             white_space: WhiteSpace::Normal,
-            truncate: None,
+            ..Default::default()
         };
         EditorElement::new(
             &self.api_key_editor,
@@ -476,21 +655,13 @@ impl ConfigurationView {
         )
     }
 
-    fn should_render_editor(&self, cx: &mut ViewContext<Self>) -> bool {
+    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const OPENAI_CONSOLE_URL: &str = "https://platform.openai.com/api-keys";
-        const INSTRUCTIONS: [&str; 4] = [
-            "To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:",
-            " - Create one by visiting:",
-            " - Ensure your OpenAI account has credits",
-            " - Paste your API key below and hit enter to start using the assistant",
-        ];
-
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_from_env;
 
         if self.load_credentials_task.is_some() {
@@ -499,19 +670,21 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("openai_console", OPENAI_CONSOLE_URL)
-                        .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .on_click(move |_, cx| cx.open_url(OPENAI_CONSOLE_URL))
-                    )
+                .child(Label::new("To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(InstructionListItem::new(
+                            "Create one by visiting",
+                            Some("OpenAI's console"),
+                            Some("https://platform.openai.com/api-keys"),
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Ensure your OpenAI account has credits",
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste your API key below and hit enter to start using the assistant",
+                        )),
                 )
-                .children(
-                    (2..INSTRUCTIONS.len()).map(|n|
-                        Label::new(INSTRUCTIONS[n])).collect::<Vec<_>>())
                 .child(
                     h_flex()
                         .w_full()
@@ -519,20 +692,22 @@ impl Render for ConfigurationView {
                         .px_2()
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
-                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
                 .child(
                     Label::new(
                         format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small).color(Color::Muted),
                 )
                 .child(
                     Label::new(
                         "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
                     )
-                    .size(LabelSize::Small),
+                    .size(LabelSize::Small).color(Color::Muted),
                 )
                 .into_any()
         } else {
@@ -556,9 +731,9 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(|cx| Tooltip::text(format!("To reset your API key, unset the {OPENAI_API_KEY_VAR} environment variable."), cx))
+                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {OPENAI_API_KEY_VAR} environment variable.")))
                         })
-                        .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
                 .into_any()
         }

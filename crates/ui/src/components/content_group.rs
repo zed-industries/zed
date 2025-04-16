@@ -1,3 +1,4 @@
+use crate::component_prelude::*;
 use crate::prelude::*;
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
@@ -10,19 +11,19 @@ pub fn content_group() -> ContentGroup {
 /// A [ContentGroup] that vertically stacks its children.
 ///
 /// This is a convenience function that simply combines [`ContentGroup`] and [`v_flex`](crate::v_flex).
-pub fn v_group() -> ContentGroup {
+pub fn v_container() -> ContentGroup {
     content_group().v_flex()
 }
 
 /// Creates a new horizontal [ContentGroup].
 ///
 /// This is a convenience function that simply combines [`ContentGroup`] and [`h_flex`](crate::h_flex).
-pub fn h_group() -> ContentGroup {
+pub fn h_container() -> ContentGroup {
     content_group().h_flex()
 }
 
 /// A flexible container component that can hold other elements.
-#[derive(IntoElement)]
+#[derive(IntoElement, Documented, RegisterComponent)]
 pub struct ContentGroup {
     base: Div,
     border: bool,
@@ -31,7 +32,7 @@ pub struct ContentGroup {
 }
 
 impl ContentGroup {
-    /// Creates a new [ContentBox].
+    /// Creates a new [`ContentGroup`].
     pub fn new() -> Self {
         Self {
             base: div(),
@@ -41,13 +42,13 @@ impl ContentGroup {
         }
     }
 
-    /// Removes the border from the [ContentBox].
+    /// Removes the border from the [`ContentGroup`].
     pub fn borderless(mut self) -> Self {
         self.border = false;
         self
     }
 
-    /// Removes the background fill from the [ContentBox].
+    /// Removes the background fill from the [`ContentGroup`].
     pub fn unfilled(mut self) -> Self {
         self.fill = false;
         self
@@ -67,7 +68,7 @@ impl Styled for ContentGroup {
 }
 
 impl RenderOnce for ContentGroup {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         // TODO:
         // Baked in padding will make scrollable views inside of content boxes awkward.
         //
@@ -80,56 +81,57 @@ impl RenderOnce for ContentGroup {
             .when(self.border, |this| {
                 this.border_1().border_color(cx.theme().colors().border)
             })
-            .rounded_md()
-            .p_2()
+            .rounded_sm()
             .children(self.children)
     }
 }
 
-impl ComponentPreview for ContentGroup {
-    fn description() -> impl Into<Option<&'static str>> {
-        "A flexible container component that can hold other elements. It can be customized with or without a border and background fill."
+impl Component for ContentGroup {
+    fn scope() -> ComponentScope {
+        ComponentScope::Layout
     }
 
-    fn example_label_side() -> ExampleLabelSide {
-        ExampleLabelSide::Bottom
+    fn description() -> Option<&'static str> {
+        Some(ContentGroup::DOCS)
     }
 
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        vec![example_group(vec![
-            single_example(
-                "Default",
-                ContentGroup::new()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .h_48()
-                    .child(Label::new("Default ContentBox")),
-            )
-            .grow(),
-            single_example(
-                "Without Border",
-                ContentGroup::new()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .h_48()
-                    .borderless()
-                    .child(Label::new("Borderless ContentBox")),
-            )
-            .grow(),
-            single_example(
-                "Without Fill",
-                ContentGroup::new()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .h_48()
-                    .unfilled()
-                    .child(Label::new("Unfilled ContentBox")),
-            )
-            .grow(),
-        ])
-        .grow()]
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            example_group(vec![
+                single_example(
+                    "Default",
+                    ContentGroup::new()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .h_48()
+                        .child(Label::new("Default ContentGroup"))
+                        .into_any_element(),
+                ).description("A contained style for laying out groups of content. Has a default background and border color."),
+                single_example(
+                    "Without Border",
+                    ContentGroup::new()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .h_48()
+                        .borderless()
+                        .child(Label::new("Borderless ContentGroup"))
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Without Fill",
+                    ContentGroup::new()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .h_48()
+                        .unfilled()
+                        .child(Label::new("Unfilled ContentGroup"))
+                        .into_any_element(),
+                ),
+            ])
+            .into_any_element(),
+        )
     }
 }

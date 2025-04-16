@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, App, AppContext, Bounds, SharedString, ViewContext,
-    WindowBounds, WindowOptions,
+    App, Application, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, rgb, size,
 };
 
 struct HelloWorld {
@@ -8,7 +8,7 @@ struct HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -27,30 +27,80 @@ impl Render for HelloWorld {
                 div()
                     .flex()
                     .gap_2()
-                    .child(div().size_8().bg(gpui::red()))
-                    .child(div().size_8().bg(gpui::green()))
-                    .child(div().size_8().bg(gpui::blue()))
-                    .child(div().size_8().bg(gpui::yellow()))
-                    .child(div().size_8().bg(gpui::black()))
-                    .child(div().size_8().bg(gpui::white())),
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::red())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::green())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::blue())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::yellow())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::black())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::white())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::black()),
+                    ),
             )
     }
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |cx| {
-                cx.new_view(|_cx| HelloWorld {
+            |_, cx| {
+                cx.new(|_| HelloWorld {
                     text: "World".into(),
                 })
             },
         )
         .unwrap();
+        cx.activate(true);
     });
 }

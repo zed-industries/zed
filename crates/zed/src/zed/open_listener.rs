@@ -1,30 +1,29 @@
 use crate::handle_open_request;
 use crate::restorable_workspace_locations;
-use anyhow::{anyhow, Context, Result};
-use cli::{ipc, IpcHandshake};
-use cli::{ipc::IpcSender, CliRequest, CliResponse};
+use anyhow::{Context as _, Result, anyhow};
+use cli::{CliRequest, CliResponse, ipc::IpcSender};
+use cli::{IpcHandshake, ipc};
 use client::parse_zed_link;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
-use editor::scroll::Autoscroll;
 use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
-use language::{Bias, Point};
-use recent_projects::{open_ssh_project, SshSettings};
+use gpui::{App, AsyncApp, Global, WindowHandle};
+use language::Point;
+use recent_projects::{SshSettings, open_ssh_project};
 use remote::SshConnectionOptions;
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use util::paths::PathWithPosition;
 use util::ResultExt;
-use welcome::{show_welcome_view, FIRST_OPEN};
+use util::paths::PathWithPosition;
+use welcome::{FIRST_OPEN, show_welcome_view};
 use workspace::item::ItemHandle;
 use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
@@ -35,14 +34,17 @@ pub struct OpenRequest {
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
+    pub dock_menu_action: Option<usize>,
 }
 
 impl OpenRequest {
-    pub fn parse(urls: Vec<String>, cx: &AppContext) -> Result<Self> {
+    pub fn parse(urls: Vec<String>, cx: &App) -> Result<Self> {
         let mut this = Self::default();
         for url in urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.cli_connection = Some(connect_to_cli(server_name)?);
+            } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
+                this.dock_menu_action = Some(action_index.parse()?);
             } else if let Some(file) = url.strip_prefix("file://") {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
@@ -68,7 +70,7 @@ impl OpenRequest {
         }
     }
 
-    fn parse_ssh_file_path(&mut self, file: &str, cx: &AppContext) -> Result<()> {
+    fn parse_ssh_file_path(&mut self, file: &str, cx: &App) -> Result<()> {
         let url = url::Url::parse(file)?;
         let host = url
             .host()
@@ -101,7 +103,7 @@ impl OpenRequest {
         let mut parts = request_path.split('/');
         if parts.next() == Some("channel") {
             if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split('-').last() {
+                if let Some(id_str) = slug.split('-').next_back() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
                             self.join_channel = Some(channel_id);
@@ -149,7 +151,7 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
 
-    let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
+    let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
     if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
         if e.kind() == std::io::ErrorKind::ConnectionRefused {
@@ -199,7 +201,7 @@ pub async fn open_paths_with_positions(
     path_positions: &[PathWithPosition],
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<(
     WindowHandle<Workspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
@@ -234,13 +236,9 @@ pub async fn open_paths_with_positions(
         };
         if let Some(active_editor) = item.downcast::<Editor>() {
             workspace
-                .update(cx, |_, cx| {
+                .update(cx, |_, window, cx| {
                     active_editor.update(cx, |editor, cx| {
-                        let snapshot = editor.snapshot(cx).display_snapshot;
-                        let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                        editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                            s.select_ranges([point..point])
-                        });
+                        editor.go_to_singleton_buffer_point(point, window, cx);
                     });
                 })
                 .log_err();
@@ -253,7 +251,7 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
-    mut cx: AsyncAppContext,
+    cx: &mut AsyncApp,
 ) {
     if let Some(request) = requests.next().await {
         match request {
@@ -263,6 +261,7 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 env,
+                user_data_dir: _, // Ignore user_data_dir
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -292,7 +291,7 @@ pub async fn handle_cli_connection(
                     wait,
                     app_state.clone(),
                     env,
-                    &mut cx,
+                    cx,
                 )
                 .await;
 
@@ -310,7 +309,7 @@ async fn open_workspaces(
     wait: bool,
     app_state: Arc<AppState>,
     env: Option<collections::HashMap<String, String>>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<()> {
     let grouped_locations = if paths.is_empty() {
         // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
@@ -339,8 +338,8 @@ async fn open_workspaces(
                     env,
                     ..Default::default()
                 };
-                workspace::open_new(open_options, app_state, cx, |workspace, cx| {
-                    Editor::new_file(workspace, &Default::default(), cx)
+                workspace::open_new(open_options, app_state, cx, |workspace, window, cx| {
+                    Editor::new_file(workspace, &Default::default(), window, cx)
                 })
                 .detach();
             })
@@ -381,7 +380,7 @@ async fn open_workspaces(
                             .connection_options_for(ssh.host, ssh.port, ssh.user)
                     });
                     if let Ok(connection_options) = connection_options {
-                        cx.spawn(|mut cx| async move {
+                        cx.spawn(async move |mut cx| {
                             open_ssh_project(
                                 connection_options,
                                 ssh.paths.into_iter().map(PathBuf::from).collect(),
@@ -417,7 +416,7 @@ async fn open_local_workspace(
     responses: &IpcSender<CliResponse>,
     env: Option<&HashMap<String, String>>,
     app_state: &Arc<AppState>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> bool {
     let mut errored = false;
 
@@ -471,8 +470,8 @@ async fn open_local_workspace(
                 let wait = async move {
                     if paths_with_position.is_empty() {
                         let (done_tx, done_rx) = oneshot::channel();
-                        let _subscription = workspace.update(cx, |_, cx| {
-                            cx.on_release(move |_, _, _| {
+                        let _subscription = workspace.update(cx, |_, _, cx| {
+                            cx.on_release(move |_, _| {
                                 let _ = done_tx.send(());
                             })
                         });
@@ -534,12 +533,13 @@ mod tests {
     use std::sync::Arc;
 
     use cli::{
-        ipc::{self},
         CliResponse,
+        ipc::{self},
     };
     use editor::Editor;
     use gpui::TestAppContext;
     use serde_json::json;
+    use util::path;
     use workspace::{AppState, Workspace};
 
     use crate::zed::{open_listener::open_local_workspace, tests::init_test};
@@ -552,7 +552,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                path!("/root"),
                 json!({
                     "dir1": {
                         "file1.txt": "content1",
@@ -565,34 +565,40 @@ mod tests {
         assert_eq!(cx.windows().len(), 0);
 
         // First open the workspace directory
-        open_workspace_file("/root/dir1", None, app_state.clone(), cx).await;
+        open_workspace_file(path!("/root/dir1"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
         let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, _, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_none())
             })
             .unwrap();
 
         // Now open a file inside that workspace
-        open_workspace_file("/root/dir1/file1.txt", None, app_state.clone(), cx).await;
+        open_workspace_file(path!("/root/dir1/file1.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, _, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some());
             })
             .unwrap();
 
         // Now open a file inside that workspace, but tell Zed to open a new window
-        open_workspace_file("/root/dir1/file1.txt", Some(true), app_state.clone(), cx).await;
+        open_workspace_file(
+            path!("/root/dir1/file1.txt"),
+            Some(true),
+            app_state.clone(),
+            cx,
+        )
+        .await;
 
         assert_eq!(cx.windows().len(), 2);
 
         let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
         workspace_2
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, _, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some());
                 let items = workspace.items(cx).collect::<Vec<_>>();
                 assert_eq!(items.len(), 1, "Workspace should have two items");
@@ -604,28 +610,32 @@ mod tests {
     async fn test_open_workspace_with_nonexistent_files(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
-        app_state.fs.as_fake().insert_tree("/root", json!({})).await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({}))
+            .await;
 
         assert_eq!(cx.windows().len(), 0);
 
         // Test case 1: Open a single file that does not exist yet
-        open_workspace_file("/root/file5.txt", None, app_state.clone(), cx).await;
+        open_workspace_file(path!("/root/file5.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
         let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
         workspace_1
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, _, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some())
             })
             .unwrap();
 
         // Test case 2: Open a single file that does not exist yet,
         // but tell Zed to add it to the current workspace
-        open_workspace_file("/root/file6.txt", Some(false), app_state.clone(), cx).await;
+        open_workspace_file(path!("/root/file6.txt"), Some(false), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
         workspace_1
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, _, cx| {
                 let items = workspace.items(cx).collect::<Vec<_>>();
                 assert_eq!(items.len(), 2, "Workspace should have two items");
             })
@@ -633,12 +643,12 @@ mod tests {
 
         // Test case 3: Open a single file that does not exist yet,
         // but tell Zed to NOT add it to the current workspace
-        open_workspace_file("/root/file7.txt", Some(true), app_state.clone(), cx).await;
+        open_workspace_file(path!("/root/file7.txt"), Some(true), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 2);
         let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
         workspace_2
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, _, cx| {
                 let items = workspace.items(cx).collect::<Vec<_>>();
                 assert_eq!(items.len(), 1, "Workspace should have two items");
             })

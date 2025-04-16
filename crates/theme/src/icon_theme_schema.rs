@@ -23,6 +23,10 @@ pub struct IconThemeContent {
     #[serde(default)]
     pub chevron_icons: ChevronIconsContent,
     #[serde(default)]
+    pub file_stems: HashMap<String, String>,
+    #[serde(default)]
+    pub file_suffixes: HashMap<String, String>,
+    #[serde(default)]
     pub file_icons: HashMap<String, IconDefinitionContent>,
 }
 

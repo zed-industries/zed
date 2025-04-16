@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use fs::Fs;
-use gpui::{AppContext, Global, ReadGlobal, SharedString, Task};
-use language::{LanguageMatcher, LanguageName, LanguageServerBinaryStatus, LoadedLanguage};
+use gpui::{App, Global, ReadGlobal, SharedString, Task};
+use language::{BinaryStatus, LanguageMatcher, LanguageName, LoadedLanguage};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
@@ -33,14 +33,14 @@ pub struct ExtensionHostProxy {
 
 impl ExtensionHostProxy {
     /// Returns the global [`ExtensionHostProxy`].
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         GlobalExtensionHostProxy::global(cx).0.clone()
     }
 
     /// Returns the global [`ExtensionHostProxy`].
     ///
     /// Inserts a default [`ExtensionHostProxy`] if one does not yet exist.
-    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+    pub fn default_global(cx: &mut App) -> Arc<Self> {
         cx.default_global::<GlobalExtensionHostProxy>().0.clone()
     }
 
@@ -96,13 +96,15 @@ impl ExtensionHostProxy {
 }
 
 pub trait ExtensionThemeProxy: Send + Sync + 'static {
+    fn set_extensions_loaded(&self);
+
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
 
     fn remove_user_themes(&self, themes: Vec<SharedString>);
 
     fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
 
-    fn reload_current_theme(&self, cx: &mut AppContext);
+    fn reload_current_theme(&self, cx: &mut App);
 
     fn list_icon_theme_names(
         &self,
@@ -118,9 +120,19 @@ pub trait ExtensionThemeProxy: Send + Sync + 'static {
         icons_root_dir: PathBuf,
         fs: Arc<dyn Fs>,
     ) -> Task<Result<()>>;
+
+    fn reload_current_icon_theme(&self, cx: &mut App);
 }
 
 impl ExtensionThemeProxy for ExtensionHostProxy {
+    fn set_extensions_loaded(&self) {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.set_extensions_loaded()
+    }
+
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         let Some(proxy) = self.theme_proxy.read().clone() else {
             return Task::ready(Ok(Vec::new()));
@@ -145,7 +157,7 @@ impl ExtensionThemeProxy for ExtensionHostProxy {
         proxy.load_user_theme(theme_path, fs)
     }
 
-    fn reload_current_theme(&self, cx: &mut AppContext) {
+    fn reload_current_theme(&self, cx: &mut App) {
         let Some(proxy) = self.theme_proxy.read().clone() else {
             return;
         };
@@ -184,6 +196,14 @@ impl ExtensionThemeProxy for ExtensionHostProxy {
         };
 
         proxy.load_icon_theme(icon_theme_path, icons_root_dir, fs)
+    }
+
+    fn reload_current_icon_theme(&self, cx: &mut App) {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.reload_current_icon_theme(cx)
     }
 }
 
@@ -264,7 +284,7 @@ pub trait ExtensionLanguageServerProxy: Send + Sync + 'static {
     fn update_language_server_status(
         &self,
         language_server_id: LanguageServerName,
-        status: LanguageServerBinaryStatus,
+        status: BinaryStatus,
     );
 }
 
@@ -297,7 +317,7 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
     fn update_language_server_status(
         &self,
         language_server_id: LanguageServerName,
-        status: LanguageServerBinaryStatus,
+        status: BinaryStatus,
     ) {
         let Some(proxy) = self.language_server_proxy.read().clone() else {
             return;
@@ -340,7 +360,7 @@ pub trait ExtensionContextServerProxy: Send + Sync + 'static {
         &self,
         extension: Arc<dyn Extension>,
         server_id: Arc<str>,
-        cx: &mut AppContext,
+        cx: &mut App,
     );
 }
 
@@ -349,7 +369,7 @@ impl ExtensionContextServerProxy for ExtensionHostProxy {
         &self,
         extension: Arc<dyn Extension>,
         server_id: Arc<str>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let Some(proxy) = self.context_server_proxy.read().clone() else {
             return;

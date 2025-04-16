@@ -1,24 +1,25 @@
 use anyhow::ensure;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::{AppContext, Task};
-use gpui::{AsyncAppContext, SharedString};
-use language::language_settings::language_settings;
-use language::LanguageName;
+use gpui::{App, Task};
+use gpui::{AsyncApp, SharedString};
 use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
+use language::language_settings::language_settings;
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
+use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use pet_core::Configuration;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
-use pet_core::Configuration;
+use project::Fs;
 use project::lsp_store::language_server_settings;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
@@ -28,11 +29,40 @@ use std::{
     any::Any,
     borrow::Cow,
     ffi::OsString,
+    fmt::Write,
+    fs,
+    io::{self, BufRead},
     path::{Path, PathBuf},
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
+
+pub(crate) struct PyprojectTomlManifestProvider;
+
+impl ManifestProvider for PyprojectTomlManifestProvider {
+    fn name(&self) -> ManifestName {
+        SharedString::new_static("pyproject.toml").into()
+    }
+
+    fn search(
+        &self,
+        ManifestQuery {
+            path,
+            depth,
+            delegate,
+        }: ManifestQuery,
+    ) -> Option<Arc<Path>> {
+        for path in path.ancestors().take(depth) {
+            let p = path.join("pyproject.toml");
+            if delegate.exists(&p, Some(false)) {
+                return Some(path.into());
+            }
+        }
+
+        None
+    }
+}
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
@@ -80,21 +110,30 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let node = delegate.which("node".as_ref()).await?;
-        let (node_modules_path, _) = delegate
-            .npm_package_installed_version(Self::SERVER_NAME.as_ref())
-            .await
-            .log_err()??;
+        if let Some(pyright_bin) = delegate.which("pyright-langserver".as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: pyright_bin,
+                env: Some(env),
+                arguments: vec!["--stdio".into()],
+            })
+        } else {
+            let node = delegate.which("node".as_ref()).await?;
+            let (node_modules_path, _) = delegate
+                .npm_package_installed_version(Self::SERVER_NAME.as_ref())
+                .await
+                .log_err()??;
 
-        let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
+            let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
 
-        Some(LanguageServerBinary {
-            path: node,
-            env: None,
-            arguments: server_binary_arguments(&path),
-        })
+            Some(LanguageServerBinary {
+                path: node,
+                env: None,
+                arguments: server_binary_arguments(&path),
+            })
+        }
     }
 
     async fn fetch_latest_server_version(
@@ -250,12 +289,18 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
-            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .active_toolchain(
+                adapter.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                cx,
+            )
             .await;
         cx.update(move |cx| {
             let mut user_settings =
@@ -281,6 +326,9 @@ impl LspAdapter for PythonLspAdapter {
             }
             user_settings
         })
+    }
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("pyproject.toml").into())
     }
 }
 
@@ -308,6 +356,10 @@ const PYTHON_TEST_TARGET_TASK_VARIABLE: VariableName =
 
 const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
+
+const PYTHON_MODULE_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_MODULE_NAME"));
+
 impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
@@ -315,23 +367,20 @@ impl ContextProvider for PythonContextProvider {
         location: &project::Location,
         _: Option<HashMap<String, String>>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut gpui::AppContext,
+        cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target = {
-            let test_runner = selected_test_runner(location.buffer.read(cx).file(), cx);
-
-            let runner = match test_runner {
-                TestRunner::UNITTEST => self.build_unittest_target(variables),
-                TestRunner::PYTEST => self.build_pytest_target(variables),
-            };
-            runner
+        let test_target = match selected_test_runner(location.buffer.read(cx).file(), cx) {
+            TestRunner::UNITTEST => self.build_unittest_target(variables),
+            TestRunner::PYTEST => self.build_pytest_target(variables),
         };
 
+        let module_target = self.build_module_target(variables);
         let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
-        cx.spawn(move |mut cx| async move {
+
+        cx.spawn(async move |cx| {
             let active_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
-                    .active_toolchain(worktree_id, "Python".into(), &mut cx)
+                    .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
                     .await
                     .map_or_else(
                         || "python3".to_owned(),
@@ -341,14 +390,20 @@ impl ContextProvider for PythonContextProvider {
                 String::from("python3")
             };
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-            Ok(task::TaskVariables::from_iter([test_target?, toolchain]))
+
+            Ok(task::TaskVariables::from_iter(
+                test_target
+                    .into_iter()
+                    .chain(module_target.into_iter())
+                    .chain([toolchain]),
+            ))
         })
     }
 
     fn associated_tasks(
         &self,
         file: Option<Arc<dyn language::File>>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<TaskTemplates> {
         let test_runner = selected_test_runner(file.as_ref(), cx);
 
@@ -368,6 +423,17 @@ impl ContextProvider for PythonContextProvider {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
+                ..TaskTemplate::default()
+            },
+            // Execute a file as module
+            TaskTemplate {
+                label: format!("run module '{}'", VariableName::File.template_value()),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                args: vec![
+                    "-m".to_owned(),
+                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
+                ],
+                tags: vec!["python-module-main-method".to_owned()],
                 ..TaskTemplate::default()
             },
         ];
@@ -439,7 +505,7 @@ impl ContextProvider for PythonContextProvider {
     }
 }
 
-fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &AppContext) -> TestRunner {
+fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
     language_settings(Some(LanguageName::new("Python")), location, cx)
         .tasks
@@ -453,10 +519,9 @@ impl PythonContextProvider {
     fn build_unittest_target(
         &self,
         variables: &task::TaskVariables,
-    ) -> Result<(VariableName, String)> {
-        let python_module_name = python_module_name_from_relative_path(
-            variables.get(&VariableName::RelativeFile).unwrap_or(""),
-        );
+    ) -> Option<(VariableName, String)> {
+        let python_module_name =
+            python_module_name_from_relative_path(variables.get(&VariableName::RelativeFile)?);
 
         let unittest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_unittest_class_name")));
@@ -467,28 +532,25 @@ impl PythonContextProvider {
 
         let unittest_target_str = match (unittest_class_name, unittest_method_name) {
             (Some(class_name), Some(method_name)) => {
-                format!("{}.{}.{}", python_module_name, class_name, method_name)
+                format!("{python_module_name}.{class_name}.{method_name}")
             }
-            (Some(class_name), None) => format!("{}.{}", python_module_name, class_name),
+            (Some(class_name), None) => format!("{python_module_name}.{class_name}"),
             (None, None) => python_module_name,
-            (None, Some(_)) => return Ok((VariableName::Custom(Cow::Borrowed("")), String::new())), // should never happen, a TestCase class is the unit of testing
+            // should never happen, a TestCase class is the unit of testing
+            (None, Some(_)) => return None,
         };
 
-        let unittest_target = (
+        Some((
             PYTHON_TEST_TARGET_TASK_VARIABLE.clone(),
             unittest_target_str,
-        );
-
-        Ok(unittest_target)
+        ))
     }
 
     fn build_pytest_target(
         &self,
         variables: &task::TaskVariables,
-    ) -> Result<(VariableName, String)> {
-        let file_path = variables
-            .get(&VariableName::RelativeFile)
-            .ok_or_else(|| anyhow!("No file path given"))?;
+    ) -> Option<(VariableName, String)> {
+        let file_path = variables.get(&VariableName::RelativeFile)?;
 
         let pytest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_pytest_class_name")));
@@ -498,20 +560,31 @@ impl PythonContextProvider {
 
         let pytest_target_str = match (pytest_class_name, pytest_method_name) {
             (Some(class_name), Some(method_name)) => {
-                format!("{}::{}::{}", file_path, class_name, method_name)
+                format!("{file_path}::{class_name}::{method_name}")
             }
             (Some(class_name), None) => {
-                format!("{}::{}", file_path, class_name)
+                format!("{file_path}::{class_name}")
             }
             (None, Some(method_name)) => {
-                format!("{}::{}", file_path, method_name)
+                format!("{file_path}::{method_name}")
             }
             (None, None) => file_path.to_string(),
         };
 
-        let pytest_target = (PYTHON_TEST_TARGET_TASK_VARIABLE.clone(), pytest_target_str);
+        Some((PYTHON_TEST_TARGET_TASK_VARIABLE.clone(), pytest_target_str))
+    }
 
-        Ok(pytest_target)
+    fn build_module_target(
+        &self,
+        variables: &task::TaskVariables,
+    ) -> Result<(VariableName, String)> {
+        let python_module_name = python_module_name_from_relative_path(
+            variables.get(&VariableName::RelativeFile).unwrap_or(""),
+        );
+
+        let module_target = (PYTHON_MODULE_NAME_TASK_VARIABLE.clone(), python_module_name);
+
+        Ok(module_target)
     }
 }
 
@@ -521,6 +594,28 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .strip_suffix(".py")
         .unwrap_or(&path_with_dots)
         .to_string()
+}
+
+fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
+    match k {
+        PythonEnvironmentKind::Conda => "Conda",
+        PythonEnvironmentKind::Pixi => "pixi",
+        PythonEnvironmentKind::Homebrew => "Homebrew",
+        PythonEnvironmentKind::Pyenv => "global (Pyenv)",
+        PythonEnvironmentKind::GlobalPaths => "global",
+        PythonEnvironmentKind::PyenvVirtualEnv => "Pyenv",
+        PythonEnvironmentKind::Pipenv => "Pipenv",
+        PythonEnvironmentKind::Poetry => "Poetry",
+        PythonEnvironmentKind::MacPythonOrg => "global (Python.org)",
+        PythonEnvironmentKind::MacCommandLineTools => "global (Command Line Tools for Xcode)",
+        PythonEnvironmentKind::LinuxGlobal => "global",
+        PythonEnvironmentKind::MacXCode => "global (Xcode)",
+        PythonEnvironmentKind::Venv => "venv",
+        PythonEnvironmentKind::VirtualEnv => "virtualenv",
+        PythonEnvironmentKind::VirtualEnvWrapper => "virtualenvwrapper",
+        PythonEnvironmentKind::WindowsStore => "global (Windows Store)",
+        PythonEnvironmentKind::WindowsRegistry => "global (Windows Registry)",
+    }
 }
 
 pub(crate) struct PythonToolchainProvider {
@@ -542,6 +637,7 @@ static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
     PythonEnvironmentKind::VirtualEnvWrapper,
     PythonEnvironmentKind::Venv,
     PythonEnvironmentKind::VirtualEnv,
+    PythonEnvironmentKind::PyenvVirtualEnv,
     PythonEnvironmentKind::Pixi,
     PythonEnvironmentKind::Conda,
     PythonEnvironmentKind::Pyenv,
@@ -561,6 +657,19 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
     }
 }
 
+/// Return the name of environment declared in <worktree-root/.venv.
+///
+/// https://virtualfish.readthedocs.io/en/latest/plugins.html#auto-activation-auto-activation
+fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
+    fs::File::open(worktree_root.join(".venv"))
+        .and_then(|file| {
+            let mut venv_name = String::new();
+            io::BufReader::new(file).read_line(&mut venv_name)?;
+            Ok(venv_name.trim().to_string())
+        })
+        .ok()
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
@@ -576,7 +685,7 @@ impl ToolchainLister for PythonToolchainProvider {
             &environment,
         );
         let mut config = Configuration::default();
-        config.workspace_directories = Some(vec![worktree_root]);
+        config.workspace_directories = Some(vec![worktree_root.clone()]);
         for locator in locators.iter() {
             locator.configure(&config);
         }
@@ -590,42 +699,91 @@ impl ToolchainLister for PythonToolchainProvider {
             .ok()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
+        let wr = worktree_root;
+        let wr_venv = get_worktree_venv_declaration(&wr);
+        // Sort detected environments by:
+        //     environment name matching activation file (<workdir>/.venv)
+        //     environment project dir matching worktree_root
+        //     general env priority
+        //     environment path matching the CONDA_PREFIX env var
+        //     executable path
         toolchains.sort_by(|lhs, rhs| {
-            env_priority(lhs.kind)
-                .cmp(&env_priority(rhs.kind))
-                .then_with(|| {
-                    if lhs.kind == Some(PythonEnvironmentKind::Conda) {
-                        environment
-                            .get_env_var("CONDA_PREFIX".to_string())
-                            .map(|conda_prefix| {
-                                let is_match = |exe: &Option<PathBuf>| {
-                                    exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
-                                };
-                                match (is_match(&lhs.executable), is_match(&rhs.executable)) {
-                                    (true, false) => Ordering::Less,
-                                    (false, true) => Ordering::Greater,
-                                    _ => Ordering::Equal,
-                                }
-                            })
-                            .unwrap_or(Ordering::Equal)
-                    } else {
-                        Ordering::Equal
-                    }
-                })
-                .then_with(|| lhs.executable.cmp(&rhs.executable))
+            // Compare venv names against worktree .venv file
+            let venv_ordering =
+                wr_venv
+                    .as_ref()
+                    .map_or(Ordering::Equal, |venv| match (&lhs.name, &rhs.name) {
+                        (Some(l), Some(r)) => (r == venv).cmp(&(l == venv)),
+                        (Some(l), None) if l == venv => Ordering::Less,
+                        (None, Some(r)) if r == venv => Ordering::Greater,
+                        _ => Ordering::Equal,
+                    });
+
+            // Compare project paths against worktree root
+            let proj_ordering = || match (&lhs.project, &rhs.project) {
+                (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
+                (Some(l), None) if l == &wr => Ordering::Less,
+                (None, Some(r)) if r == &wr => Ordering::Greater,
+                _ => Ordering::Equal,
+            };
+
+            // Compare environment priorities
+            let priority_ordering = || env_priority(lhs.kind).cmp(&env_priority(rhs.kind));
+
+            // Compare conda prefixes
+            let conda_ordering = || {
+                if lhs.kind == Some(PythonEnvironmentKind::Conda) {
+                    environment
+                        .get_env_var("CONDA_PREFIX".to_string())
+                        .map(|conda_prefix| {
+                            let is_match = |exe: &Option<PathBuf>| {
+                                exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
+                            };
+                            match (is_match(&lhs.executable), is_match(&rhs.executable)) {
+                                (true, false) => Ordering::Less,
+                                (false, true) => Ordering::Greater,
+                                _ => Ordering::Equal,
+                            }
+                        })
+                        .unwrap_or(Ordering::Equal)
+                } else {
+                    Ordering::Equal
+                }
+            };
+
+            // Compare Python executables
+            let exe_ordering = || lhs.executable.cmp(&rhs.executable);
+
+            venv_ordering
+                .then_with(proj_ordering)
+                .then_with(priority_ordering)
+                .then_with(conda_ordering)
+                .then_with(exe_ordering)
         });
 
         let mut toolchains: Vec<_> = toolchains
             .into_iter()
             .filter_map(|toolchain| {
-                let name = if let Some(version) = &toolchain.version {
-                    format!("Python {version} ({:?})", toolchain.kind?)
-                } else {
-                    format!("{:?}", toolchain.kind?)
+                let mut name = String::from("Python");
+                if let Some(ref version) = toolchain.version {
+                    _ = write!(name, " {version}");
                 }
-                .into();
+
+                let name_and_kind = match (&toolchain.name, &toolchain.kind) {
+                    (Some(name), Some(kind)) => {
+                        Some(format!("({name}; {})", python_env_kind_display(kind)))
+                    }
+                    (Some(name), None) => Some(format!("({name})")),
+                    (None, Some(kind)) => Some(format!("({})", python_env_kind_display(kind))),
+                    (None, None) => None,
+                };
+
+                if let Some(nk) = name_and_kind {
+                    _ = write!(name, " {nk}");
+                }
+
                 Some(Toolchain {
-                    name,
+                    name: name.into(),
                     path: toolchain.executable.as_ref()?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
                     as_json: serde_json::to_value(toolchain).ok()?,
@@ -673,7 +831,7 @@ impl<'a> EnvironmentApi<'a> {
     }
 }
 
-impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
+impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
     fn get_user_home(&self) -> Option<PathBuf> {
         self.user_home()
     }
@@ -787,21 +945,31 @@ impl LspAdapter for PyLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let venv = toolchains
-            .active_toolchain(
-                delegate.worktree_id(),
-                LanguageName::new("Python"),
-                &mut cx.clone(),
-            )
-            .await?;
-        let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
-        pylsp_path.exists().then(|| LanguageServerBinary {
-            path: venv.path.to_string().into(),
-            arguments: vec![pylsp_path.into()],
-            env: None,
-        })
+        if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: pylsp_bin,
+                env: Some(env),
+                arguments: vec![],
+            })
+        } else {
+            let venv = toolchains
+                .active_toolchain(
+                    delegate.worktree_id(),
+                    Arc::from("".as_ref()),
+                    LanguageName::new("Python"),
+                    &mut cx.clone(),
+                )
+                .await?;
+            let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
+            pylsp_path.exists().then(|| LanguageServerBinary {
+                path: venv.path.to_string().into(),
+                arguments: vec![pylsp_path.into()],
+                env: None,
+            })
+        }
     }
 
     async fn fetch_latest_server_version(
@@ -823,6 +991,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -833,6 +1002,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server[all]")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -843,6 +1013,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -931,12 +1102,18 @@ impl LspAdapter for PyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
-            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .active_toolchain(
+                adapter.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                cx,
+            )
             .await;
         cx.update(move |cx| {
             let mut user_settings =
@@ -998,12 +1175,15 @@ impl LspAdapter for PyLspAdapter {
             user_settings
         })
     }
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("pyproject.toml").into())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};
-    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
+    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
@@ -1022,9 +1202,9 @@ mod tests {
             });
         });
 
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
-            let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
+            let append = |buffer: &mut Buffer, text: &str, cx: &mut Context<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
             };

@@ -14,7 +14,7 @@ use std::{
 use anyhow::Result;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, Context, Model, ModelContext, Task};
+use gpui::{App, AppContext as _, Context, Entity, Task};
 use util::ResultExt;
 
 pub(crate) struct YarnPathStore {
@@ -57,8 +57,8 @@ fn resolve_virtual(path: &Path) -> Option<Arc<Path>> {
 }
 
 impl YarnPathStore {
-    pub(crate) fn new(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_| Self {
+    pub(crate) fn new(fs: Arc<dyn Fs>, cx: &mut App) -> Entity<Self> {
+        cx.new(|_| Self {
             temp_dirs: Default::default(),
             fs,
         })
@@ -67,7 +67,7 @@ impl YarnPathStore {
         &mut self,
         path: &Path,
         protocol: &str,
-        cx: &ModelContext<Self>,
+        cx: &Context<Self>,
     ) -> Task<Option<(Arc<Path>, Arc<Path>)>> {
         let mut is_zip = protocol.eq("zip");
 
@@ -91,9 +91,9 @@ impl YarnPathStore {
         };
         if let Some(zip_file) = zip_path(&path) {
             let zip_file: Arc<Path> = Arc::from(zip_file);
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 let dir = this
-                    .update(&mut cx, |this, _| {
+                    .update(cx, |this, _| {
                         this.temp_dirs
                             .get(&zip_file)
                             .map(|temp| temp.path().to_owned())
@@ -102,10 +102,10 @@ impl YarnPathStore {
                 let zip_root = if let Some(dir) = dir {
                     dir
                 } else {
-                    let fs = this.update(&mut cx, |this, _| this.fs.clone()).ok()?;
+                    let fs = this.update(cx, |this, _| this.fs.clone()).ok()?;
                     let tempdir = dump_zip(zip_file.clone(), fs).await.log_err()?;
                     let new_path = tempdir.path().to_owned();
-                    this.update(&mut cx, |this, _| {
+                    this.update(cx, |this, _| {
                         this.temp_dirs.insert(zip_file.clone(), tempdir);
                     })
                     .ok()?;

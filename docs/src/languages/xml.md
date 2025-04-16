@@ -2,7 +2,7 @@
 
 XML support is available through the [XML extension](https://github.com/sweetppro/zed-xml/).
 
-- Tree Sitter: [tree-sitter-grammars/tree-sitter-xml](https://github.com/tree-sitter-grammars/tree-sitter-xml)
+- Tree-sitter: [tree-sitter-grammars/tree-sitter-xml](https://github.com/tree-sitter-grammars/tree-sitter-xml)
 
 ## Configuration
 

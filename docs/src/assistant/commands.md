@@ -19,8 +19,6 @@ Slash commands enhance the assistant's capabilities. Begin by typing a `/` at th
 
 - `/search`: Performs semantic search for content in your project based on natural language
   - Not generally available yet, but some users may have access to it.
-- `/workflow`: Opts into the edit workflow for a specific context
-  - Not generally available yet.
 
 > **Note:** Remember, commands are only evaluated when the context is created or when the command is inserted, so a command like `/now` won't continuously update, or `/file` commands won't keep their contents up to date.
 
@@ -103,12 +101,6 @@ The `/selection` command inserts the selected text in the editor into the contex
 This is equivalent to the `assistant: quote selection` command ({#kb assistant::QuoteSelection}). See [Interacting with the Assistant](./assistant-panel.md#interacting-with-the-assistant)).
 
 Usage: `/selection`
-
-## `/workflow`
-
-The `/workflow` command inserts a prompt that opts into the edit workflow. This sets up the context for the assistant to suggest edits to your code.
-
-Usage: `/workflow`
 
 ## Extensibility
 

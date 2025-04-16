@@ -1,4 +1,4 @@
-use gpui::{px, size, Context, UpdateGlobal};
+use gpui::{AppContext as _, UpdateGlobal, px, size};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{
@@ -9,11 +9,11 @@ use std::{
 use language::language_settings::{AllLanguageSettings, SoftWrap};
 use util::test::marked_text_offsets;
 
-use super::{neovim_connection::NeovimConnection, VimTestContext};
+use super::{VimTestContext, neovim_connection::NeovimConnection};
 use crate::state::{Mode, VimGlobals};
 
 pub struct NeovimBackedTestContext {
-    cx: VimTestContext,
+    pub(crate) cx: VimTestContext,
     pub(crate) neovim: NeovimConnection,
 
     last_set_state: Option<String>,
@@ -107,7 +107,7 @@ impl SharedClipboard {
             return;
         }
 
-        let message = if expected == self.neovim {
+        let message = if expected != self.neovim {
             "Test is incorrect (currently expected != neovim_state)"
         } else {
             "Editor does not match nvim behavior"
@@ -119,12 +119,9 @@ impl SharedClipboard {
                 {}
                 # keystrokes:
                 {}
-                # currently expected:
-                {}
-                # neovim register \"{}:
-                {}
-                # zed register \"{}:
-                {}"},
+                # currently expected: {:?}
+                # neovim register \"{}: {:?}
+                # zed register \"{}: {:?}"},
             message,
             self.state.initial,
             self.state.recent_keystrokes,
@@ -150,7 +147,7 @@ impl NeovimBackedTestContext {
             .name()
             .expect("thread is not named")
             .split(':')
-            .last()
+            .next_back()
             .unwrap()
             .to_string();
         Self {
@@ -174,7 +171,7 @@ impl NeovimBackedTestContext {
             .name()
             .expect("thread is not named")
             .split(':')
-            .last()
+            .next_back()
             .unwrap()
             .to_string();
         Self {
@@ -222,7 +219,7 @@ impl NeovimBackedTestContext {
             .set_option(&format!("columns={}", columns))
             .await;
 
-        self.update(|cx| {
+        self.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                     settings.defaults.soft_wrap = Some(SoftWrap::PreferredLineLength);
@@ -237,21 +234,21 @@ impl NeovimBackedTestContext {
         self.neovim.set_option(&format!("scrolloff={}", 3)).await;
         // +2 to account for the vim command UI at the bottom.
         self.neovim.set_option(&format!("lines={}", rows + 2)).await;
-        let (line_height, visible_line_count) = self.editor(|editor, cx| {
+        let (line_height, visible_line_count) = self.editor(|editor, window, _cx| {
             (
                 editor
                     .style()
                     .unwrap()
                     .text
-                    .line_height_in_pixels(cx.rem_size()),
+                    .line_height_in_pixels(window.rem_size()),
                 editor.visible_line_count().unwrap(),
             )
         });
 
         let window = self.window;
         let margin = self
-            .update_window(window, |_, cx| {
-                cx.viewport_size().height - line_height * visible_line_count
+            .update_window(window, |_, window, _cx| {
+                window.viewport_size().height - line_height * visible_line_count
             })
             .unwrap();
 
@@ -286,7 +283,7 @@ impl NeovimBackedTestContext {
             register,
             state: self.shared_state().await,
             neovim: self.neovim.read_register(register).await,
-            editor: self.update(|cx| {
+            editor: self.update(|_, cx| {
                 cx.global::<VimGlobals>()
                     .registers
                     .get(&register)

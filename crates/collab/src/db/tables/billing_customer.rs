@@ -9,6 +9,7 @@ pub struct Model {
     pub id: BillingCustomerId,
     pub user_id: UserId,
     pub stripe_customer_id: String,
+    pub has_overdue_invoices: bool,
     pub created_at: DateTime,
 }
 

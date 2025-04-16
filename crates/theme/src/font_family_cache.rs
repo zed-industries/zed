@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use gpui::{AppContext, Global, ReadGlobal, SharedString};
+use gpui::{App, Global, ReadGlobal, SharedString};
 use parking_lot::RwLock;
 
 #[derive(Default)]
@@ -26,17 +26,17 @@ impl Global for GlobalFontFamilyCache {}
 
 impl FontFamilyCache {
     /// Initializes the global font family cache.
-    pub fn init_global(cx: &mut AppContext) {
+    pub fn init_global(cx: &mut App) {
         cx.default_global::<GlobalFontFamilyCache>();
     }
 
     /// Returns the global font family cache.
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         GlobalFontFamilyCache::global(cx).0.clone()
     }
 
     /// Returns the list of font families.
-    pub fn list_font_families(&self, cx: &AppContext) -> Vec<SharedString> {
+    pub fn list_font_families(&self, cx: &App) -> Vec<SharedString> {
         if self.state.read().loaded_at.is_some() {
             return self.state.read().font_families.clone();
         }

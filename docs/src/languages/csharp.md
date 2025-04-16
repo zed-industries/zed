@@ -2,9 +2,9 @@
 
 Note language name is "CSharp" for settings not "C#'
 
-C# support is available through the [C# extension](https://github.com/zed-industries/zed/tree/main/extensions/csharp).
+C# support is available through the [C# extension](https://github.com/zed-extensions/csharp).
 
-- Tree Sitter: [tree-sitter/tree-sitter-c-sharp](https://github.com/tree-sitter/tree-sitter-c-sharp)
+- Tree-sitter: [tree-sitter/tree-sitter-c-sharp](https://github.com/tree-sitter/tree-sitter-c-sharp)
 - Language Server: [OmniSharp/omnisharp-roslyn](https://github.com/OmniSharp/omnisharp-roslyn)
 
 ## Configuration

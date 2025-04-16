@@ -1,26 +1,29 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::AppContext;
+use gpui::App;
 use language_model::LanguageModelCacheConfiguration;
 use project::Fs;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsSources};
+use settings::{Settings, SettingsSources, update_settings_file};
 
 use crate::provider::{
     self,
     anthropic::AnthropicSettings,
+    bedrock::AmazonBedrockSettings,
     cloud::{self, ZedDotDevSettings},
     copilot_chat::CopilotChatSettings,
+    deepseek::DeepSeekSettings,
     google::GoogleSettings,
     lmstudio::LmStudioSettings,
+    mistral::MistralSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
 };
 
 /// Initializes the language model settings.
-pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     AllLanguageModelSettings::register(cx);
 
     if AllLanguageModelSettings::get_global(cx)
@@ -55,24 +58,30 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
 #[derive(Default)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
+    pub bedrock: AmazonBedrockSettings,
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
     pub copilot_chat: CopilotChatSettings,
     pub lmstudio: LmStudioSettings,
+    pub deepseek: DeepSeekSettings,
+    pub mistral: MistralSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
+    pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    pub deepseek: Option<DeepseekSettingsContent>,
     pub copilot_chat: Option<CopilotChatSettingsContent>,
+    pub mistral: Option<MistralSettingsContent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -101,6 +110,7 @@ impl AnthropicSettingsContent {
                                     max_output_tokens,
                                     default_temperature,
                                     extra_beta_headers,
+                                    mode,
                                 } => Some(provider::anthropic::AvailableModel {
                                     name,
                                     display_name,
@@ -116,6 +126,7 @@ impl AnthropicSettingsContent {
                                     max_output_tokens,
                                     default_temperature,
                                     extra_beta_headers,
+                                    mode: Some(mode.into()),
                                 }),
                                 _ => None,
                             })
@@ -151,6 +162,15 @@ pub struct AnthropicSettingsContentV1 {
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct AmazonBedrockSettingsContent {
+    available_models: Option<Vec<provider::bedrock::AvailableModel>>,
+    endpoint_url: Option<String>,
+    region: Option<String>,
+    profile: Option<String>,
+    authentication_method: Option<provider::bedrock::BedrockAuthMethod>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::ollama::AvailableModel>>,
@@ -160,6 +180,18 @@ pub struct OllamaSettingsContent {
 pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::lmstudio::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct DeepseekSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::deepseek::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct MistralSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::mistral::AvailableModel>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -246,7 +278,7 @@ impl settings::Settings for AllLanguageModelSettings {
 
     type FileContent = AllLanguageModelSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         fn merge<T>(target: &mut T, value: Option<T>) {
             if let Some(value) = value {
                 *target = value;
@@ -275,6 +307,25 @@ impl settings::Settings for AllLanguageModelSettings {
                 anthropic.as_ref().and_then(|s| s.available_models.clone()),
             );
 
+            // Bedrock
+            let bedrock = value.bedrock.clone();
+            merge(
+                &mut settings.bedrock.profile_name,
+                bedrock.as_ref().map(|s| s.profile.clone()),
+            );
+            merge(
+                &mut settings.bedrock.authentication_method,
+                bedrock.as_ref().map(|s| s.authentication_method.clone()),
+            );
+            merge(
+                &mut settings.bedrock.region,
+                bedrock.as_ref().map(|s| s.region.clone()),
+            );
+            merge(
+                &mut settings.bedrock.endpoint,
+                bedrock.as_ref().map(|s| s.endpoint_url.clone()),
+            );
+
             // Ollama
             let ollama = value.ollama.clone();
 
@@ -297,6 +348,18 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.lmstudio.available_models,
                 lmstudio.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // DeepSeek
+            let deepseek = value.deepseek.clone();
+
+            merge(
+                &mut settings.deepseek.api_url,
+                value.deepseek.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.deepseek.available_models,
+                deepseek.as_ref().and_then(|s| s.available_models.clone()),
             );
 
             // OpenAI
@@ -334,6 +397,17 @@ impl settings::Settings for AllLanguageModelSettings {
                     .google
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
+            );
+
+            // Mistral
+            let mistral = value.mistral.clone();
+            merge(
+                &mut settings.mistral.api_url,
+                mistral.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.mistral.available_models,
+                mistral.as_ref().and_then(|s| s.available_models.clone()),
             );
         }
 

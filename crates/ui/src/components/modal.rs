@@ -1,8 +1,6 @@
-#![allow(missing_docs)]
-
 use crate::{
-    h_flex, v_flex, Clickable, Color, DynamicSpacing, Headline, HeadlineSize, IconButton,
-    IconButtonShape, IconName, Label, LabelCommon, LabelSize,
+    Clickable, Color, DynamicSpacing, Headline, HeadlineSize, IconButton, IconButtonShape,
+    IconName, Label, LabelCommon, LabelSize, h_flex, v_flex,
 };
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
@@ -66,7 +64,7 @@ impl ParentElement for Modal {
 }
 
 impl RenderOnce for Modal {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
             .id(self.id.clone())
             .size_full()
@@ -143,7 +141,7 @@ impl ParentElement for ModalHeader {
 }
 
 impl RenderOnce for ModalHeader {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut children = self.children;
 
         if self.headline.is_some() {
@@ -168,8 +166,8 @@ impl RenderOnce for ModalHeader {
                 this.child(
                     IconButton::new("back", IconName::ArrowLeft)
                         .shape(IconButtonShape::Square)
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(menu::Cancel.boxed_clone());
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Cancel.boxed_clone(), cx);
                         }),
                 )
             })
@@ -178,8 +176,8 @@ impl RenderOnce for ModalHeader {
                 this.child(
                     IconButton::new("dismiss", IconName::Close)
                         .shape(IconButtonShape::Square)
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(menu::Cancel.boxed_clone());
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Cancel.boxed_clone(), cx);
                         }),
                 )
             })
@@ -212,7 +210,7 @@ impl ParentElement for ModalRow {
 }
 
 impl RenderOnce for ModalRow {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         h_flex().w_full().py_1().children(self.children)
     }
 }
@@ -249,7 +247,7 @@ impl ModalFooter {
 }
 
 impl RenderOnce for ModalFooter {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .flex_none()
             .w_full()
@@ -323,7 +321,7 @@ impl ParentElement for Section {
 }
 
 impl RenderOnce for Section {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut section_bg = cx.theme().colors().text;
         section_bg.fade_out(0.96);
 
@@ -334,7 +332,7 @@ impl RenderOnce for Section {
                 .child(
                     v_flex()
                         .w_full()
-                        .rounded_md()
+                        .rounded_sm()
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .bg(section_bg)
@@ -395,7 +393,7 @@ impl SectionHeader {
 }
 
 impl RenderOnce for SectionHeader {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .id(self.label.clone())
             .w_full()

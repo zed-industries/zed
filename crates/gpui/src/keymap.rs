@@ -4,7 +4,7 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
-use crate::{is_no_action, Action, Keystroke};
+use crate::{Action, Keystroke, is_no_action};
 use collections::HashMap;
 use smallvec::SmallVec;
 use std::any::TypeId;
@@ -188,13 +188,38 @@ impl Keymap {
 
         true
     }
+
+    /// WARN: Assumes the bindings are in the order they were added to the keymap
+    /// returns the last binding for the given bindings, which
+    /// should be the user's binding in their keymap.json if they've set one,
+    /// otherwise, the last declared binding for this action in the base keymaps
+    /// (with Vim mode bindings being considered as declared later if Vim mode
+    /// is enabled)
+    ///
+    /// If you are considering changing the behavior of this function
+    /// (especially to fix a user reported issue) see issues #23621, #24931,
+    /// and possibly others as evidence that it has swapped back and forth a
+    /// couple times. The decision as of now is to pick a side and leave it
+    /// as is, until we have a better way to decide which binding to display
+    /// that is consistent and not confusing.
+    pub fn binding_to_display_from_bindings(mut bindings: Vec<KeyBinding>) -> Option<KeyBinding> {
+        bindings.pop()
+    }
+
+    /// Like `bindings_to_display_from_bindings` but takes a `DoubleEndedIterator` and returns a
+    /// reference.
+    pub fn binding_to_display_from_bindings_iterator<'a>(
+        mut bindings: impl DoubleEndedIterator<Item = &'a KeyBinding>,
+    ) -> Option<&'a KeyBinding> {
+        bindings.next_back()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate as gpui;
-    use gpui::{actions, NoAction};
+    use gpui::{NoAction, actions};
 
     actions!(
         keymap_test,
@@ -240,38 +265,46 @@ mod tests {
         keymap.add_bindings(bindings.clone());
 
         // binding is only enabled in a specific context
-        assert!(keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-a").unwrap()],
-                &[KeyContext::parse("barf").unwrap()],
-            )
-            .0
-            .is_empty());
-        assert!(!keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-a").unwrap()],
-                &[KeyContext::parse("editor").unwrap()],
-            )
-            .0
-            .is_empty());
+        assert!(
+            keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse("barf").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
+        assert!(
+            !keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse("editor").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
 
         // binding is disabled in a more specific context
-        assert!(keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-a").unwrap()],
-                &[KeyContext::parse("editor mode=full").unwrap()],
-            )
-            .0
-            .is_empty());
+        assert!(
+            keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse("editor mode=full").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
 
         // binding is globally disabled
-        assert!(keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-b").unwrap()],
-                &[KeyContext::parse("barf").unwrap()],
-            )
-            .0
-            .is_empty());
+        assert!(
+            keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-b").unwrap()],
+                    &[KeyContext::parse("barf").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
     }
 
     #[test]

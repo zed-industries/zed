@@ -3,13 +3,13 @@ use std::cmp::Ordering;
 use gpui::Render;
 use story::Story;
 
-use crate::{prelude::*, IconButtonShape, TabPosition};
+use crate::{IconButtonShape, TabPosition, prelude::*};
 use crate::{Indicator, Tab};
 
 pub struct TabStory;
 
 impl Render for TabStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<Tab>())
             .child(Story::label("Default"))

@@ -21,8 +21,8 @@ pub fn home_dir() -> &'static PathBuf {
 
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
-    fn icon_stem_or_suffix(&self) -> Option<&str>;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
+    fn to_sanitized_string(&self) -> String;
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
         Self: From<&'a Path>,
@@ -73,8 +73,8 @@ impl<T: AsRef<Path>> PathExt for T {
         }
     }
 
-    /// Returns either the suffix if available, or the file stem otherwise to determine which file icon to use
-    fn icon_stem_or_suffix(&self) -> Option<&str> {
+    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
+    fn extension_or_hidden_file_name(&self) -> Option<&str> {
         let path = self.as_ref();
         let file_name = path.file_name()?.to_str()?;
         if file_name.starts_with('.') {
@@ -86,13 +86,18 @@ impl<T: AsRef<Path>> PathExt for T {
             .or_else(|| path.file_stem()?.to_str())
     }
 
-    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
-    fn extension_or_hidden_file_name(&self) -> Option<&str> {
-        if let Some(extension) = self.as_ref().extension() {
-            return extension.to_str();
+    /// Returns a sanitized string representation of the path.
+    /// Note, on Windows, this assumes that the path is a valid UTF-8 string and
+    /// is not a UNC path.
+    fn to_sanitized_string(&self) -> String {
+        #[cfg(target_os = "windows")]
+        {
+            self.as_ref().to_string_lossy().replace("/", "\\")
         }
-
-        self.as_ref().file_name()?.to_str()?.split('.').last()
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.as_ref().to_string_lossy().to_string()
+        }
     }
 }
 
@@ -100,7 +105,7 @@ impl<T: AsRef<Path>> PathExt for T {
 /// leverages Rust's type system to ensure that all paths entering Zed are always "sanitized" by removing the `\\\\?\\` prefix.
 /// On non-Windows operating systems, this struct is effectively a no-op.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SanitizedPath(Arc<Path>);
+pub struct SanitizedPath(pub Arc<Path>);
 
 impl SanitizedPath {
     pub fn starts_with(&self, prefix: &SanitizedPath) -> bool {
@@ -115,6 +120,17 @@ impl SanitizedPath {
         self.0.to_string_lossy().to_string()
     }
 
+    pub fn to_glob_string(&self) -> String {
+        #[cfg(target_os = "windows")]
+        {
+            self.0.to_string_lossy().replace("/", "\\")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.0.to_string_lossy().to_string()
+        }
+    }
+
     pub fn join(&self, path: &Self) -> Self {
         self.0.join(&path.0).into()
     }
@@ -127,6 +143,12 @@ impl SanitizedPath {
 impl From<SanitizedPath> for Arc<Path> {
     fn from(sanitized_path: SanitizedPath) -> Self {
         sanitized_path.0
+    }
+}
+
+impl From<SanitizedPath> for PathBuf {
+    fn from(sanitized_path: SanitizedPath) -> Self {
+        sanitized_path.0.as_ref().into()
     }
 }
 
@@ -147,9 +169,9 @@ impl<T: AsRef<Path>> From<T> for SanitizedPath {
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
-const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
+const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
     ([^\(]+)(?:
-        \((\d+),(\d+)\) # filename(row,column)
+        \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column)
         |
         \((\d+)\)()     # filename(row)
     )
@@ -355,10 +377,10 @@ impl PartialEq for PathMatcher {
 impl Eq for PathMatcher {}
 
 impl PathMatcher {
-    pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
+    pub fn new(globs: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self, globset::Error> {
         let globs = globs
-            .iter()
-            .map(|glob| Glob::new(glob))
+            .into_iter()
+            .map(|as_str| Glob::new(as_str.as_ref()))
             .collect::<Result<Vec<_>, _>>()?;
         let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
         let mut glob_builder = GlobSetBuilder::new();
@@ -446,14 +468,6 @@ pub fn compare_paths(
             (None, None) => break cmp::Ordering::Equal,
         }
     }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub fn replace_path_separator(path: &str) -> String {
-    #[cfg(target_os = "windows")]
-    return path.replace("/", std::path::MAIN_SEPARATOR_STR);
-    #[cfg(not(target_os = "windows"))]
-    return path.to_string();
 }
 
 #[cfg(test)]
@@ -610,6 +624,24 @@ mod tests {
                 column: None
             }
         );
+
+        assert_eq!(
+            PathWithPosition::parse_str("ab\ncd"),
+            PathWithPosition {
+                path: PathBuf::from("ab\ncd"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("👋\nab"),
+            PathWithPosition {
+                path: PathBuf::from("👋\nab"),
+                row: None,
+                column: None
+            }
+        );
     }
 
     #[test]
@@ -639,6 +671,14 @@ mod tests {
                 path: PathBuf::from("crate/utils/src/test:today.log"),
                 row: Some(34),
                 column: None,
+            }
+        );
+        assert_eq!(
+            PathWithPosition::parse_str("/testing/out/src/file_finder.odin(7:15)"),
+            PathWithPosition {
+                path: PathBuf::from("/testing/out/src/file_finder.odin"),
+                row: Some(7),
+                column: Some(15),
             }
         );
     }
@@ -794,33 +834,6 @@ mod tests {
     }
 
     #[test]
-    fn test_icon_stem_or_suffix() {
-        // No dots in name
-        let path = Path::new("/a/b/c/file_name.rs");
-        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
-
-        // Single dot in name
-        let path = Path::new("/a/b/c/file.name.rs");
-        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
-
-        // No suffix
-        let path = Path::new("/a/b/c/file");
-        assert_eq!(path.icon_stem_or_suffix(), Some("file"));
-
-        // Multiple dots in name
-        let path = Path::new("/a/b/c/long.file.name.rs");
-        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
-
-        // Hidden file, no extension
-        let path = Path::new("/a/b/c/.gitignore");
-        assert_eq!(path.icon_stem_or_suffix(), Some("gitignore"));
-
-        // Hidden file, with extension
-        let path = Path::new("/a/b/c/.eslintrc.js");
-        assert_eq!(path.icon_stem_or_suffix(), Some("eslintrc.js"));
-    }
-
-    #[test]
     fn test_extension_or_hidden_file_name() {
         // No dots in name
         let path = Path::new("/a/b/c/file_name.rs");
@@ -840,7 +853,7 @@ mod tests {
 
         // Hidden file, with extension
         let path = Path::new("/a/b/c/.eslintrc.js");
-        assert_eq!(path.extension_or_hidden_file_name(), Some("js"));
+        assert_eq!(path.extension_or_hidden_file_name(), Some("eslintrc.js"));
     }
 
     #[test]

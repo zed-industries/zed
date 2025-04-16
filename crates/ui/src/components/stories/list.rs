@@ -1,13 +1,13 @@
 use gpui::Render;
 use story::Story;
 
-use crate::{prelude::*, ListHeader, ListSeparator, ListSubHeader};
 use crate::{List, ListItem};
+use crate::{ListHeader, ListSeparator, ListSubHeader, prelude::*};
 
 pub struct ListStory;
 
 impl Render for ListStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<List>())
             .child(Story::label("Default"))

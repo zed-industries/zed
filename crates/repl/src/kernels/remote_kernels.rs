@@ -1,12 +1,10 @@
-use futures::{channel::mpsc, SinkExt as _};
-use gpui::{Task, View, WindowContext};
+use futures::{SinkExt as _, channel::mpsc};
+use gpui::{App, AppContext as _, Entity, Task, Window};
 use http_client::{AsyncBody, HttpClient, Request};
 use jupyter_protocol::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 
-use async_tungstenite::{
-    async_std::connect_async,
-    tungstenite::{client::IntoClientRequest, http::HeaderValue},
-};
+use async_tungstenite::tokio::connect_async;
+use async_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue};
 
 use futures::StreamExt;
 use smol::io::AsyncReadExt as _;
@@ -137,8 +135,9 @@ impl RemoteRunningKernel {
     pub fn new(
         kernelspec: RemoteKernelSpecification,
         working_directory: std::path::PathBuf,
-        session: View<Session>,
-        cx: &mut WindowContext,
+        session: Entity<Session>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
         let remote_server = RemoteServer {
             base_url: kernelspec.url,
@@ -147,7 +146,7 @@ impl RemoteRunningKernel {
 
         let http_client = cx.http_client();
 
-        cx.spawn(|cx| async move {
+        window.spawn(cx, async move |cx| {
             let kernel_id = launch_remote_kernel(
                 &remote_server,
                 http_client.clone(),
@@ -188,7 +187,7 @@ impl RemoteRunningKernel {
             let (request_tx, mut request_rx) =
                 futures::channel::mpsc::channel::<JupyterMessage>(100);
 
-            let routing_task = cx.background_executor().spawn({
+            let routing_task = cx.background_spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
                         w.send(message).await.ok();
@@ -200,13 +199,13 @@ impl RemoteRunningKernel {
             let receiving_task = cx.spawn({
                 let session = session.clone();
 
-                |mut cx| async move {
+                async move |cx| {
                     while let Some(message) = r.next().await {
                         match message {
                             Ok(message) => {
                                 session
-                                    .update(&mut cx, |session, cx| {
-                                        session.route(&message, cx);
+                                    .update_in(cx, |session, window, cx| {
+                                        session.route(&message, window, cx);
                                     })
                                     .ok();
                             }
@@ -273,14 +272,14 @@ impl RunningKernel for RemoteRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self, cx: &mut WindowContext) -> Task<anyhow::Result<()>> {
+    fn force_shutdown(&mut self, window: &mut Window, cx: &mut App) -> Task<anyhow::Result<()>> {
         let url = self
             .remote_server
             .api_url(&format!("/kernels/{}", self.kernel_id));
         let token = self.remote_server.token.clone();
         let http_client = self.http_client.clone();
 
-        cx.spawn(|_| async move {
+        window.spawn(cx, async move |_| {
             let request = Request::builder()
                 .method("DELETE")
                 .uri(&url)

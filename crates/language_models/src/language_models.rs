@@ -2,31 +2,26 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use fs::Fs;
-use gpui::{AppContext, Model, ModelContext};
+use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
+use provider::deepseek::DeepSeekLanguageModelProvider;
 
-mod logging;
 pub mod provider;
 mod settings;
+pub mod ui;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
+use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
-pub use crate::provider::cloud::LlmApiToken;
-pub use crate::provider::cloud::RefreshLlmTokenListener;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
+use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 pub use crate::settings::*;
-pub use logging::report_assistant_event;
 
-pub fn init(
-    user_store: Model<UserStore>,
-    client: Arc<Client>,
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-) {
+pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut App) {
     crate::settings::init(fs, cx);
     let registry = LanguageModelRegistry::global(cx);
     registry.update(cx, |registry, cx| {
@@ -36,13 +31,11 @@ pub fn init(
 
 fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
-    user_store: Model<UserStore>,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
-    cx: &mut ModelContext<LanguageModelRegistry>,
+    cx: &mut Context<LanguageModelRegistry>,
 ) {
     use feature_flags::FeatureFlagAppExt;
-
-    RefreshLlmTokenListener::register(client.clone(), cx);
 
     registry.register_provider(
         AnthropicLanguageModelProvider::new(client.http_client(), cx),
@@ -61,7 +54,19 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
+        DeepSeekLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
         GoogleLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        MistralLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        BedrockLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);

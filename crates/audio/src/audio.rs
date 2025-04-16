@@ -1,12 +1,12 @@
 use assets::SoundRegistry;
 use derive_more::{Deref, DerefMut};
-use gpui::{AppContext, AssetSource, BorrowAppContext, Global};
+use gpui::{App, AssetSource, BorrowAppContext, Global};
 use rodio::{OutputStream, OutputStreamHandle};
 use util::ResultExt;
 
 mod assets;
 
-pub fn init(source: impl AssetSource, cx: &mut AppContext) {
+pub fn init(source: impl AssetSource, cx: &mut App) {
     SoundRegistry::set_global(source, cx);
     cx.set_global(GlobalAudio(Audio::new()));
 }
@@ -59,7 +59,7 @@ impl Audio {
         self.output_handle.as_ref()
     }
 
-    pub fn play_sound(sound: Sound, cx: &mut AppContext) {
+    pub fn play_sound(sound: Sound, cx: &mut App) {
         if !cx.has_global::<GlobalAudio>() {
             return;
         }
@@ -72,7 +72,7 @@ impl Audio {
         });
     }
 
-    pub fn end_call(cx: &mut AppContext) {
+    pub fn end_call(cx: &mut App) {
         if !cx.has_global::<GlobalAudio>() {
             return;
         }

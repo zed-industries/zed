@@ -3,12 +3,9 @@ use crate::embedding_index::EmbeddingIndex;
 use crate::indexing::IndexingEntrySet;
 use crate::summary_index::SummaryIndex;
 use anyhow::Result;
-use feature_flags::{AutoCommand, FeatureFlagAppExt};
 use fs::Fs;
 use futures::future::Shared;
-use gpui::{
-    AppContext, AsyncAppContext, Context, Model, ModelContext, Subscription, Task, WeakModel,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::LanguageRegistry;
 use log;
 use project::{UpdatedEntriesSet, Worktree};
@@ -19,15 +16,15 @@ use util::ResultExt;
 #[derive(Clone)]
 pub enum WorktreeIndexHandle {
     Loading {
-        index: Shared<Task<Result<Model<WorktreeIndex>, Arc<anyhow::Error>>>>,
+        index: Shared<Task<Result<Entity<WorktreeIndex>, Arc<anyhow::Error>>>>,
     },
     Loaded {
-        index: Model<WorktreeIndex>,
+        index: Entity<WorktreeIndex>,
     },
 }
 
 pub struct WorktreeIndex {
-    worktree: Model<Worktree>,
+    worktree: Entity<Worktree>,
     db_connection: heed::Env,
     embedding_index: EmbeddingIndex,
     summary_index: SummaryIndex,
@@ -38,24 +35,23 @@ pub struct WorktreeIndex {
 
 impl WorktreeIndex {
     pub fn load(
-        worktree: Model<Worktree>,
+        worktree: Entity<Worktree>,
         db_connection: heed::Env,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         status_tx: channel::Sender<()>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Model<Self>>> {
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
         let worktree_for_index = worktree.clone();
         let worktree_for_summary = worktree.clone();
         let worktree_abs_path = worktree.read(cx).abs_path();
         let embedding_fs = Arc::clone(&fs);
         let summary_fs = fs;
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let entries_being_indexed = Arc::new(IndexingEntrySet::new(status_tx));
             let (embedding_index, summary_index) = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let entries_being_indexed = Arc::clone(&entries_being_indexed);
                     let db_connection = db_connection.clone();
                     async move {
@@ -106,7 +102,7 @@ impl WorktreeIndex {
                 })
                 .await?;
 
-            cx.new_model(|cx| {
+            cx.new(|cx| {
                 Self::new(
                     worktree,
                     db_connection,
@@ -119,14 +115,13 @@ impl WorktreeIndex {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        worktree: Model<Worktree>,
+        worktree: Entity<Worktree>,
         db_connection: heed::Env,
         embedding_index: EmbeddingIndex,
         summary_index: SummaryIndex,
         entry_ids_being_indexed: Arc<IndexingEntrySet>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let (updated_entries_tx, updated_entries_rx) = channel::unbounded();
         let _subscription = cx.subscribe(&worktree, move |_this, _worktree, event, _cx| {
@@ -142,7 +137,9 @@ impl WorktreeIndex {
             summary_index,
             worktree,
             entry_ids_being_indexed,
-            _index_entries: cx.spawn(|this, cx| Self::index_entries(this, updated_entries_rx, cx)),
+            _index_entries: cx.spawn(async move |this, cx| {
+                Self::index_entries(this, updated_entries_rx, cx).await
+            }),
             _subscription,
         }
     }
@@ -151,7 +148,7 @@ impl WorktreeIndex {
         self.entry_ids_being_indexed.as_ref()
     }
 
-    pub fn worktree(&self) -> &Model<Worktree> {
+    pub fn worktree(&self) -> &Entity<Worktree> {
         &self.worktree
     }
 
@@ -168,34 +165,25 @@ impl WorktreeIndex {
     }
 
     async fn index_entries(
-        this: WeakModel<Self>,
+        this: WeakEntity<Self>,
         updated_entries: channel::Receiver<UpdatedEntriesSet>,
-        mut cx: AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
-        let is_auto_available = cx.update(|cx| cx.wait_for_flag::<AutoCommand>())?.await;
-        let index = this.update(&mut cx, |this, cx| {
+        let index = this.update(cx, |this, cx| {
             futures::future::try_join(
                 this.embedding_index.index_entries_changed_on_disk(cx),
-                this.summary_index
-                    .index_entries_changed_on_disk(is_auto_available, cx),
+                this.summary_index.index_entries_changed_on_disk(false, cx),
             )
         })?;
         index.await.log_err();
 
         while let Ok(updated_entries) = updated_entries.recv().await {
-            let is_auto_available = cx
-                .update(|cx| cx.has_flag::<AutoCommand>())
-                .unwrap_or(false);
-
-            let index = this.update(&mut cx, |this, cx| {
+            let index = this.update(cx, |this, cx| {
                 futures::future::try_join(
                     this.embedding_index
                         .index_updated_entries(updated_entries.clone(), cx),
-                    this.summary_index.index_updated_entries(
-                        updated_entries,
-                        is_auto_available,
-                        cx,
-                    ),
+                    this.summary_index
+                        .index_updated_entries(updated_entries, false, cx),
                 )
             })?;
             index.await.log_err();
@@ -206,7 +194,7 @@ impl WorktreeIndex {
 
     #[cfg(test)]
     pub fn path_count(&self) -> Result<u64> {
-        use anyhow::Context;
+        use anyhow::Context as _;
 
         let txn = self
             .db_connection

@@ -9,11 +9,26 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: BillingSubscriptionId,
     pub billing_customer_id: BillingCustomerId,
+    pub kind: Option<SubscriptionKind>,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
     pub stripe_cancel_at: Option<DateTime>,
     pub stripe_cancellation_reason: Option<StripeCancellationReason>,
+    pub stripe_current_period_start: Option<i64>,
+    pub stripe_current_period_end: Option<i64>,
     pub created_at: DateTime,
+}
+
+impl Model {
+    pub fn current_period_start_at(&self) -> Option<DateTimeUtc> {
+        let period_start = self.stripe_current_period_start?;
+        chrono::DateTime::from_timestamp(period_start, 0)
+    }
+
+    pub fn current_period_end_at(&self) -> Option<DateTimeUtc> {
+        let period_end = self.stripe_current_period_end?;
+        chrono::DateTime::from_timestamp(period_end, 0)
+    }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -33,6 +48,18 @@ impl Related<super::billing_customer::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Hash, Serialize)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriptionKind {
+    #[sea_orm(string_value = "zed_pro")]
+    ZedPro,
+    #[sea_orm(string_value = "zed_pro_trial")]
+    ZedProTrial,
+    #[sea_orm(string_value = "zed_free")]
+    ZedFree,
+}
 
 /// The status of a Stripe subscription.
 ///

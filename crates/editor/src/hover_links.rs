@@ -1,11 +1,11 @@
 use crate::{
-    editor_settings::MultiCursorModifier,
-    hover_popover::{self, InlayHover},
-    scroll::ScrollAmount,
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
+    editor_settings::{GoToDefinitionFallback, MultiCursorModifier},
+    hover_popover::{self, InlayHover},
+    scroll::ScrollAmount,
 };
-use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
+use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -16,7 +16,7 @@ use project::{
 use settings::Settings;
 use std::ops::Range;
 use theme::ActiveTheme as _;
-use util::{maybe, ResultExt, TryFutureExt as _};
+use util::{ResultExt, TryFutureExt as _, maybe};
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
@@ -93,10 +93,10 @@ impl TriggerPoint {
 }
 
 pub fn exclude_link_to_position(
-    buffer: &Model<language::Buffer>,
+    buffer: &Entity<language::Buffer>,
     current_position: &text::Anchor,
     location: &LocationLink,
-    cx: &AppContext,
+    cx: &App,
 ) -> bool {
     // Exclude definition links that points back to cursor position.
     // (i.e., currently cursor upon definition).
@@ -117,7 +117,8 @@ impl Editor {
         point_for_position: PointForPosition,
         snapshot: &EditorSnapshot,
         modifiers: Modifiers,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
         let hovered_link_modifier = match multi_cursor_setting {
@@ -137,7 +138,7 @@ impl Editor {
                         .anchor_before(point.to_offset(&snapshot.display_snapshot, Bias::Left)),
                 );
 
-                show_link_definition(modifiers.shift, self, trigger_point, snapshot, cx);
+                show_link_definition(modifiers.shift, self, trigger_point, snapshot, window, cx);
             }
             None => {
                 update_inlay_link_and_hover_points(
@@ -146,13 +147,14 @@ impl Editor {
                     self,
                     hovered_link_modifier,
                     modifiers.shift,
+                    window,
                     cx,
                 );
             }
         }
     }
 
-    pub(crate) fn hide_hovered_link(&mut self, cx: &mut ViewContext<Self>) {
+    pub(crate) fn hide_hovered_link(&mut self, cx: &mut Context<Self>) {
         self.hovered_link_state.take();
         self.clear_highlights::<HoveredLinkState>(cx);
     }
@@ -161,17 +163,23 @@ impl Editor {
         &mut self,
         point: PointForPosition,
         modifiers: Modifiers,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) {
-        let reveal_task = self.cmd_click_reveal_task(point, modifiers, cx);
-        cx.spawn(|editor, mut cx| async move {
+        let reveal_task = self.cmd_click_reveal_task(point, modifiers, window, cx);
+        cx.spawn_in(window, async move |editor, cx| {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
             let find_references = editor
-                .update(&mut cx, |editor, cx| {
+                .update_in(cx, |editor, window, cx| {
                     if definition_revealed == Navigated::Yes {
                         return None;
                     }
-                    editor.find_all_references(&FindAllReferences, cx)
+                    match EditorSettings::get_global(cx).go_to_definition_fallback {
+                        GoToDefinitionFallback::None => None,
+                        GoToDefinitionFallback::FindAllReferences => {
+                            editor.find_all_references(&FindAllReferences, window, cx)
+                        }
+                    }
                 })
                 .ok()
                 .flatten();
@@ -182,9 +190,14 @@ impl Editor {
         .detach();
     }
 
-    pub fn scroll_hover(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) -> bool {
+    pub fn scroll_hover(
+        &mut self,
+        amount: &ScrollAmount,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let selection = self.selections.newest_anchor().head();
-        let snapshot = self.snapshot(cx);
+        let snapshot = self.snapshot(window, cx);
 
         let Some(popover) = self.hover_state.info_popovers.iter().find(|popover| {
             popover
@@ -193,7 +206,7 @@ impl Editor {
         }) else {
             return false;
         };
-        popover.scroll(amount, cx);
+        popover.scroll(amount, window, cx);
         true
     }
 
@@ -201,19 +214,20 @@ impl Editor {
         &mut self,
         point: PointForPosition,
         modifiers: Modifiers,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) -> Task<anyhow::Result<Navigated>> {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
             self.hide_hovered_link(cx);
             if !hovered_link_state.links.is_empty() {
-                if !self.focus_handle.is_focused(cx) {
-                    cx.focus(&self.focus_handle);
+                if !self.focus_handle.is_focused(window) {
+                    window.focus(&self.focus_handle);
                 }
 
                 // exclude links pointing back to the current anchor
                 let current_position = point
                     .next_valid
-                    .to_point(&self.snapshot(cx).display_snapshot);
+                    .to_point(&self.snapshot(window, cx).display_snapshot);
                 let Some((buffer, anchor)) = self
                     .buffer()
                     .read(cx)
@@ -232,8 +246,10 @@ impl Editor {
                         }
                     })
                     .collect();
-
-                return self.navigate_to_hover_links(None, links, modifiers.alt, cx);
+                let navigate_task =
+                    self.navigate_to_hover_links(None, links, modifiers.alt, window, cx);
+                self.select(SelectPhase::End, window, cx);
+                return navigate_task;
             }
         }
 
@@ -245,18 +261,21 @@ impl Editor {
                 add: false,
                 click_count: 1,
             },
+            window,
             cx,
         );
 
-        if point.as_valid().is_some() {
+        let navigate_task = if point.as_valid().is_some() {
             if modifiers.shift {
-                self.go_to_type_definition(&GoToTypeDefinition, cx)
+                self.go_to_type_definition(&GoToTypeDefinition, window, cx)
             } else {
-                self.go_to_definition(&GoToDefinition, cx)
+                self.go_to_definition(&GoToDefinition, window, cx)
             }
         } else {
             Task::ready(Ok(Navigated::No))
-        }
+        };
+        self.select(SelectPhase::End, window, cx);
+        return navigate_task;
     }
 }
 
@@ -266,7 +285,8 @@ pub fn update_inlay_link_and_hover_points(
     editor: &mut Editor,
     secondary_held: bool,
     shift_held: bool,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
 ) {
     let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
         Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
@@ -310,6 +330,7 @@ pub fn update_inlay_link_and_hover_points(
                                 buffer_id,
                                 excerpt_id,
                                 hovered_hint.id,
+                                window,
                                 cx,
                             );
                         }
@@ -349,6 +370,7 @@ pub fn update_inlay_link_and_hover_points(
                                                     ..hovered_hint.text.len() + extra_shift_right,
                                             },
                                         },
+                                        window,
                                         cx,
                                     );
                                     hover_updated = true;
@@ -393,6 +415,7 @@ pub fn update_inlay_link_and_hover_points(
                                                 },
                                                 range: highlight.clone(),
                                             },
+                                            window,
                                             cx,
                                         );
                                         hover_updated = true;
@@ -413,6 +436,7 @@ pub fn update_inlay_link_and_hover_points(
                                                     language_server_id,
                                                 ),
                                                 snapshot,
+                                                window,
                                                 cx,
                                             );
                                         }
@@ -431,7 +455,7 @@ pub fn update_inlay_link_and_hover_points(
         editor.hide_hovered_link(cx)
     }
     if !hover_updated {
-        hover_popover::hover_at(editor, None, cx);
+        hover_popover::hover_at(editor, None, window, cx);
     }
 }
 
@@ -440,7 +464,8 @@ pub fn show_link_definition(
     editor: &mut Editor,
     trigger_point: TriggerPoint,
     snapshot: &EditorSnapshot,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
 ) {
     let preferred_kind = match trigger_point {
         TriggerPoint::Text(_) if !shift_held => GotoDefinitionKind::Symbol,
@@ -509,12 +534,12 @@ pub fn show_link_definition(
     let provider = editor.semantics_provider.clone();
 
     let snapshot = snapshot.buffer_snapshot.clone();
-    hovered_link_state.task = Some(cx.spawn(|this, mut cx| {
+    hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
                     if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
-                        this.update(&mut cx, |_, _| {
+                        this.update(cx, |_, _| {
                             let range = maybe!({
                                 let start =
                                     snapshot.anchor_in_excerpt(excerpt_id, url_range.start)?;
@@ -525,7 +550,7 @@ pub fn show_link_definition(
                         })
                         .ok()
                     } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), buffer_position, &mut cx).await
+                        find_file(&buffer, project.clone(), buffer_position, cx).await
                     {
                         let range = maybe!({
                             let start =
@@ -536,7 +561,7 @@ pub fn show_link_definition(
 
                         Some((range, vec![HoverLink::File(filename)]))
                     } else if let Some(provider) = provider {
-                        let task = cx.update(|cx| {
+                        let task = cx.update(|_, cx| {
                             provider.definitions(&buffer, buffer_position, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
@@ -569,7 +594,7 @@ pub fn show_link_definition(
                 )),
             };
 
-            this.update(&mut cx, |editor, cx| {
+            this.update(cx, |editor, cx| {
                 // Clear any existing highlights
                 editor.clear_highlights::<HoveredLinkState>(cx);
                 let Some(hovered_link_state) = editor.hovered_link_state.as_mut() else {
@@ -627,13 +652,14 @@ pub fn show_link_definition(
             Ok::<_, anyhow::Error>(())
         }
         .log_err()
+        .await
     }));
 
     editor.hovered_link_state = Some(hovered_link_state);
 }
 
 pub(crate) fn find_url(
-    buffer: &Model<language::Buffer>,
+    buffer: &Entity<language::Buffer>,
     position: text::Anchor,
     mut cx: AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, String)> {
@@ -695,7 +721,7 @@ pub(crate) fn find_url(
 }
 
 pub(crate) fn find_url_from_range(
-    buffer: &Model<language::Buffer>,
+    buffer: &Entity<language::Buffer>,
     range: Range<text::Anchor>,
     mut cx: AsyncWindowContext,
 ) -> Option<String> {
@@ -754,8 +780,8 @@ pub(crate) fn find_url_from_range(
 }
 
 pub(crate) async fn find_file(
-    buffer: &Model<language::Buffer>,
-    project: Option<Model<Project>>,
+    buffer: &Entity<language::Buffer>,
+    project: Option<Entity<Project>>,
     position: text::Anchor,
     cx: &mut AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
@@ -766,8 +792,8 @@ pub(crate) async fn find_file(
 
     async fn check_path(
         candidate_file_path: &str,
-        project: &Model<Project>,
-        buffer: &Model<language::Buffer>,
+        project: &Entity<Project>,
+        buffer: &Entity<language::Buffer>,
         cx: &mut AsyncWindowContext,
     ) -> Option<ResolvedPath> {
         project
@@ -894,18 +920,18 @@ fn surrounding_filename(
 mod tests {
     use super::*;
     use crate::{
+        DisplayPoint,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
-        DisplayPoint,
     };
     use futures::StreamExt;
     use gpui::Modifiers;
     use indoc::indoc;
     use language::language_settings::InlayHintSettings;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
-    use util::assert_set_eq;
+    use util::{assert_set_eq, path};
     use workspace::item::Item;
 
     #[gpui::test]
@@ -926,7 +952,7 @@ mod tests {
             struct A;
             let vˇariable = A;
         "});
-        let screen_coord = cx.editor(|editor, cx| editor.pixel_position_of_cursor(cx));
+        let screen_coord = cx.editor(|editor, _, cx| editor.pixel_position_of_cursor(cx));
 
         // Basic hold cmd+shift, expect highlight in region if response contains type definition
         let symbol_range = cx.lsp_range(indoc! {"
@@ -941,7 +967,7 @@ mod tests {
         cx.run_until_parked();
 
         let mut requests =
-            cx.handle_request::<GotoTypeDefinition, _, _>(move |url, _, _| async move {
+            cx.set_request_handler::<GotoTypeDefinition, _, _>(move |url, _, _| async move {
                 Ok(Some(lsp::GotoTypeDefinitionResponse::Link(vec![
                     lsp::LocationLink {
                         origin_selection_range: Some(symbol_range),
@@ -1016,16 +1042,17 @@ mod tests {
                 fn «do_work»() { test(); }
             "});
 
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
-            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                lsp::LocationLink {
-                    origin_selection_range: Some(symbol_range),
-                    target_uri: url.clone(),
-                    target_range,
-                    target_selection_range: target_range,
-                },
-            ])))
-        });
+        let mut requests =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
 
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         requests.next().await;
@@ -1042,16 +1069,17 @@ mod tests {
                 fn do_work() { test(); }
             "});
 
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
-            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                lsp::LocationLink {
-                    origin_selection_range: Some(symbol_range),
-                    target_uri: url.clone(),
-                    target_range,
-                    target_selection_range: target_range,
-                },
-            ])))
-        });
+        let mut requests =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url.clone(),
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
 
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         requests.next().await;
@@ -1066,12 +1094,12 @@ mod tests {
                 fˇn test() { do_work(); }
                 fn do_work() { test(); }
             "});
-        let mut requests = cx
-            .lsp
-            .handle_request::<GotoDefinition, _, _>(move |_, _| async move {
-                // No definitions returned
-                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
-            });
+        let mut requests =
+            cx.lsp
+                .set_request_handler::<GotoDefinition, _, _>(move |_, _| async move {
+                    // No definitions returned
+                    Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
+                });
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
 
         requests.next().await;
@@ -1105,16 +1133,17 @@ mod tests {
                 fn do_work() { test(); }
             "});
 
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
-            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                lsp::LocationLink {
-                    origin_selection_range: Some(symbol_range),
-                    target_uri: url,
-                    target_range,
-                    target_selection_range: target_range,
-                },
-            ])))
-        });
+        let mut requests =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: Some(symbol_range),
+                        target_uri: url,
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
 
         cx.simulate_modifiers_change(Modifiers::secondary_key());
 
@@ -1154,7 +1183,7 @@ mod tests {
         // Cmd click with existing definition doesn't re-request and dismisses highlight
         cx.simulate_click(hover_point, Modifiers::secondary_key());
         cx.lsp
-            .handle_request::<GotoDefinition, _, _>(move |_, _| async move {
+            .set_request_handler::<GotoDefinition, _, _>(move |_, _| async move {
                 // Empty definition response to make sure we aren't hitting the lsp and using
                 // the cached location instead
                 Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
@@ -1181,16 +1210,17 @@ mod tests {
                 fn «do_work»() { test(); }
             "});
 
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
-            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                lsp::LocationLink {
-                    origin_selection_range: None,
-                    target_uri: url,
-                    target_range,
-                    target_selection_range: target_range,
-                },
-            ])))
-        });
+        let mut requests =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: None,
+                        target_uri: url,
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
         cx.simulate_click(hover_point, Modifiers::secondary_key());
         requests.next().await;
         cx.background_executor.run_until_parked();
@@ -1209,16 +1239,17 @@ mod tests {
                 fn test() { do_work(); }
                 fn «do_work»() { test(); }
             "});
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
-            Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
-                lsp::LocationLink {
-                    origin_selection_range: None,
-                    target_uri: url,
-                    target_range,
-                    target_selection_range: target_range,
-                },
-            ])))
-        });
+        let mut requests =
+            cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
+                    lsp::LocationLink {
+                        origin_selection_range: None,
+                        target_uri: url,
+                        target_range,
+                        target_selection_range: target_range,
+                    },
+                ])))
+            });
 
         // create a pending selection
         let selection_range = cx.ranges(indoc! {"
@@ -1226,11 +1257,11 @@ mod tests {
                 fn do_work() { test(); }
             "})[0]
             .clone();
-        cx.update_editor(|editor, cx| {
+        cx.update_editor(|editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let anchor_range = snapshot.anchor_before(selection_range.start)
                 ..snapshot.anchor_after(selection_range.end);
-            editor.change_selections(Some(crate::Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(crate::Autoscroll::fit()), window, cx, |s| {
                 s.set_pending_anchor_range(anchor_range, crate::SelectMode::Character)
             });
         });
@@ -1255,6 +1286,7 @@ mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -1293,7 +1325,7 @@ mod tests {
         let expected_uri = cx.buffer_lsp_url.clone();
         let hint_label = ": TestStruct";
         cx.lsp
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let expected_uri = expected_uri.clone();
                 async move {
                     assert_eq!(params.text_document.uri, expected_uri);
@@ -1319,7 +1351,7 @@ mod tests {
             .next()
             .await;
         cx.background_executor.run_until_parked();
-        cx.update_editor(|editor, cx| {
+        cx.update_editor(|editor, _window, cx| {
             let expected_layers = vec![hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
@@ -1336,8 +1368,8 @@ mod tests {
             .first()
             .cloned()
             .unwrap();
-        let midpoint = cx.update_editor(|editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        let midpoint = cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
             let previous_valid = inlay_range.start.to_display_point(&snapshot);
             let next_valid = inlay_range.end.to_display_point(&snapshot);
             assert_eq!(previous_valid.row(), next_valid.row());
@@ -1351,8 +1383,8 @@ mod tests {
         let hover_point = cx.pixel_position_for(midpoint);
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
-        cx.update_editor(|editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
             let actual_highlights = snapshot
                 .inlay_highlights::<HoveredLinkState>()
                 .into_iter()
@@ -1370,8 +1402,8 @@ mod tests {
 
         cx.simulate_mouse_move(hover_point, None, Modifiers::none());
         // Assert no link highlights
-        cx.update_editor(|editor, cx| {
-                let snapshot = editor.snapshot(cx);
+        cx.update_editor(|editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
                 let actual_ranges = snapshot
                     .text_highlight_ranges::<HoveredLinkState>()
                     .map(|ranges| ranges.as_ref().clone().1)
@@ -1515,7 +1547,7 @@ mod tests {
         for (input, expected) in test_cases {
             cx.set_state(input);
 
-            let (position, snapshot) = cx.editor(|editor, cx| {
+            let (position, snapshot) = cx.editor(|editor, _, cx| {
                 let positions = editor.selections.newest_anchor().head().text_anchor;
                 let snapshot = editor
                     .buffer()
@@ -1556,20 +1588,33 @@ mod tests {
         .await;
 
         // Insert a new file
-        let fs = cx.update_workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
-            .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
+            .insert_file(
+                path!("/root/dir/file2.rs"),
+                "This is file2.rs".as_bytes().to_vec(),
+            )
             .await;
 
+        #[cfg(not(target_os = "windows"))]
         cx.set_state(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.ˇ
+            "});
+        #[cfg(target_os = "windows")]
+        cx.set_state(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to C:/root/dir/file2.rs if project is local.
+            Or go to C:/root/dir/file2 if this is a Rust file.ˇ
         "});
 
         // File does not exist
+        #[cfg(not(target_os = "windows"))]
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that dˇoes_not_exist.txt.
             Go to file2.rs if you want.
@@ -1577,18 +1622,29 @@ mod tests {
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
+        #[cfg(target_os = "windows")]
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that dˇoes_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to C:/root/dir/file2.rs if project is local.
+            Or go to C:/root/dir/file2 if this is a Rust file.
+        "});
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         // No highlight
-        cx.update_editor(|editor, cx| {
-            assert!(editor
-                .snapshot(cx)
-                .text_highlight_ranges::<HoveredLinkState>()
-                .unwrap_or_default()
-                .1
-                .is_empty());
+        cx.update_editor(|editor, window, cx| {
+            assert!(
+                editor
+                    .snapshot(window, cx)
+                    .text_highlight_ranges::<HoveredLinkState>()
+                    .unwrap_or_default()
+                    .1
+                    .is_empty()
+            );
         });
 
         // Moving the mouse over a file that does exist should highlight it.
+        #[cfg(not(target_os = "windows"))]
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to fˇile2.rs if you want.
@@ -1596,8 +1652,17 @@ mod tests {
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
+        #[cfg(target_os = "windows")]
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to fˇile2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to C:/root/dir/file2.rs if project is local.
+            Or go to C:/root/dir/file2 if this is a Rust file.
+        "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        #[cfg(not(target_os = "windows"))]
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to «file2.rsˇ» if you want.
@@ -1605,8 +1670,17 @@ mod tests {
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
+        #[cfg(target_os = "windows")]
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to «file2.rsˇ» if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to C:/root/dir/file2.rs if project is local.
+            Or go to C:/root/dir/file2 if this is a Rust file.
+        "});
 
         // Moving the mouse over a relative path that does exist should highlight it
+        #[cfg(not(target_os = "windows"))]
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
@@ -1614,8 +1688,17 @@ mod tests {
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
+        #[cfg(target_os = "windows")]
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/fˇile2.rs if you want.
+            Or go to C:/root/dir/file2.rs if project is local.
+            Or go to C:/root/dir/file2 if this is a Rust file.
+        "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        #[cfg(not(target_os = "windows"))]
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
@@ -1623,8 +1706,17 @@ mod tests {
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
+        #[cfg(target_os = "windows")]
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to «../dir/file2.rsˇ» if you want.
+            Or go to C:/root/dir/file2.rs if project is local.
+            Or go to C:/root/dir/file2 if this is a Rust file.
+        "});
 
         // Moving the mouse over an absolute path that does exist should highlight it
+        #[cfg(not(target_os = "windows"))]
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
@@ -1633,7 +1725,17 @@ mod tests {
             Or go to /root/dir/file2 if this is a Rust file.
         "});
 
+        #[cfg(target_os = "windows")]
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to C:/root/diˇr/file2.rs if project is local.
+            Or go to C:/root/dir/file2 if this is a Rust file.
+        "});
+
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        #[cfg(not(target_os = "windows"))]
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
@@ -1641,8 +1743,17 @@ mod tests {
             Or go to «/root/dir/file2.rsˇ» if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
+        #[cfg(target_os = "windows")]
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to «C:/root/dir/file2.rsˇ» if project is local.
+            Or go to C:/root/dir/file2 if this is a Rust file.
+        "});
 
         // Moving the mouse over a path that exists, if we add the language-specific suffix, it should highlight it
+        #[cfg(not(target_os = "windows"))]
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
@@ -1650,8 +1761,17 @@ mod tests {
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/diˇr/file2 if this is a Rust file.
         "});
+        #[cfg(target_os = "windows")]
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to C:/root/dir/file2.rs if project is local.
+            Or go to C:/root/diˇr/file2 if this is a Rust file.
+        "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        #[cfg(not(target_os = "windows"))]
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
@@ -1659,11 +1779,19 @@ mod tests {
             Or go to /root/dir/file2.rs if project is local.
             Or go to «/root/dir/file2ˇ» if this is a Rust file.
         "});
+        #[cfg(target_os = "windows")]
+        cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
+            You can't go to a file that does_not_exist.txt.
+            Go to file2.rs if you want.
+            Or go to ../dir/file2.rs if you want.
+            Or go to C:/root/dir/file2.rs if project is local.
+            Or go to «C:/root/dir/file2ˇ» if this is a Rust file.
+        "});
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
 
-        cx.update_workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
-        cx.update_workspace(|workspace, cx| {
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.update_workspace(|workspace, _, cx| {
             let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
 
             let buffer = active_editor
@@ -1676,7 +1804,10 @@ mod tests {
             let file = buffer.read(cx).file().unwrap();
             let file_path = file.as_local().unwrap().abs_path(cx);
 
-            assert_eq!(file_path.to_str().unwrap(), "/root/dir/file2.rs");
+            assert_eq!(
+                file_path,
+                std::path::PathBuf::from(path!("/root/dir/file2.rs"))
+            );
         });
     }
 
@@ -1692,7 +1823,7 @@ mod tests {
         .await;
 
         // Insert a new file
-        let fs = cx.update_workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
             .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
             .await;
@@ -1708,17 +1839,19 @@ mod tests {
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
 
         // No highlight
-        cx.update_editor(|editor, cx| {
-            assert!(editor
-                .snapshot(cx)
-                .text_highlight_ranges::<HoveredLinkState>()
-                .unwrap_or_default()
-                .1
-                .is_empty());
+        cx.update_editor(|editor, window, cx| {
+            assert!(
+                editor
+                    .snapshot(window, cx)
+                    .text_highlight_ranges::<HoveredLinkState>()
+                    .unwrap_or_default()
+                    .1
+                    .is_empty()
+            );
         });
 
         // Does not open the directory
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
-        cx.update_workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
     }
 }

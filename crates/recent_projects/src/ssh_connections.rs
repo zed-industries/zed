@@ -1,30 +1,29 @@
 use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use auto_update::AutoUpdater;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
-    percentage, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
-    EventEmitter, FocusableView, FontFeatures, ParentElement as _, PromptLevel, Render,
-    SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
+    Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent, Entity, EventEmitter,
+    Focusable, FontFeatures, ParentElement as _, PromptLevel, Render, SemanticVersion,
+    SharedString, Task, TextStyleRefinement, Transformation, WeakEntity, percentage,
 };
-use gpui::{AppContext, Model};
 
 use language::CursorShape;
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
-use remote::ssh_session::ConnectionIdentifier;
+use remote::ssh_session::{ConnectionIdentifier, SshPortForwardOption};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ActiveTheme, Color, Icon, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon, Styled, ViewContext, VisualContext, WindowContext,
+    ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
+    LabelCommon, Styled, Window, prelude::*,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -34,7 +33,7 @@ pub struct SshSettings {
 }
 
 impl SshSettings {
-    pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> {
+    pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
         self.ssh_connections.clone().into_iter().flatten()
     }
 
@@ -53,6 +52,7 @@ impl SshSettings {
                     host,
                     port,
                     username,
+                    port_forwards: conn.port_forwards,
                     password: None,
                 };
             }
@@ -87,6 +87,9 @@ pub struct SshConnection {
     // limited outbound internet access.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upload_binary_over_ssh: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_forwards: Option<Vec<SshPortForwardOption>>,
 }
 
 impl From<SshConnection> for SshConnectionOptions {
@@ -99,6 +102,7 @@ impl From<SshConnection> for SshConnectionOptions {
             args: Some(val.args),
             nickname: val.nickname,
             upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
+            port_forwards: val.port_forwards,
         }
     }
 }
@@ -118,7 +122,7 @@ impl Settings for SshSettings {
 
     type FileContent = RemoteSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }
@@ -127,9 +131,9 @@ pub struct SshPrompt {
     connection_string: SharedString,
     nickname: Option<SharedString>,
     status_message: Option<SharedString>,
-    prompt: Option<(View<Markdown>, oneshot::Sender<Result<String>>)>,
+    prompt: Option<(Entity<Markdown>, oneshot::Sender<String>)>,
     cancellation: Option<oneshot::Sender<()>>,
-    editor: View<Editor>,
+    editor: Entity<Editor>,
 }
 
 impl Drop for SshPrompt {
@@ -141,7 +145,7 @@ impl Drop for SshPrompt {
 }
 
 pub struct SshConnectionModal {
-    pub(crate) prompt: View<SshPrompt>,
+    pub(crate) prompt: Entity<SshPrompt>,
     paths: Vec<PathBuf>,
     finished: bool,
 }
@@ -149,7 +153,8 @@ pub struct SshConnectionModal {
 impl SshPrompt {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         let connection_string = connection_options.connection_string().into();
         let nickname = connection_options.nickname.clone().map(|s| s.into());
@@ -157,7 +162,7 @@ impl SshPrompt {
         Self {
             connection_string,
             nickname,
-            editor: cx.new_view(Editor::single_line),
+            editor: cx.new(|cx| Editor::single_line(window, cx)),
             status_message: None,
             cancellation: None,
             prompt: None,
@@ -171,22 +176,21 @@ impl SshPrompt {
     pub fn set_prompt(
         &mut self,
         prompt: String,
-        tx: oneshot::Sender<Result<String>>,
-        cx: &mut ViewContext<Self>,
+        tx: oneshot::Sender<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let theme = ThemeSettings::get_global(cx);
 
-        let mut text_style = cx.text_style();
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
             font_features: Some(FontFeatures::disable_ligatures()),
-            font_size: Some(theme.buffer_font_size.into()),
+            font_size: Some(theme.buffer_font_size(cx).into()),
             color: Some(cx.theme().colors().editor_foreground),
             background_color: Some(gpui::transparent_black()),
             ..Default::default()
         };
 
-        text_style.refine(&refinement);
         self.editor.update(cx, |editor, cx| {
             if prompt.contains("yes/no") {
                 editor.set_masked(false, cx);
@@ -196,37 +200,50 @@ impl SshPrompt {
             editor.set_text_style_refinement(refinement);
             editor.set_cursor_shape(CursorShape::Block, cx);
         });
-        let markdown_style = MarkdownStyle {
-            base_text_style: text_style,
-            selection_background_color: cx.theme().players().local().selection,
-            ..Default::default()
-        };
-        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, None, cx));
+
+        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
-        cx.focus_view(&self.editor);
+        window.focus(&self.editor.focus_handle(cx));
         cx.notify();
     }
 
-    pub fn set_status(&mut self, status: Option<String>, cx: &mut ViewContext<Self>) {
+    pub fn set_status(&mut self, status: Option<String>, cx: &mut Context<Self>) {
         self.status_message = status.map(|s| s.into());
         cx.notify();
     }
 
-    pub fn confirm(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
             self.status_message = Some("Connecting".into());
             self.editor.update(cx, |editor, cx| {
-                tx.send(Ok(editor.text(cx))).ok();
-                editor.clear(cx);
+                tx.send(editor.text(cx)).ok();
+                editor.clear(window, cx);
             });
         }
     }
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let cx = cx.window_context();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = ThemeSettings::get_global(cx);
+
+        let mut text_style = window.text_style();
+        let refinement = TextStyleRefinement {
+            font_family: Some(theme.buffer_font.family.clone()),
+            font_features: Some(FontFeatures::disable_ligatures()),
+            font_size: Some(theme.buffer_font_size(cx).into()),
+            color: Some(cx.theme().colors().editor_foreground),
+            background_color: Some(gpui::transparent_black()),
+            ..Default::default()
+        };
+
+        text_style.refine(&refinement);
+        let markdown_style = MarkdownStyle {
+            base_text_style: text_style,
+            selection_background_color: cx.theme().players().local().selection,
+            ..Default::default()
+        };
 
         v_flex()
             .key_context("PasswordPrompt")
@@ -262,7 +279,7 @@ impl Render for SshPrompt {
                     div()
                         .size_full()
                         .overflow_hidden()
-                        .child(prompt.0.clone())
+                        .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
                         .child(self.editor.clone()),
                 )
             })
@@ -273,25 +290,27 @@ impl SshConnectionModal {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
         paths: Vec<PathBuf>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            prompt: cx.new_view(|cx| SshPrompt::new(connection_options, cx)),
+            prompt: cx.new(|cx| SshPrompt::new(connection_options, window, cx)),
             finished: false,
             paths,
         }
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        self.prompt.update(cx, |prompt, cx| prompt.confirm(cx))
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt
+            .update(cx, |prompt, cx| prompt.confirm(window, cx))
     }
 
-    pub fn finished(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn finished(&mut self, cx: &mut Context<Self>) {
         self.finished = true;
         cx.emit(DismissEvent);
     }
 
-    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(tx) = self
             .prompt
             .update(cx, |prompt, _cx| prompt.cancellation.take())
@@ -309,7 +328,7 @@ pub(crate) struct SshConnectionHeader {
 }
 
 impl RenderOnce for SshConnectionHeader {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
 
         let mut header_color = theme.colors().text;
@@ -325,7 +344,7 @@ impl RenderOnce for SshConnectionHeader {
             .px(DynamicSpacing::Base12.rems(cx))
             .pt(DynamicSpacing::Base08.rems(cx))
             .pb(DynamicSpacing::Base04.rems(cx))
-            .rounded_t_md()
+            .rounded_t_sm()
             .w_full()
             .gap_1p5()
             .child(Icon::new(IconName::Server).size(IconSize::XSmall))
@@ -357,7 +376,7 @@ impl RenderOnce for SshConnectionHeader {
 }
 
 impl Render for SshConnectionModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let nickname = self.prompt.read(cx).nickname.clone();
         let connection_string = self.prompt.read(cx).connection_string.clone();
 
@@ -379,7 +398,7 @@ impl Render for SshConnectionModal {
                     connection_string,
                     nickname,
                 }
-                .render(cx),
+                .render(window, cx),
             )
             .child(
                 div()
@@ -393,8 +412,8 @@ impl Render for SshConnectionModal {
     }
 }
 
-impl FocusableView for SshConnectionModal {
-    fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
+impl Focusable for SshConnectionModal {
+    fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
         self.prompt.read(cx).editor.focus_handle(cx)
     }
 }
@@ -402,7 +421,11 @@ impl FocusableView for SshConnectionModal {
 impl EventEmitter<DismissEvent> for SshConnectionModal {}
 
 impl ModalView for SshConnectionModal {
-    fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> workspace::DismissDecision {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
         return workspace::DismissDecision::Dismiss(self.finished);
     }
 
@@ -414,33 +437,27 @@ impl ModalView for SshConnectionModal {
 #[derive(Clone)]
 pub struct SshClientDelegate {
     window: AnyWindowHandle,
-    ui: WeakView<SshPrompt>,
+    ui: WeakEntity<SshPrompt>,
     known_password: Option<String>,
 }
 
 impl remote::SshClientDelegate for SshClientDelegate {
-    fn ask_password(
-        &self,
-        prompt: String,
-        cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<String>> {
-        let (tx, rx) = oneshot::channel();
+    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp) {
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {
-            tx.send(Ok(password)).ok();
+            tx.send(password).ok();
         } else {
             self.window
-                .update(cx, |_, cx| {
+                .update(cx, |_, window, cx| {
                     self.ui.update(cx, |modal, cx| {
-                        modal.set_prompt(prompt, tx, cx);
+                        modal.set_prompt(prompt, tx, window, cx);
                     })
                 })
                 .ok();
         }
-        rx
     }
 
-    fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
+    fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
         self.update_status(status, cx)
     }
 
@@ -449,15 +466,15 @@ impl remote::SshClientDelegate for SshClientDelegate {
         platform: SshPlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let binary_path = AutoUpdater::download_remote_server_release(
                 platform.os,
                 platform.arch,
                 release_channel,
                 version,
-                &mut cx,
+                cx,
             )
             .await
             .map_err(|e| {
@@ -480,15 +497,15 @@ impl remote::SshClientDelegate for SshClientDelegate {
         platform: SshPlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Task<Result<Option<(String, String)>>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             AutoUpdater::get_remote_server_release_url(
                 platform.os,
                 platform.arch,
                 release_channel,
                 version,
-                &mut cx,
+                cx,
             )
             .await
         })
@@ -496,9 +513,9 @@ impl remote::SshClientDelegate for SshClientDelegate {
 }
 
 impl SshClientDelegate {
-    fn update_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
+    fn update_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
         self.window
-            .update(cx, |_, cx| {
+            .update(cx, |_, _, cx| {
                 self.ui.update(cx, |modal, cx| {
                     modal.set_status(status.map(|s| s.to_string()), cx);
                 })
@@ -507,17 +524,18 @@ impl SshClientDelegate {
     }
 }
 
-pub fn is_connecting_over_ssh(workspace: &Workspace, cx: &AppContext) -> bool {
+pub fn is_connecting_over_ssh(workspace: &Workspace, cx: &App) -> bool {
     workspace.active_modal::<SshConnectionModal>(cx).is_some()
 }
 
 pub fn connect_over_ssh(
     unique_identifier: ConnectionIdentifier,
     connection_options: SshConnectionOptions,
-    ui: View<SshPrompt>,
-    cx: &mut WindowContext,
-) -> Task<Result<Option<Model<SshRemoteClient>>>> {
-    let window = cx.window_handle();
+    ui: Entity<SshPrompt>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<SshRemoteClient>>>> {
+    let window = window.window_handle();
     let known_password = connection_options.password.clone();
     let (tx, rx) = oneshot::channel();
     ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
@@ -540,23 +558,24 @@ pub async fn open_ssh_project(
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<()> {
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
         let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
-        cx.open_window(options, |cx| {
+        cx.open_window(options, |window, cx| {
             let project = project::Project::local(
                 app_state.client.clone(),
                 app_state.node_runtime.clone(),
                 app_state.user_store.clone(),
                 app_state.languages.clone(),
+                app_state.debug_adapters.clone(),
                 app_state.fs.clone(),
                 None,
                 cx,
             );
-            cx.new_view(|cx| Workspace::new(None, project, app_state.clone(), cx))
+            cx.new(|cx| Workspace::new(None, project, app_state.clone(), window, cx))
         })?
     };
 
@@ -565,10 +584,10 @@ pub async fn open_ssh_project(
         let delegate = window.update(cx, {
             let connection_options = connection_options.clone();
             let paths = paths.clone();
-            move |workspace, cx| {
-                cx.activate_window();
-                workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, paths, cx)
+            move |workspace, window, cx| {
+                window.activate_window();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    SshConnectionModal::new(&connection_options, paths, window, cx)
                 });
 
                 let ui = workspace
@@ -582,7 +601,7 @@ pub async fn open_ssh_project(
                 });
 
                 Some(Arc::new(SshClientDelegate {
-                    window: cx.window_handle(),
+                    window: window.window_handle(),
                     ui: ui.downgrade(),
                     known_password: connection_options.password.clone(),
                 }))
@@ -593,7 +612,7 @@ pub async fn open_ssh_project(
 
         let did_open_ssh_project = cx
             .update(|cx| {
-                workspace::open_ssh_project(
+                workspace::open_ssh_project_with_new_connection(
                     window,
                     connection_options.clone(),
                     cancel_rx,
@@ -606,7 +625,7 @@ pub async fn open_ssh_project(
             .await;
 
         window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, _, cx| {
                 if let Some(ui) = workspace.active_modal::<SshConnectionModal>(cx) {
                     ui.update(cx, |modal, cx| modal.finished(cx))
                 }
@@ -616,12 +635,13 @@ pub async fn open_ssh_project(
         if let Err(e) = did_open_ssh_project {
             log::error!("Failed to open project: {:?}", e);
             let response = window
-                .update(cx, |_, cx| {
-                    cx.prompt(
+                .update(cx, |_, window, cx| {
+                    window.prompt(
                         PromptLevel::Critical,
                         "Failed to connect over SSH",
                         Some(&e.to_string()),
                         &["Retry", "Ok"],
+                        cx,
                     )
                 })?
                 .await;
@@ -632,7 +652,7 @@ pub async fn open_ssh_project(
         }
 
         window
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, _, cx| {
                 if let Some(client) = workspace.project().read(cx).ssh_client().clone() {
                     ExtensionStore::global(cx)
                         .update(cx, |store, cx| store.register_ssh_client(client, cx));

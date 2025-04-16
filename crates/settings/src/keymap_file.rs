@@ -1,21 +1,40 @@
-use std::rc::Rc;
-
-use crate::{settings_store::parse_json_with_comments, SettingsAssets};
-use anyhow::anyhow;
-use collections::{HashMap, IndexMap};
+use anyhow::{Result, anyhow};
+use collections::{BTreeMap, HashMap, IndexMap};
+use fs::Fs;
 use gpui::{
-    Action, ActionBuildError, AppContext, InvalidKeystrokeError, KeyBinding,
-    KeyBindingContextPredicate, NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
+    Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
+    KeyBinding, KeyBindingContextPredicate, NoAction, SharedString,
 };
 use schemars::{
-    gen::{SchemaGenerator, SchemaSettings},
-    schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
     JsonSchema,
+    r#gen::{SchemaGenerator, SchemaSettings},
+    schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::fmt::Write;
+use std::{any::TypeId, fmt::Write, rc::Rc, sync::Arc, sync::LazyLock};
 use util::{asset_str, markdown::MarkdownString};
+
+use crate::{SettingsAssets, settings_store::parse_json_with_comments};
+
+pub trait KeyBindingValidator: Send + Sync {
+    fn action_type_id(&self) -> TypeId;
+    fn validate(&self, binding: &KeyBinding) -> Result<(), MarkdownString>;
+}
+
+pub struct KeyBindingValidatorRegistration(pub fn() -> Box<dyn KeyBindingValidator>);
+
+inventory::collect!(KeyBindingValidatorRegistration);
+
+pub(crate) static KEY_BINDING_VALIDATORS: LazyLock<BTreeMap<TypeId, Box<dyn KeyBindingValidator>>> =
+    LazyLock::new(|| {
+        let mut validators = BTreeMap::new();
+        for validator_registration in inventory::iter::<KeyBindingValidatorRegistration> {
+            let validator = validator_registration.0();
+            validators.insert(validator.action_type_id(), validator);
+        }
+        validators
+    });
 
 // Note that the doc comments on these are shown by json-language-server when editing the keymap, so
 // they should be considered user-facing documentation. Documentation is not handled well with
@@ -129,9 +148,9 @@ impl KeymapFile {
         parse_json_with_comments::<Self>(content)
     }
 
-    pub fn load_asset(asset_path: &str, cx: &AppContext) -> anyhow::Result<Vec<KeyBinding>> {
+    pub fn load_asset(asset_path: &str, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
-            KeymapFileLoadResult::Success { key_bindings, .. } => Ok(key_bindings),
+            KeymapFileLoadResult::Success { key_bindings } => Ok(key_bindings),
             KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => Err(anyhow!(
                 "Error loading built-in keymap \"{asset_path}\": {error_message}"
             )),
@@ -144,12 +163,13 @@ impl KeymapFile {
     #[cfg(feature = "test-support")]
     pub fn load_asset_allow_partial_failure(
         asset_path: &str,
-        cx: &AppContext,
+        cx: &App,
     ) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
                 error_message,
+                ..
             } if key_bindings.is_empty() => Err(anyhow!(
                 "Error loading built-in keymap \"{asset_path}\": {error_message}"
             )),
@@ -162,9 +182,9 @@ impl KeymapFile {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn load_panic_on_failure(content: &str, cx: &AppContext) -> Vec<KeyBinding> {
+    pub fn load_panic_on_failure(content: &str, cx: &App) -> Vec<KeyBinding> {
         match Self::load(content, cx) {
-            KeymapFileLoadResult::Success { key_bindings } => key_bindings,
+            KeymapFileLoadResult::Success { key_bindings, .. } => key_bindings,
             KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
                 panic!("{error_message}");
             }
@@ -174,7 +194,7 @@ impl KeymapFile {
         }
     }
 
-    pub fn load(content: &str, cx: &AppContext) -> KeymapFileLoadResult {
+    pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
         let key_equivalents = crate::key_equivalents::get_key_equivalents(&cx.keyboard_layout());
 
         if content.is_empty() {
@@ -249,9 +269,16 @@ impl KeymapFile {
                             key_bindings.push(key_binding);
                         }
                         Err(err) => {
+                            let mut lines = err.lines();
+                            let mut indented_err = lines.next().unwrap().to_string();
+                            for line in lines {
+                                indented_err.push_str("  ");
+                                indented_err.push_str(line);
+                                indented_err.push_str("\n");
+                            }
                             write!(
                                 section_errors,
-                                "\n\n - In binding {}, {err}",
+                                "\n\n- In binding {}, {indented_err}",
                                 inline_code_string(keystrokes),
                             )
                             .unwrap();
@@ -294,7 +321,7 @@ impl KeymapFile {
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
         key_equivalents: Option<&HashMap<char, char>>,
-        cx: &AppContext,
+        cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {
             Value::Array(items) => {
@@ -336,7 +363,7 @@ impl KeymapFile {
                 return Err(format!(
                     "didn't find an action named {}.",
                     inline_code_string(&name)
-                ))
+                ));
             }
             Err(ActionBuildError::BuildError { name, error }) => match action_input_string {
                 Some(action_input_string) => {
@@ -345,29 +372,40 @@ impl KeymapFile {
                         inline_code_string(&name),
                         MarkdownString::inline_code(&action_input_string),
                         MarkdownString::escape(&error.to_string())
-                    ))
+                    ));
                 }
                 None => {
                     return Err(format!(
                         "can't build {} action - it requires input data via [name, input]: {}",
                         inline_code_string(&name),
                         MarkdownString::escape(&error.to_string())
-                    ))
+                    ));
                 }
             },
         };
 
-        match KeyBinding::load(keystrokes, action, context, key_equivalents) {
-            Ok(binding) => Ok(binding),
-            Err(InvalidKeystrokeError { keystroke }) => Err(format!(
-                "invalid keystroke {}. {}",
-                inline_code_string(&keystroke),
-                KEYSTROKE_PARSE_EXPECTED_MESSAGE
-            )),
+        let key_binding = match KeyBinding::load(keystrokes, action, context, key_equivalents) {
+            Ok(key_binding) => key_binding,
+            Err(InvalidKeystrokeError { keystroke }) => {
+                return Err(format!(
+                    "invalid keystroke {}. {}",
+                    inline_code_string(&keystroke),
+                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
+                ));
+            }
+        };
+
+        if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
+            match validator.validate(&key_binding) {
+                Ok(()) => Ok(key_binding),
+                Err(error) => Err(error.0),
+            }
+        } else {
+            Ok(key_binding)
         }
     }
 
-    pub fn generate_json_schema_for_registered_actions(cx: &mut AppContext) -> Value {
+    pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {
         let mut generator = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)
             .into_generator();
@@ -551,6 +589,20 @@ impl KeymapFile {
     pub fn sections(&self) -> impl DoubleEndedIterator<Item = &KeymapSection> {
         self.0.iter()
     }
+
+    pub async fn load_keymap_file(fs: &Arc<dyn Fs>) -> Result<String> {
+        match fs.load(paths::keymap_file()).await {
+            result @ Ok(_) => result,
+            Err(err) => {
+                if let Some(e) = err.downcast_ref::<std::io::Error>() {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        return Ok(crate::initial_keymap_content().to_string());
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
 }
 
 // Double quotes a string and wraps it in backticks for markdown inline code..
@@ -568,7 +620,7 @@ mod tests {
               // Standard macOS bindings
               {
                 \"bindings\": {
-                  \"up\": \"menu::SelectPrev\",
+                  \"up\": \"menu::SelectPrevious\",
                 },
               },
             ]

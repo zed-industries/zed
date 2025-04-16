@@ -1,14 +1,14 @@
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
+use gpui::{App, BackgroundExecutor, Entity, Task, WeakEntity};
 use indexed_docs::{
     DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
     ProviderId,
@@ -16,7 +16,7 @@ use indexed_docs::{
 use language::{BufferSnapshot, LspAdapterDelegate};
 use project::{Project, ProjectPath};
 use ui::prelude::*;
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 use workspace::Workspace;
 
 pub struct DocsSlashCommand;
@@ -24,7 +24,7 @@ pub struct DocsSlashCommand;
 impl DocsSlashCommand {
     pub const NAME: &'static str = "docs";
 
-    fn path_to_cargo_toml(project: Model<Project>, cx: &mut AppContext) -> Option<Arc<Path>> {
+    fn path_to_cargo_toml(project: Entity<Project>, cx: &mut App) -> Option<Arc<Path>> {
         let worktree = project.read(cx).worktrees(cx).next()?;
         let worktree = worktree.read(cx);
         let entry = worktree.entry_for_path("Cargo.toml")?;
@@ -43,8 +43,8 @@ impl DocsSlashCommand {
     /// access the workspace so we can read the project.
     fn ensure_rust_doc_providers_are_registered(
         &self,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        cx: &mut App,
     ) {
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
         if indexed_docs_registry
@@ -164,8 +164,9 @@ impl SlashCommand for DocsSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         self.ensure_rust_doc_providers_are_registered(workspace, cx);
 
@@ -175,7 +176,7 @@ impl SlashCommand for DocsSlashCommand {
             .provider()
             .ok_or_else(|| anyhow!("no docs provider specified"))
             .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             fn build_completions(items: Vec<String>) -> Vec<ArgumentCompletion> {
                 items
                     .into_iter()
@@ -272,9 +273,10 @@ impl SlashCommand for DocsSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing an argument")));
@@ -282,7 +284,7 @@ impl SlashCommand for DocsSlashCommand {
 
         let args = DocsSlashCommandArgs::parse(arguments);
         let executor = cx.background_executor().clone();
-        let task = cx.background_executor().spawn({
+        let task = cx.background_spawn({
             let store = args
                 .provider()
                 .ok_or_else(|| anyhow!("no docs provider specified"))

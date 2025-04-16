@@ -37,8 +37,8 @@ impl Connection {
         executor: gpui::BackgroundExecutor,
     ) -> (Self, Self, std::sync::Arc<std::sync::atomic::AtomicBool>) {
         use std::sync::{
-            atomic::{AtomicBool, Ordering::SeqCst},
             Arc,
+            atomic::{AtomicBool, Ordering::SeqCst},
         };
 
         let killed = Arc::new(AtomicBool::new(false));

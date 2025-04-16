@@ -42,6 +42,7 @@ where
         self.0
     }
 
+    #[must_use]
     pub fn compose(&self, new_edits_iter: impl IntoIterator<Item = Edit<T>>) -> Self {
         let mut old_edits_iter = self.0.iter().cloned().peekable();
         let mut new_edits_iter = new_edits_iter.into_iter().peekable();
@@ -220,6 +221,15 @@ where
         } else {
             old
         }
+    }
+}
+
+impl<T> Patch<T> {
+    pub fn retain_mut<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut Edit<T>) -> bool,
+    {
+        self.0.retain_mut(f);
     }
 }
 

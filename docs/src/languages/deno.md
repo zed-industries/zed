@@ -1,6 +1,6 @@
 # Deno
 
-Deno support is available through the [Deno extension](https://github.com/zed-industries/zed/tree/main/extensions/deno).
+Deno support is available through the [Deno extension](https://github.com/zed-extensions/deno).
 
 - Language server: [Deno Language Server](https://docs.deno.com/runtime/manual/advanced/language_server/overview/)
 

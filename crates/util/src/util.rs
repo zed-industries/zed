@@ -25,9 +25,11 @@ use std::{
 use unicase::UniCase;
 
 #[cfg(unix)]
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 
 pub use take_until::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use util_macros::{line_endings, separator, uri};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -38,6 +40,50 @@ macro_rules! debug_panic {
             let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        concat!("C:", util::separator!($path))
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        $path
     };
 }
 
@@ -97,6 +143,66 @@ pub fn truncate_lines_and_trailoff(s: &str, max_lines: usize) -> String {
     } else {
         lines.join("\n")
     }
+}
+
+/// Truncates the string at a character boundary, such that the result is less than `max_bytes` in
+/// length.
+pub fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() < max_bytes {
+        return s;
+    }
+
+    for i in (0..max_bytes).rev() {
+        if s.is_char_boundary(i) {
+            return &s[..i];
+        }
+    }
+
+    ""
+}
+
+/// Takes a prefix of complete lines which fit within the byte limit. If the first line is longer
+/// than the limit, truncates at a character boundary.
+pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() < max_bytes {
+        return s;
+    }
+
+    for i in (0..max_bytes).rev() {
+        if s.is_char_boundary(i) {
+            if s.as_bytes()[i] == b'\n' {
+                // Since the i-th character is \n, valid to slice at i + 1.
+                return &s[..i + 1];
+            }
+        }
+    }
+
+    truncate_to_byte_limit(s, max_bytes)
+}
+
+#[test]
+fn test_truncate_lines_to_byte_limit() {
+    let text = "Line 1\nLine 2\nLine 3\nLine 4";
+
+    // Limit that includes all lines
+    assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
+
+    // Exactly the first line
+    assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
+
+    // Limit between lines
+    assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
+    assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
+
+    // Limit before first newline
+    assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
+
+    // Test with non-ASCII characters
+    let text_utf8 = "Line 1\nLíne 2\nLine 3";
+    assert_eq!(
+        truncate_lines_to_byte_limit(text_utf8, 15),
+        "Line 1\nLíne 2\n"
+    );
 }
 
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
@@ -193,7 +299,7 @@ pub fn load_shell_from_passwd() -> Result<()> {
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
         );
-        env::set_var("SHELL", shell);
+        unsafe { env::set_var("SHELL", shell) };
     }
 
     Ok(())
@@ -239,7 +345,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
 
-        parse_env_output(env_output, |key, value| env::set_var(key, value));
+        parse_env_output(env_output, |key, value| unsafe { env::set_var(key, value) });
 
         log::info!(
             "set environment variables from shell:{}, path:{}",
@@ -286,7 +392,7 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                 if let Some(target) = target.get_mut(&key) {
                     merge_json_value_into(value, target);
                 } else {
-                    target.insert(key.clone(), value);
+                    target.insert(key, value);
                 }
             }
         }
@@ -314,7 +420,7 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
             if let Some(target) = target_object.get_mut(&key) {
                 merge_non_null_json_value_into(value, target);
             } else if !value.is_null() {
-                target_object.insert(key.clone(), value);
+                target_object.insert(key, value);
             }
         }
     } else if !source.is_null() {
@@ -370,6 +476,108 @@ pub fn iterate_expanded_and_wrapped_usize_range(
     }
 }
 
+#[cfg(target_os = "windows")]
+pub fn get_windows_system_shell() -> String {
+    use std::path::PathBuf;
+
+    fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
+        #[cfg(target_pointer_width = "64")]
+        let env_var = if find_alternate {
+            "ProgramFiles(x86)"
+        } else {
+            "ProgramFiles"
+        };
+
+        #[cfg(target_pointer_width = "32")]
+        let env_var = if find_alternate {
+            "ProgramW6432"
+        } else {
+            "ProgramFiles"
+        };
+
+        let install_base_dir = PathBuf::from(std::env::var_os(env_var)?).join("PowerShell");
+        install_base_dir
+            .read_dir()
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| matches!(entry.file_type(), Ok(ft) if ft.is_dir()))
+            .filter_map(|entry| {
+                let dir_name = entry.file_name();
+                let dir_name = dir_name.to_string_lossy();
+
+                let version = if find_preview {
+                    let dash_index = dir_name.find('-')?;
+                    if &dir_name[dash_index + 1..] != "preview" {
+                        return None;
+                    };
+                    dir_name[..dash_index].parse::<u32>().ok()?
+                } else {
+                    dir_name.parse::<u32>().ok()?
+                };
+
+                let exe_path = entry.path().join("pwsh.exe");
+                if exe_path.exists() {
+                    Some((version, exe_path))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(version, _)| *version)
+            .map(|(_, path)| path)
+    }
+
+    fn find_pwsh_in_msix(find_preview: bool) -> Option<PathBuf> {
+        let msix_app_dir =
+            PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft\\WindowsApps");
+        if !msix_app_dir.exists() {
+            return None;
+        }
+
+        let prefix = if find_preview {
+            "Microsoft.PowerShellPreview_"
+        } else {
+            "Microsoft.PowerShell_"
+        };
+        msix_app_dir
+            .read_dir()
+            .ok()?
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
+                    return None;
+                }
+
+                if !entry.file_name().to_string_lossy().starts_with(prefix) {
+                    return None;
+                }
+
+                let exe_path = entry.path().join("pwsh.exe");
+                exe_path.exists().then_some(exe_path)
+            })
+            .next()
+    }
+
+    fn find_pwsh_in_scoop() -> Option<PathBuf> {
+        let pwsh_exe =
+            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
+        pwsh_exe.exists().then_some(pwsh_exe)
+    }
+
+    static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
+        find_pwsh_in_programfiles(false, false)
+            .or_else(|| find_pwsh_in_programfiles(true, false))
+            .or_else(|| find_pwsh_in_msix(false))
+            .or_else(|| find_pwsh_in_programfiles(false, true))
+            .or_else(|| find_pwsh_in_msix(true))
+            .or_else(|| find_pwsh_in_programfiles(true, true))
+            .or_else(find_pwsh_in_scoop)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or("powershell.exe".to_string())
+    });
+
+    (*SYSTEM_SHELL).clone()
+}
+
 pub trait ResultExt<E> {
     type Ok;
 
@@ -377,6 +585,7 @@ pub trait ResultExt<E> {
     /// Assert that this result should never be an error in development or tests.
     fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
+    fn log_with_level(self, level: log::Level) -> Option<Self::Ok>;
     fn anyhow(self) -> anyhow::Result<Self::Ok>
     where
         E: Into<anyhow::Error>;
@@ -390,13 +599,7 @@ where
 
     #[track_caller]
     fn log_err(self) -> Option<T> {
-        match self {
-            Ok(value) => Some(value),
-            Err(error) => {
-                log_error_with_caller(*Location::caller(), error, log::Level::Error);
-                None
-            }
-        }
+        self.log_with_level(log::Level::Error)
     }
 
     #[track_caller]
@@ -409,10 +612,15 @@ where
 
     #[track_caller]
     fn warn_on_err(self) -> Option<T> {
+        self.log_with_level(log::Level::Warn)
+    }
+
+    #[track_caller]
+    fn log_with_level(self, level: log::Level) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log_error_with_caller(*Location::caller(), error, log::Level::Warn);
+                log_error_with_caller(*Location::caller(), error, level);
                 None
             }
         }
@@ -579,7 +787,7 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
 
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
-    use rand::{seq::SliceRandom, Rng};
+    use rand::{Rng, seq::SliceRandom};
     pub struct RandomCharIter<T: Rng> {
         rng: T,
         simple_text: bool,
@@ -632,7 +840,7 @@ mod rng {
 pub use rng::RandomCharIter;
 /// Get an embedded file as a string.
 pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
-    match A::get(path).unwrap().data {
+    match A::get(path).expect(path).data {
         Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
         Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).unwrap()),
     }
@@ -735,9 +943,31 @@ impl Ord for NumericPrefixWithSuffix<'_> {
     }
 }
 
-impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
+impl PartialOrd for NumericPrefixWithSuffix<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+/// Capitalizes the first character of a string.
+///
+/// This function takes a string slice as input and returns a new `String` with the first character
+/// capitalized.
+///
+/// # Examples
+///
+/// ```
+/// use util::capitalize;
+///
+/// assert_eq!(capitalize("hello"), "Hello");
+/// assert_eq!(capitalize("WORLD"), "WORLD");
+/// assert_eq!(capitalize(""), "");
+/// ```
+pub fn capitalize(str: &str) -> String {
+    let mut chars = str.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
     }
 }
 
@@ -758,6 +988,22 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
         prev_end = capture.end();
     }
     prev_end == s.len()
+}
+
+pub fn default<D: Default>() -> D {
+    Default::default()
+}
+
+pub fn get_system_shell() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_system_shell()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+    }
 }
 
 #[cfg(test)]

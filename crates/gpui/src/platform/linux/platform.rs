@@ -14,20 +14,21 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use async_task::Runnable;
-use calloop::{channel::Channel, LoopSignal};
+use calloop::{LoopSignal, channel::Channel};
 use futures::channel::oneshot;
 use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
-    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Point, Result,
-    ScreenCaptureSource, Task, WindowAppearance, WindowParams,
+    ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
 };
+
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
 
@@ -50,6 +51,10 @@ pub trait LinuxClient {
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    fn is_screen_capture_supported(&self) -> bool;
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -181,16 +186,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         log::info!("Restarting process, using app path: {:?}", app_path);
 
         // Script to wait for the current process to exit and then restart the app.
-        // We also wait for possibly open TCP sockets by the process to be closed,
-        // since on Linux it's not guaranteed that a process' resources have been
-        // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
             while kill -0 {pid} 2>/dev/null; do
-                sleep 0.1
-            done
-
-            while lsof -nP -iTCP -a -p {pid} 2>/dev/null; do
                 sleep 0.1
             done
 
@@ -237,12 +235,14 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        self.is_screen_capture_supported()
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
-        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
-        rx
+        self.screen_capture_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -440,7 +440,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| Some(common.menus.clone()))
     }
 
-    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}
+    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {
+        // todo(linux)
+    }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
@@ -639,7 +641,7 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
-    let mut file = File::from_raw_fd(fd.as_raw_fd());
+    let mut file = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
     Ok(buffer)
@@ -673,6 +675,12 @@ impl CursorStyle {
             CursorStyle::DragLink => "alias",
             CursorStyle::DragCopy => "copy",
             CursorStyle::ContextualMenu => "context-menu",
+            CursorStyle::None => {
+                #[cfg(debug_assertions)]
+                panic!("CursorStyle::None should be handled separately in the client");
+                #[cfg(not(debug_assertions))]
+                "default"
+            }
         }
         .to_string()
     }
@@ -773,7 +781,7 @@ impl crate::Keystroke {
 
     /**
      * Returns which symbol the dead key represents
-     * https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux
+     * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
      */
     pub fn underlying_dead_key(keysym: Keysym) -> Option<String> {
         match keysym {
@@ -853,7 +861,7 @@ impl crate::Modifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{px, Point};
+    use crate::{Point, px};
 
     #[test]
     fn test_is_within_click_distance() {

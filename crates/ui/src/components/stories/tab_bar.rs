@@ -1,12 +1,12 @@
 use gpui::Render;
 use story::Story;
 
-use crate::{prelude::*, Tab, TabBar, TabPosition};
+use crate::{Tab, TabBar, TabPosition, prelude::*};
 
 pub struct TabBarStory;
 
 impl Render for TabBarStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let tab_count = 20;
         let selected_tab_index = 3;
 

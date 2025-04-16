@@ -2,42 +2,36 @@
 mod context_tests;
 
 use crate::patch::{AssistantEdit, AssistantPatch, AssistantPatchStatus};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
-use assistant_tool::ToolWorkingSet;
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use feature_flags::{FeatureFlagAppExt, ToolUseFeatureFlag};
 use fs::{Fs, RemoveOptions};
-use futures::{future::Shared, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
-    AppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage, SharedString,
-    Subscription, Task,
+    App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
+    Task,
 };
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role, StopReason,
-};
-use language_models::{
-    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
-    report_assistant_event,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
+    Role, StopReason, report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
-    cmp::{max, Ordering},
+    cmp::{Ordering, max},
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -46,10 +40,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -168,6 +162,11 @@ pub enum ContextOperation {
         section: SlashCommandOutputSection<language::Anchor>,
         version: clock::Global,
     },
+    ThoughtProcessOutputSectionAdded {
+        timestamp: clock::Lamport,
+        section: ThoughtProcessOutputSection<language::Anchor>,
+        version: clock::Global,
+    },
     BufferOperation(language::Operation),
 }
 
@@ -262,6 +261,20 @@ impl ContextOperation {
                         message.timestamp.context("missing timestamp")?,
                     ),
                     error_message: message.error_message,
+                    version: language::proto::deserialize_version(&message.version),
+                })
+            }
+            proto::context_operation::Variant::ThoughtProcessOutputSectionAdded(message) => {
+                let section = message.section.context("missing section")?;
+                Ok(Self::ThoughtProcessOutputSectionAdded {
+                    timestamp: language::proto::deserialize_timestamp(
+                        message.timestamp.context("missing timestamp")?,
+                    ),
+                    section: ThoughtProcessOutputSection {
+                        range: language::proto::deserialize_anchor_range(
+                            section.range.context("invalid range")?,
+                        )?,
+                    },
                     version: language::proto::deserialize_version(&message.version),
                 })
             }
@@ -376,6 +389,27 @@ impl ContextOperation {
                     },
                 )),
             },
+            Self::ThoughtProcessOutputSectionAdded {
+                timestamp,
+                section,
+                version,
+            } => proto::ContextOperation {
+                variant: Some(
+                    proto::context_operation::Variant::ThoughtProcessOutputSectionAdded(
+                        proto::context_operation::ThoughtProcessOutputSectionAdded {
+                            timestamp: Some(language::proto::serialize_timestamp(*timestamp)),
+                            section: Some({
+                                proto::ThoughtProcessOutputSection {
+                                    range: Some(language::proto::serialize_anchor_range(
+                                        section.range.clone(),
+                                    )),
+                                }
+                            }),
+                            version: language::proto::serialize_version(version),
+                        },
+                    ),
+                ),
+            },
             Self::BufferOperation(operation) => proto::ContextOperation {
                 variant: Some(proto::context_operation::Variant::BufferOperation(
                     proto::context_operation::BufferOperation {
@@ -393,7 +427,8 @@ impl ContextOperation {
             Self::UpdateSummary { summary, .. } => summary.timestamp,
             Self::SlashCommandStarted { id, .. } => id.0,
             Self::SlashCommandOutputSectionAdded { timestamp, .. }
-            | Self::SlashCommandFinished { timestamp, .. } => *timestamp,
+            | Self::SlashCommandFinished { timestamp, .. }
+            | Self::ThoughtProcessOutputSectionAdded { timestamp, .. } => *timestamp,
             Self::BufferOperation(_) => {
                 panic!("reading the timestamp of a buffer operation is not supported")
             }
@@ -408,7 +443,8 @@ impl ContextOperation {
             | Self::UpdateSummary { version, .. }
             | Self::SlashCommandStarted { version, .. }
             | Self::SlashCommandOutputSectionAdded { version, .. }
-            | Self::SlashCommandFinished { version, .. } => version,
+            | Self::SlashCommandFinished { version, .. }
+            | Self::ThoughtProcessOutputSectionAdded { version, .. } => version,
             Self::BufferOperation(_) => {
                 panic!("reading the version of a buffer operation is not supported")
             }
@@ -424,6 +460,8 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
+    StartedThoughtProcess(Range<language::Anchor>),
+    EndedThoughtProcess(language::Anchor),
     PatchesUpdated {
         removed: Vec<Range<language::Anchor>>,
         updated: Vec<Range<language::Anchor>>,
@@ -437,11 +475,6 @@ pub enum ContextEvent {
     },
     SlashCommandOutputSectionAdded {
         section: SlashCommandOutputSection<language::Anchor>,
-    },
-    UsePendingTools,
-    ToolFinished {
-        tool_use_id: LanguageModelToolUseId,
-        output_range: Range<language::Anchor>,
     },
     Operation(ContextOperation),
 }
@@ -509,6 +542,17 @@ impl MessageMetadata {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThoughtProcessOutputSection<T> {
+    pub range: Range<T>,
+}
+
+impl ThoughtProcessOutputSection<language::Anchor> {
+    pub fn is_valid(&self, buffer: &language::TextBuffer) -> bool {
+        self.range.start.is_valid(buffer) && !self.range.to_offset(buffer).is_empty()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Message {
     pub offset_range: Range<usize>,
@@ -528,21 +572,12 @@ pub enum Content {
         render_image: Arc<RenderImage>,
         image: Shared<Task<Option<LanguageModelImage>>>,
     },
-    ToolUse {
-        range: Range<language::Anchor>,
-        tool_use: LanguageModelToolUse,
-    },
-    ToolResult {
-        range: Range<language::Anchor>,
-        tool_use_id: LanguageModelToolUseId,
-    },
 }
 
 impl Content {
     fn range(&self) -> Range<language::Anchor> {
         match self {
             Self::Image { anchor, .. } => *anchor..*anchor,
-            Self::ToolUse { range, .. } | Self::ToolResult { range, .. } => range.clone(),
         }
     }
 
@@ -588,20 +623,19 @@ pub enum XmlTagKind {
     Operation,
 }
 
-pub struct Context {
+pub struct AssistantContext {
     id: ContextId,
     timestamp: clock::Lamport,
     version: clock::Global,
     pending_ops: Vec<ContextOperation>,
     operations: Vec<ContextOperation>,
-    buffer: Model<Buffer>,
+    buffer: Entity<Buffer>,
     parsed_slash_commands: Vec<ParsedSlashCommand>,
     invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
     edits_since_last_parse: language::Subscription,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    tools: Arc<ToolWorkingSet>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
-    pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
+    thought_process_output_sections: Vec<ThoughtProcessOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -619,7 +653,7 @@ pub struct Context {
     language_registry: Arc<LanguageRegistry>,
     patches: Vec<AssistantPatch>,
     xml_tags: Vec<XmlTag>,
-    project: Option<Model<Project>>,
+    project: Option<Entity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
 }
 
@@ -645,17 +679,16 @@ impl ContextAnnotation for XmlTag {
     }
 }
 
-impl EventEmitter<ContextEvent> for Context {}
+impl EventEmitter<ContextEvent> for AssistantContext {}
 
-impl Context {
+impl AssistantContext {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<Model<Project>>,
+        project: Option<Entity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        tools: Arc<ToolWorkingSet>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
             ContextId::new(),
@@ -664,14 +697,12 @@ impl Context {
             language_registry,
             prompt_builder,
             slash_commands,
-            tools,
             project,
             telemetry,
             cx,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ContextId,
         replica_id: ReplicaId,
@@ -679,12 +710,11 @@ impl Context {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        tools: Arc<ToolWorkingSet>,
-        project: Option<Model<Project>>,
+        project: Option<Entity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let buffer = cx.new_model(|_cx| {
+        let buffer = cx.new(|_cx| {
             let buffer = Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 replica_id,
@@ -707,8 +737,8 @@ impl Context {
             messages_metadata: Default::default(),
             parsed_slash_commands: Vec::new(),
             invoked_slash_commands: HashMap::default(),
-            pending_tool_uses_by_id: HashMap::default(),
             slash_command_output_sections: Vec::new(),
+            thought_process_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
             pending_summary: Task::ready(None),
@@ -725,7 +755,6 @@ impl Context {
             project,
             language_registry,
             slash_commands,
-            tools,
             patches: Vec::new(),
             xml_tags: Vec::new(),
             prompt_builder,
@@ -755,7 +784,7 @@ impl Context {
         this
     }
 
-    pub(crate) fn serialize(&self, cx: &AppContext) -> SavedContext {
+    pub(crate) fn serialize(&self, cx: &App) -> SavedContext {
         let buffer = self.buffer.read(cx);
         SavedContext {
             id: Some(self.id.clone()),
@@ -792,20 +821,30 @@ impl Context {
                     }
                 })
                 .collect(),
+            thought_process_output_sections: self
+                .thought_process_output_sections
+                .iter()
+                .filter_map(|section| {
+                    if section.is_valid(buffer) {
+                        let range = section.range.to_offset(buffer);
+                        Some(ThoughtProcessOutputSection { range })
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn deserialize(
         saved_context: SavedContext,
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
-        tools: Arc<ToolWorkingSet>,
-        project: Option<Model<Project>>,
+        project: Option<Entity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let id = saved_context.id.clone().unwrap_or_else(ContextId::new);
         let mut this = Self::new(
@@ -815,7 +854,6 @@ impl Context {
             language_registry,
             prompt_builder,
             slash_commands,
-            tools,
             project,
             telemetry,
             cx,
@@ -837,7 +875,7 @@ impl Context {
         self.timestamp.replica_id
     }
 
-    pub fn version(&self, cx: &AppContext) -> ContextVersion {
+    pub fn version(&self, cx: &App) -> ContextVersion {
         ContextVersion {
             context: self.version.clone(),
             buffer: self.buffer.read(cx).version(),
@@ -848,15 +886,7 @@ impl Context {
         &self.slash_commands
     }
 
-    pub fn tools(&self) -> &Arc<ToolWorkingSet> {
-        &self.tools
-    }
-
-    pub fn set_capability(
-        &mut self,
-        capability: language::Capability,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_capability(&mut self, capability: language::Capability, cx: &mut Context<Self>) {
         self.buffer
             .update(cx, |buffer, cx| buffer.set_capability(capability, cx));
     }
@@ -870,7 +900,7 @@ impl Context {
     pub fn serialize_ops(
         &self,
         since: &ContextVersion,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Vec<proto::ContextOperation>> {
         let buffer_ops = self
             .buffer
@@ -885,7 +915,7 @@ impl Context {
             .collect::<Vec<_>>();
         context_ops.extend(self.pending_ops.iter().cloned());
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let buffer_ops = buffer_ops.await;
             context_ops.sort_unstable_by_key(|op| op.timestamp());
             buffer_ops
@@ -905,7 +935,7 @@ impl Context {
     pub fn apply_ops(
         &mut self,
         ops: impl IntoIterator<Item = ContextOperation>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut buffer_ops = Vec::new();
         for op in ops {
@@ -919,7 +949,7 @@ impl Context {
         self.flush_ops(cx);
     }
 
-    fn flush_ops(&mut self, cx: &mut ModelContext<Context>) {
+    fn flush_ops(&mut self, cx: &mut Context<AssistantContext>) {
         let mut changed_messages = HashSet::default();
         let mut summary_changed = false;
 
@@ -996,6 +1026,16 @@ impl Context {
                         cx.emit(ContextEvent::SlashCommandOutputSectionAdded { section });
                     }
                 }
+                ContextOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
+                    let buffer = self.buffer.read(cx);
+                    if let Err(ix) = self
+                        .thought_process_output_sections
+                        .binary_search_by(|probe| probe.range.cmp(&section.range, buffer))
+                    {
+                        self.thought_process_output_sections
+                            .insert(ix, section.clone());
+                    }
+                }
                 ContextOperation::SlashCommandFinished {
                     id,
                     error_message,
@@ -1038,7 +1078,7 @@ impl Context {
         }
     }
 
-    fn can_apply_op(&self, op: &ContextOperation, cx: &AppContext) -> bool {
+    fn can_apply_op(&self, op: &ContextOperation, cx: &App) -> bool {
         if !self.version.observed_all(op.version()) {
             return false;
         }
@@ -1059,6 +1099,9 @@ impl Context {
             ContextOperation::SlashCommandOutputSectionAdded { section, .. } => {
                 self.has_received_operations_for_anchor_range(section.range.clone(), cx)
             }
+            ContextOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
+                self.has_received_operations_for_anchor_range(section.range.clone(), cx)
+            }
             ContextOperation::SlashCommandFinished { .. } => true,
             ContextOperation::BufferOperation(_) => {
                 panic!("buffer operations should always be applied")
@@ -1069,7 +1112,7 @@ impl Context {
     fn has_received_operations_for_anchor_range(
         &self,
         range: Range<text::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> bool {
         let version = &self.buffer.read(cx).version;
         let observed_start = range.start == language::Anchor::MIN
@@ -1081,12 +1124,12 @@ impl Context {
         observed_start && observed_end
     }
 
-    fn push_op(&mut self, op: ContextOperation, cx: &mut ModelContext<Self>) {
+    fn push_op(&mut self, op: ContextOperation, cx: &mut Context<Self>) {
         self.operations.push(op.clone());
         cx.emit(ContextEvent::Operation(op));
     }
 
-    pub fn buffer(&self) -> &Model<Buffer> {
+    pub fn buffer(&self) -> &Entity<Buffer> {
         &self.buffer
     }
 
@@ -1094,7 +1137,7 @@ impl Context {
         self.language_registry.clone()
     }
 
-    pub fn project(&self) -> Option<Model<Project>> {
+    pub fn project(&self) -> Option<Entity<Project>> {
         self.project.clone()
     }
 
@@ -1110,7 +1153,7 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn patch_containing(&self, position: Point, cx: &AppContext) -> Option<&AssistantPatch> {
+    pub fn patch_containing(&self, position: Point, cx: &App) -> Option<&AssistantPatch> {
         let buffer = self.buffer.read(cx);
         let index = self.patches.binary_search_by(|patch| {
             let patch_range = patch.range.to_point(&buffer);
@@ -1136,7 +1179,7 @@ impl Context {
     pub fn patch_for_range(
         &self,
         range: &Range<language::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<&AssistantPatch> {
         let buffer = self.buffer.read(cx);
         let index = self.patch_index_for_range(range, buffer).ok()?;
@@ -1167,7 +1210,13 @@ impl Context {
         &self.slash_command_output_sections
     }
 
-    pub fn contains_files(&self, cx: &AppContext) -> bool {
+    pub fn thought_process_output_sections(
+        &self,
+    ) -> &[ThoughtProcessOutputSection<language::Anchor>] {
+        &self.thought_process_output_sections
+    }
+
+    pub fn contains_files(&self, cx: &App) -> bool {
         let buffer = self.buffer.read(cx);
         self.slash_command_output_sections.iter().any(|section| {
             section.is_valid(buffer)
@@ -1181,19 +1230,11 @@ impl Context {
         })
     }
 
-    pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
-        self.pending_tool_uses_by_id.values().collect()
-    }
-
-    pub fn get_tool_use_by_id(&self, id: &LanguageModelToolUseId) -> Option<&PendingToolUse> {
-        self.pending_tool_uses_by_id.get(id)
-    }
-
-    fn set_language(&mut self, cx: &mut ModelContext<Self>) {
+    fn set_language(&mut self, cx: &mut Context<Self>) {
         let markdown = self.language_registry.language_for_name("Markdown");
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let markdown = markdown.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.buffer
                     .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
             })
@@ -1203,9 +1244,9 @@ impl Context {
 
     fn handle_buffer_event(
         &mut self,
-        _: Model<Buffer>,
+        _: Entity<Buffer>,
         event: &language::BufferEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             language::BufferEvent::Operation {
@@ -1227,27 +1268,33 @@ impl Context {
         self.token_count
     }
 
-    pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
+    pub(crate) fn count_remaining_tokens(&mut self, cx: &mut Context<Self>) {
         // Assume it will be a Chat request, even though that takes fewer tokens (and risks going over the limit),
         // because otherwise you see in the UI that your empty message has a bunch of tokens already used.
         let request = self.to_completion_request(RequestType::Chat, cx);
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
-        self.pending_token_count = cx.spawn(|this, mut cx| {
+        let debounce = self.token_count.is_some();
+        self.pending_token_count = cx.spawn(async move |this, cx| {
             async move {
-                cx.background_executor()
-                    .timer(Duration::from_millis(200))
-                    .await;
+                if debounce {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(200))
+                        .await;
+                }
 
-                let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
-                this.update(&mut cx, |this, cx| {
+                let token_count = cx
+                    .update(|cx| model.model.count_tokens(request, cx))?
+                    .await?;
+                this.update(cx, |this, cx| {
                     this.token_count = Some(token_count);
-                    this.start_cache_warming(&model, cx);
+                    this.start_cache_warming(&model.model, cx);
                     cx.notify()
                 })
             }
             .log_err()
+            .await
         });
     }
 
@@ -1255,7 +1302,7 @@ impl Context {
         &mut self,
         cache_configuration: &Option<LanguageModelCacheConfiguration>,
         speculative: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let cache_configuration =
             cache_configuration
@@ -1357,7 +1404,7 @@ impl Context {
         new_anchor_needs_caching
     }
 
-    fn start_cache_warming(&mut self, model: &Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
+    fn start_cache_warming(&mut self, model: &Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         let cache_configuration = model.cache_configuration();
 
         if !self.mark_cache_anchors(&cache_configuration, true, cx) {
@@ -1386,7 +1433,7 @@ impl Context {
         };
 
         let model = Arc::clone(model);
-        self.pending_cache_warming_task = cx.spawn(|this, mut cx| {
+        self.pending_cache_warming_task = cx.spawn(async move |this, cx| {
             async move {
                 match model.stream_completion(request, &cx).await {
                     Ok(mut stream) => {
@@ -1397,17 +1444,18 @@ impl Context {
                         log::warn!("Cache warming failed: {}", e);
                     }
                 };
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.update_cache_status_for_completion(cx);
                 })
                 .ok();
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         });
     }
 
-    pub fn update_cache_status_for_completion(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn update_cache_status_for_completion(&mut self, cx: &mut Context<Self>) {
         let cached_message_ids: Vec<MessageId> = self
             .messages_metadata
             .iter()
@@ -1432,7 +1480,7 @@ impl Context {
         cx.notify();
     }
 
-    pub fn reparse(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn reparse(&mut self, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx).text_snapshot();
         let mut row_ranges = self
             .edits_since_last_parse
@@ -1505,7 +1553,7 @@ impl Context {
         buffer: &BufferSnapshot,
         updated: &mut Vec<ParsedSlashCommand>,
         removed: &mut Vec<Range<text::Anchor>>,
-        cx: &AppContext,
+        cx: &App,
     ) {
         let old_range = self.pending_command_indices_for_range(range.clone(), cx);
 
@@ -1559,7 +1607,7 @@ impl Context {
     fn invalidate_pending_slash_commands(
         &mut self,
         buffer: &BufferSnapshot,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut invalidated_command_ids = Vec::new();
         for (&command_id, command) in self.invoked_slash_commands.iter_mut() {
@@ -1593,7 +1641,7 @@ impl Context {
         buffer: &BufferSnapshot,
         updated: &mut Vec<Range<text::Anchor>>,
         removed: &mut Vec<Range<text::Anchor>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         // Rebuild the XML tags in the edited range.
         let intersecting_tags_range =
@@ -1636,7 +1684,7 @@ impl Context {
         &self,
         buffer: &BufferSnapshot,
         range: Range<text::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<XmlTag> {
         let mut messages = self.messages(cx).peekable();
 
@@ -1693,7 +1741,7 @@ impl Context {
         tags_start_ix: usize,
         buffer_end: text::Anchor,
         buffer: &BufferSnapshot,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<AssistantPatch> {
         let mut new_patches = Vec::new();
         let mut pending_patch = None;
@@ -1851,7 +1899,7 @@ impl Context {
     pub fn pending_command_for_position(
         &mut self,
         position: language::Anchor,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<&mut ParsedSlashCommand> {
         let buffer = self.buffer.read(cx);
         match self
@@ -1875,7 +1923,7 @@ impl Context {
     pub fn pending_commands_for_range(
         &self,
         range: Range<language::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> &[ParsedSlashCommand] {
         let range = self.pending_command_indices_for_range(range, cx);
         &self.parsed_slash_commands[range]
@@ -1884,7 +1932,7 @@ impl Context {
     fn pending_command_indices_for_range(
         &self,
         range: Range<language::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Range<usize> {
         self.indices_intersecting_buffer_range(&self.parsed_slash_commands, range, cx)
     }
@@ -1893,7 +1941,7 @@ impl Context {
         &self,
         all_annotations: &[T],
         range: Range<language::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Range<usize> {
         let buffer = self.buffer.read(cx);
         let start_ix = match all_annotations
@@ -1916,7 +1964,7 @@ impl Context {
         name: &str,
         output: Task<SlashCommandResult>,
         ensure_trailing_newline: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let version = self.version.clone();
         let command_id = InvokedSlashCommandId(self.next_timestamp());
@@ -1960,7 +2008,7 @@ impl Context {
             });
         self.reparse(cx);
 
-        let insert_output_task = cx.spawn(|this, mut cx| async move {
+        let insert_output_task = cx.spawn(async move |this, cx| {
             let run_command = async {
                 let mut stream = output.await?;
 
@@ -1977,7 +2025,7 @@ impl Context {
 
                 while let Some(event) = stream.next().await {
                     let event = event?;
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.buffer.update(cx, |buffer, _cx| {
                             buffer.finalize_last_transaction();
                             buffer.start_transaction()
@@ -2078,7 +2126,7 @@ impl Context {
                     })?;
                 }
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.buffer.update(cx, |buffer, cx| {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
@@ -2124,7 +2172,7 @@ impl Context {
 
             let command_result = run_command.await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let version = this.version.clone();
                 let timestamp = this.next_timestamp();
                 let Some(invoked_slash_command) = this.invoked_slash_commands.get_mut(&command_id)
@@ -2184,7 +2232,7 @@ impl Context {
     fn insert_slash_command_output_section(
         &mut self,
         section: SlashCommandOutputSection<language::Anchor>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let buffer = self.buffer.read(cx);
         let insertion_ix = match self
@@ -2210,73 +2258,40 @@ impl Context {
         );
     }
 
-    pub fn insert_tool_output(
+    fn insert_thought_process_output_section(
         &mut self,
-        tool_use_id: LanguageModelToolUseId,
-        output: Task<Result<String>>,
-        cx: &mut ModelContext<Self>,
+        section: ThoughtProcessOutputSection<language::Anchor>,
+        cx: &mut Context<Self>,
     ) {
-        let insert_output_task = cx.spawn(|this, mut cx| {
-            let tool_use_id = tool_use_id.clone();
-            async move {
-                let output = output.await;
-                this.update(&mut cx, |this, cx| match output {
-                    Ok(mut output) => {
-                        const NEWLINE: char = '\n';
-
-                        if !output.ends_with(NEWLINE) {
-                            output.push(NEWLINE);
-                        }
-
-                        let anchor_range = this.buffer.update(cx, |buffer, cx| {
-                            let insert_start = buffer.len().to_offset(buffer);
-                            let insert_end = insert_start;
-
-                            let start = insert_start;
-                            let end = start + output.len() - NEWLINE.len_utf8();
-
-                            buffer.edit([(insert_start..insert_end, output)], None, cx);
-
-                            let output_range = buffer.anchor_after(start)..buffer.anchor_after(end);
-
-                            output_range
-                        });
-
-                        this.insert_content(
-                            Content::ToolResult {
-                                range: anchor_range.clone(),
-                                tool_use_id: tool_use_id.clone(),
-                            },
-                            cx,
-                        );
-
-                        cx.emit(ContextEvent::ToolFinished {
-                            tool_use_id,
-                            output_range: anchor_range,
-                        });
-                    }
-                    Err(err) => {
-                        if let Some(tool_use) = this.pending_tool_uses_by_id.get_mut(&tool_use_id) {
-                            tool_use.status = PendingToolUseStatus::Error(err.to_string());
-                        }
-                    }
-                })
-                .ok();
-            }
-        });
-
-        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
-            tool_use.status = PendingToolUseStatus::Running {
-                _task: insert_output_task.shared(),
-            };
-        }
+        let buffer = self.buffer.read(cx);
+        let insertion_ix = match self
+            .thought_process_output_sections
+            .binary_search_by(|probe| probe.range.cmp(&section.range, buffer))
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        self.thought_process_output_sections
+            .insert(insertion_ix, section.clone());
+        // cx.emit(ContextEvent::ThoughtProcessOutputSectionAdded {
+        //     section: section.clone(),
+        // });
+        let version = self.version.clone();
+        let timestamp = self.next_timestamp();
+        self.push_op(
+            ContextOperation::ThoughtProcessOutputSectionAdded {
+                timestamp,
+                section,
+                version,
+            },
+            cx,
+        );
     }
 
-    pub fn completion_provider_changed(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn completion_provider_changed(&mut self, cx: &mut Context<Self>) {
         self.count_remaining_tokens(cx);
     }
 
-    fn get_last_valid_message_id(&self, cx: &ModelContext<Self>) -> Option<MessageId> {
+    fn get_last_valid_message_id(&self, cx: &Context<Self>) -> Option<MessageId> {
         self.message_anchors.iter().rev().find_map(|message| {
             message
                 .start
@@ -2288,37 +2303,23 @@ impl Context {
     pub fn assist(
         &mut self,
         request_type: RequestType,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<MessageAnchor> {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let provider = model_registry.active_provider()?;
-        let model = model_registry.active_model()?;
+        let model = model_registry.default_model()?;
         let last_message_id = self.get_last_valid_message_id(cx)?;
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             log::info!("completion provider has no credentials");
             return None;
         }
+
+        let model = model.model;
+
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
-        let mut request = self.to_completion_request(request_type, cx);
-
-        // Don't attach tools for now; we'll be removing tool use from
-        // Assistant1 shortly.
-        #[allow(clippy::overly_complex_bool_expr)]
-        if false && cx.has_flag::<ToolUseFeatureFlag>() {
-            request.tools = self
-                .tools
-                .tools(cx)
-                .into_iter()
-                .map(|tool| LanguageModelRequestTool {
-                    name: tool.name(),
-                    description: tool.description(),
-                    input_schema: tool.input_schema(),
-                })
-                .collect();
-        }
+        let request = self.to_completion_request(request_type, cx);
 
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -2332,7 +2333,7 @@ impl Context {
         let pending_completion_id = post_inc(&mut self.completion_count);
 
         let task = cx.spawn({
-            |this, mut cx| async move {
+            async move |this, cx| {
                 let stream = model.stream_completion(request, &cx);
                 let assistant_message_id = assistant_message.id;
                 let mut response_latency = None;
@@ -2340,6 +2341,10 @@ impl Context {
                     let request_start = Instant::now();
                     let mut events = stream.await?;
                     let mut stop_reason = StopReason::EndTurn;
+                    let mut thought_process_stack = Vec::new();
+
+                    const THOUGHT_PROCESS_START_MARKER: &str = "<think>\n";
+                    const THOUGHT_PROCESS_END_MARKER: &str = "\n</think>";
 
                     while let Some(event) = events.next().await {
                         if response_latency.is_none() {
@@ -2347,7 +2352,10 @@ impl Context {
                         }
                         let event = event?;
 
-                        this.update(&mut cx, |this, cx| {
+                        let mut context_event = None;
+                        let mut thought_process_output_section = None;
+
+                        this.update(cx, |this, cx| {
                             let message_ix = this
                                 .message_anchors
                                 .iter()
@@ -2365,7 +2373,50 @@ impl Context {
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
-                                    LanguageModelCompletionEvent::Text(chunk) => {
+                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                        if thought_process_stack.is_empty() {
+                                            let start =
+                                                buffer.anchor_before(message_old_end_offset);
+                                            thought_process_stack.push(start);
+                                            let chunk =
+                                                format!("{THOUGHT_PROCESS_START_MARKER}{chunk}{THOUGHT_PROCESS_END_MARKER}");
+                                            let chunk_len = chunk.len();
+                                            buffer.edit(
+                                                [(
+                                                    message_old_end_offset..message_old_end_offset,
+                                                    chunk,
+                                                )],
+                                                None,
+                                                cx,
+                                            );
+                                            let end = buffer
+                                                .anchor_before(message_old_end_offset + chunk_len);
+                                            context_event = Some(
+                                                ContextEvent::StartedThoughtProcess(start..end),
+                                            );
+                                        } else {
+                                            // This ensures that all the thinking chunks are inserted inside the thinking tag
+                                            let insertion_position =
+                                                message_old_end_offset - THOUGHT_PROCESS_END_MARKER.len();
+                                            buffer.edit(
+                                                [(insertion_position..insertion_position, chunk)],
+                                                None,
+                                                cx,
+                                            );
+                                        }
+                                    }
+                                    LanguageModelCompletionEvent::Text(mut chunk) => {
+                                        if let Some(start) = thought_process_stack.pop() {
+                                            let end = buffer.anchor_before(message_old_end_offset);
+                                            context_event =
+                                                Some(ContextEvent::EndedThoughtProcess(end));
+                                            thought_process_output_section =
+                                                Some(ThoughtProcessOutputSection {
+                                                    range: start..end,
+                                                });
+                                            chunk.insert_str(0, "\n\n");
+                                        }
+
                                         buffer.edit(
                                             [(
                                                 message_old_end_offset..message_old_end_offset,
@@ -2375,46 +2426,17 @@ impl Context {
                                             cx,
                                         );
                                     }
-                                    LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                        const NEWLINE: char = '\n';
-
-                                        let mut text = String::new();
-                                        text.push(NEWLINE);
-                                        text.push_str(
-                                            &serde_json::to_string_pretty(&tool_use)
-                                                .expect("failed to serialize tool use to JSON"),
-                                        );
-                                        text.push(NEWLINE);
-                                        let text_len = text.len();
-
-                                        buffer.edit(
-                                            [(
-                                                message_old_end_offset..message_old_end_offset,
-                                                text,
-                                            )],
-                                            None,
-                                            cx,
-                                        );
-
-                                        let start_ix = message_old_end_offset + NEWLINE.len_utf8();
-                                        let end_ix =
-                                            message_old_end_offset + text_len - NEWLINE.len_utf8();
-                                        let source_range = buffer.anchor_after(start_ix)
-                                            ..buffer.anchor_after(end_ix);
-
-                                        this.pending_tool_uses_by_id.insert(
-                                            tool_use.id.clone(),
-                                            PendingToolUse {
-                                                id: tool_use.id,
-                                                name: tool_use.name,
-                                                input: tool_use.input,
-                                                status: PendingToolUseStatus::Idle,
-                                                source_range,
-                                            },
-                                        );
-                                    }
+                                    LanguageModelCompletionEvent::ToolUse(_) => {}
+                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
                             });
+
+                            if let Some(section) = thought_process_output_section.take() {
+                                this.insert_thought_process_output_section(section, cx);
+                            }
+                            if let Some(context_event) = context_event.take() {
+                                cx.emit(context_event);
+                            }
 
                             cx.emit(ContextEvent::StreamedCompletion);
 
@@ -2422,7 +2444,7 @@ impl Context {
                         })?;
                         smol::future::yield_now().await;
                     }
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != pending_completion_id);
                         this.summarize(false, cx);
@@ -2434,7 +2456,7 @@ impl Context {
 
                 let result = stream_completion.await;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     let error_message = if let Some(error) = result.as_ref().err() {
                         if error.is::<PaymentRequiredError>() {
                             cx.emit(ContextEvent::ShowPaymentRequiredError);
@@ -2476,7 +2498,7 @@ impl Context {
                         .language()
                         .map(|language| language.name());
                     report_assistant_event(
-                        AssistantEvent {
+                        AssistantEventData {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
@@ -2495,9 +2517,7 @@ impl Context {
 
                     if let Ok(stop_reason) = result {
                         match stop_reason {
-                            StopReason::ToolUse => {
-                                cx.emit(ContextEvent::UsePendingTools);
-                            }
+                            StopReason::ToolUse => {}
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
                         }
@@ -2519,7 +2539,7 @@ impl Context {
     pub fn to_completion_request(
         &self,
         request_type: RequestType,
-        cx: &AppContext,
+        cx: &App,
     ) -> LanguageModelRequest {
         let buffer = self.buffer.read(cx);
 
@@ -2576,23 +2596,6 @@ impl Context {
                                     .push(language_model::MessageContent::Image(image));
                             }
                         }
-                        Content::ToolUse { tool_use, .. } => {
-                            request_message
-                                .content
-                                .push(language_model::MessageContent::ToolUse(tool_use.clone()));
-                        }
-                        Content::ToolResult { tool_use_id, .. } => {
-                            request_message.content.push(
-                                language_model::MessageContent::ToolResult(
-                                    LanguageModelToolResult {
-                                        tool_use_id: tool_use_id.to_string(),
-                                        is_error: false,
-                                        content: collect_text_content(buffer, range.clone())
-                                            .unwrap_or_default(),
-                                    },
-                                ),
-                            );
-                        }
                     }
 
                     offset = range.end;
@@ -2631,7 +2634,7 @@ impl Context {
         completion_request
     }
 
-    pub fn cancel_last_assist(&mut self, cx: &mut ModelContext<Self>) -> bool {
+    pub fn cancel_last_assist(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(pending_completion) = self.pending_completions.pop() {
             self.update_metadata(pending_completion.assistant_message_id, cx, |metadata| {
                 if metadata.status == MessageStatus::Pending {
@@ -2644,7 +2647,7 @@ impl Context {
         }
     }
 
-    pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
+    pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut Context<Self>) {
         for id in &ids {
             if let Some(metadata) = self.messages_metadata.get(id) {
                 let role = metadata.role.cycle();
@@ -2655,7 +2658,7 @@ impl Context {
         self.message_roles_updated(ids, cx);
     }
 
-    fn message_roles_updated(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
+    fn message_roles_updated(&mut self, ids: HashSet<MessageId>, cx: &mut Context<Self>) {
         let mut ranges = Vec::new();
         for message in self.messages(cx) {
             if ids.contains(&message.id) {
@@ -2678,7 +2681,7 @@ impl Context {
     pub fn update_metadata(
         &mut self,
         id: MessageId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
         f: impl FnOnce(&mut MessageMetadata),
     ) {
         let version = self.version.clone();
@@ -2702,7 +2705,7 @@ impl Context {
         message_id: MessageId,
         role: Role,
         status: MessageStatus,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<MessageAnchor> {
         if let Some(prev_message_ix) = self
             .message_anchors
@@ -2736,7 +2739,7 @@ impl Context {
         offset: usize,
         role: Role,
         status: MessageStatus,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> MessageAnchor {
         let start = self.buffer.update(cx, |buffer, cx| {
             buffer.edit([(offset..offset, "\n")], None, cx);
@@ -2766,7 +2769,7 @@ impl Context {
         anchor
     }
 
-    pub fn insert_content(&mut self, content: Content, cx: &mut ModelContext<Self>) {
+    pub fn insert_content(&mut self, content: Content, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx);
         let insertion_ix = match self
             .contents
@@ -2782,7 +2785,7 @@ impl Context {
         cx.emit(ContextEvent::MessagesEdited);
     }
 
-    pub fn contents<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Content> {
+    pub fn contents<'a>(&'a self, cx: &'a App) -> impl 'a + Iterator<Item = Content> {
         let buffer = self.buffer.read(cx);
         self.contents
             .iter()
@@ -2796,7 +2799,7 @@ impl Context {
     pub fn split_message(
         &mut self,
         range: Range<usize>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> (Option<MessageAnchor>, Option<MessageAnchor>) {
         let start_message = self.message_for_offset(range.start, cx);
         let end_message = self.message_for_offset(range.end, cx);
@@ -2922,7 +2925,7 @@ impl Context {
         &mut self,
         new_anchor: MessageAnchor,
         new_metadata: MessageMetadata,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         cx.emit(ContextEvent::MessagesEdited);
 
@@ -2940,16 +2943,13 @@ impl Context {
         self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
-    pub fn summarize(&mut self, replace_old: bool, cx: &mut ModelContext<Self>) {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-            return;
-        };
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+    pub fn summarize(&mut self, replace_old: bool, cx: &mut Context<Self>) {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
 
         if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
-            if !provider.is_authenticated(cx) {
+            if !model.provider.is_authenticated(cx) {
                 return;
             }
 
@@ -2963,16 +2963,16 @@ impl Context {
                 cache: false,
             });
 
-            self.pending_summary = cx.spawn(|this, mut cx| {
+            self.pending_summary = cx.spawn(async move |this, cx| {
                 async move {
-                    let stream = model.stream_completion_text(request, &cx);
+                    let stream = model.model.stream_completion_text(request, &cx);
                     let mut messages = stream.await?;
 
                     let mut replaced = !replace_old;
                     while let Some(message) = messages.stream.next().await {
                         let text = message?;
                         let mut lines = text.lines();
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             let version = this.version.clone();
                             let timestamp = this.next_timestamp();
                             let summary = this.summary.get_or_insert(ContextSummary::default());
@@ -2996,7 +2996,7 @@ impl Context {
                         }
                     }
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         let version = this.version.clone();
                         let timestamp = this.next_timestamp();
                         if let Some(summary) = this.summary.as_mut() {
@@ -3014,18 +3014,19 @@ impl Context {
                     anyhow::Ok(())
                 }
                 .log_err()
+                .await
             });
         }
     }
 
-    fn message_for_offset(&self, offset: usize, cx: &AppContext) -> Option<Message> {
+    fn message_for_offset(&self, offset: usize, cx: &App) -> Option<Message> {
         self.messages_for_offsets([offset], cx).pop()
     }
 
     pub fn messages_for_offsets(
         &self,
         offsets: impl IntoIterator<Item = usize>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<Message> {
         let mut result = Vec::new();
 
@@ -3058,14 +3059,14 @@ impl Context {
     fn messages_from_anchors<'a>(
         &'a self,
         message_anchors: impl Iterator<Item = &'a MessageAnchor> + 'a,
-        cx: &'a AppContext,
+        cx: &'a App,
     ) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
 
         Self::messages_from_iters(buffer, &self.messages_metadata, message_anchors.enumerate())
     }
 
-    pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
+    pub fn messages<'a>(&'a self, cx: &'a App) -> impl 'a + Iterator<Item = Message> {
         self.messages_from_anchors(self.message_anchors.iter(), cx)
     }
 
@@ -3113,19 +3114,19 @@ impl Context {
         &mut self,
         debounce: Option<Duration>,
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<Context>,
+        cx: &mut Context<AssistantContext>,
     ) {
         if self.replica_id() != ReplicaId::default() {
             // Prevent saving a remote context for now.
             return;
         }
 
-        self.pending_save = cx.spawn(|this, mut cx| async move {
+        self.pending_save = cx.spawn(async move |this, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
 
-            let (old_path, summary) = this.read_with(&cx, |this, _| {
+            let (old_path, summary) = this.read_with(cx, |this, _| {
                 let path = this.path.clone();
                 let summary = if let Some(summary) = this.summary.as_ref() {
                     if summary.done {
@@ -3140,7 +3141,7 @@ impl Context {
             })?;
 
             if let Some(summary) = summary {
-                let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
+                let context = this.read_with(cx, |this, cx| this.serialize(cx))?;
                 let mut discriminant = 1;
                 let mut new_path;
                 loop {
@@ -3172,14 +3173,14 @@ impl Context {
                     }
                 }
 
-                this.update(&mut cx, |this, _| this.path = Some(new_path))?;
+                this.update(cx, |this, _| this.path = Some(new_path))?;
             }
 
             Ok(())
         });
     }
 
-    pub fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
+    pub fn custom_summary(&mut self, custom_summary: String, cx: &mut Context<Self>) {
         let timestamp = self.next_timestamp();
         let summary = self.summary.get_or_insert(ContextSummary::default());
         summary.timestamp = timestamp;
@@ -3301,6 +3302,8 @@ pub struct SavedContext {
     pub summary: String,
     pub slash_command_output_sections:
         Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
+    #[serde(default)]
+    pub thought_process_output_sections: Vec<ThoughtProcessOutputSection<usize>>,
 }
 
 impl SavedContext {
@@ -3339,8 +3342,8 @@ impl SavedContext {
 
     fn into_ops(
         self,
-        buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Context>,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<AssistantContext>,
     ) -> Vec<ContextOperation> {
         let mut operations = Vec::new();
         let mut version = clock::Global::new();
@@ -3395,6 +3398,20 @@ impl SavedContext {
                     icon: section.icon,
                     label: section.label,
                     metadata: section.metadata,
+                },
+                version: version.clone(),
+            });
+
+            version.observe(timestamp);
+        }
+
+        for section in self.thought_process_output_sections {
+            let timestamp = next_timestamp.tick();
+            operations.push(ContextOperation::ThoughtProcessOutputSectionAdded {
+                timestamp,
+                section: ThoughtProcessOutputSection {
+                    range: buffer.anchor_after(section.range.start)
+                        ..buffer.anchor_before(section.range.end),
                 },
                 version: version.clone(),
             });
@@ -3476,6 +3493,7 @@ impl SavedContextV0_3_0 {
                 .collect(),
             summary: self.summary,
             slash_command_output_sections: self.slash_command_output_sections,
+            thought_process_output_sections: Vec::new(),
         }
     }
 }
@@ -3539,7 +3557,7 @@ impl SavedContextV0_1_0 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SavedContextMetadata {
     pub title: String,
     pub path: PathBuf,

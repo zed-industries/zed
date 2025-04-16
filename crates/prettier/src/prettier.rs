@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
 use fs::Fs;
-use gpui::{AsyncAppContext, Model};
-use language::{language_settings::language_settings, Buffer, Diff};
+use gpui::{AsyncApp, Entity};
+use language::{Buffer, Diff, language_settings::language_settings};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
@@ -119,9 +119,13 @@ impl Prettier {
                                     } else {
                                         log::warn!("Skipping path {path_to_check:?} workspace root with workspaces {workspaces:?} that have no prettier installed");
                                     }
-                                },
-                                Some(unknown) => log::error!("Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."),
-                                None => log::warn!("Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"),
+                                }
+                                Some(unknown) => log::error!(
+                                    "Failed to parse workspaces for {path_to_check:?} from package.json, got {unknown:?}. Skipping."
+                                ),
+                                None => log::warn!(
+                                    "Skipping path {path_to_check:?} that has no prettier dependency and no workspaces section in its package.json"
+                                ),
                             }
                         }
                     }
@@ -213,7 +217,9 @@ impl Prettier {
                                 let workspace_ignore = path_to_check.join(".prettierignore");
                                 if let Some(metadata) = fs.metadata(&workspace_ignore).await? {
                                     if !metadata.is_dir {
-                                        log::info!("Found prettier ignore at workspace root {workspace_ignore:?}");
+                                        log::info!(
+                                            "Found prettier ignore at workspace root {workspace_ignore:?}"
+                                        );
                                         return Ok(ControlFlow::Continue(Some(path_to_check)));
                                     }
                                 }
@@ -235,7 +241,7 @@ impl Prettier {
         _: LanguageServerId,
         prettier_dir: PathBuf,
         _: NodeRuntime,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
             default: prettier_dir == default_prettier_dir().as_path(),
@@ -248,7 +254,7 @@ impl Prettier {
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: NodeRuntime,
-        cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         use lsp::{LanguageServerBinary, LanguageServerName};
 
@@ -279,17 +285,18 @@ impl Prettier {
             server_binary,
             &prettier_dir,
             None,
-            cx.clone(),
+            Default::default(),
+            &mut cx,
         )
         .context("prettier server creation")?;
 
-        let initialize_params = None;
-        let configuration = lsp::DidChangeConfigurationParams {
-            settings: Default::default(),
-        };
         let server = cx
             .update(|cx| {
-                executor.spawn(server.initialize(initialize_params, configuration.into(), cx))
+                let params = server.default_initialize_params(cx);
+                let configuration = lsp::DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                executor.spawn(server.initialize(params, configuration.into(), cx))
             })?
             .await
             .context("prettier server initialization")?;
@@ -302,10 +309,10 @@ impl Prettier {
 
     pub async fn format(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         buffer_path: Option<PathBuf>,
         ignore_dir: Option<PathBuf>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> anyhow::Result<Diff> {
         match self {
             Self::Real(local) => {
@@ -645,7 +652,8 @@ mod tests {
                 &HashSet::default(),
                 Path::new("/root/work/project/src/index.js")
             )
-            .await.unwrap(),
+            .await
+            .unwrap(),
             ControlFlow::Continue(Some(PathBuf::from("/root/work/project"))),
             "Should successfully find a prettier for path hierarchy that has node_modules with prettier, but no package.json mentions of it"
         );
@@ -946,7 +954,7 @@ mod tests {
         .await {
             Ok(path) => panic!("Expected to fail for prettier in package.json but not in node_modules found, but got path {path:?}"),
             Err(e) => {
-                let message = e.to_string();
+                let message = e.to_string().replace("\\\\", "/");
                 assert!(message.contains("/root/work/full-stack-foundations/exercises/03.loading/01.problem.loader"), "Error message should mention which project had prettier defined");
                 assert!(message.contains("/root/work/full-stack-foundations"), "Error message should mention potential candidates without prettier node_modules contents");
             },

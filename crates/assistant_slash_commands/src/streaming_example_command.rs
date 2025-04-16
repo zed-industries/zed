@@ -1,5 +1,5 @@
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -9,10 +9,10 @@ use assistant_slash_command::{
 };
 use feature_flags::FeatureFlag;
 use futures::channel::mpsc;
-use gpui::{Task, WeakView};
+use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use smol::stream::StreamExt;
 use smol::Timer;
+use smol::stream::StreamExt;
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -45,8 +45,9 @@ impl SlashCommand for StreamingExampleSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _workspace: Option<WeakEntity<Workspace>>,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -56,61 +57,61 @@ impl SlashCommand for StreamingExampleSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let (events_tx, events_rx) = mpsc::unbounded();
-        cx.background_executor()
-            .spawn(async move {
-                events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
-                    icon: IconName::FileRust,
-                    label: "Section 1".into(),
-                    metadata: None,
-                }))?;
-                events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
-                    SlashCommandContent::Text {
-                        text: "Hello".into(),
-                        run_commands_in_text: false,
-                    },
-                )))?;
-                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
+        cx.background_spawn(async move {
+            events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
+                icon: IconName::FileRust,
+                label: "Section 1".into(),
+                metadata: None,
+            }))?;
+            events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                SlashCommandContent::Text {
+                    text: "Hello".into(),
+                    run_commands_in_text: false,
+                },
+            )))?;
+            events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
 
+            Timer::after(Duration::from_secs(1)).await;
+
+            events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
+                icon: IconName::FileRust,
+                label: "Section 2".into(),
+                metadata: None,
+            }))?;
+            events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                SlashCommandContent::Text {
+                    text: "World".into(),
+                    run_commands_in_text: false,
+                },
+            )))?;
+            events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
+
+            for n in 1..=10 {
                 Timer::after(Duration::from_secs(1)).await;
 
                 events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
-                    icon: IconName::FileRust,
-                    label: "Section 2".into(),
+                    icon: IconName::StarFilled,
+                    label: format!("Section {n}").into(),
                     metadata: None,
                 }))?;
                 events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                     SlashCommandContent::Text {
-                        text: "World".into(),
+                        text: "lorem ipsum ".repeat(n).trim().into(),
                         run_commands_in_text: false,
                     },
                 )))?;
                 events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
+            }
 
-                for n in 1..=10 {
-                    Timer::after(Duration::from_secs(1)).await;
-
-                    events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
-                        icon: IconName::StarFilled,
-                        label: format!("Section {n}").into(),
-                        metadata: None,
-                    }))?;
-                    events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
-                        SlashCommandContent::Text {
-                            text: "lorem ipsum ".repeat(n).trim().into(),
-                            run_commands_in_text: false,
-                        },
-                    )))?;
-                    events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
-                }
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 
         Task::ready(Ok(events_rx.boxed()))
     }

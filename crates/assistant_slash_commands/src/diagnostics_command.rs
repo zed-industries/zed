@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
 use fuzzy::{PathMatch, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, View, WeakView};
+use gpui::{App, Entity, Task, WeakEntity};
 use language::{
     Anchor, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, LspAdapterDelegate,
     OffsetRangeExt, ToOffset,
@@ -14,11 +14,11 @@ use rope::Point;
 use std::{
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
-use util::paths::PathMatcher;
 use util::ResultExt;
+use util::paths::PathMatcher;
 use workspace::Workspace;
 
 use crate::create_label_for_command;
@@ -30,8 +30,8 @@ impl DiagnosticsSlashCommand {
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: &View<Workspace>,
-        cx: &mut AppContext,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
             let workspace = workspace.read(cx);
@@ -90,7 +90,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         "diagnostics".into()
     }
 
-    fn label(&self, cx: &AppContext) -> language::CodeLabel {
+    fn label(&self, cx: &App) -> language::CodeLabel {
         create_label_for_command("diagnostics", &[INCLUDE_WARNINGS_ARGUMENT], cx)
     }
 
@@ -118,8 +118,9 @@ impl SlashCommand for DiagnosticsSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
@@ -128,7 +129,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         let paths = self.search_paths(query.clone(), cancellation_flag.clone(), &workspace, cx);
         let executor = cx.background_executor().clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut matches: Vec<String> = paths
                 .await
                 .into_iter()
@@ -172,9 +173,10 @@ impl SlashCommand for DiagnosticsSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
@@ -184,7 +186,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
 
-        cx.spawn(move |_| async move {
+        window.spawn(cx, async move |_| {
             task.await?
                 .map(|output| output.to_event_stream())
                 .ok_or_else(|| anyhow!("No diagnostics found"))
@@ -223,9 +225,9 @@ impl Options {
 }
 
 fn collect_diagnostics(
-    project: Model<Project>,
+    project: Entity<Project>,
     options: Options,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Task<Result<Option<SlashCommandOutput>>> {
     let error_source = if let Some(path_matcher) = &options.path_matcher {
         debug_assert_eq!(path_matcher.sources().len(), 1);
@@ -266,7 +268,7 @@ fn collect_diagnostics(
         })
         .collect();
 
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let mut output = SlashCommandOutput::default();
 
         if let Some(error_source) = error_source.as_ref() {
@@ -297,11 +299,11 @@ fn collect_diagnostics(
             }
 
             if let Some(buffer) = project_handle
-                .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))?
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await
                 .log_err()
             {
-                let snapshot = cx.read_model(&buffer, |buffer, _| buffer.snapshot())?;
+                let snapshot = cx.read_entity(&buffer, |buffer, _| buffer.snapshot())?;
                 collect_buffer_diagnostics(&mut output, &snapshot, options.include_warnings);
             }
 

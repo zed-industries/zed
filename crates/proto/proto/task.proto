@@ -1,0 +1,42 @@
+syntax = "proto3";
+package zed.messages;
+
+import "buffer.proto";
+
+message TaskContextForLocation {
+    uint64 project_id = 1;
+    Location location = 2;
+    map<string, string> task_variables = 3;
+}
+
+message TaskContext {
+    optional string cwd = 1;
+    map<string, string> task_variables = 2;
+    map<string, string> project_env = 3;
+}
+
+message Shell {
+    message WithArguments {
+        string program = 1;
+        repeated string args = 2;
+    }
+
+    oneof shell_type {
+        System system = 1;
+        string program = 2;
+        WithArguments with_arguments = 3;
+    }
+}
+
+message System {}
+
+enum RevealStrategy {
+    RevealAlways = 0;
+    RevealNever = 1;
+}
+
+enum HideStrategy {
+    HideAlways = 0;
+    HideNever = 1;
+    HideOnSuccess = 2;
+}

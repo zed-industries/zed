@@ -4,7 +4,8 @@ use crate::{LanguageToolchainStore, Location, Runnable};
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, Task};
+use gpui::{App, Task};
+use lsp::LanguageServerName;
 use task::{TaskTemplates, TaskVariables};
 use text::BufferId;
 
@@ -15,6 +16,7 @@ pub struct RunnableRange {
     pub runnable: Runnable,
     pub extra_captures: HashMap<String, String>,
 }
+
 /// Language Contexts are used by Zed tasks to extract information about the source file where the tasks are supposed to be scheduled from.
 /// Multiple context providers may be used together: by default, Zed provides a base [`BasicContextProvider`] context that fills all non-custom [`VariableName`] variants.
 ///
@@ -27,7 +29,7 @@ pub trait ContextProvider: Send + Sync {
         _location: &Location,
         _project_env: Option<HashMap<String, String>>,
         _toolchains: Arc<dyn LanguageToolchainStore>,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) -> Task<Result<TaskVariables>> {
         Task::ready(Ok(TaskVariables::default()))
     }
@@ -36,8 +38,13 @@ pub trait ContextProvider: Send + Sync {
     fn associated_tasks(
         &self,
         _: Option<Arc<dyn crate::File>>,
-        _cx: &AppContext,
+        _cx: &App,
     ) -> Option<TaskTemplates> {
+        None
+    }
+
+    /// A language server name, that can return tasks using LSP (ext) for this language.
+    fn lsp_task_source(&self) -> Option<LanguageServerName> {
         None
     }
 }

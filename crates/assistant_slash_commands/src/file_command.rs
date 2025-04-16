@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent,
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandResult,
 };
-use futures::channel::mpsc;
 use futures::Stream;
+use futures::channel::mpsc;
 use fuzzy::PathMatch;
-use gpui::{AppContext, Model, Task, View, WeakView};
+use gpui::{App, Entity, Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
 use serde::{Deserialize, Serialize};
@@ -15,11 +15,12 @@ use std::{
     fmt::Write,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
+use worktree::ChildEntriesOptions;
 
 pub struct FileSlashCommand;
 
@@ -28,8 +29,8 @@ impl FileSlashCommand {
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: &View<Workspace>,
-        cx: &mut AppContext,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
             let workspace = workspace.read(cx);
@@ -42,7 +43,13 @@ impl FileSlashCommand {
                 .chain(project.worktrees(cx).flat_map(|worktree| {
                     let worktree = worktree.read(cx);
                     let id = worktree.id();
-                    worktree.child_entries(Path::new("")).map(move |entry| {
+                    let options = ChildEntriesOptions {
+                        include_files: true,
+                        include_dirs: true,
+                        include_ignored: false,
+                    };
+                    let entries = worktree.child_entries_with_options(Path::new(""), options);
+                    entries.map(move |entry| {
                         (
                             project::ProjectPath {
                                 worktree_id: id,
@@ -134,8 +141,9 @@ impl SlashCommand for FileSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
@@ -148,7 +156,7 @@ impl SlashCommand for FileSlashCommand {
             cx,
         );
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             Ok(paths
                 .await
                 .into_iter()
@@ -187,9 +195,10 @@ impl SlashCommand for FileSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
@@ -209,10 +218,10 @@ impl SlashCommand for FileSlashCommand {
 }
 
 fn collect_files(
-    project: Model<Project>,
+    project: Entity<Project>,
     glob_inputs: &[String],
-    cx: &mut AppContext,
-) -> impl Stream<Item = Result<SlashCommandEvent>> {
+    cx: &mut App,
+) -> impl Stream<Item = Result<SlashCommandEvent>> + use<> {
     let Ok(matchers) = glob_inputs
         .into_iter()
         .map(|glob_input| {
@@ -232,7 +241,7 @@ fn collect_files(
         .collect::<Vec<_>>();
 
     let (events_tx, events_rx) = mpsc::unbounded();
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         for snapshot in snapshots {
             let worktree_id = snapshot.id();
             let mut directory_stack: Vec<Arc<Path>> = Vec::new();
@@ -314,7 +323,14 @@ fn collect_files(
                         )))?;
                         directory_stack.push(entry.path.clone());
                     } else {
-                        let entry_name = format!("{}/{}", prefix_paths, &filename);
+                        // todo(windows)
+                        // Potential bug: this assumes that the path separator is always `\` on Windows
+                        let entry_name = format!(
+                            "{}{}{}",
+                            prefix_paths,
+                            std::path::MAIN_SEPARATOR_STR,
+                            &filename
+                        );
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Folder,
                             label: entry_name.clone().into(),
@@ -336,7 +352,7 @@ fn collect_files(
                     )))?;
                 } else if entry.is_file() {
                     let Some(open_buffer_task) = project_handle
-                        .update(&mut cx, |project, cx| {
+                        .update(cx, |project, cx| {
                             project.open_buffer((worktree_id, &entry.path), cx)
                         })
                         .ok()
@@ -345,7 +361,7 @@ fn collect_files(
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
                         let mut output = SlashCommandOutput::default();
-                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+                        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
                         append_buffer_to_output(
                             &snapshot,
                             Some(&path_including_worktree_name),
@@ -446,6 +462,7 @@ mod custom_path_matcher {
     use std::{fmt::Debug as _, path::Path};
 
     use globset::{Glob, GlobSet, GlobSetBuilder};
+    use util::paths::SanitizedPath;
 
     #[derive(Clone, Debug, Default)]
     pub struct PathMatcher {
@@ -472,7 +489,7 @@ mod custom_path_matcher {
         pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
             let globs = globs
                 .into_iter()
-                .map(|glob| Glob::new(&glob))
+                .map(|glob| Glob::new(&SanitizedPath::from(glob).to_glob_string()))
                 .collect::<Result<Vec<_>, _>>()?;
             let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
             let sources_with_trailing_slash = globs
@@ -498,7 +515,9 @@ mod custom_path_matcher {
                 .zip(self.sources_with_trailing_slash.iter())
                 .any(|(source, with_slash)| {
                     let as_bytes = other_path.as_os_str().as_encoded_bytes();
-                    let with_slash = if source.ends_with("/") {
+                    // todo(windows)
+                    // Potential bug: this assumes that the path separator is always `\` on Windows
+                    let with_slash = if source.ends_with(std::path::MAIN_SEPARATOR_STR) {
                         source.as_bytes()
                     } else {
                         with_slash.as_bytes()
@@ -560,6 +579,7 @@ mod test {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
+    use util::{path, separator};
 
     use super::collect_files;
 
@@ -583,7 +603,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "dir": {
                     "subdir": {
@@ -598,7 +618,7 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let result_1 =
             cx.update(|cx| collect_files(project.clone(), &["root/dir".to_string()], cx));
@@ -606,7 +626,7 @@ mod test {
             .await
             .unwrap();
 
-        assert!(result_1.text.starts_with("root/dir"));
+        assert!(result_1.text.starts_with(separator!("root/dir")));
         // 4 files + 2 directories
         assert_eq!(result_1.sections.len(), 6);
 
@@ -622,7 +642,7 @@ mod test {
             cx.update(|cx| collect_files(project.clone(), &["root/dir*".to_string()], cx).boxed());
         let result = SlashCommandOutput::from_event_stream(result).await.unwrap();
 
-        assert!(result.text.starts_with("root/dir"));
+        assert!(result.text.starts_with(separator!("root/dir")));
         // 5 files + 2 directories
         assert_eq!(result.sections.len(), 7);
 
@@ -636,7 +656,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            "/zed",
+            path!("/zed"),
             json!({
                 "assets": {
                     "dir1": {
@@ -661,7 +681,7 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, ["/zed".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/zed").as_ref()], cx).await;
 
         let result =
             cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
@@ -670,27 +690,42 @@ mod test {
             .unwrap();
 
         // Sanity check
-        assert!(result.text.starts_with("zed/assets/themes\n"));
+        assert!(result.text.starts_with(separator!("zed/assets/themes\n")));
         assert_eq!(result.sections.len(), 7);
 
         // Ensure that full file paths are included in the real output
-        assert!(result.text.contains("zed/assets/themes/andromeda/LICENSE"));
-        assert!(result.text.contains("zed/assets/themes/ayu/LICENSE"));
-        assert!(result.text.contains("zed/assets/themes/summercamp/LICENSE"));
+        assert!(
+            result
+                .text
+                .contains(separator!("zed/assets/themes/andromeda/LICENSE"))
+        );
+        assert!(
+            result
+                .text
+                .contains(separator!("zed/assets/themes/ayu/LICENSE"))
+        );
+        assert!(
+            result
+                .text
+                .contains(separator!("zed/assets/themes/summercamp/LICENSE"))
+        );
 
         assert_eq!(result.sections[5].label, "summercamp");
 
         // Ensure that things are in descending order, with properly relativized paths
         assert_eq!(
             result.sections[0].label,
-            "zed/assets/themes/andromeda/LICENSE"
+            separator!("zed/assets/themes/andromeda/LICENSE")
         );
         assert_eq!(result.sections[1].label, "andromeda");
-        assert_eq!(result.sections[2].label, "zed/assets/themes/ayu/LICENSE");
+        assert_eq!(
+            result.sections[2].label,
+            separator!("zed/assets/themes/ayu/LICENSE")
+        );
         assert_eq!(result.sections[3].label, "ayu");
         assert_eq!(
             result.sections[4].label,
-            "zed/assets/themes/summercamp/LICENSE"
+            separator!("zed/assets/themes/summercamp/LICENSE")
         );
 
         // Ensure that the project lasts until after the last await
@@ -703,7 +738,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            "/zed",
+            path!("/zed"),
             json!({
                 "assets": {
                     "themes": {
@@ -723,7 +758,7 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, ["/zed".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/zed").as_ref()], cx).await;
 
         let result =
             cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
@@ -731,26 +766,34 @@ mod test {
             .await
             .unwrap();
 
-        assert!(result.text.starts_with("zed/assets/themes\n"));
-        assert_eq!(result.sections[0].label, "zed/assets/themes/LICENSE");
+        assert!(result.text.starts_with(separator!("zed/assets/themes\n")));
+        assert_eq!(
+            result.sections[0].label,
+            separator!("zed/assets/themes/LICENSE")
+        );
         assert_eq!(
             result.sections[1].label,
-            "zed/assets/themes/summercamp/LICENSE"
+            separator!("zed/assets/themes/summercamp/LICENSE")
         );
         assert_eq!(
             result.sections[2].label,
-            "zed/assets/themes/summercamp/subdir/LICENSE"
+            separator!("zed/assets/themes/summercamp/subdir/LICENSE")
         );
         assert_eq!(
             result.sections[3].label,
-            "zed/assets/themes/summercamp/subdir/subsubdir/LICENSE"
+            separator!("zed/assets/themes/summercamp/subdir/subsubdir/LICENSE")
         );
         assert_eq!(result.sections[4].label, "subsubdir");
         assert_eq!(result.sections[5].label, "subdir");
         assert_eq!(result.sections[6].label, "summercamp");
-        assert_eq!(result.sections[7].label, "zed/assets/themes");
+        assert_eq!(result.sections[7].label, separator!("zed/assets/themes"));
 
-        assert_eq!(result.text, "zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n");
+        assert_eq!(
+            result.text,
+            separator!(
+                "zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n"
+            )
+        );
 
         // Ensure that the project lasts until after the last await
         drop(project);

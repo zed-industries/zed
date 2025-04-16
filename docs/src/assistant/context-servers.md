@@ -26,6 +26,7 @@ You can configure each context server using the `context_servers` setting in you
         "database_url": "postgresql://postgres@localhost/my_database"
       }
     }
+  }
 }
 ```
 

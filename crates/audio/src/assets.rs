@@ -2,10 +2,10 @@ use std::{io::Cursor, sync::Arc};
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, AssetSource, Global};
+use gpui::{App, AssetSource, Global};
 use rodio::{
-    source::{Buffered, SamplesConverter},
     Decoder, Source,
+    source::{Buffered, SamplesConverter},
 };
 
 type Sound = Buffered<SamplesConverter<Decoder<Cursor<Vec<u8>>>, f32>>;
@@ -27,15 +27,15 @@ impl SoundRegistry {
         })
     }
 
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         cx.global::<GlobalSoundRegistry>().0.clone()
     }
 
-    pub(crate) fn set_global(source: impl AssetSource, cx: &mut AppContext) {
+    pub(crate) fn set_global(source: impl AssetSource, cx: &mut App) {
         cx.set_global(GlobalSoundRegistry(SoundRegistry::new(source)));
     }
 
-    pub fn get(&self, name: &str) -> Result<impl Source<Item = f32>> {
+    pub fn get(&self, name: &str) -> Result<impl Source<Item = f32> + use<>> {
         if let Some(wav) = self.cache.lock().get(name) {
             return Ok(wav.clone());
         }

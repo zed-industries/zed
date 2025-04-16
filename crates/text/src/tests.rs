@@ -262,9 +262,24 @@ fn test_text_summary_for_range() {
         "ab\nefg\nhklm\nnopqrs\ntuvwxyz".into(),
     );
     assert_eq!(
+        buffer.text_summary_for_range::<TextSummary, _>(0..2),
+        TextSummary {
+            len: 2,
+            chars: 2,
+            len_utf16: OffsetUtf16(2),
+            lines: Point::new(0, 2),
+            first_line_chars: 2,
+            last_line_chars: 2,
+            last_line_len_utf16: 2,
+            longest_row: 0,
+            longest_row_chars: 2,
+        }
+    );
+    assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(1..3),
         TextSummary {
             len: 2,
+            chars: 2,
             len_utf16: OffsetUtf16(2),
             lines: Point::new(1, 0),
             first_line_chars: 1,
@@ -278,6 +293,7 @@ fn test_text_summary_for_range() {
         buffer.text_summary_for_range::<TextSummary, _>(1..12),
         TextSummary {
             len: 11,
+            chars: 11,
             len_utf16: OffsetUtf16(11),
             lines: Point::new(3, 0),
             first_line_chars: 1,
@@ -291,6 +307,7 @@ fn test_text_summary_for_range() {
         buffer.text_summary_for_range::<TextSummary, _>(0..20),
         TextSummary {
             len: 20,
+            chars: 20,
             len_utf16: OffsetUtf16(20),
             lines: Point::new(4, 1),
             first_line_chars: 2,
@@ -304,6 +321,7 @@ fn test_text_summary_for_range() {
         buffer.text_summary_for_range::<TextSummary, _>(0..22),
         TextSummary {
             len: 22,
+            chars: 22,
             len_utf16: OffsetUtf16(22),
             lines: Point::new(4, 3),
             first_line_chars: 2,
@@ -317,6 +335,7 @@ fn test_text_summary_for_range() {
         buffer.text_summary_for_range::<TextSummary, _>(7..22),
         TextSummary {
             len: 15,
+            chars: 15,
             len_utf16: OffsetUtf16(15),
             lines: Point::new(2, 3),
             first_line_chars: 4,

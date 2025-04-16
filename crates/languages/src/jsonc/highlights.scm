@@ -11,8 +11,14 @@
 [
   (true)
   (false)
-  (null)
-] @constant
+] @boolean
+
+(null) @constant.builtin
+
+[
+  ","
+  ":"
+] @punctuation.delimiter
 
 [
   "{"

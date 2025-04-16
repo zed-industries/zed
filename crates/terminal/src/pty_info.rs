@@ -123,10 +123,7 @@ impl PtyProcessInfo {
 
     fn load(&mut self) -> Option<ProcessInfo> {
         let process = self.refresh()?;
-        let cwd = process
-            .cwd()
-            .take()
-            .map_or(PathBuf::new(), |p| p.to_owned());
+        let cwd = process.cwd().map_or(PathBuf::new(), |p| p.to_owned());
 
         let info = ProcessInfo {
             name: process.name().to_str()?.to_owned(),
@@ -153,5 +150,9 @@ impl PtyProcessInfo {
             self.current = current;
         }
         has_changed
+    }
+
+    pub fn pid(&self) -> Option<Pid> {
+        self.pid_getter.pid()
     }
 }

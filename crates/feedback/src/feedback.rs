@@ -1,62 +1,69 @@
-use gpui::{actions, AppContext, ClipboardItem, PromptLevel};
+use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::SystemSpecs;
 use util::ResultExt;
 use workspace::Workspace;
+use zed_actions::feedback::FileBugReport;
 
 pub mod feedback_modal;
 
-mod system_specs;
+pub mod system_specs;
 
 actions!(
     zed,
     [
         CopySystemSpecsIntoClipboard,
-        FileBugReport,
+        EmailZed,
+        OpenZedRepo,
         RequestFeature,
-        OpenZedRepo
     ]
 );
 
-const fn zed_repo_url() -> &'static str {
-    "https://github.com/zed-industries/zed"
-}
+const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed";
 
-fn request_feature_url(specs: &SystemSpecs) -> String {
-    format!(
-        concat!(
-            "https://github.com/zed-industries/zed/issues/new",
-            "?labels=admin+read%2Ctriage%2Cenhancement",
-            "&template=0_feature_request.yml",
-            "&environment={}"
-        ),
-        urlencoding::encode(&specs.to_string())
-    )
-}
+const REQUEST_FEATURE_URL: &str = "https://github.com/zed-industries/zed/discussions/new/choose";
 
 fn file_bug_report_url(specs: &SystemSpecs) -> String {
     format!(
         concat!(
             "https://github.com/zed-industries/zed/issues/new",
-            "?labels=admin+read%2Ctriage%2Cbug",
-            "&template=1_bug_report.yml",
-            "&environment={}"
+            "?",
+            "template=10_bug_report.yml",
+            "&",
+            "environment={}"
         ),
         urlencoding::encode(&specs.to_string())
     )
 }
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        feedback_modal::FeedbackModal::register(workspace, cx);
-        workspace
-            .register_action(|_, _: &CopySystemSpecsIntoClipboard, cx| {
-                let specs = SystemSpecs::new(cx);
+fn email_zed_url(specs: &SystemSpecs) -> String {
+    format!(
+        concat!("mailto:hi@zed.dev", "?", "body={}"),
+        email_body(specs)
+    )
+}
 
-                cx.spawn(|_, mut cx| async move {
+fn email_body(specs: &SystemSpecs) -> String {
+    let body = format!("\n\nSystem Information:\n\n{}", specs);
+    urlencoding::encode(&body).to_string()
+}
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+        feedback_modal::FeedbackModal::register(workspace, window, cx);
+        workspace
+            .register_action(|_, _: &CopySystemSpecsIntoClipboard, window, cx| {
+                let specs = SystemSpecs::new(window, cx);
+
+                cx.spawn_in(window, async move |_, cx| {
                     let specs = specs.await.to_string();
 
-                    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(specs.clone())))
-                        .log_err();
+                    cx.update(|_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(specs.clone()))
+                    })
+                    .log_err();
 
                     cx.prompt(
                         PromptLevel::Info,
@@ -65,34 +72,36 @@ pub fn init(cx: &mut AppContext) {
                         &["OK"],
                     )
                     .await
-                    .ok();
                 })
                 .detach();
             })
-            .register_action(|_, _: &RequestFeature, cx| {
-                let specs = SystemSpecs::new(cx);
-                cx.spawn(|_, mut cx| async move {
-                    let specs = specs.await;
-                    cx.update(|cx| {
-                        cx.open_url(&request_feature_url(&specs));
-                    })
-                    .log_err();
-                })
-                .detach();
+            .register_action(|_, _: &RequestFeature, _, cx| {
+                cx.open_url(REQUEST_FEATURE_URL);
             })
-            .register_action(move |_, _: &FileBugReport, cx| {
-                let specs = SystemSpecs::new(cx);
-                cx.spawn(|_, mut cx| async move {
+            .register_action(move |_, _: &FileBugReport, window, cx| {
+                let specs = SystemSpecs::new(window, cx);
+                cx.spawn_in(window, async move |_, cx| {
                     let specs = specs.await;
-                    cx.update(|cx| {
+                    cx.update(|_, cx| {
                         cx.open_url(&file_bug_report_url(&specs));
                     })
                     .log_err();
                 })
                 .detach();
             })
-            .register_action(move |_, _: &OpenZedRepo, cx| {
-                cx.open_url(zed_repo_url());
+            .register_action(move |_, _: &EmailZed, window, cx| {
+                let specs = SystemSpecs::new(window, cx);
+                cx.spawn_in(window, async move |_, cx| {
+                    let specs = specs.await;
+                    cx.update(|_, cx| {
+                        cx.open_url(&email_zed_url(&specs));
+                    })
+                    .log_err();
+                })
+                .detach();
+            })
+            .register_action(move |_, _: &OpenZedRepo, _, cx| {
+                cx.open_url(ZED_REPO_URL);
             });
     })
     .detach();

@@ -1,4 +1,4 @@
-use gpui::{prelude::*, AnyElement};
+use gpui::{AnyElement, prelude::*};
 use smallvec::SmallVec;
 use ui::prelude::*;
 
@@ -29,7 +29,7 @@ impl ParentElement for ExtensionCard {
 }
 
 impl RenderOnce for ExtensionCard {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div().w_full().child(
             v_flex()
                 .w_full()
@@ -40,7 +40,7 @@ impl RenderOnce for ExtensionCard {
                 .bg(cx.theme().colors().elevated_surface_background)
                 .border_1()
                 .border_color(cx.theme().colors().border)
-                .rounded_md()
+                .rounded_sm()
                 .children(self.children)
                 .when(self.overridden_by_dev_extension, |card| {
                     card.child(
@@ -53,10 +53,7 @@ impl RenderOnce for ExtensionCard {
                             .size_full()
                             .items_center()
                             .justify_center()
-                            .bg(theme::color_alpha(
-                                cx.theme().colors().elevated_surface_background,
-                                0.8,
-                            ))
+                            .bg(cx.theme().colors().elevated_surface_background.alpha(0.8))
                             .child(Label::new("Overridden by dev extension.")),
                     )
                 }),

@@ -1,9 +1,9 @@
 [
   {
     "bindings": {
-      "ctrl-shift-[": "pane::ActivatePrevItem",
-      "ctrl-shift-]": "pane::ActivateNextItem",
-      "ctrl-pageup": "pane::ActivatePrevItem",
+      "ctrl-{": "pane::ActivatePreviousItem",
+      "ctrl-}": "pane::ActivateNextItem",
+      "ctrl-pageup": "pane::ActivatePreviousItem",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-1": ["workspace::ActivatePane", 0],
       "ctrl-2": ["workspace::ActivatePane", 1],
@@ -14,15 +14,15 @@
       "ctrl-7": ["workspace::ActivatePane", 6],
       "ctrl-8": ["workspace::ActivatePane", 7],
       "ctrl-9": ["workspace::ActivatePane", 8],
-      "ctrl-shift-1": ["workspace::MoveItemToPane", { "destination": 0, "focus": true }],
-      "ctrl-shift-2": ["workspace::MoveItemToPane", { "destination": 1 }],
-      "ctrl-shift-3": ["workspace::MoveItemToPane", { "destination": 2 }],
-      "ctrl-shift-4": ["workspace::MoveItemToPane", { "destination": 3 }],
-      "ctrl-shift-5": ["workspace::MoveItemToPane", { "destination": 4 }],
-      "ctrl-shift-6": ["workspace::MoveItemToPane", { "destination": 5 }],
-      "ctrl-shift-7": ["workspace::MoveItemToPane", { "destination": 6 }],
-      "ctrl-shift-8": ["workspace::MoveItemToPane", { "destination": 7 }],
-      "ctrl-shift-9": ["workspace::MoveItemToPane", { "destination": 8 }]
+      "ctrl-!": ["workspace::MoveItemToPane", { "destination": 0, "focus": true }],
+      "ctrl-@": ["workspace::MoveItemToPane", { "destination": 1 }],
+      "ctrl-#": ["workspace::MoveItemToPane", { "destination": 2 }],
+      "ctrl-$": ["workspace::MoveItemToPane", { "destination": 3 }],
+      "ctrl-%": ["workspace::MoveItemToPane", { "destination": 4 }],
+      "ctrl-^": ["workspace::MoveItemToPane", { "destination": 5 }],
+      "ctrl-&": ["workspace::MoveItemToPane", { "destination": 6 }],
+      "ctrl-*": ["workspace::MoveItemToPane", { "destination": 7 }],
+      "ctrl-(": ["workspace::MoveItemToPane", { "destination": 8 }]
     }
   },
   {
@@ -37,6 +37,8 @@
       "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-d": "editor::DuplicateSelection",
       "alt-f3": "editor::SelectAllMatches", // find_all_under
+      // "ctrl-f3": "", // find_under (cancels any selections)
+      // "cmd-alt-shift-g": "" // find_under_prev (cancels any selections)
       "f9": "editor::SortLinesCaseSensitive",
       "ctrl-f9": "editor::SortLinesCaseInsensitive",
       "f12": "editor::GoToDefinition",
@@ -44,12 +46,14 @@
       "shift-f12": "editor::FindAllReferences",
       "ctrl-shift-f12": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
-      "ctrl-,": "editor::GoToPrevHunk",
+      "ctrl-,": "editor::GoToPreviousHunk",
       "ctrl-k ctrl-u": "editor::ConvertToUpperCase",
       "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd"
+      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "f3": "editor::FindNextMatch",
+      "shift-f3": "editor::FindPreviousMatch"
     }
   },
   {
@@ -59,10 +63,16 @@
     }
   },
   {
+    "context": "Editor && !agent_diff",
+    "bindings": {
+      "ctrl-k ctrl-z": "git::Restore"
+    }
+  },
+  {
     "context": "Pane",
     "bindings": {
       "f4": "search::SelectNextMatch",
-      "shift-f4": "search::SelectPrevMatch",
+      "shift-f4": "search::SelectPreviousMatch",
       "alt-1": ["pane::ActivateItem", 0],
       "alt-2": ["pane::ActivateItem", 1],
       "alt-3": ["pane::ActivateItem", 2],

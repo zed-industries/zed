@@ -1,5 +1,12 @@
 [toolchain]
-channel = "1.81"
+channel = "1.86"
 profile = "minimal"
 components = [ "rustfmt", "clippy" ]
-targets = [ "x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "wasm32-wasip1", "x86_64-pc-windows-msvc" ]
+targets = [
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "wasm32-wasip1", # extensions
+    "x86_64-unknown-linux-musl", # remote server
+]

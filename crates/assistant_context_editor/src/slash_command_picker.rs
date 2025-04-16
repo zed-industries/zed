@@ -1,17 +1,22 @@
 use std::sync::Arc;
 
 use assistant_slash_command::SlashCommandWorkingSet;
-use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
+use gpui::{AnyElement, AnyView, DismissEvent, SharedString, Task, WeakEntity};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
+use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip, prelude::*};
 
 use crate::context_editor::ContextEditor;
 
 #[derive(IntoElement)]
-pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
+pub(super) struct SlashCommandSelector<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
     working_set: Arc<SlashCommandWorkingSet>,
-    active_context_editor: WeakView<ContextEditor>,
+    active_context_editor: WeakEntity<ContextEditor>,
     trigger: T,
+    tooltip: TT,
 }
 
 #[derive(Clone)]
@@ -27,8 +32,8 @@ enum SlashCommandEntry {
     Info(SlashCommandInfo),
     Advert {
         name: SharedString,
-        renderer: fn(&mut WindowContext) -> AnyElement,
-        on_confirm: fn(&mut WindowContext),
+        renderer: fn(&mut Window, &mut App) -> AnyElement,
+        on_confirm: fn(&mut Window, &mut App),
     },
 }
 
@@ -44,20 +49,26 @@ impl AsRef<str> for SlashCommandEntry {
 pub(crate) struct SlashCommandDelegate {
     all_commands: Vec<SlashCommandEntry>,
     filtered_commands: Vec<SlashCommandEntry>,
-    active_context_editor: WeakView<ContextEditor>,
+    active_context_editor: WeakEntity<ContextEditor>,
     selected_index: usize,
 }
 
-impl<T: PopoverTrigger> SlashCommandSelector<T> {
+impl<T, TT> SlashCommandSelector<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
     pub(crate) fn new(
         working_set: Arc<SlashCommandWorkingSet>,
-        active_context_editor: WeakView<ContextEditor>,
+        active_context_editor: WeakEntity<ContextEditor>,
         trigger: T,
+        tooltip: TT,
     ) -> Self {
         SlashCommandSelector {
             working_set,
             active_context_editor,
             trigger,
+            tooltip,
         }
     }
 }
@@ -73,21 +84,25 @@ impl PickerDelegate for SlashCommandDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix.min(self.filtered_commands.len().saturating_sub(1));
         cx.notify();
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a command...".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
         let all_commands = self.all_commands.clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let filtered_commands = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     if query.is_empty() {
                         all_commands
                     } else {
@@ -104,9 +119,9 @@ impl PickerDelegate for SlashCommandDelegate {
                 })
                 .await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_commands = filtered_commands;
-                this.delegate.set_selected_index(0, cx);
+                this.delegate.set_selected_index(0, window, cx);
                 cx.notify();
             })
             .ok();
@@ -139,25 +154,25 @@ impl PickerDelegate for SlashCommandDelegate {
         ret
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(command) = self.filtered_commands.get(self.selected_index) {
             match command {
                 SlashCommandEntry::Info(info) => {
                     self.active_context_editor
                         .update(cx, |context_editor, cx| {
-                            context_editor.insert_command(&info.name, cx)
+                            context_editor.insert_command(&info.name, window, cx)
                         })
                         .ok();
                 }
                 SlashCommandEntry::Advert { on_confirm, .. } => {
-                    on_confirm(cx);
+                    on_confirm(window, cx);
                 }
             }
             cx.emit(DismissEvent);
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
     fn editor_position(&self) -> PickerEditorPosition {
         PickerEditorPosition::End
@@ -167,7 +182,8 @@ impl PickerDelegate for SlashCommandDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let command_info = self.filtered_commands.get(ix)?;
 
@@ -179,7 +195,7 @@ impl PickerDelegate for SlashCommandDelegate {
                     .toggle_state(selected)
                     .tooltip({
                         let description = info.description.clone();
-                        move |cx| cx.new_view(|_| Tooltip::new(description.clone())).into()
+                        move |_, cx| cx.new(|_| Tooltip::new(description.clone())).into()
                     })
                     .child(
                         v_flex()
@@ -191,24 +207,31 @@ impl PickerDelegate for SlashCommandDelegate {
                             .child(
                                 h_flex()
                                     .gap_1p5()
-                                    .child(Icon::new(info.icon).size(IconSize::XSmall))
-                                    .child(div().font_buffer(cx).child({
+                                    .child(
+                                        Icon::new(info.icon)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child({
                                         let mut label = format!("{}", info.name);
                                         if let Some(args) = info.args.as_ref().filter(|_| selected)
                                         {
                                             label.push_str(&args);
                                         }
-                                        Label::new(label).single_line().size(LabelSize::Small)
-                                    }))
+                                        Label::new(label)
+                                            .single_line()
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx)
+                                    })
                                     .children(info.args.clone().filter(|_| !selected).map(
                                         |args| {
                                             div()
-                                                .font_buffer(cx)
                                                 .child(
                                                     Label::new(args)
                                                         .single_line()
                                                         .size(LabelSize::Small)
-                                                        .color(Color::Muted),
+                                                        .color(Color::Muted)
+                                                        .buffer_font(cx),
                                                 )
                                                 .visible_on_hover(format!(
                                                     "command-entry-label-{ix}"
@@ -220,7 +243,7 @@ impl PickerDelegate for SlashCommandDelegate {
                                 Label::new(info.description.clone())
                                     .size(LabelSize::Small)
                                     .color(Color::Muted)
-                                    .text_ellipsis(),
+                                    .truncate(),
                             ),
                     ),
             ),
@@ -229,14 +252,18 @@ impl PickerDelegate for SlashCommandDelegate {
                     .inset(true)
                     .spacing(ListItemSpacing::Dense)
                     .toggle_state(selected)
-                    .child(renderer(cx)),
+                    .child(renderer(window, cx)),
             ),
         }
     }
 }
 
-impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+impl<T, TT> RenderOnce for SlashCommandSelector<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let all_models = self
             .working_set
             .featured_command_names(cx)
@@ -259,7 +286,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             })
             .chain([SlashCommandEntry::Advert {
                 name: "create-your-command".into(),
-                renderer: |cx| {
+                renderer: |_, cx| {
                     v_flex()
                         .w_full()
                         .child(
@@ -274,10 +301,9 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                                         .gap_1p5()
                                         .child(Icon::new(IconName::Plus).size(IconSize::XSmall))
                                         .child(
-                                            div().font_buffer(cx).child(
-                                                Label::new("create-your-command")
-                                                    .size(LabelSize::Small),
-                                            ),
+                                            Label::new("create-your-command")
+                                                .size(LabelSize::Small)
+                                                .buffer_font(cx),
                                         ),
                                 )
                                 .child(
@@ -293,7 +319,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                         )
                         .into_any_element()
                 },
-                on_confirm: |cx| cx.open_url("https://zed.dev/docs/extensions/slash-commands"),
+                on_confirm: |_, cx| cx.open_url("https://zed.dev/docs/extensions/slash-commands"),
             }])
             .collect::<Vec<_>>();
 
@@ -304,8 +330,9 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             selected_index: 0,
         };
 
-        let picker_view = cx.new_view(|cx| {
-            let picker = Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into()));
+        let picker_view = cx.new(|cx| {
+            let picker =
+                Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()));
             picker
         });
 
@@ -314,13 +341,13 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             .update(cx, |this, _| this.slash_menu_handle.clone())
             .ok();
         PopoverMenu::new("model-switcher")
-            .menu(move |_cx| Some(picker_view.clone()))
-            .trigger(self.trigger)
+            .menu(move |_window, _cx| Some(picker_view.clone()))
+            .trigger_with_tooltip(self.trigger, self.tooltip)
             .attach(gpui::Corner::TopLeft)
             .anchor(gpui::Corner::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
-                y: px(-16.0),
+                y: px(-2.0),
             })
             .when_some(handle, |this, handle| this.with_handle(handle))
     }

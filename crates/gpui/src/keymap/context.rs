@@ -1,6 +1,5 @@
 use crate::SharedString;
-use anyhow::{anyhow, Result};
-use smallvec::SmallVec;
+use anyhow::{Result, anyhow};
 use std::fmt;
 
 /// A datastructure for resolving whether an action should be dispatched
@@ -8,7 +7,7 @@ use std::fmt;
 /// and/or key value pairs representing the current context for the
 /// keymap.
 #[derive(Clone, Default, Eq, PartialEq, Hash)]
-pub struct KeyContext(SmallVec<[ContextEntry; 1]>);
+pub struct KeyContext(Vec<ContextEntry>);
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 /// An entry in a KeyContext
@@ -413,7 +412,7 @@ fn is_identifier_char(c: char) -> bool {
 }
 
 fn is_vim_operator_char(c: char) -> bool {
-    c == '>' || c == '<' || c == '~' || c == '"'
+    c == '>' || c == '<' || c == '~' || c == '"' || c == '?'
 }
 
 fn skip_whitespace(source: &str) -> &str {
@@ -439,14 +438,8 @@ mod tests {
             actions!(
                 test,
                 [
-                A,
-                B,
-                C,
-                D,
-                E,
-                F,
-                G, // Don't wrap, test the trailing comma
-            ]
+                    A, B, C, D, E, F, G, // Don't wrap, test the trailing comma
+                ]
             );
         }
     }
