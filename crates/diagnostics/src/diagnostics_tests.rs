@@ -3,7 +3,7 @@ use collections::{HashMap, HashSet};
 use editor::{
     DisplayPoint, InlayId,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, MoveToBeginning},
-    display_map::{DisplayRow, Inlay, ToDisplayPoint},
+    display_map::{DisplayRow, Inlay},
     test::{editor_content_with_blocks, editor_test_context::EditorTestContext},
 };
 use gpui::{TestAppContext, VisualTestContext};
@@ -639,7 +639,6 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     let mutated_diagnostics = window.build_entity(cx, |window, cx| {
         ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
     });
-    let editor = mutated_diagnostics.update(cx, |d, _| d.editor.clone());
 
     workspace.update_in(cx, |workspace, window, cx| {
         workspace.add_item_to_center(Box::new(mutated_diagnostics.clone()), window, cx);
@@ -672,8 +671,6 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
             }
 
             21..=50 => {
-                // eprintln!("{}", editor_content_with_blocks(&editor, cx));
-
                 mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
                     diagnostics.editor.update(cx, |editor, cx| {
                         let snapshot = editor.snapshot(window, cx);
@@ -687,21 +684,6 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                                 snapshot.buffer_snapshot.text(),
                             );
 
-                            editor.display_map.update(cx, |display_map, _| {
-                                dbg!(
-                                    display_map
-                                        .inlay_map
-                                        .current_inlays()
-                                        .map(|inlay| {
-                                            (
-                                                inlay.text.clone(),
-                                                inlay.position,
-                                                inlay.position.to_display_point(&snapshot),
-                                            )
-                                        })
-                                        .collect::<Vec<_>>()
-                                );
-                            });
                             editor.splice_inlays(
                                 &[],
                                 vec![Inlay {

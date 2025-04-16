@@ -1759,7 +1759,6 @@ impl MultiBuffer {
                                 .end
                                 .to_point(&buffer_snapshot);
                             if existing_end <= last.context.end {
-                                dbg!("replacing {} {}", existing_id, new_id);
                                 self.snapshot
                                     .borrow_mut()
                                     .replaced_excerpts
@@ -1802,7 +1801,6 @@ impl MultiBuffer {
                 let existing_id = existing_iter.next().unwrap();
                 if let Some((new_id, last)) = to_insert.last() {
                     if existing_end <= last.context.end {
-                        dbg!("replacing {} {}", existing_id, new_id);
                         self.snapshot
                             .borrow_mut()
                             .replaced_excerpts
@@ -1830,7 +1828,6 @@ impl MultiBuffer {
             } else {
                 let existing_id = existing_iter.next().unwrap();
                 let new_id = next_excerpt_id();
-                dbg!("replacing {} {}", existing_id, new_id);
                 self.snapshot
                     .borrow_mut()
                     .replaced_excerpts
@@ -7002,23 +6999,7 @@ impl ExcerptId {
     pub fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> cmp::Ordering {
         let a = snapshot.excerpt_locator_for_id(*self);
         let b = snapshot.excerpt_locator_for_id(*other);
-        dbg!((a, b));
-        dbg!(a.cmp(b)).then_with(|| self.0.cmp(&other.0))
-    }
-}
-
-#[cfg(test)]
-mod aaaa {
-    use super::*;
-
-    #[test]
-    fn test_name() {
-        let aa = SmallVec::<[u64; 4]>::from_vec(vec![65535]);
-        let bb = SmallVec::<[u64; 4]>::from_vec(vec![0, 65535]);
-        dbg!(aa.cmp(&bb));
-        let locator_aa = Locator(aa);
-        let locator_bb = Locator(bb);
-        dbg!((&locator_aa, &locator_bb, locator_aa.cmp(&locator_bb)));
+        a.cmp(b).then_with(|| self.0.cmp(&other.0))
     }
 }
 

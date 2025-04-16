@@ -64,9 +64,8 @@ impl Anchor {
         let self_excerpt_id = snapshot.latest_excerpt_id(self.excerpt_id);
         let other_excerpt_id = snapshot.latest_excerpt_id(other.excerpt_id);
 
-        dbg!((self.excerpt_id, other.excerpt_id));
         let excerpt_id_cmp = self_excerpt_id.cmp(&other_excerpt_id, snapshot);
-        if dbg!(excerpt_id_cmp).is_ne() {
+        if excerpt_id_cmp.is_ne() {
             return excerpt_id_cmp;
         }
         if self_excerpt_id == ExcerptId::min() || self_excerpt_id == ExcerptId::max() {

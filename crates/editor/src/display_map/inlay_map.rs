@@ -470,7 +470,6 @@ impl InlayMap {
                     buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
                 );
                 let new_start = InlayOffset(new_transforms.summary().output.len);
-                // dbg!(&self.inlays);
 
                 let start_ix = match self.inlays.binary_search_by(|probe| {
                     probe
@@ -490,7 +489,6 @@ impl InlayMap {
 
                     let prefix_start = new_transforms.summary().input.len;
                     let prefix_end = buffer_offset;
-                    // dbg!(&prefix_start, &prefix_end, inlay);
                     push_isomorphic(
                         &mut new_transforms,
                         buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
@@ -569,12 +567,14 @@ impl InlayMap {
             }
 
             let offset = inlay_to_insert.position.to_offset(&snapshot.buffer);
-            match dbg!(self.inlays.binary_search_by(|probe| {
-                dbg!(dbg!(probe.position).cmp(&inlay_to_insert.position, &snapshot.buffer))
+            match self.inlays.binary_search_by(|probe| {
+                probe
+                    .position
+                    .cmp(&inlay_to_insert.position, &snapshot.buffer)
                     .then(std::cmp::Ordering::Less)
-            })) {
+            }) {
                 Ok(ix) | Err(ix) => {
-                    self.inlays.insert(ix, dbg!(inlay_to_insert));
+                    self.inlays.insert(ix, inlay_to_insert);
                 }
             }
 
