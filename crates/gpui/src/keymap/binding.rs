@@ -35,6 +35,7 @@ impl KeyBinding {
             keystrokes,
             Box::new(action),
             context_predicate,
+            false,
             &EmptyKeyboardMapper,
         )
         .unwrap()
@@ -46,12 +47,14 @@ impl KeyBinding {
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         // key_equivalents: Option<&HashMap<char, char>>,
+        use_key_equivalents: bool,
         keyboard_mapper: &dyn KeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
             .map(|source| {
-                Keystroke::parse(source).map(|keystroke| keyboard_mapper.map_keystroke(keystroke))
+                Keystroke::parse(source)
+                    .map(|keystroke| keyboard_mapper.map_keystroke(keystroke, use_key_equivalents))
             })
             .collect::<std::result::Result<_, _>>()?;
 

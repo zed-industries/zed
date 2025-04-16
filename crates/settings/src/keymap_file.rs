@@ -195,8 +195,8 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        let key_equivalents =
-            crate::key_equivalents::get_key_equivalents(cx.keyboard_layout().id());
+        // let key_equivalents =
+        // crate::key_equivalents::get_key_equivalents(cx.keyboard_layout().id());
 
         if content.is_empty() {
             return KeymapFileLoadResult::Success {
@@ -239,12 +239,6 @@ impl KeymapFile {
                 }
             };
 
-            let key_equivalents = if *use_key_equivalents {
-                key_equivalents.as_ref()
-            } else {
-                None
-            };
-
             let mut section_errors = String::new();
 
             if !unrecognized_fields.is_empty() {
@@ -262,7 +256,7 @@ impl KeymapFile {
                         keystrokes,
                         action,
                         context_predicate.clone(),
-                        key_equivalents,
+                        *use_key_equivalents,
                         cx,
                     );
                     match result {
@@ -321,7 +315,8 @@ impl KeymapFile {
         keystrokes: &str,
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
-        key_equivalents: Option<&HashMap<char, char>>,
+        // key_equivalents: Option<&HashMap<char, char>>,
+        use_key_equivalents: bool,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {
@@ -385,7 +380,13 @@ impl KeymapFile {
             },
         };
 
-        let key_binding = match KeyBinding::load(keystrokes, action, context, key_equivalents) {
+        let key_binding = match KeyBinding::load(
+            keystrokes,
+            action,
+            context,
+            use_key_equivalents,
+            cx.keyboard_mapper(),
+        ) {
             Ok(key_binding) => key_binding,
             Err(InvalidKeystrokeError { keystroke }) => {
                 return Err(format!(
