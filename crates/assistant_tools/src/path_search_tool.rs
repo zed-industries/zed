@@ -1,7 +1,9 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
-use gpui::{App, AppContext, Context, Entity, IntoElement, Task, Window};
+use gpui::{
+    App, AppContext, Context, Entity, IntoElement, Task, Window, linear_color_stop, linear_gradient,
+};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -195,13 +197,12 @@ impl ToolCard for PathSearchToolCard {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-
         let matches_label: SharedString = if self.total_matches == 0 {
-            "No matches".into()
+            "No matches for".into()
         } else if self.total_matches == 1 {
-            "1 match".into()
+            "1 match for".into()
         } else {
-            format!("{} matches", self.total_matches).into()
+            format!("{} matches for", self.total_matches).into()
         };
 
         let header = h_flex()
@@ -218,12 +219,12 @@ impl ToolCard for PathSearchToolCard {
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
+                    .child(Label::new(matches_label).size(LabelSize::Small))
                     .child(
                         Label::new(&self.glob)
                             .size(LabelSize::Small)
                             .buffer_font(cx),
                     )
-                    .child(Label::new(matches_label).size(LabelSize::Small))
                     .into_any_element()
             })
             .child(
@@ -239,27 +240,45 @@ impl ToolCard for PathSearchToolCard {
             )
             .into_any();
 
+        let panel_bg = cx.theme().colors().panel_background;
+
+        let gradient_overlay = div()
+            .absolute()
+            .bottom_0()
+            .h_2_3()
+            .w_full()
+            .bg(linear_gradient(
+                180.,
+                linear_color_stop(panel_bg, 1.),
+                linear_color_stop(panel_bg.opacity(0.2), 0.),
+            ));
+
         let content = if !self.paths.is_empty() {
             Some(
                 v_flex()
+                    .relative()
                     .ml_1p5()
-                    .pl_1p5()
+                    .px_1p5()
+                    .gap_0p5()
                     .border_l_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .gap_1()
                     .map(|container| {
                         if self.expanded {
                             container.h_full()
                         } else {
-                            container.max_h_80()
+                            container.max_h_32().overflow_hidden()
                         }
                     })
                     .children(self.paths.iter().enumerate().map(|(index, path)| {
                         Button::new(("path", index), path.clone())
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::End)
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
                             .truncate(true)
                     }))
+                    .when(!self.expanded, |parent| parent.child(gradient_overlay))
                     .into_any(),
             )
         } else {
