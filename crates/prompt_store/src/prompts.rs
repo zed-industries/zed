@@ -390,3 +390,36 @@ impl PromptBuilder {
         self.handlebars.lock().render("suggest_edits", &())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_assistant_system_prompt_renders() {
+        let project_context = ProjectContext {
+            worktrees: vec![WorktreeContext {
+                root_name: "path".into(),
+                abs_path: Path::new("/some/path").into(),
+                rules_file: Some(RulesFileContext {
+                    path_in_worktree: Path::new(".rules").into(),
+                    abs_path: Path::new("/some/path/.rules").into(),
+                    text: "".into(),
+                }),
+            }],
+            has_rules: true,
+            default_user_rules: vec![DefaultUserRulesContext {
+                title: Some("Rules title".into()),
+                contents: "Rules contents".into(),
+            }],
+            has_default_user_rules: true,
+            os: "OS".into(),
+            arch: "ARCH".into(),
+            shell: "SHELL".into(),
+        };
+        PromptBuilder::new(None)
+            .unwrap()
+            .generate_assistant_system_prompt(&project_context)
+            .unwrap();
+    }
+}
