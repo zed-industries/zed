@@ -268,7 +268,8 @@ impl ThreadStore {
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
-        cx.new(|cx| {
+        let thread = cx.new(|cx| {
+            // Changed: Store the entity in a variable
             Thread::new(
                 self.project.clone(),
                 self.tools.clone(),
@@ -276,7 +277,13 @@ impl ThreadStore {
                 self.project_context.clone(),
                 cx,
             )
-        })
+        });
+
+        // Immediately save the newly created thread to ensure it persists across restarts.
+        // Detach the task as we don't need to wait for the save to complete here.
+        self.save_thread(&thread, cx).detach_and_log_err(cx);
+
+        thread // Return the created entity
     }
 
     pub fn open_thread(
