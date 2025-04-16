@@ -529,10 +529,7 @@ pub fn authenticate_model_provider(
 }
 
 pub async fn get_current_commit_id(repo_path: &Path) -> Option<String> {
-    match run_git(repo_path, &["rev-parse", "HEAD"]).await {
-        Ok(commit_id) => Some(commit_id),
-        Err(_) => None,
-    }
+    (run_git(repo_path, &["rev-parse", "HEAD"]).await).ok()
 }
 
 pub fn get_current_commit_id_sync(repo_path: &Path) -> String {
