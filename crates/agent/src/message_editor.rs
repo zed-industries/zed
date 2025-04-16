@@ -985,10 +985,10 @@ impl MessageEditor {
             }
 
             let token_count = if let Some(task) = cx.update(|cx| {
-                let context = context_store.read(cx).context().clone();
-                let new_context = thread.read(cx).new_context(context);
+                let context = context_store.read(cx).context().iter();
+                let new_context = thread.read(cx).filter_new_context(context);
                 let context_text =
-                    format_context_as_string(new_context.iter(), cx).unwrap_or(String::new());
+                    format_context_as_string(new_context, cx).unwrap_or(String::new());
                 let message_text = editor.read(cx).text(cx);
 
                 let content = context_text + &message_text;

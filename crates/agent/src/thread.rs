@@ -663,13 +663,16 @@ impl Thread {
         self.tool_use.message_has_tool_results(message_id)
     }
 
-    /// Iterate over new context entries that aren't already added to the thread
-    pub fn new_context<'a>(&self, context: Vec<AssistantContext>) -> Vec<AssistantContext> {
-        // todo! reconsider taking Vec here
-        context
-            .into_iter()
-            .filter(|ctx| !self.context.contains_key(&ctx.id()))
-            .collect()
+    /// Filter out contexts that have already been included in previous messages
+    pub fn filter_new_context<'a>(
+        &self,
+        context: impl Iterator<Item = &'a AssistantContext>,
+    ) -> impl Iterator<Item = &'a AssistantContext> {
+        context.filter(|ctx| self.is_context_new(ctx))
+    }
+
+    fn is_context_new(&self, context: &AssistantContext) -> bool {
+        !self.context.contains_key(&context.id())
     }
 
     pub fn insert_user_message(
@@ -683,8 +686,10 @@ impl Thread {
 
         let message_id = self.insert_message(Role::User, vec![MessageSegment::Text(text)], cx);
 
-        // Filter out contexts that have already been included in previous messages
-        let new_context: Vec<_> = self.new_context(context);
+        let new_context: Vec<_> = context
+            .into_iter()
+            .filter(|ctx| self.is_context_new(ctx))
+            .collect();
 
         if !new_context.is_empty() {
             if let Some(context_string) = format_context_as_string(new_context.iter(), cx) {

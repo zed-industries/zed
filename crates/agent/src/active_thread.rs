@@ -1181,14 +1181,10 @@ impl ActiveThread {
             }
 
             let token_count = if let Some(task) = cx.update(|cx| {
-                let context = thread
-                    .read(cx)
-                    .context_for_message(message_id)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let new_context = thread.read(cx).new_context(context);
+                let context = thread.read(cx).context_for_message(message_id);
+                let new_context = thread.read(cx).filter_new_context(context);
                 let context_text =
-                    format_context_as_string(new_context.iter(), cx).unwrap_or(String::new());
+                    format_context_as_string(new_context, cx).unwrap_or(String::new());
                 let message_text = editor.read(cx).text(cx);
 
                 let content = context_text + &message_text;
