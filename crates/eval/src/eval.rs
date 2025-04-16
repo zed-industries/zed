@@ -271,9 +271,8 @@ fn main() {
                             match judge_result {
                                 Ok(judge_output) => {
                                     const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
-                                    // Ensure score is u32 and properly convert to usize for indexing
                                     let score: u32 = judge_output.score;
-                                    let score_index = (score_u32.min(5)) as usize;
+                                    let score_index = (score.min(5)) as usize;
 
                                     println!(
                                         "{} {}{}",
