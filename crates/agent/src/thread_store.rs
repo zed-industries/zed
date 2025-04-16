@@ -22,7 +22,10 @@ use heed::Database;
 use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
-use prompt_store::{ProjectContext, PromptBuilder, RulesFileContext, WorktreeContext};
+use prompt_store::{
+    DefaultUserRulesContext, ProjectContext, PromptBuilder, PromptStore, RulesFileContext,
+    WorktreeContext,
+};
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
@@ -142,6 +145,7 @@ impl ThreadStore {
     }
 
     pub fn reload_system_prompt(&self, cx: &mut Context<Self>) -> Task<()> {
+        let prompt_store = PromptStore::global(cx);
         let project = self.project.read(cx);
         let tasks = project
             .visible_worktrees(cx)
@@ -155,7 +159,42 @@ impl ThreadStore {
             .collect::<Vec<_>>();
 
         cx.spawn(async move |this, cx| {
-            let results = futures::future::join_all(tasks).await;
+            dbg!("Before await");
+            let (results, prompt_store) = future::join(future::join_all(tasks), prompt_store).await;
+            dbg!("After await");
+            let default_user_rules = match prompt_store {
+                Err(err) => {
+                    log::error!(
+                        "Error loading user rules, so not loading default user rules: {err:?}"
+                    );
+                    vec![]
+                }
+                Ok(prompt_store) => {
+                    let prompts = prompt_store.default_prompt_metadata();
+                    dbg!("Before loading user rules");
+                    let default_user_rules =
+                        future::join_all(prompts.into_iter().map(|prompt_metadata| {
+                            let prompt_store = prompt_store.clone();
+                            async move {
+                                let prompt = prompt_store.load(prompt_metadata.id);
+                                (prompt.await, prompt_metadata)
+                            }
+                        }))
+                        .await;
+                    dbg!("After loading user rules");
+                    default_user_rules
+                        .into_iter()
+                        .flat_map(|(prompt, prompt_metadata)| {
+                            Some(DefaultUserRulesContext {
+                                title: prompt_metadata.title.map(|title| title.to_string()),
+                                // todo! better error handling
+                                contents: prompt.log_err()?,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                }
+            };
+
             let worktrees = results
                 .into_iter()
                 .map(|(worktree, rules_error)| {
@@ -165,8 +204,10 @@ impl ThreadStore {
                     worktree
                 })
                 .collect::<Vec<_>>();
+
             this.update(cx, |this, _cx| {
-                *this.project_context.0.borrow_mut() = Some(ProjectContext::new(worktrees));
+                *this.project_context.0.borrow_mut() =
+                    Some(ProjectContext::new(worktrees, default_user_rules));
             })
             .ok();
         })

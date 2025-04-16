@@ -20,24 +20,35 @@ use util::{ResultExt, get_system_shell};
 pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
     pub has_rules: bool,
+    pub default_user_rules: Vec<DefaultUserRulesContext>,
     pub os: String,
     pub arch: String,
     pub shell: String,
 }
 
 impl ProjectContext {
-    pub fn new(worktrees: Vec<WorktreeContext>) -> Self {
+    pub fn new(
+        worktrees: Vec<WorktreeContext>,
+        default_user_rules: Vec<DefaultUserRulesContext>,
+    ) -> Self {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
         Self {
             worktrees,
             has_rules,
+            default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             shell: get_system_shell(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DefaultUserRulesContext {
+    pub title: Option<String>,
+    pub contents: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

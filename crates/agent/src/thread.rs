@@ -914,7 +914,7 @@ impl Thread {
             };
         }
 
-        self.stream_completion(request, model, cx);
+        self.stream_completion(dbg!(request), model, cx);
     }
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
@@ -942,20 +942,41 @@ impl Thread {
         };
 
         if let Some(project_context) = self.project_context.borrow().as_ref() {
+            match self
+                .prompt_builder
+                .generate_assistant_system_prompt(project_context)
+            {
+                Err(err) => {
+                    dbg!(err);
+                }
+                Ok(system_prompt) => {
+                    request.messages.push(LanguageModelRequestMessage {
+                        role: Role::System,
+                        content: vec![MessageContent::Text(system_prompt)],
+                        cache: true,
+                    });
+                }
+            }
+            /*
             if let Some(system_prompt) = self
                 .prompt_builder
                 .generate_assistant_system_prompt(project_context)
                 .context("failed to generate assistant system prompt")
                 .log_err()
             {
+                dbg!(&system_prompt);
                 request.messages.push(LanguageModelRequestMessage {
                     role: Role::System,
                     content: vec![MessageContent::Text(system_prompt)],
                     cache: true,
                 });
+            } else {
+                dbg!("Failed to generate system prompt");
             }
+            */
         } else {
-            log::error!("project_context not set.")
+            log::error!("project_context not set.");
+            dbg!("project_context not set");
         }
 
         for message in &self.messages {
