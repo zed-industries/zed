@@ -114,6 +114,9 @@ use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
 };
 
+#[allow(unused)]
+use ui_parking_lot::*; // Import for component registry, gets culled otherwise
+
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {

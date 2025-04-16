@@ -110,7 +110,11 @@ impl RenderOnce for Banner {
 
         let mut container = base.bg(bg_color).border_color(border_color);
 
-        let mut content_area = h_flex().id("content_area").gap_1p5().overflow_x_scroll();
+        let mut content_area = h_flex()
+            .id("content_area")
+            .flex_1()
+            .gap_1p5()
+            .overflow_x_scroll();
 
         if self.icon.is_none() {
             content_area =
@@ -126,10 +130,13 @@ impl RenderOnce for Banner {
                 .pl_2()
                 .pr_0p5()
                 .gap_2()
+                .flex_1()
                 .child(content_area)
                 .child(action_slot);
         } else {
-            container = container.px_2().child(div().w_full().child(content_area));
+            container = container
+                .px_2()
+                .child(div().w_full().flex_1().child(content_area));
         }
 
         container

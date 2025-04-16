@@ -62,6 +62,7 @@ task.workspace = true
 telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
+ui_parking_lot.workspace = true
 util.workspace = true
 uuid.workspace = true
 zed_actions.workspace = true

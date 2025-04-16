@@ -158,6 +158,7 @@ members = [
     "crates/title_bar",
     "crates/toolchain_selector",
     "crates/ui",
+    "crates/ui_parking_lot",
     "crates/ui_input",
     "crates/ui_macros",
     "crates/ui_prompt",
@@ -365,6 +366,7 @@ toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
+ui_parking_lot = { path = "crates/ui_parking_lot" }
 ui_prompt = { path = "crates/ui_prompt" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }

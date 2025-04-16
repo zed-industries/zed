@@ -15488,6 +15488,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ui_parking_lot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "component",
+ "gpui",
+ "linkme",
+ "ui",
+ "util",
+]
+
+[[package]]
 name = "ui_prompt"
 version = "0.1.0"
 dependencies = [
@@ -17630,6 +17642,7 @@ dependencies = [
  "tempfile",
  "theme",
  "ui",
+ "ui_parking_lot",
  "util",
  "uuid",
  "windows 0.61.1",
