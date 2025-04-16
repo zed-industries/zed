@@ -318,7 +318,7 @@ async fn run_example(
                 .parent()
                 .and_then(|p| p.file_name())
                 .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+                .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
 
             telemetry::event!(
                 "Agent Eval Completed",
