@@ -204,7 +204,7 @@ pub fn main(socket: &str) {
     }
 }
 #[cfg(not(unix))]
-fn main(_socket: &str) {}
+pub fn main(_socket: &str) {}
 
 #[cfg(not(unix))]
 pub struct AskPassSession {
