@@ -555,12 +555,12 @@ impl InlayHintCache {
     /// Completely forget of certain excerpts that were removed from the multibuffer.
     pub(super) fn remove_excerpts(
         &mut self,
-        excerpts_removed: Vec<ExcerptId>,
+        excerpts_removed: &[ExcerptId],
     ) -> Option<InlaySplice> {
         let mut to_remove = Vec::new();
         for excerpt_to_remove in excerpts_removed {
-            self.update_tasks.remove(&excerpt_to_remove);
-            if let Some(cached_hints) = self.hints.remove(&excerpt_to_remove) {
+            self.update_tasks.remove(excerpt_to_remove);
+            if let Some(cached_hints) = self.hints.remove(excerpt_to_remove) {
                 let cached_hints = cached_hints.read();
                 to_remove.extend(cached_hints.ordered_hints.iter().copied());
             }
