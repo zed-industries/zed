@@ -1113,16 +1113,16 @@ impl AssistantPanel {
                                                     "New Text Thread",
                                                     NewTextThread.boxed_clone(),
                                                 )
-                                                .action("Settings", OpenConfiguration.boxed_clone())
+                                                .action("Prompt Library", Box::new(OpenPromptLibrary))
+                                                .action("Settings", Box::new(OpenConfiguration))
                                                 .separator()
                                                 .action(
                                                     "Install MCPs",
-                                                    zed_actions::Extensions {
+                                                    Box::new(zed_actions::Extensions {
                                                         category_filter: Some(
                                                             zed_actions::ExtensionCategoryFilter::ContextServers,
                                                         ),
-                                                    }
-                                                    .boxed_clone(),
+                                                        }),
                                                 )
                                             },
                                         ))
