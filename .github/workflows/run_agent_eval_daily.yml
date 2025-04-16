@@ -21,13 +21,8 @@ jobs:
         with:
           clean: false
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mold pkg-config \
-            libx11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libasound2-dev
+      - name: Install Dependencies
+        run: ./script/headless && ./script/install-mold 2.34.0
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

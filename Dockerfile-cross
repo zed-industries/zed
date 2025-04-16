@@ -11,7 +11,7 @@ ENV CARGO_TERM_COLOR=always
 
 COPY script/install-mold script/
 RUN ./script/install-mold "2.34.0"
-COPY script/remote-server script/
-RUN ./script/remote-server
+COPY script/headless script/
+RUN ./script/headless
 
 COPY . .
