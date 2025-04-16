@@ -693,8 +693,10 @@ pub trait Addon: 'static {
     fn to_any(&self) -> &dyn std::any::Any;
 }
 
+/// A set of caret positions, registered when the editor was edited.
 pub struct ChangeList {
     changes: Vec<Vec<Anchor>>,
+    /// Currently "selected" change.
     position: Option<usize>,
 }
 
@@ -706,6 +708,8 @@ impl ChangeList {
         }
     }
 
+    /// Moves to the next change in the list (based on the direction given) and returns the caret positions for the next change.
+    /// If reaches the end of the list in the direction, returns the corresponding change until called for a different direction.
     pub fn next_change(&mut self, count: usize, direction: Direction) -> Option<&[Anchor]> {
         if self.changes.is_empty() {
             return None;
@@ -721,6 +725,7 @@ impl ChangeList {
         self.changes.get(next).map(|anchors| anchors.as_slice())
     }
 
+    /// Adds a new change to the list, resetting the change list position.
     pub fn push_to_change_list(&mut self, pop_state: bool, new_positions: Vec<Anchor>) {
         self.position.take();
         if pop_state {

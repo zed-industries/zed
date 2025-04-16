@@ -134,7 +134,9 @@
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-shift-e": "editor::ToggleEditPrediction",
       "f9": "editor::ToggleBreakpoint",
-      "shift-f9": "editor::EditLogBreakpoint"
+      "shift-f9": "editor::EditLogBreakpoint",
+      "ctrl-shift-backspace": "editor::GoToPreviousChange",
+      "ctrl-shift-alt-backspace": "editor::GoToNextChange"
     }
   },
   {
