@@ -61,8 +61,9 @@ impl Anchor {
             return Ordering::Equal;
         }
 
+        dbg!((self.excerpt_id, other.excerpt_id));
         let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id, snapshot);
-        if excerpt_id_cmp.is_ne() {
+        if dbg!(excerpt_id_cmp).is_ne() {
             return excerpt_id_cmp;
         }
         if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {

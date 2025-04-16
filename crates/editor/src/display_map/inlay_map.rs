@@ -1,4 +1,4 @@
-use crate::{HighlightStyles, InlayId, display_map::ToDisplayPoint};
+use crate::{HighlightStyles, InlayId};
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{
@@ -418,7 +418,6 @@ impl InlayMap {
         mut buffer_edits: Vec<text::Edit<usize>>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
-        dbg!(&buffer_edits);
 
         if buffer_edits.is_empty()
             && snapshot.buffer.trailing_excerpt_update_count()
@@ -429,7 +428,6 @@ impl InlayMap {
                 new: buffer_snapshot.len()..buffer_snapshot.len(),
             });
         }
-        dbg!(&buffer_edits);
 
         if buffer_edits.is_empty() {
             if snapshot.buffer.edit_count() != buffer_snapshot.edit_count()
@@ -485,7 +483,6 @@ impl InlayMap {
                 };
 
                 for inlay in &self.inlays[start_ix..] {
-                    dbg!(&inlay.position);
                     let buffer_offset = inlay.position.to_offset(&buffer_snapshot);
                     if buffer_offset > buffer_edit.new.end {
                         break;
@@ -573,9 +570,7 @@ impl InlayMap {
 
             let offset = inlay_to_insert.position.to_offset(&snapshot.buffer);
             match dbg!(self.inlays.binary_search_by(|probe| {
-                probe
-                    .position
-                    .cmp(&inlay_to_insert.position, &snapshot.buffer)
+                dbg!(dbg!(probe.position).cmp(&inlay_to_insert.position, &snapshot.buffer))
                     .then(std::cmp::Ordering::Less)
             })) {
                 Ok(ix) | Err(ix) => {

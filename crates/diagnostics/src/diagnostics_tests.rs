@@ -695,6 +695,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                                         .map(|inlay| {
                                             (
                                                 inlay.text.clone(),
+                                                inlay.position,
                                                 inlay.position.to_display_point(&snapshot),
                                             )
                                         })

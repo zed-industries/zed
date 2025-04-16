@@ -7002,7 +7002,23 @@ impl ExcerptId {
     pub fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> cmp::Ordering {
         let a = snapshot.excerpt_locator_for_id(*self);
         let b = snapshot.excerpt_locator_for_id(*other);
-        a.cmp(b).then_with(|| self.0.cmp(&other.0))
+        dbg!((a, b));
+        dbg!(a.cmp(b)).then_with(|| self.0.cmp(&other.0))
+    }
+}
+
+#[cfg(test)]
+mod aaaa {
+    use super::*;
+
+    #[test]
+    fn test_name() {
+        let aa = SmallVec::<[u64; 4]>::from_vec(vec![65535]);
+        let bb = SmallVec::<[u64; 4]>::from_vec(vec![0, 65535]);
+        dbg!(aa.cmp(&bb));
+        let locator_aa = Locator(aa);
+        let locator_bb = Locator(bb);
+        dbg!((&locator_aa, &locator_bb, locator_aa.cmp(&locator_bb)));
     }
 }
 
