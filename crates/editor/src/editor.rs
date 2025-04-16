@@ -693,6 +693,52 @@ pub trait Addon: 'static {
     fn to_any(&self) -> &dyn std::any::Any;
 }
 
+/// A set of caret positions, registered when the editor was edited.
+pub struct ChangeList {
+    changes: Vec<Vec<Anchor>>,
+    /// Currently "selected" change.
+    position: Option<usize>,
+}
+
+impl ChangeList {
+    pub fn new() -> Self {
+        Self {
+            changes: Vec::new(),
+            position: None,
+        }
+    }
+
+    /// Moves to the next change in the list (based on the direction given) and returns the caret positions for the next change.
+    /// If reaches the end of the list in the direction, returns the corresponding change until called for a different direction.
+    pub fn next_change(&mut self, count: usize, direction: Direction) -> Option<&[Anchor]> {
+        if self.changes.is_empty() {
+            return None;
+        }
+
+        let prev = self.position.unwrap_or(self.changes.len());
+        let next = if direction == Direction::Prev {
+            prev.saturating_sub(count)
+        } else {
+            (prev + count).min(self.changes.len() - 1)
+        };
+        self.position = Some(next);
+        self.changes.get(next).map(|anchors| anchors.as_slice())
+    }
+
+    /// Adds a new change to the list, resetting the change list position.
+    pub fn push_to_change_list(&mut self, pop_state: bool, new_positions: Vec<Anchor>) {
+        self.position.take();
+        if pop_state {
+            self.changes.pop();
+        }
+        self.changes.push(new_positions.clone());
+    }
+
+    pub fn last(&self) -> Option<&[Anchor]> {
+        self.changes.last().map(|anchors| anchors.as_slice())
+    }
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -857,6 +903,7 @@ pub struct Editor {
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
     hide_mouse_mode: HideMouseMode,
+    pub change_list: ChangeList,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1648,6 +1695,7 @@ impl Editor {
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
                 .unwrap_or_default(),
+            change_list: ChangeList::new(),
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -1661,8 +1709,8 @@ impl Editor {
         this._subscriptions.push(cx.subscribe_in(
             &cx.entity(),
             window,
-            |editor, _, e: &EditorEvent, window, cx| {
-                if let EditorEvent::SelectionsChanged { local } = e {
+            |editor, _, e: &EditorEvent, window, cx| match e {
+                EditorEvent::ScrollPositionChanged { local, .. } => {
                     if *local {
                         let new_anchor = editor.scroll_manager.anchor();
                         let snapshot = editor.snapshot(window, cx);
@@ -1674,6 +1722,30 @@ impl Editor {
                         });
                     }
                 }
+                EditorEvent::Edited { .. } => {
+                    if !vim_enabled(cx) {
+                        let (map, selections) = editor.selections.all_adjusted_display(cx);
+                        let pop_state = editor
+                            .change_list
+                            .last()
+                            .map(|previous| {
+                                previous.len() == selections.len()
+                                    && previous.iter().enumerate().all(|(ix, p)| {
+                                        p.to_display_point(&map).row()
+                                            == selections[ix].head().row()
+                                    })
+                            })
+                            .unwrap_or(false);
+                        let new_positions = selections
+                            .into_iter()
+                            .map(|s| map.display_point_to_anchor(s.head(), Bias::Left))
+                            .collect();
+                        editor
+                            .change_list
+                            .push_to_change_list(pop_state, new_positions);
+                    }
+                }
+                _ => (),
             },
         ));
 
@@ -13303,6 +13375,48 @@ impl Editor {
             .or_else(|| snapshot.buffer_snapshot.diff_hunk_before(Point::MAX))
     }
 
+    fn go_to_next_change(
+        &mut self,
+        _: &GoToNextChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selections) = self
+            .change_list
+            .next_change(1, Direction::Next)
+            .map(|s| s.to_vec())
+        {
+            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                let map = s.display_map();
+                s.select_display_ranges(selections.iter().map(|a| {
+                    let point = a.to_display_point(&map);
+                    point..point
+                }))
+            })
+        }
+    }
+
+    fn go_to_previous_change(
+        &mut self,
+        _: &GoToPreviousChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selections) = self
+            .change_list
+            .next_change(1, Direction::Prev)
+            .map(|s| s.to_vec())
+        {
+            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                let map = s.display_map();
+                s.select_display_ranges(selections.iter().map(|a| {
+                    let point = a.to_display_point(&map);
+                    point..point
+                }))
+            })
+        }
+    }
+
     fn go_to_line<T: 'static>(
         &mut self,
         position: Anchor,
@@ -17711,11 +17825,7 @@ impl Editor {
             .and_then(|e| e.to_str())
             .map(|a| a.to_string()));
 
-        let vim_mode = cx
-            .global::<SettingsStore>()
-            .raw_user_settings()
-            .get("vim_mode")
-            == Some(&serde_json::Value::Bool(true));
+        let vim_mode = vim_enabled(cx);
 
         let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
         let copilot_enabled = edit_predictions_provider
@@ -18159,6 +18269,13 @@ impl Editor {
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
+}
+
+fn vim_enabled(cx: &App) -> bool {
+    cx.global::<SettingsStore>()
+        .raw_user_settings()
+        .get("vim_mode")
+        == Some(&serde_json::Value::Bool(true))
 }
 
 // Consider user intent and default settings

@@ -324,7 +324,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum 0.27.1",
  "thiserror 2.0.12",
  "workspace-hack",
 ]
@@ -337,9 +337,9 @@ checksum = "34cd60c5e3152cef0a592f1b296f1cc93715d89d2551d85315828c3a09575ff4"
 
 [[package]]
 name = "anyhow"
-version = "1.0.97"
+version = "1.0.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
+checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
 name = "approx"
@@ -567,7 +567,7 @@ dependencies = [
  "settings",
  "smallvec",
  "smol",
- "strum 0.26.3",
+ "strum 0.27.1",
  "telemetry_events",
  "text",
  "theme",
@@ -1884,7 +1884,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum 0.27.1",
  "thiserror 2.0.12",
  "tokio",
  "workspace-hack",
@@ -3031,7 +3031,7 @@ dependencies = [
  "settings",
  "sha2",
  "sqlx",
- "strum 0.26.3",
+ "strum 0.27.1",
  "subtle",
  "supermaven_api",
  "telemetry_events",
@@ -3051,6 +3051,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -3363,7 +3364,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.26.3",
+ "strum 0.27.1",
  "task",
  "theme",
  "ui",
@@ -5125,7 +5126,7 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
- "strum 0.26.3",
+ "strum 0.27.1",
  "telemetry",
  "theme",
  "ui",
@@ -5976,7 +5977,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "strum 0.26.3",
+ "strum 0.27.1",
  "telemetry",
  "theme",
  "time",
@@ -6069,7 +6070,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum 0.27.1",
  "workspace-hack",
 ]
 
@@ -6175,7 +6176,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "smol",
- "strum 0.26.3",
+ "strum 0.27.1",
  "sum_tree",
  "taffy",
  "thiserror 2.0.12",
@@ -6823,7 +6824,7 @@ name = "icons"
 version = "0.1.0"
 dependencies = [
  "serde",
- "strum 0.26.3",
+ "strum 0.27.1",
  "workspace-hack",
 ]
 
@@ -7091,7 +7092,7 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "serde",
- "strum 0.26.3",
+ "strum 0.27.1",
  "util",
  "workspace-hack",
 ]
@@ -7677,7 +7678,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "strum 0.26.3",
+ "strum 0.27.1",
  "telemetry_events",
  "thiserror 2.0.12",
  "util",
@@ -7737,7 +7738,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "strum 0.26.3",
+ "strum 0.27.1",
  "theme",
  "thiserror 2.0.12",
  "tiktoken-rs",
@@ -8710,7 +8711,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum 0.27.1",
  "workspace-hack",
 ]
 
@@ -9557,7 +9558,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum 0.26.3",
+ "strum 0.27.1",
  "workspace-hack",
 ]
 
@@ -12136,7 +12137,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "strum 0.26.3",
+ "strum 0.27.1",
  "tracing",
  "util",
  "workspace-hack",
@@ -13709,7 +13710,7 @@ dependencies = [
  "settings",
  "simplelog",
  "story",
- "strum 0.26.3",
+ "strum 0.27.1",
  "theme",
  "title_bar",
  "ui",
@@ -14446,7 +14447,7 @@ dependencies = [
  "serde_json_lenient",
  "serde_repr",
  "settings",
- "strum 0.26.3",
+ "strum 0.27.1",
  "thiserror 2.0.12",
  "util",
  "uuid",
@@ -14480,7 +14481,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "simplelog",
- "strum 0.26.3",
+ "strum 0.27.1",
  "theme",
  "vscode_theme",
  "workspace-hack",
@@ -15481,7 +15482,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
- "strum 0.26.3",
+ "strum 0.27.1",
  "theme",
  "ui_macros",
  "util",
@@ -17682,7 +17683,7 @@ dependencies = [
  "settings",
  "smallvec",
  "sqlez",
- "strum 0.26.3",
+ "strum 0.27.1",
  "task",
  "telemetry",
  "tempfile",
@@ -18388,9 +18389,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a5e1b5b3ace3fb55292a4c14036723bb8a01fac4aeaa3c2b63b51228412f94"
+checksum = "9ee4d410dbc030c3e6e3af78fc76296f6bebe20dcb6d7d3fa24bca306fc8c1ce"
 dependencies = [
  "serde",
  "serde_json",

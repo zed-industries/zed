@@ -792,9 +792,47 @@ fn create_new_session(
         this.update(cx, |_, cx| {
             cx.subscribe(
                 &session,
-                move |this: &mut DapStore, _, event: &SessionStateEvent, cx| match event {
+                move |this: &mut DapStore, session, event: &SessionStateEvent, cx| match event {
                     SessionStateEvent::Shutdown => {
                         this.shutdown_session(session_id, cx).detach_and_log_err(cx);
+                    }
+                    SessionStateEvent::Restart => {
+                        let Some((config, binary)) = session.read_with(cx, |session, _| {
+                            session
+                                .configuration()
+                                .map(|config| (config, session.binary().clone()))
+                        }) else {
+                            log::error!("Failed to get debug config from session");
+                            return;
+                        };
+
+                        let mut curr_session = session;
+                        while let Some(parent_id) = curr_session.read(cx).parent_id() {
+                            if let Some(parent_session) = this.sessions.get(&parent_id).cloned() {
+                                curr_session = parent_session;
+                            } else {
+                                log::error!("Failed to get parent session from parent session id");
+                                break;
+                            }
+                        }
+
+                        let session_id = curr_session.read(cx).session_id();
+
+                        let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
+
+                        cx.spawn(async move |this, cx| {
+                            task.await;
+
+                            this.update(cx, |this, cx| {
+                                this.sessions.remove(&session_id);
+                                this.new_session(binary, config, None, cx)
+                            })?
+                            .1
+                            .await?;
+
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
                     }
                 },
             )

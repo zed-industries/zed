@@ -75,6 +75,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "re
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 assistant = { workspace = true, features = ["test-support"] }

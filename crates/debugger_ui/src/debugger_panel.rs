@@ -33,6 +33,7 @@ use std::sync::Arc;
 use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
+use util::debug_panic;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -316,8 +317,20 @@ impl DebugPanel {
                             .any(|item| item.read(cx).session_id(cx) == session_id)
                         {
                             // We already have an item for this session.
+                            debug_panic!("We should never reuse session ids");
                             return;
                         }
+
+                        this.sessions.retain(|session| {
+                            session
+                                .read(cx)
+                                .mode()
+                                .as_running()
+                                .map_or(false, |running_state| {
+                                    !running_state.read(cx).session().read(cx).is_terminated()
+                                })
+                        });
+
                         let session_item = DebugSession::running(
                             project,
                             this.workspace.clone(),
@@ -769,9 +782,6 @@ impl DebugPanel {
                                             this.restart_session(cx);
                                         },
                                     ))
-                                    .disabled(
-                                        !capabilities.supports_restart_request.unwrap_or_default(),
-                                    )
                                     .tooltip(move |window, cx| {
                                         Tooltip::text("Restart")(window, cx)
                                     }),

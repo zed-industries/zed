@@ -705,12 +705,12 @@ pub fn map_to_language_model_completion_events(
                             update_usage(&mut state.usage, &message.usage);
                             return Some((
                                 vec![
-                                    Ok(LanguageModelCompletionEvent::StartMessage {
-                                        message_id: message.id,
-                                    }),
                                     Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
                                         &state.usage,
                                     ))),
+                                    Ok(LanguageModelCompletionEvent::StartMessage {
+                                        message_id: message.id,
+                                    }),
                                 ],
                                 state,
                             ));
