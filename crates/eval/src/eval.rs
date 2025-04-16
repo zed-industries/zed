@@ -310,7 +310,7 @@ async fn run_example(
     let mut results = Vec::new();
     for round in 0..judge_repetitions {
         let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
-        
+
         // Log telemetry for this judge result
         if let Ok(judge_output) = &judge_result {
             let cohort_id = example
@@ -337,7 +337,7 @@ async fn run_example(
                 diagnostics_summary = run_output.diagnostics
             );
         }
-        
+
         results.push(judge_result);
     }
 
