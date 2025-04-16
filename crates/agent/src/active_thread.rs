@@ -1737,8 +1737,16 @@ impl ActiveThread {
             ),
         };
 
+        let after_editing_message = self
+            .editing_message
+            .as_ref()
+            .map_or(false, |(editing_message_id, _)| {
+                message_id > *editing_message_id
+            });
+
         v_flex()
             .w_full()
+            .when(after_editing_message, |parent| parent.opacity(0.2))
             .when_some(checkpoint, |parent, checkpoint| {
                 let mut is_pending = false;
                 let mut error = None;
