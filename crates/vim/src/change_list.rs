@@ -1,6 +1,4 @@
-use editor::{
-    Anchor, Bias, Direction, Editor, display_map::ToDisplayPoint, movement, scroll::Autoscroll,
-};
+use editor::{Bias, Direction, Editor, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
 use gpui::{Context, Window, actions};
 
 use crate::{Vim, state::Mode};
@@ -16,47 +14,6 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 }
 
-pub struct ChangeList {
-    changes: Vec<Vec<Anchor>>,
-    position: Option<usize>,
-}
-
-impl ChangeList {
-    pub fn new() -> Self {
-        Self {
-            changes: Vec::new(),
-            position: None,
-        }
-    }
-
-    pub fn next_change(&mut self, count: usize, direction: Direction) -> Option<&[Anchor]> {
-        if self.changes.is_empty() {
-            return None;
-        }
-
-        let prev = self.position.unwrap_or(self.changes.len());
-        let next = if direction == Direction::Prev {
-            prev.saturating_sub(count)
-        } else {
-            (prev + count).min(self.changes.len() - 1)
-        };
-        self.position = Some(next);
-        self.changes.get(next).map(|anchors| anchors.as_slice())
-    }
-
-    pub fn push_to_change_list(&mut self, pop_state: bool, new_positions: Vec<Anchor>) {
-        self.position.take();
-        if pop_state {
-            self.changes.pop();
-        }
-        self.changes.push(new_positions.clone());
-    }
-
-    pub fn last(&self) -> Option<&[Anchor]> {
-        self.changes.last().map(|anchors| anchors.as_slice())
-    }
-}
-
 impl Vim {
     fn move_to_change(
         &mut self,
@@ -66,8 +23,12 @@ impl Vim {
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
-            if let Some(selections) = vim.change_list.next_change(count, direction) {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            if let Some(selections) = editor
+                .change_list
+                .next_change(count, direction)
+                .map(|s| s.to_vec())
+            {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     let map = s.display_map();
                     s.select_display_ranges(selections.iter().map(|a| {
@@ -84,7 +45,7 @@ impl Vim {
             let (map, selections) = editor.selections.all_adjusted_display(cx);
             let buffer = editor.buffer().clone();
 
-            let pop_state = vim
+            let pop_state = editor
                 .change_list
                 .last()
                 .map(|previous| {
@@ -107,7 +68,8 @@ impl Vim {
                 })
                 .collect::<Vec<_>>();
 
-            vim.change_list
+            editor
+                .change_list
                 .push_to_change_list(pop_state, new_positions.clone());
 
             (new_positions, buffer)

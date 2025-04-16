@@ -20,7 +20,6 @@ mod surrounds;
 mod visual;
 
 use anyhow::Result;
-use change_list::ChangeList;
 use collections::HashMap;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, ToPoint,
@@ -324,7 +323,6 @@ pub(crate) struct Vim {
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
-    pub(crate) change_list: ChangeList,
 
     pub(crate) current_tx: Option<TransactionId>,
     pub(crate) current_anchor: Option<Selection<Anchor>>,
@@ -370,7 +368,6 @@ impl Vim {
             replacements: Vec::new(),
 
             stored_visual_mode: None,
-            change_list: ChangeList::new(),
             current_tx: None,
             current_anchor: None,
             undo_modes: HashMap::default(),
