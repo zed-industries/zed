@@ -375,18 +375,26 @@ impl Example {
                                 pending_tool_use,
                                 ..
                             } => {
-                                if let Some(tool_use) = pending_tool_use {
-                                    let message = format!("TOOL FINISHED: {}", tool_use.name);
-                                    println!("{}{message}", log_prefix);
-                                    writeln!(&mut output_file, "\n{}", message).log_err();
-                                }
                                 thread.update(cx, |thread, _cx| {
-                                    if let Some(tool_result) = thread.tool_result(&tool_use_id) {
-                                        writeln!(&mut output_file, "\n{}\n", tool_result.content).log_err();
-                                        let mut tool_use_counts = tool_use_counts.lock().unwrap();
-                                        *tool_use_counts
-                                            .entry(tool_result.tool_name.clone())
-                                            .or_insert(0) += 1;
+                                    if let Some(tool_use) = pending_tool_use {
+                                        if let Some(tool_result) = thread.tool_result(&tool_use_id) {
+                                            let message = if tool_result.is_error {
+                                                format!("TOOL FAILED: {}", tool_use.name)
+                                            } else {
+                                                format!("TOOL FINISHED: {}", tool_use.name)
+                                            };
+                                            println!("{log_prefix}{message}");
+                                            writeln!(&mut output_file, "\n{}", message).log_err();
+                                            writeln!(&mut output_file, "\n{}\n", tool_result.content).log_err();
+                                            let mut tool_use_counts = tool_use_counts.lock().unwrap();
+                                            *tool_use_counts
+                                                .entry(tool_result.tool_name.clone())
+                                                .or_insert(0) += 1;
+                                        } else {
+                                            let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
+                                            println!("{log_prefix}{message}");
+                                            writeln!(&mut output_file, "\n{}", message).log_err();
+                                        }
                                     }
                                 })?;
                             }
