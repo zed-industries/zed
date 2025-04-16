@@ -1,5 +1,4 @@
 mod cloud;
-mod open_ai;
 
 use client::Client;
 use feature_flags::{FeatureFlagAppExt, ZedProWebSearchTool};
