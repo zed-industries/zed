@@ -12,7 +12,7 @@ use crate::session::running::{
     module_list::ModuleList, stack_frame_list::StackFrameList, variable_list::VariableList,
 };
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Hash, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) enum DebuggerPaneItem {
     Console,
     Variables,
@@ -22,6 +22,17 @@ pub(crate) enum DebuggerPaneItem {
 }
 
 impl DebuggerPaneItem {
+    pub(crate) fn all() -> &'static [DebuggerPaneItem] {
+        static VARIANTS: &[DebuggerPaneItem] = &[
+            DebuggerPaneItem::Console,
+            DebuggerPaneItem::Variables,
+            DebuggerPaneItem::BreakpointList,
+            DebuggerPaneItem::Frames,
+            DebuggerPaneItem::Modules,
+        ];
+        VARIANTS
+    }
+
     pub(crate) fn to_shared_string(self) -> SharedString {
         match self {
             DebuggerPaneItem::Console => SharedString::new_static("Console"),
@@ -30,6 +41,12 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::Frames => SharedString::new_static("Frames"),
             DebuggerPaneItem::Modules => SharedString::new_static("Modules"),
         }
+    }
+}
+
+impl From<DebuggerPaneItem> for SharedString {
+    fn from(item: DebuggerPaneItem) -> Self {
+        item.to_shared_string()
     }
 }
 

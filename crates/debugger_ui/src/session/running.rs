@@ -11,7 +11,7 @@ use crate::persistence::{self, DebuggerPaneItem, SerializedPaneLayout};
 
 use super::DebugPanelItemEvent;
 use breakpoint_list::BreakpointList;
-use collections::HashMap;
+use collections::{HashMap, IndexMap};
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
 use gpui::{
@@ -474,6 +474,21 @@ impl RunningState {
             pane_close_subscriptions,
             _schedule_serialize: None,
         }
+    }
+
+    pub(crate) fn pane_items_status(&self, cx: &App) -> IndexMap<DebuggerPaneItem, bool> {
+        let mut pane_item_status =
+            IndexMap::from_iter(DebuggerPaneItem::all().iter().map(|kind| (*kind, false)));
+        self.panes.panes().iter().for_each(|pane| {
+            pane.read(cx)
+                .items()
+                .filter_map(|item| item.act_as::<SubView>(cx))
+                .for_each(|view| {
+                    pane_item_status.insert(view.read(cx).kind, true);
+                });
+        });
+
+        pane_item_status
     }
 
     fn serialize_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
