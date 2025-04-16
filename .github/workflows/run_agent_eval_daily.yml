@@ -27,6 +27,12 @@ jobs:
           sudo apt-get install -y libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev libxcb-render0-dev libxcb-randr0-dev libxcb-xtest0-dev libxcb-keysyms1-dev libxext-dev libxrender-dev libxrandr-dev libxtst-dev libxfixes-dev pkg-config libasound2-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev
           ./script/headless && ./script/install-mold 2.34.0
 
+      - name: Create required directories
+        run: |
+          mkdir -p /home/runner/.config/zed
+          mkdir -p ./crates/eval/repos
+          mkdir -p ./crates/eval/worktrees
+
       - name: Set up Anthropic API key
         run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
 
