@@ -16585,7 +16585,6 @@ name = "web_search"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "collections",
  "gpui",
  "serde",
@@ -16598,7 +16597,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "collections",
  "futures 0.3.31",
  "gpui",
  "http_client",

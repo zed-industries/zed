@@ -13,7 +13,6 @@ path = "src/web_search.rs"
 
 [dependencies]
 anyhow.workspace = true
-client.workspace = true
 collections.workspace = true
 gpui.workspace = true
 serde.workspace = true
