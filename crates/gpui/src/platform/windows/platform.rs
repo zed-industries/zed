@@ -33,8 +33,8 @@ use crate::{platform::blade::BladeContext, *};
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
-    gpu_context: BladeContext,
     // The below members will never change throughout the entire lifecycle of the app.
+    gpu_context: BladeContext,
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
@@ -44,6 +44,7 @@ pub(crate) struct WindowsPlatform {
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     validation_number: usize,
     main_thread_id_win32: u32,
+    keyboard_mapper: WindowsKeyboardMapper,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -107,6 +108,7 @@ impl WindowsPlatform {
         let raw_window_handles = RwLock::new(SmallVec::new());
         let gpu_context = BladeContext::new().expect("Unable to init GPU context");
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let keyboard_mapper = WindowsKeyboardMapper::new();
 
         Self {
             state,
@@ -121,6 +123,7 @@ impl WindowsPlatform {
             bitmap_factory,
             validation_number,
             main_thread_id_win32,
+            keyboard_mapper,
         }
     }
 
@@ -684,6 +687,10 @@ impl Platform for WindowsPlatform {
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Vec<SmallVec<[PathBuf; 2]>> {
         self.update_jump_list(menus, entries)
+    }
+
+    fn keyboard_mapper(&self) -> &dyn KeyboardMapper {
+        &self.keyboard_mapper
     }
 }
 
