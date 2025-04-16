@@ -455,6 +455,41 @@ mod tests {
             test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›: Wat?");
         }
 
+        #[cfg(target_os = "windows")]
+        mod windows {
+            // Lots of fun to be had with long file paths and UNC paths
+            // See <https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation>
+            // See <https://users.rust-lang.org/t/understanding-windows-paths/58583>
+            // See <https://github.com/rust-lang/cargo/issues/13919>
+
+            #[test]
+            fn unc() {
+                test_path!(r#"‹«\\server\share\👉test\cool.rs»›"#);
+                test_path!(r#"‹«\\server\share\test\cool👉.rs»›"#);
+            }
+
+            mod issues {
+                #[test]
+                #[should_panic(
+                    expected = r#"Path = «\\C:\\test\\cool.rs», at grid cells (1, 0)..=(6, 0)"#
+                )]
+                fn verbatim() {
+                    test_path!(r#"‹\\?\«C:\👉test\cool.rs»›"#);
+                    test_path!(r#"‹\\?\«C:\test\cool👉.rs»›"#);
+                }
+
+                #[test]
+                #[should_panic(
+                    expected = r#"Path = «\\UNC\\server\\share\\test\\cool.rs», at grid cells (1, 0)..=(10, 2)"#
+                )]
+                fn verbatim_unc() {
+                    // TODO: This isn't quite right, we want to say the path should be "\\server\share\👉test\cool.rs"
+                    test_path!(r#"‹«\\?\UNC\server\share\👉test\cool.rs»›"#);
+                    test_path!(r#"‹«\\?\UNC\server\share\test\cool👉.rs»›"#);
+                }
+            }
+        }
+
         #[test]
         fn file_iri() {
             test_path!("‹file://«/👉test/cool/index.rs»›");
@@ -486,14 +521,14 @@ mod tests {
             test_path!(4, 8, 16; "‹«/例/cool.rs»:«4»:«👉2»›");
 
             // Cargo output
-            test_path!(4, 25, 30; "    Compiling Cool (‹«/👉例/Cool»›)");
-            test_path!(4, 25, 30; "    Compiling Cool (‹«/例👈/Cool»›)");
+            test_path!(4, 27, 30; "    Compiling Cool (‹«/👉例/Cool»›)");
+            test_path!(4, 27, 30; "    Compiling Cool (‹«/例👈/Cool»›)");
 
             // Python
             test_path!(4, 11; "‹«👉例wesome.py»›");
             test_path!(4, 11; "‹«例👈wesome.py»›");
-            test_path!(6, 15, 40; "    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
-            test_path!(6, 15, 40; "    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
+            test_path!(6, 17, 40; "    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
+            test_path!(6, 17, 40; "    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
         }
 
         #[test]
@@ -518,7 +553,8 @@ mod tests {
             // in the category of people experiencing failures, but somewhat randomly and not really
             // understanding what situation is causing it to work or not work, which isn't a great experience,
             // even though it might not have been reported as an actual issue with a clear repro case.
-            #[should_panic(expected = "Path = «例»")]
+            #[cfg_attr(not(target_os = "windows"), should_panic(expected = "Path = «例»"))]
+            #[cfg_attr(target_os = "windows", should_panic(expected = r#"Path = «C:\\例»"#))]
             fn issue_alacritty_bugs_with_wide_char_at_line_wrap() {
                 // Rust paths
                 test_path!("‹«/👉例/cool.rs»›");
@@ -572,8 +608,17 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(
-                expected = "Path = «/test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/», at grid cells (0, 0)..=(15, 1)"
+            #[cfg_attr(
+                not(target_os = "windows"),
+                should_panic(
+                    expected = "Path = «/test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/», at grid cells (0, 0)..=(15, 1)"
+                )
+            )]
+            #[cfg_attr(
+                target_os = "windows",
+                should_panic(
+                    expected = r#"Path = «C:\\test\\%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82\\», at grid cells (0, 0)..=(16, 0)"#
+                )
             )]
             fn issue_file_iri_with_percent_encoded_characters() {
                 // Non-space characters
@@ -589,7 +634,14 @@ mod tests {
         /// Minor issues arguably not important enough to fix/workaround...
         mod nits {
             #[test]
-            #[should_panic(expected = "Path = «/test/cool.rs(4»")]
+            #[cfg_attr(
+                not(target_os = "windows"),
+                should_panic(expected = "Path = «/test/cool.rs(4»")
+            )]
+            #[cfg_attr(
+                target_os = "windows",
+                should_panic(expected = r#"Path = «C:\\test\\cool.rs(4»"#)
+            )]
             fn alacritty_bugs_with_two_columns() {
                 test_path!(2; "‹«/👉test/cool.rs»(«4»)›");
                 test_path!(2; "‹«/test/cool.rs»(«👉4»)›");
@@ -600,8 +652,17 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(
-                expected = "Path = «/test/cool.rs», line = 1, at grid cells (0, 0)..=(9, 0)"
+            #[cfg_attr(
+                not(target_os = "windows"),
+                should_panic(
+                    expected = "Path = «/test/cool.rs», line = 1, at grid cells (0, 0)..=(9, 0)"
+                )
+            )]
+            #[cfg_attr(
+                target_os = "windows",
+                should_panic(
+                    expected = r#"Path = «C:\\test\\cool.rs», line = 1, at grid cells (0, 0)..=(9, 2)"#
+                )
             )]
             fn invalid_row_column_should_be_part_of_path() {
                 test_path!("‹«/👉test/cool.rs:1:618033988749»›");
@@ -616,7 +677,14 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(expected = "Path = «/test/cool.rs»")]
+            #[cfg_attr(
+                not(target_os = "windows"),
+                should_panic(expected = "Path = «/test/cool.rs»")
+            )]
+            #[cfg_attr(
+                target_os = "windows",
+                should_panic(expected = r#"Path = «C:\\test\\cool.rs»"#)
+            )]
             fn many_trailing_colons_should_be_parsed_as_part_of_the_path() {
                 test_path!("‹«/test/cool.rs:::👉:»›");
                 test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
@@ -696,7 +764,30 @@ mod tests {
         let mut term = Term::new(Config::default(), &term_size, VoidListener);
 
         for text in test_lines.clone().into_iter() {
-            let text = text.chars().collect_vec();
+            let mut text = text.chars().collect_vec();
+
+            // Convert path to Windows style if on Windows
+            if cfg!(windows) && !is_iri {
+                if let Some(mut path_start) =
+                    text.iter().position(|&c| c == '«').map(|index| index + 1)
+                {
+                    let mut path_end = text.iter().position(|&c| c == '»').unwrap() - 1;
+
+                    if text[path_start] == '/' {
+                        text.insert(path_start, ':');
+                        text.insert(path_start, 'C');
+                        path_start += 2;
+                        path_end += 2;
+                    }
+
+                    for index in path_start..=path_end {
+                        if text[index] == '/' {
+                            text[index] = '\\';
+                        }
+                    }
+                }
+            }
+
             for index in 0..text.len() {
                 match text[index] {
                     '👉' => {
@@ -878,6 +969,13 @@ mod tests {
             };
 
         assert_eq!(
+            expected_hyperlink.is_iri,
+            false,
+            "\n    at {source_location}\nExpected a iri, but was a path:\n{}",
+            format_renderable_content(term, expected_hyperlink)
+        );
+
+        assert_eq!(
             format_path_with_position_and_match(
                 &PathWithPosition {
                     path: PathBuf::from(expected_hyperlink.iri_or_path.clone()),
@@ -911,6 +1009,13 @@ mod tests {
         };
 
         assert_eq!(
+            expected_hyperlink.is_iri,
+            true,
+            "\n    at {source_location}\nExpected a path, but was a iri:\n{}",
+            format_renderable_content(term, expected_hyperlink)
+        );
+
+        assert_eq!(
             format_iri_and_match(
                 &expected_hyperlink.iri_or_path,
                 &expected_hyperlink.hyperlink_match
@@ -937,10 +1042,6 @@ mod tests {
             .find_from_grid_point(&mut term, expected_hyperlink.hovered_grid_point)
         {
             Some((hyperlink_word, false, hyperlink_match)) => {
-                assert_eq!(
-                    expected_hyperlink.is_iri, false,
-                    "\n    at {source_location}\nExpected a iri, but was a path"
-                );
                 check_path_with_position_and_match(
                     &term,
                     &expected_hyperlink,
@@ -950,10 +1051,6 @@ mod tests {
                 );
             }
             Some((hyperlink_word, true, hyperlink_match)) => {
-                assert_eq!(
-                    expected_hyperlink.is_iri, true,
-                    "\n    at {source_location}\nExpected a path, but was a iri"
-                );
                 check_iri_and_match(
                     &term,
                     &expected_hyperlink,
