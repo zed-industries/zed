@@ -11751,6 +11751,7 @@ name = "remote_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "async-watch",
  "backtrace",
  "cargo_toml",
