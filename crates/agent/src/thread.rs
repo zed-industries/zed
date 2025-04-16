@@ -1079,7 +1079,7 @@ impl Thread {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
-                                thread.update_token_usage_at_last_message(token_usage.clone());
+                                thread.update_token_usage_at_last_message(token_usage);
                                 thread.cumulative_token_usage = thread.cumulative_token_usage
                                     + token_usage
                                     - current_token_usage;

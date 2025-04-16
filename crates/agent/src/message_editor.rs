@@ -957,7 +957,7 @@ impl MessageEditor {
     }
 
     pub fn last_estimated_token_count(&self) -> Option<usize> {
-        self.last_estimated_token_count.clone()
+        self.last_estimated_token_count
     }
 
     pub fn is_waiting_to_update_token_count(&self) -> bool {
