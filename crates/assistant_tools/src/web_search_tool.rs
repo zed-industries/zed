@@ -60,7 +60,7 @@ impl Tool for WebSearchTool {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
-        let Some(provider) = WebSearchRegistry::read_global(cx).default_provider() else {
+        let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {
             return Task::ready(Err(anyhow!("Web search is not available."))).into();
         };
 
