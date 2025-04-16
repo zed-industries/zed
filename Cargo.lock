@@ -704,6 +704,7 @@ dependencies = [
  "assistant_tool",
  "chrono",
  "collections",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "html_to_markdown",

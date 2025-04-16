@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
+use feature_flags::FeatureFlagAppExt;
 use gpui::App;
 use http_client::HttpClientWithUrl;
 use move_path_tool::MovePathTool;
@@ -80,7 +81,17 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(SymbolInfoTool);
     registry.register_tool(TerminalTool);
     registry.register_tool(ThinkingTool);
-    registry.register_tool(WebSearchTool);
+
+    cx.observe_flag::<feature_flags::ZedProWebSearchTool, _>({
+        move |is_enabled, cx| {
+            if is_enabled {
+                ToolRegistry::global(cx).register_tool(WebSearchTool);
+            } else {
+                ToolRegistry::global(cx).unregister_tool(WebSearchTool);
+            }
+        }
+    })
+    .detach();
 }
 
 #[cfg(test)]
