@@ -166,8 +166,7 @@ impl Anchor {
     pub fn is_valid(&self, snapshot: &MultiBufferSnapshot) -> bool {
         if *self == Anchor::min() || *self == Anchor::max() {
             true
-        } else if let Some(excerpt) = snapshot.excerpt(snapshot.latest_excerpt_id(self.excerpt_id))
-        {
+        } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
             excerpt.contains(self)
                 && (self.text_anchor == excerpt.range.context.start
                     || self.text_anchor == excerpt.range.context.end
