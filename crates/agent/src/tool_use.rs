@@ -33,7 +33,7 @@ pub enum ToolUseStatus {
     NeedsConfirmation,
     Pending,
     Running,
-    Finished(SharedString),
+    Finished(ToolOutput),
     Error(SharedString),
 }
 
@@ -351,20 +351,17 @@ impl ToolUseState {
 
                 // Get string representation of the tool result
                 let response_text = tool_result.response_for_model();
-                
+
                 // Check length and truncate if needed
                 let final_tool_result = if response_text.len() <= tool_output_limit {
                     response_text.to_string()
                 } else {
                     let response_string = response_text.to_string();
-                    let truncated = truncate_lines_to_byte_limit(&response_string, tool_output_limit);
+                    let truncated =
+                        truncate_lines_to_byte_limit(&response_string, tool_output_limit);
                     let truncated_len = truncated.len();
 
-                    format!(
-                        "Tool result too long. The first {} bytes:\n\n{}",
-                        truncated_len,
-                        truncated
-                    )
+                    format!("Tool result too long. The first {truncated_len} bytes:\n\n{truncated}")
                 };
 
                 self.tool_results.insert(

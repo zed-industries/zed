@@ -22,7 +22,8 @@ use gpui::{
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role, StringToolOutput, ToolOutput,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelToolUseId, Role, StringToolOutput,
+    ToolOutput,
 };
 use markdown::parser::CodeBlockKind;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, without_fences};
@@ -38,6 +39,7 @@ use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::ResultExt as _;
+use util::markdown::MarkdownString;
 use workspace::{OpenOptions, Workspace};
 
 use crate::context_store::ContextStore;
@@ -76,8 +78,7 @@ struct RenderedMessage {
 struct RenderedToolUse {
     label: Entity<Markdown>,
     input: Entity<Markdown>,
-    output: Entity<Markdown>,
-    tool_output: ToolOutput,
+    output: ToolOutput,
 }
 
 impl RenderedMessage {
@@ -732,22 +733,28 @@ impl ActiveThread {
         tool_use_id: LanguageModelToolUseId,
         tool_label: impl Into<SharedString>,
         tool_input: &serde_json::Value,
-        tool_output: SharedString,
+        tool_output: ToolOutput,
         cx: &mut Context<Self>,
     ) {
         let rendered = RenderedToolUse {
             label: render_tool_use_markdown(tool_label.into(), self.language_registry.clone(), cx),
             input: render_tool_use_markdown(
-                format!(
-                    "```json\n{}\n```",
-                    serde_json::to_string_pretty(tool_input).unwrap_or_default()
+                MarkdownString::code_block(
+                    "json",
+                    &serde_json::to_string_pretty(tool_input).unwrap_or_default(),
                 )
+                .to_string()
                 .into(),
                 self.language_registry.clone(),
                 cx,
             ),
-            output: render_tool_use_markdown(tool_output.clone(), self.language_registry.clone(), cx),
-            tool_output: StringToolOutput::new(tool_output),
+            output: render_tool_use_markdown(
+                tool_output.clone(),
+                self.language_registry.clone(),
+                cx,
+            ),
+            output: StringToolOutput::new(tool_output, language_registry: Arc<LanguageRegistry>),
+
         };
         self.rendered_tool_uses
             .insert(tool_use_id.clone(), rendered);
@@ -2105,7 +2112,7 @@ impl ActiveThread {
 
                                 if let Some(_tool) = tool_registry.tool(&tool_name) {
                                     // Tool doesn't have a render method, but ToolOutput does
-                                    match rendered.tool_output.render(window, cx) {
+                                    match rendered.output.render(window, cx) {
                                         Some(rendered) => rendered,
                                         None => {
                                             // Default to rendering the output as markdown

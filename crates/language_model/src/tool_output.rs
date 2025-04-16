@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ToolOutput {
     /// A simple string output
-    String(StringToolOutput),
+    String {
+        string: SharedString,
+        rendered: Entity<Markdown>,
+    },
     // Add other tool output types here as variants
 }
 
@@ -23,17 +26,8 @@ impl ToolOutput {
     /// Returns None by default to indicate that rendering has not yet been
     /// implemented for this tool, and the caller should do some default rendering.
     pub fn render(&self, _window: &mut Window, _cx: &App) -> Option<AnyElement> {
-        None
-    }
-}
-
-/// A simple implementation of ToolOutput that wraps a string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct StringToolOutput(pub SharedString);
-
-impl StringToolOutput {
-    /// Create a new StringToolOutput from a string-like value
-    pub fn new(value: impl Into<SharedString>) -> ToolOutput {
-        ToolOutput::String(Self(value.into()))
+        match self {
+            ToolOutput::String { string, rendered } => todo!(),
+        }
     }
 }
