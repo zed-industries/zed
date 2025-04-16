@@ -1103,7 +1103,7 @@ impl AssistantPanel {
                     .id("token-count")
                     .flex_shrink_0()
                     .gap_0p5()
-                    .when(unsent_tokens > 0, |parent| {
+                    .when(!is_generating && unsent_tokens > 0, |parent| {
                         parent
                             .child(
                                 h_flex()
