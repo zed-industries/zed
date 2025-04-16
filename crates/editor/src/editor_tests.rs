@@ -6309,7 +6309,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::«{mod3, mod4}ˇ»;
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    «ˇlet var1 = "text";»
+                    let var1 = "«ˇtext»";
                 }
             "#},
             cx,
