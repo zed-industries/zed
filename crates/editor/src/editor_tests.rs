@@ -6478,6 +6478,23 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
             cx,
         );
     });
+
+    // Test 5: Expansion beyond string
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    «ˇlet var1 = "hello world";»
+                }
+            "#},
+            cx,
+        );
+    });
 }
 
 #[gpui::test]
