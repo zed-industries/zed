@@ -154,7 +154,7 @@ fn main() {
                 println!(
                     "{}Logging to: {}",
                     example.log_prefix,
-                    example.output_file_path.display()
+                    example.run_directory_path.display()
                 );
 
                 let repo_url = example.base.url.clone();
@@ -244,7 +244,7 @@ fn main() {
                 println!(
                     "{}    > {}",
                     " ".repeat(max_name_width),
-                    example.output_file_path.display()
+                    example.run_directory_path.display()
                 );
             }
 

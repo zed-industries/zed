@@ -10,8 +10,8 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{
-    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
-    StopReason, TokenUsage,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
+    MessageContent, Role, StopReason, TokenUsage,
 };
 use project::{LspStore, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
@@ -56,10 +56,8 @@ pub struct Example {
     pub prompt: String,
     /// Content of `criteria.md`
     pub criteria: String,
-    /// Markdown output file to append to
-    pub output_file: Option<Arc<Mutex<File>>>,
-    /// Path to markdown output file
-    pub output_file_path: PathBuf,
+    /// Path to the directory containing the requests and responses for the agentic loop
+    pub run_directory_path: PathBuf,
     /// Prefix used for logging that identifies this example
     pub log_prefix: String,
 }
@@ -93,18 +91,12 @@ impl Example {
         let prompt_path = dir_path.join("prompt.md");
         let criteria_path = dir_path.join("criteria.md");
 
-        let output_file_path = run_dir.join(format!(
-            "{}.md",
-            dir_path.file_name().unwrap().to_str().unwrap()
-        ));
-
         Ok(Example {
             name: name.clone(),
             base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
             criteria: fs::read_to_string(criteria_path.clone())?,
-            output_file: None,
-            output_file_path,
+            run_directory_path: run_dir.to_path_buf(),
             log_prefix: name,
         })
     }
@@ -170,18 +162,7 @@ impl Example {
             .await?;
         }
 
-        // Create the output file
-        let output_file = Arc::new(Mutex::new(File::create(&self.output_file_path)?));
-        self.output_file = Some(output_file);
-
         Ok(())
-    }
-
-    /// Returns the output file, panicking if it's not set
-    fn output_file(&self) -> Arc<Mutex<File>> {
-        self.output_file
-            .clone()
-            .expect("Output file not created. Call setup() first.")
     }
 
     pub fn run(
@@ -296,14 +277,18 @@ impl Example {
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
 
-            {
-                let output_file_ref = this.output_file();
-                let mut output_file = output_file_ref.lock().unwrap();
-                writeln!(&mut output_file, "👤 USER:").log_err();
-                writeln!(&mut output_file, "{}", this.prompt).log_err();
-                writeln!(&mut output_file, "🤖 ASSISTANT:").log_err();
-                output_file.flush().log_err();
-            }
+            thread.update(cx, |thread, _cx| {
+                let mut request_count = 0;
+                let run_dir_path = this.run_directory_path.clone();
+                thread.set_request_callback(move |request, response_events| {
+                    request_count += 1;
+                    let tools_file_path = run_dir_path.join(format!("{request_count}.tools.md"));
+                    let messages_file_path = run_dir_path.join(format!("{request_count}.messages.md"));
+                    let markdown = RequestMarkdown::new(request, response_events);
+                    fs::write(tools_file_path, markdown.tools).expect("failed to write tools file");
+                    fs::write(messages_file_path, markdown.messages).expect("failed to write messages file");
+                });
+            })?;
 
             let tool_use_counts: Arc<Mutex<HashMap<Arc<str>, u32>>> =
                 Mutex::new(HashMap::default()).into();
@@ -316,7 +301,6 @@ impl Example {
 
             let event_handler_task = cx.spawn({
                 // Need to clone the Arc here because the reference from output_file() won't live long enough
-                let output_file = this.output_file.clone().unwrap();
                 let log_prefix = this.log_prefix.clone();
                 let tool_use_counts = tool_use_counts.clone();
                 let thread = thread.downgrade();
@@ -331,8 +315,6 @@ impl Example {
                         let Some(event) = event else {
                             return Err(anyhow!("ThreadEvent channel ended early"));
                         };
-
-                        let mut output_file = output_file.lock().unwrap();
 
                         match event {
                             ThreadEvent::Stopped(reason) => match reason {
@@ -354,18 +336,7 @@ impl Example {
                             ThreadEvent::ShowError(thread_error) => {
                                 break Err(anyhow!(thread_error.clone()));
                             }
-                            ThreadEvent::StreamedAssistantText(_, chunk) => {
-                                write!(&mut output_file, "{}", chunk).log_err();
-                            }
-                            ThreadEvent::StreamedAssistantThinking(_, chunk) => {
-                                write!(&mut output_file, "{}", chunk).log_err();
-                            }
-                            ThreadEvent::UsePendingTools { tool_uses } => {
-                                writeln!(&mut output_file, "\n\nUSING TOOLS:").log_err();
-                                for tool_use in tool_uses {
-                                    writeln!(&mut output_file, "{}: {}", tool_use.name, tool_use.input)
-                                        .log_err();
-                                }
+                            ThreadEvent::StreamedAssistantText(_, _)| ThreadEvent::StreamedAssistantThinking(_, _) | ThreadEvent::UsePendingTools { .. } => {
                             }
                             ThreadEvent::ToolFinished {
                                 tool_use_id,
@@ -375,11 +346,9 @@ impl Example {
                                 if let Some(tool_use) = pending_tool_use {
                                     let message = format!("TOOL FINISHED: {}", tool_use.name);
                                     println!("{}{message}", log_prefix);
-                                    writeln!(&mut output_file, "\n{}", message).log_err();
                                 }
                                 thread.update(cx, |thread, _cx| {
                                     if let Some(tool_result) = thread.tool_result(&tool_use_id) {
-                                        writeln!(&mut output_file, "\n{}\n", tool_result.content).log_err();
                                         let mut tool_use_counts = tool_use_counts.lock().unwrap();
                                         *tool_use_counts
                                             .entry(tool_result.tool_name.clone())
@@ -402,8 +371,6 @@ impl Example {
                                 }
                             }
                         }
-
-                        output_file.flush().log_err();
                     }
                 }
             });
@@ -458,9 +425,9 @@ impl Example {
         repository_diff: String,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
+        let mut output_file = File::create(self.run_directory_path.join("judge.md"))
+            .expect("failed to create judge.md");
         {
-            let output_file_ref = self.output_file();
-            let mut output_file = output_file_ref.lock().unwrap();
             writeln!(&mut output_file, "\n\n").log_err();
             writeln!(&mut output_file, "========================================").log_err();
             writeln!(&mut output_file, "           REPOSITORY DIFF             ").log_err();
@@ -492,9 +459,6 @@ impl Example {
         };
 
         let response = send_language_model_request(model, request, cx).await?;
-
-        let output_file_ref = self.output_file();
-        let mut output_file = output_file_ref.lock().unwrap();
 
         writeln!(&mut output_file, "\n\n").log_err();
         writeln!(&mut output_file, "========================================").log_err();
@@ -698,6 +662,129 @@ pub async fn send_language_model_request(
         Err(err) => Err(anyhow!(
             "Failed to get response from language model. Error was: {err}"
         )),
+    }
+}
+
+struct RequestMarkdown {
+    tools: String,
+    messages: String,
+}
+
+impl RequestMarkdown {
+    fn new(
+        request: &LanguageModelRequest,
+        response_events: &[Result<LanguageModelCompletionEvent, String>],
+    ) -> Self {
+        let mut tools = String::new();
+        let mut messages = String::new();
+
+        // Print the tools
+        if !request.tools.is_empty() {
+            for tool in &request.tools {
+                write!(&mut tools, "# {}\n\n", tool.name).unwrap();
+                write!(&mut tools, "{}\n\n", tool.description).unwrap();
+                write!(
+                    &mut tools,
+                    "```json\n{}\n```\n\n",
+                    serde_json::to_string_pretty(&tool.input_schema).unwrap_or_default()
+                )
+                .unwrap();
+            }
+        }
+
+        // Print the messages
+        for message in &request.messages {
+            let role_str = match message.role {
+                Role::User => "👤 USER",
+                Role::Assistant => "🤖 ASSISTANT",
+                Role::System => "⚙️ SYSTEM",
+            };
+
+            messages.push_str(&format!("# {}\n\n", role_str));
+
+            for content in &message.content {
+                match content {
+                    MessageContent::Text(text) => {
+                        messages.push_str(text);
+                        messages.push_str("\n\n");
+                    }
+                    MessageContent::Image(_) => {
+                        messages.push_str("[IMAGE DATA]\n\n");
+                    }
+                    MessageContent::ToolUse(tool_use) => {
+                        messages.push_str(&format!(
+                            "**Tool Use**: {} (ID: {})\n",
+                            tool_use.name, tool_use.id
+                        ));
+                        messages.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
+                    }
+                    MessageContent::ToolResult(tool_result) => {
+                        messages.push_str(&format!(
+                            "**Tool Result**: {} (ID: {})\n",
+                            tool_result.tool_name, tool_result.tool_use_id
+                        ));
+                        if tool_result.is_error {
+                            messages.push_str("**ERROR:**\n");
+                        }
+                        messages.push_str(&format!("```\n{}\n```\n\n", tool_result.content));
+                    }
+                }
+            }
+        }
+
+        // Print the response events if any
+        if !response_events.is_empty() {
+            messages.push_str("# Response\n\n");
+            let mut text_buffer = String::new();
+            let mut thinking_buffer = String::new();
+
+            let flush_buffers =
+                |output: &mut String, text_buffer: &mut String, thinking_buffer: &mut String| {
+                    if !text_buffer.is_empty() {
+                        output.push_str(&format!("**Text**:\n{}\n\n", text_buffer));
+                        text_buffer.clear();
+                    }
+                    if !thinking_buffer.is_empty() {
+                        output.push_str(&format!("**Thinking**:\n{}\n\n", thinking_buffer));
+                        thinking_buffer.clear();
+                    }
+                };
+
+            for event in response_events {
+                match event {
+                    Ok(LanguageModelCompletionEvent::Text(text)) => {
+                        text_buffer.push_str(text);
+                    }
+                    Ok(LanguageModelCompletionEvent::Thinking(text)) => {
+                        thinking_buffer.push_str(text);
+                    }
+                    Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                        flush_buffers(&mut messages, &mut text_buffer, &mut thinking_buffer);
+                        messages.push_str(&format!("**Stop**: {:?}\n\n", reason));
+                    }
+                    Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                        flush_buffers(&mut messages, &mut text_buffer, &mut thinking_buffer);
+                        messages.push_str(&format!(
+                            "**Tool Use**: {} (ID: {})\n",
+                            tool_use.name, tool_use.id
+                        ));
+                        messages.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
+                    }
+                    Ok(
+                        LanguageModelCompletionEvent::UsageUpdate(_)
+                        | LanguageModelCompletionEvent::StartMessage { .. },
+                    ) => {}
+                    Err(error) => {
+                        flush_buffers(&mut messages, &mut text_buffer, &mut thinking_buffer);
+                        messages.push_str(&format!("**Error**: {}\n\n", error));
+                    }
+                }
+            }
+
+            flush_buffers(&mut messages, &mut text_buffer, &mut thinking_buffer);
+        }
+
+        Self { tools, messages }
     }
 }
 

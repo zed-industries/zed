@@ -265,6 +265,9 @@ pub struct Thread {
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
+    request_callback: Option<
+        Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
+    >,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,6 +318,7 @@ impl Thread {
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            request_callback: None,
         }
     }
 
@@ -382,7 +386,16 @@ impl Thread {
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            request_callback: None,
         }
+    }
+
+    pub fn set_request_callback(
+        &mut self,
+        callback: impl 'static
+        + FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>]),
+    ) {
+        self.request_callback = Some(Box::new(callback));
     }
 
     pub fn id(&self) -> &ThreadId {
@@ -1013,17 +1026,28 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
+        let request_callback_parameters = if self.request_callback.is_some() {
+            Some((request.clone(), Vec::new()))
+        } else {
+            None
+        };
 
         let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion(request, &cx);
             let initial_token_usage =
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
+                let mut request_callback_parameters = request_callback_parameters;
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
 
                 while let Some(event) = events.next().await {
+                    if let Some((_, response_events)) = request_callback_parameters.as_mut() {
+                        response_events
+                            .push(event.as_ref().map_err(|error| error.to_string()).cloned());
+                    }
+
                     let event = event?;
 
                     thread.update(cx, |thread, cx| {
@@ -1126,7 +1150,7 @@ impl Thread {
                     }
                 })?;
 
-                anyhow::Ok(stop_reason)
+                anyhow::Ok((stop_reason, request_callback_parameters))
             };
 
             let result = stream_completion.await;
@@ -1135,14 +1159,24 @@ impl Thread {
                 .update(cx, |thread, cx| {
                     thread.finalize_pending_checkpoint(cx);
                     match result.as_ref() {
-                        Ok(stop_reason) => match stop_reason {
-                            StopReason::ToolUse => {
-                                let tool_uses = thread.use_pending_tools(cx);
-                                cx.emit(ThreadEvent::UsePendingTools { tool_uses });
+                        Ok((stop_reason, request_callback_parameters)) => {
+                            match stop_reason {
+                                StopReason::ToolUse => {
+                                    let tool_uses = thread.use_pending_tools(cx);
+                                    cx.emit(ThreadEvent::UsePendingTools { tool_uses });
+                                }
+                                StopReason::EndTurn => {}
+                                StopReason::MaxTokens => {}
                             }
-                            StopReason::EndTurn => {}
-                            StopReason::MaxTokens => {}
-                        },
+
+                            if let Some((request_callback, (request, response_events))) = thread
+                                .request_callback
+                                .as_mut()
+                                .zip(request_callback_parameters.as_ref())
+                            {
+                                request_callback(request, response_events);
+                            }
+                        }
                         Err(error) => {
                             if error.is::<PaymentRequiredError>() {
                                 cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
@@ -1179,7 +1213,9 @@ impl Thread {
                             thread.cancel_last_completion(cx);
                         }
                     }
-                    cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
+                    cx.emit(ThreadEvent::Stopped(
+                        result.map(|result| result.0).map_err(Arc::new),
+                    ));
 
                     thread.auto_capture_telemetry(cx);
 
