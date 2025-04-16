@@ -16635,7 +16635,6 @@ dependencies = [
  "gpui",
  "http_client",
  "language_model",
- "open_ai",
  "serde",
  "serde_json",
  "web_search",
