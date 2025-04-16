@@ -588,16 +588,31 @@ impl DebugPanel {
             .and_then(|session| session.read(cx).mode().as_running().cloned())
         {
             let pane_items_status = running_state.read(cx).pane_items_status(cx);
+            let this = cx.weak_entity();
 
             let context_menu = ContextMenu::build(window, cx, |mut menu, _window, _cx| {
                 for (item_kind, is_visible) in pane_items_status.into_iter() {
-                    menu = menu.toggleable_entry(
-                        item_kind,
-                        is_visible,
-                        IconPosition::End,
-                        None,
-                        |_, _| {},
-                    );
+                    menu = menu.toggleable_entry(item_kind, is_visible, IconPosition::End, None, {
+                        let this = this.clone();
+                        move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                if let Some(running_state) =
+                                    this.active_session.as_ref().and_then(|session| {
+                                        session.read(cx).mode().as_running().cloned()
+                                    })
+                                {
+                                    running_state.update(cx, |state, cx| {
+                                        if is_visible {
+                                            state.remove_pane_item(item_kind, window, cx);
+                                        } else {
+                                            state.add_pane_item(item_kind, position, window, cx);
+                                        }
+                                    })
+                                }
+                            })
+                            .ok();
+                        }
+                    });
                 }
 
                 menu
