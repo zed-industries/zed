@@ -21,6 +21,7 @@ pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
     pub has_rules: bool,
     pub default_user_rules: Vec<DefaultUserRulesContext>,
+    pub has_default_user_rules: bool,
     pub os: String,
     pub arch: String,
     pub shell: String,
@@ -37,6 +38,7 @@ impl ProjectContext {
         Self {
             worktrees,
             has_rules,
+            has_default_user_rules: !default_user_rules.is_empty(),
             default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),

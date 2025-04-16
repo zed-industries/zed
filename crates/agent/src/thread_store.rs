@@ -159,9 +159,7 @@ impl ThreadStore {
             .collect::<Vec<_>>();
 
         cx.spawn(async move |this, cx| {
-            dbg!("Before await");
             let (results, prompt_store) = future::join(future::join_all(tasks), prompt_store).await;
-            dbg!("After await");
             let default_user_rules = match prompt_store {
                 Err(err) => {
                     log::error!(
@@ -171,7 +169,6 @@ impl ThreadStore {
                 }
                 Ok(prompt_store) => {
                     let prompts = prompt_store.default_prompt_metadata();
-                    dbg!("Before loading user rules");
                     let default_user_rules =
                         future::join_all(prompts.into_iter().map(|prompt_metadata| {
                             let prompt_store = prompt_store.clone();
@@ -181,7 +178,6 @@ impl ThreadStore {
                             }
                         }))
                         .await;
-                    dbg!("After loading user rules");
                     default_user_rules
                         .into_iter()
                         .flat_map(|(prompt, prompt_metadata)| {

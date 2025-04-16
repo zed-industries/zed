@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -914,7 +914,7 @@ impl Thread {
             };
         }
 
-        self.stream_completion(dbg!(request), model, cx);
+        self.stream_completion(request, model, cx);
     }
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
@@ -932,7 +932,7 @@ impl Thread {
     pub fn to_completion_request(
         &self,
         request_kind: RequestKind,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             messages: vec![],
@@ -947,7 +947,12 @@ impl Thread {
                 .generate_assistant_system_prompt(project_context)
             {
                 Err(err) => {
-                    dbg!(err);
+                    let message = format!("{err:?}").into();
+                    log::error!("{message}");
+                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                        header: "Error generating system prompt".into(),
+                        message,
+                    }));
                 }
                 Ok(system_prompt) => {
                     request.messages.push(LanguageModelRequestMessage {
@@ -957,26 +962,13 @@ impl Thread {
                     });
                 }
             }
-            /*
-            if let Some(system_prompt) = self
-                .prompt_builder
-                .generate_assistant_system_prompt(project_context)
-                .context("failed to generate assistant system prompt")
-                .log_err()
-            {
-                dbg!(&system_prompt);
-                request.messages.push(LanguageModelRequestMessage {
-                    role: Role::System,
-                    content: vec![MessageContent::Text(system_prompt)],
-                    cache: true,
-                });
-            } else {
-                dbg!("Failed to generate system prompt");
-            }
-            */
         } else {
-            log::error!("project_context not set.");
-            dbg!("project_context not set");
+            let message = "Context for system prompt unexpectedly not ready.".into();
+            log::error!("{message}");
+            cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                header: "Error generating system prompt".into(),
+                message,
+            }));
         }
 
         for message in &self.messages {
@@ -2161,7 +2153,7 @@ fn main() {{
         assert_eq!(message.context, expected_context);
 
         // Check message in request
-        let request = thread.read_with(cx, |thread, cx| {
+        let request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2253,7 +2245,7 @@ fn main() {{
         assert!(message3.context.contains("file3.rs"));
 
         // Check entire request to make sure all contexts are properly included
-        let request = thread.read_with(cx, |thread, cx| {
+        let request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2305,7 +2297,7 @@ fn main() {{
         assert_eq!(message.context, "");
 
         // Check message in request
-        let request = thread.read_with(cx, |thread, cx| {
+        let request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2325,7 +2317,7 @@ fn main() {{
         assert_eq!(message2.context, "");
 
         // Check that both messages appear in the request
-        let request = thread.read_with(cx, |thread, cx| {
+        let request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2367,7 +2359,7 @@ fn main() {{
         });
 
         // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.read_with(cx, |thread, cx| {
+        let initial_request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2397,7 +2389,7 @@ fn main() {{
         });
 
         // Create a new request and check for the stale buffer warning
-        let new_request = thread.read_with(cx, |thread, cx| {
+        let new_request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
