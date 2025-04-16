@@ -107,7 +107,6 @@ Non-negative `float` values
 }
 ```
 
-
 3. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
 
 ```json
