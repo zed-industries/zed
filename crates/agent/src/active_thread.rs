@@ -2343,6 +2343,9 @@ impl ActiveThread {
                                     rendered.input.clone(),
                                     tool_use_markdown_style(window, cx),
                                 )
+                                .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                    copy_button: false,
+                                })
                                 .on_url_click({
                                     let workspace = self.workspace.clone();
                                     move |text, window, cx| {
@@ -2369,6 +2372,9 @@ impl ActiveThread {
                                     rendered.output.clone(),
                                     tool_use_markdown_style(window, cx),
                                 )
+                                .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                    copy_button: false,
+                                })
                                 .on_url_click({
                                     let workspace = self.workspace.clone();
                                     move |text, window, cx| {
@@ -2544,7 +2550,7 @@ impl ActiveThread {
                 )
             } else {
                 v_flex()
-                    .my_3()
+                    .my_2()
                     .rounded_lg()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
