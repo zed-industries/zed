@@ -1688,7 +1688,7 @@ impl SshRemoteConnection {
 
     #[allow(unused)]
     async fn ensure_server_binary(
-        &self,
+        &mut self,
         delegate: &Arc<dyn SshClientDelegate>,
         release_channel: ReleaseChannel,
         version: SemanticVersion,
@@ -1737,18 +1737,20 @@ impl SshRemoteConnection {
             return Ok(dst_path);
         }
 
-        let wanted_version = cx.update(|cx| match release_channel {
-            ReleaseChannel::Nightly => Ok(None),
-            ReleaseChannel::Dev => {
-                anyhow::bail!(
-                    "ZED_BUILD_REMOTE_SERVER is not set and no remote server exists at ({:?})",
-                    dst_path
-                )
-            }
-            _ => Ok(Some(AppVersion::global(cx))),
+        let wanted_version = cx.update(|cx| -> Result<Option<SemanticVersion>> {
+            Ok(match release_channel {
+                ReleaseChannel::Nightly => None,
+                ReleaseChannel::Dev => {
+                    log::warn!("Forcing version to None in Dev mode");
+                    None
+                }
+                _ => Some(AppVersion::global(cx)),
+            })
         })??;
 
         let platform = self.platform().await?;
+
+        self.socket.connection_options.upload_binary_over_ssh = true;
 
         if !self.socket.connection_options.upload_binary_over_ssh {
             if let Some((url, body)) = delegate
