@@ -2418,6 +2418,7 @@ fn main() {{
             language::init(cx);
             Project::init_settings(cx);
             AssistantSettings::register(cx);
+            prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
