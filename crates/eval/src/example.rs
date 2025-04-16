@@ -458,6 +458,16 @@ impl Example {
         repository_diff: String,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
+        {
+            let output_file_ref = self.output_file();
+            let mut output_file = output_file_ref.lock().unwrap();
+            writeln!(&mut output_file, "\n\n").log_err();
+            writeln!(&mut output_file, "========================================").log_err();
+            writeln!(&mut output_file, "           REPOSITORY DIFF             ").log_err();
+            writeln!(&mut output_file, "========================================").log_err();
+            writeln!(&mut output_file, "\n{}", &repository_diff).log_err();
+        }
+
         let judge_prompt = include_str!("judge_prompt.hbs");
         let judge_prompt_name = "judge_prompt";
         let mut handlebars = Handlebars::new();
