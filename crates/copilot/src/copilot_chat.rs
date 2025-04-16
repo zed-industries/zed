@@ -140,7 +140,7 @@ impl Model {
             Self::O3Mini => 64_000,
             Self::O1 => 20_000,
             Self::O3 => 64_000,
-            Self::O4Mini => 64_000,
+            Self::O4Mini => 128_000,
             Self::Claude3_5Sonnet => 200_000,
             Self::Claude3_7Sonnet => 90_000,
             Self::Claude3_7SonnetThinking => 90_000,
