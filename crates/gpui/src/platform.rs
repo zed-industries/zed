@@ -2,6 +2,7 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
+mod keyboard;
 mod keystroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
