@@ -6,7 +6,7 @@ use gpui::{
     WeakEntity, Window, div,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
-use project::{Project, ProjectPath, WorktreeId};
+use project::{Project, ProjectPath, WorktreeId, toolchain_store::ToolchainStoreEvent};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -22,6 +22,26 @@ pub struct ActiveToolchain {
 
 impl ActiveToolchain {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.subscribe_in(
+            workspace.project(),
+            window,
+            |this, _, _: &ToolchainStoreEvent, window, cx| {
+                let editor = this
+                    .workspace
+                    .update(cx, |workspace, cx| {
+                        workspace
+                            .active_item(cx)
+                            .and_then(|item| item.downcast::<Editor>())
+                    })
+                    .ok()
+                    .flatten();
+                if let Some(editor) = editor {
+                    this.active_toolchain.take();
+                    this.update_lister(editor, window, cx);
+                }
+            },
+        )
+        .detach();
         Self {
             active_toolchain: None,
             active_buffer: None,
