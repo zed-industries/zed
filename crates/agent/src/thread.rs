@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
 use feature_flags::{self, FeatureFlagAppExt};
@@ -18,12 +18,13 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, TokenUsage,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, StopReason, TokenUsage,
 };
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use prompt_store::PromptBuilder;
+use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -630,6 +631,14 @@ impl Thread {
         self.tool_use.tool_result(id)
     }
 
+    pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
+        Some(&self.tool_use.tool_result(id)?.content)
+    }
+
+    pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<AnyToolCard> {
+        self.tool_use.tool_result_card(id).cloned()
+    }
+
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
         self.tool_use.message_has_tool_results(message_id)
     }
@@ -1150,6 +1159,12 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::MaxMonthlySpendReached,
                                 ));
+                            } else if let Some(error) =
+                                error.downcast_ref::<ModelRequestLimitReachedError>()
+                            {
+                                cx.emit(ThreadEvent::ShowError(
+                                    ThreadError::ModelRequestLimitReached { plan: error.plan },
+                                ));
                             } else if let Some(known_error) =
                                 error.downcast_ref::<LanguageModelKnownError>()
                             {
@@ -1418,6 +1433,12 @@ impl Thread {
                 cx,
             )
         };
+
+        // Store the card separately if it exists
+        if let Some(card) = tool_result.card.clone() {
+            self.tool_use
+                .insert_tool_result_card(tool_use_id.clone(), card);
+        }
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
@@ -1929,6 +1950,8 @@ pub enum ThreadError {
     PaymentRequired,
     #[error("Max monthly spend reached")]
     MaxMonthlySpendReached,
+    #[error("Model request limit reached")]
+    ModelRequestLimitReached { plan: Plan },
     #[error("Message {header}: {message}")]
     Message {
         header: SharedString,

@@ -4258,6 +4258,8 @@ mod tests {
                 app_state.fs.clone(),
                 cx,
             );
+            web_search::init(cx);
+            web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
             assistant::init(
                 app_state.fs.clone(),

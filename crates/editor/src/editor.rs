@@ -4170,10 +4170,13 @@ impl Editor {
                 if let Some(InlaySplice {
                     to_remove,
                     to_insert,
-                }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
+                }) = self.inlay_hint_cache.remove_excerpts(&excerpts_removed)
                 {
                     self.splice_inlays(&to_remove, to_insert, cx);
                 }
+                self.display_map.update(cx, |display_map, _| {
+                    display_map.remove_inlays_for_excerpts(&excerpts_removed)
+                });
                 return;
             }
             InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
@@ -4737,8 +4740,8 @@ impl Editor {
         let lookahead = replace_range
             .end
             .saturating_sub(newest_anchor.end.text_anchor.to_offset(buffer));
-        let prefix = &old_text[..old_text.len() - lookahead];
-        let suffix = &old_text[lookbehind..];
+        let prefix = &old_text[..old_text.len().saturating_sub(lookahead)];
+        let suffix = &old_text[lookbehind.min(old_text.len())..];
 
         let selections = self.selections.all::<usize>(cx);
         let mut edits = Vec::new();
@@ -4753,7 +4756,7 @@ impl Editor {
 
                 // if prefix is present, don't duplicate it
                 if snapshot.contains_str_at(range.start.saturating_sub(lookbehind), prefix) {
-                    text = &new_text[lookbehind..];
+                    text = &new_text[lookbehind.min(new_text.len())..];
 
                     // if suffix is also present, mimic the newest cursor and replace it
                     if selection.id != newest_anchor.id
@@ -12519,6 +12522,45 @@ impl Editor {
             .iter()
             .map(|selection| {
                 let old_range = selection.start..selection.end;
+
+                if let Some((node, _)) = buffer.syntax_ancestor(old_range.clone()) {
+                    // manually select word at selection
+                    if ["string_content", "inline"].contains(&node.kind()) {
+                        let word_range = {
+                            let display_point = buffer
+                                .offset_to_point(old_range.start)
+                                .to_display_point(&display_map);
+                            let Range { start, end } =
+                                movement::surrounding_word(&display_map, display_point);
+                            start.to_point(&display_map).to_offset(&buffer)
+                                ..end.to_point(&display_map).to_offset(&buffer)
+                        };
+                        // ignore if word is already selected
+                        if !word_range.is_empty() && old_range != word_range {
+                            let last_word_range = {
+                                let display_point = buffer
+                                    .offset_to_point(old_range.end)
+                                    .to_display_point(&display_map);
+                                let Range { start, end } =
+                                    movement::surrounding_word(&display_map, display_point);
+                                start.to_point(&display_map).to_offset(&buffer)
+                                    ..end.to_point(&display_map).to_offset(&buffer)
+                            };
+                            // only select word if start and end point belongs to same word
+                            if word_range == last_word_range {
+                                selected_larger_node = true;
+                                return Selection {
+                                    id: selection.id,
+                                    start: word_range.start,
+                                    end: word_range.end,
+                                    goal: SelectionGoal::None,
+                                    reversed: selection.reversed,
+                                };
+                            }
+                        }
+                    }
+                }
+
                 let mut new_range = old_range.clone();
                 let mut new_node = None;
                 while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())

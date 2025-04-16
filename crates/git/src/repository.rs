@@ -1013,7 +1013,6 @@ impl GitRepository for RealGitRepository {
             let mut command = new_smol_command("git");
             command
                 .envs(env.iter())
-                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory)
                 .args(["push"])
                 .args(options.map(|option| match option {
@@ -1045,7 +1044,6 @@ impl GitRepository for RealGitRepository {
             let mut command = new_smol_command("git");
             command
                 .envs(env.iter())
-                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["pull"])
                 .arg(remote_name)
@@ -1070,7 +1068,6 @@ impl GitRepository for RealGitRepository {
             let mut command = new_smol_command("git");
             command
                 .envs(env.iter())
-                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["fetch", "--all"])
                 .stdout(smol::process::Stdio::piped())

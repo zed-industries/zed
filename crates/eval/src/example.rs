@@ -58,6 +58,8 @@ pub struct Example {
     pub criteria: String,
     /// Markdown output file to append to
     pub output_file: Option<Arc<Mutex<File>>>,
+    /// Path to the output run directory.
+    pub run_dir: PathBuf,
     /// Path to markdown output file
     pub output_file_path: PathBuf,
     /// Prefix used for logging that identifies this example
@@ -92,21 +94,25 @@ impl Example {
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
         let criteria_path = dir_path.join("criteria.md");
-
-        let output_file_path = run_dir.join(format!(
-            "{}.md",
-            dir_path.file_name().unwrap().to_str().unwrap()
-        ));
+        let output_file_path = run_dir.join(format!("{}.md", name));
 
         Ok(Example {
             name: name.clone(),
             base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
             criteria: fs::read_to_string(criteria_path.clone())?,
+            run_dir: run_dir.to_path_buf(),
             output_file: None,
             output_file_path,
             log_prefix: name,
         })
+    }
+
+    pub fn set_repetition_number(&mut self, repetition_number: u32) {
+        if repetition_number > 0 {
+            self.name = format!("{}-{}", self.name, repetition_number);
+            self.output_file_path = self.run_dir.join(format!("{}.md", self.name));
+        }
     }
 
     pub fn set_log_prefix_style(&mut self, color: &str, name_width: usize) {
@@ -134,13 +140,21 @@ impl Example {
     pub async fn setup(&mut self) -> Result<()> {
         let repo_path = repo_path_for_url(&self.base.url);
 
-        println!("{}Fetching", self.log_prefix);
+        let revision_exists = run_git(&repo_path, &["rev-parse", "--verify", &self.base.revision])
+            .await
+            .is_ok();
 
-        run_git(
-            &repo_path,
-            &["fetch", "--depth", "1", "origin", &self.base.revision],
-        )
-        .await?;
+        if !revision_exists {
+            println!(
+                "{}Fetching revision {}",
+                self.log_prefix, &self.base.revision
+            );
+            run_git(
+                &repo_path,
+                &["fetch", "--depth", "1", "origin", &self.base.revision],
+            )
+            .await?;
+        }
 
         let worktree_path = self.worktree_path();
 
@@ -372,18 +386,26 @@ impl Example {
                                 pending_tool_use,
                                 ..
                             } => {
-                                if let Some(tool_use) = pending_tool_use {
-                                    let message = format!("TOOL FINISHED: {}", tool_use.name);
-                                    println!("{}{message}", log_prefix);
-                                    writeln!(&mut output_file, "\n{}", message).log_err();
-                                }
                                 thread.update(cx, |thread, _cx| {
-                                    if let Some(tool_result) = thread.tool_result(&tool_use_id) {
-                                        writeln!(&mut output_file, "\n{}\n", tool_result.content).log_err();
-                                        let mut tool_use_counts = tool_use_counts.lock().unwrap();
-                                        *tool_use_counts
-                                            .entry(tool_result.tool_name.clone())
-                                            .or_insert(0) += 1;
+                                    if let Some(tool_use) = pending_tool_use {
+                                        if let Some(tool_result) = thread.tool_result(&tool_use_id) {
+                                            let message = if tool_result.is_error {
+                                                format!("TOOL FAILED: {}", tool_use.name)
+                                            } else {
+                                                format!("TOOL FINISHED: {}", tool_use.name)
+                                            };
+                                            println!("{log_prefix}{message}");
+                                            writeln!(&mut output_file, "\n{}", message).log_err();
+                                            writeln!(&mut output_file, "\n{}\n", tool_result.content).log_err();
+                                            let mut tool_use_counts = tool_use_counts.lock().unwrap();
+                                            *tool_use_counts
+                                                .entry(tool_result.tool_name.clone())
+                                                .or_insert(0) += 1;
+                                        } else {
+                                            let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
+                                            println!("{log_prefix}{message}");
+                                            writeln!(&mut output_file, "\n{}", message).log_err();
+                                        }
                                     }
                                 })?;
                             }
@@ -425,6 +447,10 @@ impl Example {
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
 
+            let repository_diff_path = this.run_dir.join(format!("{}.diff", this.name));
+            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
+            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
+
             println!("{}Getting diagnostics", this.log_prefix);
             let diagnostics = cx
                 .update(move |cx| {
@@ -456,6 +482,7 @@ impl Example {
         &self,
         model: Arc<dyn LanguageModel>,
         repository_diff: String,
+        judge_repetitions: u32,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
         let judge_prompt = include_str!("judge_prompt.hbs");
@@ -483,14 +510,14 @@ impl Example {
 
         let response = send_language_model_request(model, request, cx).await?;
 
-        let output_file_ref = self.output_file();
-        let mut output_file = output_file_ref.lock().unwrap();
+        let judge_file_path = self.run_dir.join(format!(
+            "{}_judge_{}.md",
+            self.name, // This is the eval_name
+            judge_repetitions
+        ));
 
-        writeln!(&mut output_file, "\n\n").log_err();
-        writeln!(&mut output_file, "========================================").log_err();
-        writeln!(&mut output_file, "              JUDGE OUTPUT              ").log_err();
-        writeln!(&mut output_file, "========================================").log_err();
-        writeln!(&mut output_file, "\n{}", &response).log_err();
+        let mut judge_output_file = File::create(&judge_file_path)?;
+        writeln!(&mut judge_output_file, "{}", &response).log_err();
 
         parse_judge_output(&response)
     }

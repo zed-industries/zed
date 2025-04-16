@@ -302,7 +302,7 @@ impl TitleBar {
                 cx.notify()
             }),
         );
-        subscriptions.push(cx.subscribe(&project, |_, _, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe(&project, |_, _, _: &project::Event, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));

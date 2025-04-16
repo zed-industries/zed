@@ -54,6 +54,7 @@ pub fn router() -> Router {
             post(manage_billing_subscription),
         )
         .route("/billing/monthly_spend", get(get_monthly_spend))
+        .route("/billing/usage", get(get_current_usage))
 }
 
 #[derive(Debug, Deserialize)]
@@ -944,6 +945,93 @@ async fn get_monthly_spend(
         monthly_free_tier_spend_in_cents: free_tier_spend.0,
         monthly_free_tier_allowance_in_cents: free_tier.0,
         monthly_spend_in_cents: monthly_spend.0,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct GetCurrentUsageParams {
+    github_user_id: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct UsageCounts {
+    pub used: i32,
+    pub limit: Option<i32>,
+    pub remaining: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+struct GetCurrentUsageResponse {
+    pub model_requests: UsageCounts,
+    pub edit_predictions: UsageCounts,
+}
+
+async fn get_current_usage(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<GetCurrentUsageParams>,
+) -> Result<Json<GetCurrentUsageResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_user_id(params.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let Some(llm_db) = app.llm_db.clone() else {
+        return Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "LLM database not available".into(),
+        ));
+    };
+
+    let empty_usage = GetCurrentUsageResponse {
+        model_requests: UsageCounts {
+            used: 0,
+            limit: Some(0),
+            remaining: Some(0),
+        },
+        edit_predictions: UsageCounts {
+            used: 0,
+            limit: Some(0),
+            remaining: Some(0),
+        },
+    };
+
+    let Some(subscription) = app.db.get_active_billing_subscription(user.id).await? else {
+        return Ok(Json(empty_usage));
+    };
+
+    let subscription_period = maybe!({
+        let period_start_at = subscription.current_period_start_at()?;
+        let period_end_at = subscription.current_period_end_at()?;
+
+        Some((period_start_at, period_end_at))
+    });
+
+    let Some((period_start_at, period_end_at)) = subscription_period else {
+        return Ok(Json(empty_usage));
+    };
+
+    let usage = llm_db
+        .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
+        .await?;
+    let Some(usage) = usage else {
+        return Ok(Json(empty_usage));
+    };
+
+    let model_requests_limit = Some(500);
+    let edit_prediction_limit = Some(2000);
+
+    Ok(Json(GetCurrentUsageResponse {
+        model_requests: UsageCounts {
+            used: usage.model_requests,
+            limit: model_requests_limit,
+            remaining: model_requests_limit.map(|limit| (limit - usage.model_requests).max(0)),
+        },
+        edit_predictions: UsageCounts {
+            used: usage.edit_predictions,
+            limit: edit_prediction_limit,
+            remaining: edit_prediction_limit.map(|limit| (limit - usage.edit_predictions).max(0)),
+        },
     }))
 }
 

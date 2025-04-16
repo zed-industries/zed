@@ -108,6 +108,28 @@ impl Database {
         .await
     }
 
+    pub async fn get_active_billing_subscription(
+        &self,
+        user_id: UserId,
+    ) -> Result<Option<billing_subscription::Model>> {
+        self.transaction(|tx| async move {
+            Ok(billing_subscription::Entity::find()
+                .inner_join(billing_customer::Entity)
+                .filter(billing_customer::Column::UserId.eq(user_id))
+                .filter(
+                    Condition::all()
+                        .add(
+                            billing_subscription::Column::StripeSubscriptionStatus
+                                .eq(StripeSubscriptionStatus::Active),
+                        )
+                        .add(billing_subscription::Column::Kind.is_not_null()),
+                )
+                .one(&*tx)
+                .await?)
+        })
+        .await
+    }
+
     /// Returns all of the billing subscriptions for the user with the specified ID.
     ///
     /// Note that this returns the subscriptions regardless of their status.
@@ -145,6 +167,7 @@ impl Database {
                         billing_subscription::Column::StripeSubscriptionStatus
                             .eq(StripeSubscriptionStatus::Active),
                     )
+                    .filter(billing_subscription::Column::Kind.is_null())
                     .order_by_asc(billing_subscription::Column::Id)
                     .stream(&*tx)
                     .await?;
