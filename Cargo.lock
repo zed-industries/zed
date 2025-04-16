@@ -4886,6 +4886,7 @@ dependencies = [
  "collections",
  "context_server",
  "dap",
+ "dirs 5.0.1",
  "env_logger 0.11.8",
  "extension",
  "fs",
@@ -4907,9 +4908,11 @@ dependencies = [
  "serde",
  "settings",
  "shellexpand 2.1.2",
+ "telemetry",
  "toml 0.8.20",
  "unindent",
  "util",
+ "uuid",
  "workspace-hack",
 ]
 

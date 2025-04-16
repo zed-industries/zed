@@ -1,13 +1,16 @@
 mod example;
+mod ids;
 
 use client::{Client, ProxySettings, UserStore};
 pub(crate) use example::*;
+use telemetry;
 
 use ::fs::RealFs;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use extension::ExtensionHostProxy;
 use futures::future;
+use futures::stream::StreamExt;
 use gpui::http_client::{Uri, read_proxy_from_env};
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task, UpdateGlobal};
 use gpui_tokio::Tokio;
@@ -39,9 +42,18 @@ struct Args {
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
-    /// Languages to run (comma-separated, e.g. "js,ts,py"). If unspecified, only Rust examples are run.
     #[arg(long, value_delimiter = ',')]
     languages: Option<Vec<String>>,
+    /// How many times to run each example. Note that this is currently not very efficient as N
+    /// worktrees will be created for the examples.
+    #[arg(long, default_value = "1")]
+    repetitions: u32,
+    /// How many times to run the judge on each example run.
+    #[arg(long, default_value = "3")]
+    judge_repetitions: u32,
+    /// Maximum number of examples to run concurrently.
+    #[arg(long, default_value = "10")]
+    concurrency: usize,
 }
 
 fn main() {
@@ -73,6 +85,15 @@ fn main() {
 
     app.run(move |cx| {
         let app_state = init(cx);
+
+        let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
+        let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
+        let session_id = uuid::Uuid::new_v4().to_string();
+
+        app_state
+            .client
+            .telemetry()
+            .start(system_id, installation_id, session_id, cx);
 
         let model = find_model("claude-3-7-sonnet-latest", cx).unwrap();
 
@@ -129,12 +150,20 @@ fn main() {
                     continue;
                 }
 
-                let name_len = example.name.len();
-                if name_len > max_name_width {
-                    max_name_width = example.name.len();
-                }
+                // TODO: This creates a worktree per repetition. Ideally these examples should
+                // either be run sequentially on the same worktree, or reuse worktrees when there
+                // are more examples to run than the concurrency limit.
+                for repetition_number in 0..args.repetitions {
+                    let mut example = example.clone();
+                    example.set_repetition_number(repetition_number);
 
-                examples.push(example);
+                    let name_len = example.name.len();
+                    if name_len > max_name_width {
+                        max_name_width = example.name.len();
+                    }
+
+                    examples.push(example);
+                }
             }
 
             println!("Skipped examples: {}\n", skipped.join(", "));
@@ -199,9 +228,12 @@ fn main() {
 
             future::join_all(clone_tasks).await;
 
-            for example in examples.iter() {
+            for example in examples.iter_mut() {
                 example.setup().await?;
             }
+
+            let judge_repetitions = args.judge_repetitions;
+            let concurrency = args.concurrency;
 
             let tasks = examples
                 .into_iter()
@@ -209,12 +241,17 @@ fn main() {
                     let app_state = app_state.clone();
                     let model = model.clone();
                     cx.spawn(async move |cx| {
-                        (run_example(&example, model, app_state, cx).await, example)
+                        let result =
+                            run_example(&example, model, app_state, judge_repetitions, cx).await;
+                        (result, example)
                     })
                 })
                 .collect::<Vec<_>>();
 
-            let results: Vec<(Result<JudgeOutput>, Example)> = future::join_all(tasks).await;
+            let results = futures::stream::iter(tasks)
+                .buffer_unordered(concurrency)
+                .collect::<Vec<(Result<Vec<Result<JudgeOutput>>>, Example)>>()
+                .await;
 
             println!("\n\n");
             println!("========================================");
@@ -229,16 +266,25 @@ fn main() {
                     Err(err) => {
                         println!("💥 {}{:?}", example.log_prefix, err);
                     }
-                    Ok(judge_output) => {
-                        const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
+                    Ok(judge_results) => {
+                        for judge_result in judge_results {
+                            match judge_result {
+                                Ok(judge_output) => {
+                                    const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
 
-                        println!(
-                            "{} {}{}",
-                            SCORES[judge_output.score.min(5) as usize],
-                            example.log_prefix,
-                            judge_output.score,
-                        );
-                        judge_scores.push(judge_output.score);
+                                    println!(
+                                        "{} {}{}",
+                                        SCORES[judge_output.score.min(5) as usize],
+                                        example.log_prefix,
+                                        judge_output.score,
+                                    );
+                                    judge_scores.push(judge_output.score);
+                                }
+                                Err(err) => {
+                                    println!("💥 {}{:?}", example.log_prefix, err);
+                                }
+                            }
+                        }
                     }
                 }
                 println!(
@@ -256,6 +302,11 @@ fn main() {
                 / (score_count as f32);
             println!("\nAverage score: {average_score}");
 
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // Flush telemetry events before exiting
+            app_state.client.telemetry().flush_events();
+
             cx.update(|cx| cx.quit())
         })
         .detach_and_log_err(cx);
@@ -266,12 +317,52 @@ async fn run_example(
     example: &Example,
     model: Arc<dyn LanguageModel>,
     app_state: Arc<AgentAppState>,
+    judge_repetitions: u32,
     cx: &mut AsyncApp,
-) -> Result<JudgeOutput> {
-    cx.update(|cx| example.run(model.clone(), app_state, cx))?
+) -> Result<Vec<Result<JudgeOutput>>> {
+    let run_output = cx
+        .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
         .await?;
     let diff = example.repository_diff().await?;
-    example.judge(model, diff, cx).await
+
+    // Run judge for each repetition
+    let mut results = Vec::new();
+    for round in 0..judge_repetitions {
+        let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
+
+        // Log telemetry for this judge result
+        if let Ok(judge_output) = &judge_result {
+            let cohort_id = example
+                .output_file_path
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+
+            telemetry::event!(
+                "Agent Eval Completed",
+                cohort_id = cohort_id,
+                example_name = example.name.clone(),
+                round = round,
+                score = judge_output.score,
+                analysis = judge_output.analysis,
+                tool_use_counts = run_output.tool_use_counts,
+                response_count = run_output.response_count,
+                token_usage = run_output.token_usage,
+                model = model.telemetry_id(),
+                model_provider = model.provider_id().to_string(),
+                repository_url = example.base.url.clone(),
+                repository_revision = example.base.revision.clone(),
+                diagnostics_summary = run_output.diagnostics
+            );
+        }
+
+        results.push(judge_result);
+    }
+
+    app_state.client.telemetry().flush_events();
+
+    Ok(results)
 }
 
 fn list_all_examples() -> Result<Vec<PathBuf>> {
