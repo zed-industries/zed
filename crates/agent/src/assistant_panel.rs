@@ -1792,10 +1792,27 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
 
     fn quote_selection(
         &self,
-        _workspace: &mut Workspace,
-        _creases: Vec<(String, String)>,
-        _window: &mut Window,
-        _cx: &mut Context<Workspace>,
+        workspace: &mut Workspace,
+        creases: Vec<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(window, cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
+        }
+
+        panel.update(cx, |_, cx| {
+            // Wait to create a new context until the workspace is no longer
+            // being updated.
+            cx.defer_in(window, move |panel, window, cx| {
+                if let Some(context) = panel.active_context_editor() {
+                    context.update(cx, |context, cx| context.quote_creases(creases, window, cx));
+                };
+            });
+        });
     }
 }
