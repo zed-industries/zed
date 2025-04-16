@@ -173,19 +173,27 @@ impl ThreadStore {
                         future::join_all(prompts.into_iter().map(|prompt_metadata| {
                             let prompt_store = prompt_store.clone();
                             async move {
-                                let prompt = prompt_store.load(prompt_metadata.id);
-                                (prompt.await, prompt_metadata)
+                                let contents = prompt_store.load(prompt_metadata.id);
+                                (contents.await, prompt_metadata)
                             }
                         }))
                         .await;
                     default_user_rules
                         .into_iter()
-                        .flat_map(|(prompt, prompt_metadata)| {
-                            Some(DefaultUserRulesContext {
+                        .flat_map(|(contents, prompt_metadata)| match contents {
+                            Ok(contents) => Some(DefaultUserRulesContext {
                                 title: prompt_metadata.title.map(|title| title.to_string()),
-                                // todo! better error handling
-                                contents: prompt.log_err()?,
-                            })
+                                contents,
+                            }),
+                            Err(err) => {
+                                this.update(cx, |_, cx| {
+                                    cx.emit(RulesLoadingError {
+                                        message: format!("{err:?}").into(),
+                                    });
+                                })
+                                .ok();
+                                None
+                            }
                         })
                         .collect::<Vec<_>>()
                 }
