@@ -1333,13 +1333,23 @@ impl FakeFs {
             let Some((git_dir_entry, canonical_path)) = state.try_read_path(&path, true) else {
                 anyhow::bail!("pointed-to git dir {path:?} not found")
             };
-            let FakeFsEntry::Dir { git_repo_state, .. } = &mut *git_dir_entry.lock() else {
+            let FakeFsEntry::Dir {
+                git_repo_state,
+                entries,
+                ..
+            } = &mut *git_dir_entry.lock()
+            else {
                 anyhow::bail!("gitfile points to a non-directory")
             };
-            let common_dir = canonical_path
-                .ancestors()
-                .find(|ancestor| ancestor.ends_with(".git"))
-                .ok_or_else(|| anyhow!("repository dir not contained in any .git"))?;
+            let common_dir = if let Some(child) = entries.get("commondir") {
+                Path::new(
+                    std::str::from_utf8(child.lock().file_content("commondir".as_ref())?)
+                        .context("commondir content")?,
+                )
+                .to_owned()
+            } else {
+                canonical_path.clone()
+            };
             let repo_state = git_repo_state.get_or_insert_with(|| {
                 Arc::new(Mutex::new(FakeGitRepositoryState::new(
                     state.git_event_tx.clone(),
@@ -1347,7 +1357,7 @@ impl FakeFs {
             });
             let mut repo_state = repo_state.lock();
 
-            let result = f(&mut repo_state, &canonical_path, common_dir);
+            let result = f(&mut repo_state, &canonical_path, &common_dir);
 
             if emit_git_event {
                 state.emit_event([(canonical_path, None)]);
