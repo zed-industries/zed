@@ -14,8 +14,8 @@ use settings::Settings;
 use text::{AnchorRangeExt, Point};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, Context, ElementId, IntoElement, ParentElement, SharedString,
-    Styled, Window, div, prelude::*, px,
+    ActiveTheme, AnyElement, App, Context, IntoElement, ParentElement, SharedString, Styled,
+    Window, div, prelude::*, px,
 };
 use util::maybe;
 
@@ -153,7 +153,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, RegisterComponent)]
 pub(crate) struct DiagnosticBlock {
     pub(crate) initial_range: Range<Point>,
     pub(crate) severity: DiagnosticSeverity,
@@ -354,5 +354,24 @@ impl DiagnosticBlock {
             s.select_ranges([range.start..range.start]);
         });
         window.focus(&editor.focus_handle(cx));
+    }
+}
+
+impl Component for DiagnosticBlock {
+    fn scope() -> ComponentScope {
+        ComponentScope::Editor
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .p_4()
+                .children(vec![
+                    example_group(vec![single_example("Error", div().into_any_element())])
+                        .vertical(),
+                ])
+                .into_any_element(),
+        )
     }
 }
