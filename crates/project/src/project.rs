@@ -105,7 +105,7 @@ use std::{
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
-use toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent};
+use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
     paths::{SanitizedPath, compare_paths},
@@ -951,12 +951,7 @@ impl Project {
                 client_state: ProjectClientState::Local,
                 git_store,
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![
-                    cx.on_release(Self::release),
-                    cx.subscribe(&toolchain_store, |_, _, event: &ToolchainStoreEvent, cx| {
-                        cx.emit(event.clone());
-                    }),
-                ],
+                _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
                 snippets,
                 languages,
@@ -3099,6 +3094,9 @@ impl Project {
             .map(|lister| lister.term())
     }
 
+    pub fn toolchain_store(&self) -> Option<Entity<ToolchainStore>> {
+        self.toolchain_store.clone()
+    }
     pub fn activate_toolchain(
         &self,
         path: ProjectPath,
@@ -4936,7 +4934,6 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 }
 
 impl EventEmitter<Event> for Project {}
-impl EventEmitter<ToolchainStoreEvent> for Project {}
 
 impl<'a> From<&'a ProjectPath> for SettingsLocation<'a> {
     fn from(val: &'a ProjectPath) -> Self {
