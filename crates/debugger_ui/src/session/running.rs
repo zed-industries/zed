@@ -49,6 +49,7 @@ pub struct RunningState {
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
+    loaded_sources_list: Entity<LoadedSourceList>,
     module_list: Entity<module_list::ModuleList>,
     _console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
@@ -384,7 +385,6 @@ impl RunningState {
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
-        #[expect(unused)]
         let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), cx));
 
         let console = cx.new(|cx| {
@@ -438,6 +438,7 @@ impl RunningState {
                 &module_list,
                 &console,
                 &breakpoint_list,
+                &loaded_source_list,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -476,6 +477,7 @@ impl RunningState {
             module_list,
             _console: console,
             breakpoint_list,
+            loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
             _schedule_serialize: None,
         }
@@ -487,6 +489,11 @@ impl RunningState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        debug_assert!(
+            item_kind.is_supported(self.session.read(cx).capabilities()),
+            "We should only allow removing supported item kinds"
+        );
+
         if let Some((pane, item_id)) = self.panes.panes().iter().find_map(|pane| {
             Some(pane).zip(
                 pane.read(cx)
@@ -506,20 +513,25 @@ impl RunningState {
 
     pub(crate) fn add_pane_item(
         &mut self,
-        item: DebuggerPaneItem,
+        item_kind: DebuggerPaneItem,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        debug_assert!(
+            item_kind.is_supported(self.session.read(cx).capabilities()),
+            "We should only allow adding supported item kinds"
+        );
+
         if let Some(pane) = self.panes.pane_at_pixel_position(position) {
-            let sub_view = match item {
+            let sub_view = match item_kind {
                 DebuggerPaneItem::Console => {
                     let weak_console = self._console.clone().downgrade();
 
                     Box::new(SubView::new(
                         pane.focus_handle(cx),
                         self._console.clone().into(),
-                        item,
+                        item_kind,
                         Some(Box::new(move |cx| {
                             weak_console
                                 .read_with(cx, |console, cx| console.show_indicator(cx))
@@ -531,28 +543,35 @@ impl RunningState {
                 DebuggerPaneItem::Variables => Box::new(SubView::new(
                     self.variable_list.focus_handle(cx),
                     self.variable_list.clone().into(),
-                    item,
+                    item_kind,
                     None,
                     cx,
                 )),
                 DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
                     self.breakpoint_list.focus_handle(cx),
                     self.breakpoint_list.clone().into(),
-                    item,
+                    item_kind,
                     None,
                     cx,
                 )),
                 DebuggerPaneItem::Frames => Box::new(SubView::new(
                     self.stack_frame_list.focus_handle(cx),
                     self.stack_frame_list.clone().into(),
-                    item,
+                    item_kind,
                     None,
                     cx,
                 )),
                 DebuggerPaneItem::Modules => Box::new(SubView::new(
                     self.module_list.focus_handle(cx),
                     self.module_list.clone().into(),
-                    item,
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
+                    self.loaded_sources_list.focus_handle(cx),
+                    self.loaded_sources_list.clone().into(),
+                    item_kind,
                     None,
                     cx,
                 )),
@@ -565,8 +584,13 @@ impl RunningState {
     }
 
     pub(crate) fn pane_items_status(&self, cx: &App) -> IndexMap<DebuggerPaneItem, bool> {
-        let mut pane_item_status =
-            IndexMap::from_iter(DebuggerPaneItem::all().iter().map(|kind| (*kind, false)));
+        let caps = self.session.read(cx).capabilities();
+        let mut pane_item_status = IndexMap::from_iter(
+            DebuggerPaneItem::all()
+                .iter()
+                .filter(|kind| kind.is_supported(&caps))
+                .map(|kind| (*kind, false)),
+        );
         self.panes.panes().iter().for_each(|pane| {
             pane.read(cx)
                 .items()
