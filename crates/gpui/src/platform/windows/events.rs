@@ -89,6 +89,7 @@ pub(crate) fn handle_msg(
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, lparam, state_ptr),
         WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
+        WM_DEADCHAR => handle_dead_char_msg(wparam, lparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
@@ -374,7 +375,7 @@ fn handle_syskeyup_msg(
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     })?;
     let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
-    let result = if func(platform_input).propagate {
+    let result = if !func(platform_input).propagate {
         Some(0)
     } else {
         None
@@ -404,7 +405,7 @@ fn handle_keydown_msg(
     };
     drop(lock);
 
-    let result = if func(platform_input).propagate {
+    let result = if !func(platform_input).propagate {
         Some(0)
     } else {
         Some(1)
@@ -431,7 +432,7 @@ fn handle_keyup_msg(
     };
     drop(lock);
 
-    let result = if func(platform_input).propagate {
+    let result = if !func(platform_input).propagate {
         Some(0)
     } else {
         Some(1)
@@ -473,6 +474,41 @@ fn handle_char_msg(
     });
 
     Some(0)
+}
+
+fn handle_dead_char_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    let platform_input = parse_keystroke(wparam, lparam, |keystroke| {
+        let is_pressed = lparam.0 & (1 << 31);
+        if is_pressed > 0 {
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke,
+                is_held: true,
+            })
+        } else {
+            PlatformInput::KeyUp(KeyUpEvent { keystroke })
+        }
+    })?;
+    let mut lock = state_ptr.state.borrow_mut();
+    if let Some(mut func) = lock.callbacks.input.take() {
+        drop(lock);
+        let result = !func(platform_input).propagate;
+        state_ptr.state.borrow_mut().callbacks.input = Some(func);
+        if result {
+            return Some(0);
+        }
+    } else {
+        drop(lock);
+    }
+    let ch = char::from_u32(wparam.0 as u32)?.to_string();
+    println!("DeadChar: {}<->{:X}", ch, lparam.0 as u32);
+    with_input_handler(&state_ptr, |input_handler| {
+        input_handler.replace_and_mark_text_in_range(None, &ch, Some(1..1));
+    });
+    None
 }
 
 fn handle_mouse_down_msg(
