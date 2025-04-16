@@ -183,7 +183,7 @@ the sequence, or if you want to disable multikey bindings starting with that key
 
 A `null` binding follows the same precedence rules as normal actions. So disables all bindings that would match further up in the tree too. If you'd like a binding that matches further up in the tree to take precedence over a lower binding, you need to rebind it to the action you want in the context you want.
 
-This is useful for preventing Zed from falling back to a default keybinding when the action you specified is conditional and propagates. For example, buffer_search::DeployReplace only triggers when the search bar is not in view. If the search bar is in view, it would propagate and trigger the default action set for that binding, such as opening the right dock. To prevent this from happening:
+This is useful for preventing Zed from falling back to a default keybinding when the action you specified is conditional and propagates. For example, `buffer_search::DeployReplace` only triggers when the search bar is not in view. If the search bar is in view, it would propagate and trigger the default action set for that binding, such as opening the right dock. To prevent this from happening:
 
 ```json
 [
