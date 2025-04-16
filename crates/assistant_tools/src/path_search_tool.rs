@@ -84,18 +84,15 @@ impl Tool for PathSearchTool {
             Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))).into(),
         };
 
-        // Get all worktrees from the project
         let project_handle = project.read(cx);
         let worktrees: Vec<_> = project_handle.worktrees(cx).collect();
 
-        // Collect all matching paths
         let mut matches = Vec::new();
         for worktree_handle in &worktrees {
             let worktree = worktree_handle.read(cx);
             let snapshot = worktree.snapshot();
             let root_name = snapshot.root_name();
 
-            // Don't consider ignored entries
             for entry in snapshot.entries(false, 0) {
                 if path_matcher.is_match(&entry.path) {
                     matches.push(
@@ -108,11 +105,9 @@ impl Tool for PathSearchTool {
             }
         }
 
-        // Sort to group entries in the same directory together
         matches.sort();
         let total_matches = matches.len();
 
-        // Create the card
         let glob_for_card = glob.clone();
         let card = if !matches.is_empty() {
             let matches_for_card: Vec<_> = matches
@@ -135,7 +130,6 @@ impl Tool for PathSearchTool {
             )
         };
 
-        // Format the output text
         let result = if matches.is_empty() {
             format!("No paths in the project matched the glob {glob:?}")
         } else {
