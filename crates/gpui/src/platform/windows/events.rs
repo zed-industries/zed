@@ -84,7 +84,7 @@ pub(crate) fn handle_msg(
         WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
-        WM_SYSKEYUP => handle_syskeyup_msg(wparam, state_ptr),
+        WM_SYSKEYUP => handle_syskeyup_msg(wparam, lparam, state_ptr),
         WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, lparam, state_ptr),
@@ -343,13 +343,15 @@ fn handle_syskeydown_msg(
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let platform_input = parse_keystroke(wparam, lparam, |keystroke| {
+        println!("SysKeydown: {:#?}", keystroke);
+        PlatformInput::KeyDown(KeyDownEvent {
+            keystroke,
+            is_held: lparam.0 & (0x1 << 30) > 0,
+        })
+    })?;
     let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
-    let event = KeyDownEvent {
-        keystroke,
-        is_held: lparam.0 & (0x1 << 30) > 0,
-    };
-    let result = if !func(PlatformInput::KeyDown(event)).propagate {
+    let result = if !func(platform_input).propagate {
         state_ptr.state.borrow_mut().system_key_handled = true;
         Some(0)
     } else {
@@ -360,13 +362,19 @@ fn handle_syskeydown_msg(
     result
 }
 
-fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_syskeyup_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let platform_input = parse_keystroke(wparam, lparam, |keystroke| {
+        println!("SysKeyup: {:#?}", keystroke);
+        PlatformInput::KeyUp(KeyUpEvent { keystroke })
+    })?;
     let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
-    let event = KeyUpEvent { keystroke };
-    let result = if func(PlatformInput::KeyUp(event)).propagate {
+    let result = if func(platform_input).propagate {
         Some(0)
     } else {
         None
