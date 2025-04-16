@@ -546,7 +546,6 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         use feature_flags::FeatureFlagAppExt;
 
         let plan = proto::Plan::ZedPro;
-        let is_trial = false;
 
         Some(
             h_flex()
@@ -558,7 +557,6 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .justify_between()
                 .when(cx.has_flag::<ZedPro>(), |this| {
                     this.child(match plan {
-                        // Already a Zed Pro subscriber
                         Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
                             .icon(IconName::ZedAssistant)
                             .icon_size(IconSize::Small)
@@ -568,10 +566,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 window
                                     .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
                             }),
-                        // Free user
-                        Plan::Free => Button::new(
+                        Plan::Free | Plan::ZedProTrial => Button::new(
                             "try-pro",
-                            if is_trial {
+                            if plan == Plan::ZedProTrial {
                                 "Upgrade to Pro"
                             } else {
                                 "Try Pro"
