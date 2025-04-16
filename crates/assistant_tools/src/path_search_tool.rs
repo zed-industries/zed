@@ -1,9 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
-use gpui::{
-    App, AppContext, Context, Entity, IntoElement, Task, Window, linear_color_stop, linear_gradient,
-};
+use gpui::{App, AppContext, Context, Entity, IntoElement, Task, Window};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -240,20 +238,7 @@ impl ToolCard for PathSearchToolCard {
             )
             .into_any();
 
-        let panel_bg = cx.theme().colors().panel_background;
-
-        let gradient_overlay = div()
-            .absolute()
-            .bottom_0()
-            .h_2_3()
-            .w_full()
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(panel_bg, 1.),
-                linear_color_stop(panel_bg.opacity(0.2), 0.),
-            ));
-
-        let content = if !self.paths.is_empty() {
+        let content = if !self.paths.is_empty() && self.expanded {
             Some(
                 v_flex()
                     .relative()
@@ -262,13 +247,6 @@ impl ToolCard for PathSearchToolCard {
                     .gap_0p5()
                     .border_l_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .map(|container| {
-                        if self.expanded {
-                            container.h_full()
-                        } else {
-                            container.max_h_32().overflow_hidden()
-                        }
-                    })
                     .children(self.paths.iter().enumerate().map(|(index, path)| {
                         Button::new(("path", index), path.clone())
                             .icon(IconName::ArrowUpRight)
@@ -276,9 +254,7 @@ impl ToolCard for PathSearchToolCard {
                             .icon_position(IconPosition::End)
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
-                            .truncate(true)
                     }))
-                    .when(!self.expanded, |parent| parent.child(gradient_overlay))
                     .into_any(),
             )
         } else {
