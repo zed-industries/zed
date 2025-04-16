@@ -37,6 +37,7 @@ impl Global for GlobalWebSearchRegistry {}
 #[derive(Default)]
 pub struct WebSearchRegistry {
     providers: HashMap<WebSearchProviderId, Arc<dyn WebSearchProvider>>,
+    default_provider: Option<Arc<dyn WebSearchProvider>>,
 }
 
 impl WebSearchRegistry {
@@ -50,6 +51,15 @@ impl WebSearchRegistry {
 
     pub fn providers(&self) -> impl Iterator<Item = &Arc<dyn WebSearchProvider>> {
         self.providers.values()
+    }
+
+    pub fn default_provider(&self) -> Option<Arc<dyn WebSearchProvider>> {
+        self.default_provider.clone()
+    }
+
+    pub fn set_default_provider(&mut self, provider: Arc<dyn WebSearchProvider>) {
+        self.default_provider = Some(provider.clone());
+        self.providers.insert(provider.id(), provider);
     }
 
     pub fn register_provider<T: WebSearchProvider + 'static>(

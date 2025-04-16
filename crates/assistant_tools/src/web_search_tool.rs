@@ -60,18 +60,11 @@ impl Tool for WebSearchTool {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
-        let Some(provider) = WebSearchRegistry::read_global(cx)
-            .providers()
-            .next()
-            .cloned()
-        else {
-            return Task::ready(Err(anyhow!("No web search provider configured."))).into();
+        let Some(provider) = WebSearchRegistry::read_global(cx).default_provider() else {
+            return Task::ready(Err(anyhow!("Web search is not available."))).into();
         };
 
-        let search_task = provider
-            .search(input.query, cx)
-            .map_err(Arc::new)
-            .shared();
+        let search_task = provider.search(input.query, cx).map_err(Arc::new).shared();
         let output = cx.background_spawn({
             let search_task = search_task.clone();
             async move {
