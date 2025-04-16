@@ -13,7 +13,8 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::{IconName, Tooltip, prelude::*};
-use web_search::{WebSearchRegistry, WebSearchResponse};
+use web_search::WebSearchRegistry;
+use zed_llm_client::WebSearchResponse;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchToolInput {

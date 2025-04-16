@@ -725,6 +725,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -16619,6 +16620,7 @@ dependencies = [
  "gpui",
  "serde",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -16627,14 +16629,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "language_model",
  "open_ai",
  "serde",
  "serde_json",
  "web_search",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -18381,9 +18386,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d28a5d6bdb0f40acf5261c39cabbf65a13b55ba4b86d9beb5b8b1c484373f1a"
+checksum = "57a5e1b5b3ace3fb55292a4c14036723bb8a01fac4aeaa3c2b63b51228412f94"
 dependencies = [
  "serde",
  "serde_json",

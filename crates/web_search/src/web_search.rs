@@ -1,8 +1,8 @@
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
-use serde::{Deserialize, Serialize};
-use std::{ops::Range, sync::Arc};
+use std::sync::Arc;
+use zed_llm_client::WebSearchResponse;
 
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| WebSearchRegistry::default());
@@ -11,19 +11,6 @@ pub fn init(cx: &mut App) {
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct WebSearchProviderId(pub SharedString);
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct WebSearchResponse {
-    pub summary: SharedString,
-    pub citations: Vec<WebSearchCitation>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct WebSearchCitation {
-    pub title: SharedString,
-    pub url: SharedString,
-    pub range: Option<Range<usize>>,
-}
 
 pub trait WebSearchProvider {
     fn id(&self) -> WebSearchProviderId;
@@ -68,6 +55,10 @@ impl WebSearchRegistry {
         _cx: &mut Context<Self>,
     ) {
         let id = provider.id();
-        self.providers.insert(id.clone(), Arc::new(provider));
+        let provider = Arc::new(provider);
+        self.providers.insert(id.clone(), provider.clone());
+        if self.active_provider.is_none() {
+            self.active_provider = Some(provider);
+        }
     }
 }
