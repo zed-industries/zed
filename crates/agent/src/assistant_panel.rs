@@ -25,6 +25,7 @@ use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
+use proto::Plan;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
@@ -1449,6 +1450,9 @@ impl AssistantPanel {
                     ThreadError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
                     }
+                    ThreadError::ModelRequestLimitReached { plan } => {
+                        self.render_model_request_limit_reached_error(plan, cx)
+                    }
                     ThreadError::Message { header, message } => {
                         self.render_error_message(header, message, cx)
                     }
@@ -1537,6 +1541,67 @@ impl AssistantPanel {
                                 cx.notify();
                             }),
                         ),
+                    )
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
+
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
+
+    fn render_model_request_limit_reached_error(
+        &self,
+        plan: Plan,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let error_message = match plan {
+            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
+            Plan::ZedPro => {
+                "Model request limit reached. Upgrade to usage-based billing for more requests."
+            }
+        };
+        let call_to_action = match plan {
+            Plan::Free => "Upgrade to Zed Pro",
+            Plan::ZedPro => "Upgrade to usage-based billing",
+        };
+
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(Label::new("Model Request Limit Reached").weight(FontWeight::MEDIUM)),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(error_message)),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(
+                        Button::new("subscribe", call_to_action).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.thread.update(cx, |this, _cx| {
+                                    this.clear_last_error();
+                                });
+
+                                cx.open_url(&zed_urls::account_url(cx));
+                                cx.notify();
+                            },
+                        )),
                     )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _, cx| {

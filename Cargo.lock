@@ -324,7 +324,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.26.3",
  "thiserror 2.0.12",
  "workspace-hack",
 ]
@@ -567,7 +567,7 @@ dependencies = [
  "settings",
  "smallvec",
  "smol",
- "strum",
+ "strum 0.26.3",
  "telemetry_events",
  "text",
  "theme",
@@ -1882,7 +1882,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.26.3",
  "thiserror 2.0.12",
  "tokio",
  "workspace-hack",
@@ -3029,7 +3029,7 @@ dependencies = [
  "settings",
  "sha2",
  "sqlx",
- "strum",
+ "strum 0.26.3",
  "subtle",
  "supermaven_api",
  "telemetry_events",
@@ -3361,7 +3361,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum",
+ "strum 0.26.3",
  "task",
  "theme",
  "ui",
@@ -4316,19 +4316,24 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "component",
  "ctor",
  "editor",
  "env_logger 0.11.8",
  "gpui",
+ "indoc",
  "language",
+ "linkme",
  "log",
  "lsp",
+ "markdown",
  "pretty_assertions",
  "project",
  "rand 0.8.5",
  "serde",
  "serde_json",
  "settings",
+ "text",
  "theme",
  "ui",
  "unindent",
@@ -4473,7 +4478,7 @@ dependencies = [
  "optfield",
  "proc-macro2",
  "quote",
- "strum",
+ "strum 0.26.3",
  "syn 2.0.100",
 ]
 
@@ -4873,7 +4878,6 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "anyhow",
- "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-watch",
@@ -4883,6 +4887,7 @@ dependencies = [
  "collections",
  "context_server",
  "dap",
+ "dirs 5.0.1",
  "env_logger 0.11.8",
  "extension",
  "fs",
@@ -4904,9 +4909,11 @@ dependencies = [
  "serde",
  "settings",
  "shellexpand 2.1.2",
+ "telemetry",
  "toml 0.8.20",
  "unindent",
  "util",
+ "uuid",
  "workspace-hack",
 ]
 
@@ -5116,7 +5123,7 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
- "strum",
+ "strum 0.26.3",
  "telemetry",
  "theme",
  "ui",
@@ -5967,7 +5974,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "strum",
+ "strum 0.26.3",
  "telemetry",
  "theme",
  "time",
@@ -6060,7 +6067,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.26.3",
  "workspace-hack",
 ]
 
@@ -6166,7 +6173,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "smol",
- "strum",
+ "strum 0.26.3",
  "sum_tree",
  "taffy",
  "thiserror 2.0.12",
@@ -6814,7 +6821,7 @@ name = "icons"
 version = "0.1.0"
 dependencies = [
  "serde",
- "strum",
+ "strum 0.26.3",
  "workspace-hack",
 ]
 
@@ -7082,16 +7089,16 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "serde",
- "strum",
+ "strum 0.26.3",
  "util",
  "workspace-hack",
 ]
 
 [[package]]
 name = "indexmap"
-version = "2.9.0"
+version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cea70ddb795996207ad57735b50c5982d8844f38ba9ee5f1aedcfb708a2aa11e"
+checksum = "3954d50fe15b02142bf25d3b8bdadb634ec3948f103d04ffe3031bc8fe9d7058"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.2",
@@ -7668,7 +7675,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "strum",
+ "strum 0.26.3",
  "telemetry_events",
  "thiserror 2.0.12",
  "util",
@@ -7728,7 +7735,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "strum",
+ "strum 0.26.3",
  "theme",
  "thiserror 2.0.12",
  "tiktoken-rs",
@@ -7736,6 +7743,7 @@ dependencies = [
  "ui",
  "util",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -7951,9 +7959,9 @@ checksum = "8355be11b20d696c8f18f6cc018c4e372165b1fa8126cef092399c9951984ffa"
 
 [[package]]
 name = "libmimalloc-sys"
-version = "0.1.42"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec9d6fac27761dabcd4ee73571cdb06b7022dc99089acbe5435691edffaac0f4"
+checksum = "6b20daca3a4ac14dbdc753c5e90fc7b490a48a9131daed3c9a9ced7b2defd37b"
 dependencies = [
  "cc",
  "libc",
@@ -8624,9 +8632,9 @@ dependencies = [
 
 [[package]]
 name = "mimalloc"
-version = "0.1.46"
+version = "0.1.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "995942f432bbb4822a7e9c3faa87a695185b0d09273ba85f097b54f4e458f2af"
+checksum = "03cb1f88093fe50061ca1195d336ffec131347c7b833db31f9ab62a2d1b7925f"
 dependencies = [
  "libmimalloc-sys",
 ]
@@ -8700,7 +8708,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.26.3",
  "workspace-hack",
 ]
 
@@ -9547,7 +9555,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.26.3",
  "workspace-hack",
 ]
 
@@ -12126,7 +12134,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "strum",
+ "strum 0.26.3",
  "tracing",
  "util",
  "workspace-hack",
@@ -12654,7 +12662,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "strum",
+ "strum 0.26.3",
  "thiserror 2.0.12",
  "time",
  "tracing",
@@ -13250,9 +13258,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.15.0"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8917285742e9f3e1683f0a9c4e6b57960b7314d0b08d30d1ecd426713ee2eee9"
+checksum = "7fcf8323ef1faaee30a44a340193b1ac6814fd9b7b4e88e9d4519a3e4abe1cfd"
 dependencies = [
  "serde",
 ]
@@ -13699,7 +13707,7 @@ dependencies = [
  "settings",
  "simplelog",
  "story",
- "strum",
+ "strum 0.26.3",
  "theme",
  "title_bar",
  "ui",
@@ -13781,7 +13789,16 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "strum"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f64def088c51c9510a8579e3c5d67c65349dcf755e5479ad3d010aa6454e2c32"
+dependencies = [
+ "strum_macros 0.27.1",
 ]
 
 [[package]]
@@ -13789,6 +13806,19 @@ name = "strum_macros"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c77a8c5abcaf0f9ce05d62342b7d298c346515365c36b673df4ebe3ced01fde8"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -14412,7 +14442,7 @@ dependencies = [
  "serde_json_lenient",
  "serde_repr",
  "settings",
- "strum",
+ "strum 0.26.3",
  "thiserror 2.0.12",
  "util",
  "uuid",
@@ -14446,7 +14476,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "simplelog",
- "strum",
+ "strum 0.26.3",
  "theme",
  "vscode_theme",
  "workspace-hack",
@@ -15447,7 +15477,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
- "strum",
+ "strum 0.26.3",
  "theme",
  "ui_macros",
  "util",
@@ -17645,7 +17675,7 @@ dependencies = [
  "settings",
  "smallvec",
  "sqlez",
- "strum",
+ "strum 0.26.3",
  "task",
  "telemetry",
  "tempfile",
@@ -17790,7 +17820,7 @@ dependencies = [
  "sqlx-macros-core",
  "sqlx-postgres",
  "sqlx-sqlite",
- "strum",
+ "strum 0.26.3",
  "subtle",
  "syn 1.0.109",
  "syn 2.0.100",
@@ -18162,7 +18192,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.183.0"
+version = "0.184.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -18351,12 +18381,13 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bf21350eced858d129840589158a8f6895c4fa4327ae56dd8c7d6a98495bed4"
+checksum = "1d28a5d6bdb0f40acf5261c39cabbf65a13b55ba4b86d9beb5b8b1c484373f1a"
 dependencies = [
  "serde",
  "serde_json",
+ "strum 0.27.1",
  "uuid",
 ]
 

@@ -61,7 +61,7 @@ pub struct BlockSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CustomBlockId(usize);
+pub struct CustomBlockId(pub usize);
 
 impl From<CustomBlockId> for ElementId {
     fn from(val: CustomBlockId) -> Self {
@@ -89,7 +89,7 @@ pub enum BlockPlacement<T> {
 }
 
 impl<T> BlockPlacement<T> {
-    fn start(&self) -> &T {
+    pub fn start(&self) -> &T {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
@@ -187,14 +187,15 @@ impl BlockPlacement<Anchor> {
 }
 
 pub struct CustomBlock {
-    id: CustomBlockId,
-    placement: BlockPlacement<Anchor>,
-    height: Option<u32>,
+    pub id: CustomBlockId,
+    pub placement: BlockPlacement<Anchor>,
+    pub height: Option<u32>,
     style: BlockStyle,
     render: Arc<Mutex<RenderBlock>>,
     priority: usize,
 }
 
+#[derive(Clone)]
 pub struct BlockProperties<P> {
     pub placement: BlockPlacement<P>,
     // None if the block takes up no space
@@ -686,6 +687,9 @@ impl BlockMap {
                         rows_before_block = position.0 - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
+                        if position.0 + 1 < new_transforms.summary().input_rows {
+                            continue;
+                        }
                         rows_before_block = (position.0 + 1) - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Replace(range) => {
