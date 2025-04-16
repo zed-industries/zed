@@ -6034,7 +6034,6 @@ impl MultiBufferSnapshot {
         } else if id == ExcerptId::max() {
             Locator::max_ref()
         } else {
-            let id = self.latest_excerpt_id(id);
             let mut cursor = self.excerpt_ids.cursor::<ExcerptId>(&());
             cursor.seek(&id, Bias::Left, &());
             if let Some(entry) = cursor.item() {
@@ -6051,10 +6050,7 @@ impl MultiBufferSnapshot {
         &self,
         ids: impl IntoIterator<Item = ExcerptId>,
     ) -> SmallVec<[Locator; 1]> {
-        let mut sorted_ids = ids
-            .into_iter()
-            .map(|id| self.latest_excerpt_id(id))
-            .collect::<SmallVec<[_; 1]>>();
+        let mut sorted_ids = ids.into_iter().collect::<SmallVec<[_; 1]>>();
         sorted_ids.sort_unstable();
         let mut locators = SmallVec::new();
 
