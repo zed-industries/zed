@@ -22,7 +22,10 @@ jobs:
           clean: false
 
       - name: Install Dependencies
-        run: ./script/headless && ./script/install-mold 2.34.0
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev libxcb-render0-dev libxcb-randr0-dev libxcb-xtest0-dev libxcb-keysyms1-dev libxext-dev libxrender-dev libxrandr-dev libxtst-dev libxfixes-dev pkg-config
+          ./script/headless && ./script/install-mold 2.34.0
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
