@@ -125,7 +125,7 @@ use project::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
         },
-        session::Session,
+        session::{Session, SessionEvent},
     },
 };
 
@@ -4105,8 +4105,7 @@ impl Editor {
             InlayHintRefreshReason::SettingsChange(_)
                 | InlayHintRefreshReason::Toggle(_)
                 | InlayHintRefreshReason::ExcerptsRemoved(_)
-                | InlayHintRefreshReason::ModifiersChanged(_)
-                | InlayHintRefreshReason::DebuggerStateChanged
+                | InlayHintRefreshReason::ModifiersChanged(_) // | InlayHintRefreshReason::DebuggerStateChanged
         );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::ModifiersChanged(enabled) => {
@@ -17205,11 +17204,12 @@ impl Editor {
     fn on_debug_session_event(
         &mut self,
         _session: Entity<Session>,
-        event: &debugger::session::SessionEvent,
+        event: &SessionEvent,
         cx: &mut Context<Self>,
     ) {
         match event {
-            debugger::session::SessionEvent::InvalidateInlineValue => {
+            SessionEvent::InvalidateInlineValue => {
+                // self.inlay_hint_cache.clear();
                 self.refresh_inlay_hints(InlayHintRefreshReason::DebuggerStateChanged, cx);
             }
             _ => {}

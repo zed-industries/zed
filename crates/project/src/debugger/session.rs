@@ -1243,6 +1243,7 @@ impl Session {
                 .map(Into::into)
                 .filter(|_| !event.preserve_focus_hint.unwrap_or(false)),
         ));
+        // cx.emit(SessionEvent::InvalidateInlineValue);
         cx.notify();
     }
 

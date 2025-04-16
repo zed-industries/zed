@@ -3572,17 +3572,9 @@ impl Project {
             return Task::ready(Err(anyhow::anyhow!("Stack frame not found")));
         };
 
+        // todo(debugger): check if file is equal to the stackframe's file
+
         let snapshot = buffer_handle.read(cx).snapshot();
-
-        let stack_frame_start = snapshot.anchor_before(PointUtf16::new(
-            stack_frame.dap.line as u32 - 1,
-            stack_frame.dap.column as u32,
-        ));
-
-        let stack_frame_end = snapshot.anchor_after(PointUtf16::new(
-            stack_frame.dap.end_line.unwrap_or(stack_frame.dap.line) as u32 - 1,
-            stack_frame.dap.end_column.unwrap_or(stack_frame.dap.column) as u32,
-        ));
 
         let inline_value_provider = session
             .read(cx)
@@ -3611,6 +3603,16 @@ impl Project {
 
             Task::ready(Ok(Some(inline_value_provider.provide(variable_ranges))))
         } else {
+            let stack_frame_start = snapshot.anchor_before(PointUtf16::new(
+                stack_frame.dap.line as u32 - 1,
+                stack_frame.dap.column as u32,
+            ));
+
+            let stack_frame_end = snapshot.anchor_after(PointUtf16::new(
+                stack_frame.dap.end_line.unwrap_or(stack_frame.dap.line) as u32 - 1,
+                stack_frame.dap.end_column.unwrap_or(stack_frame.dap.column) as u32,
+            ));
+
             self.lsp_store.update(cx, |lsp_store, cx| {
                 lsp_store.inline_values(
                     buffer_handle.clone(),
