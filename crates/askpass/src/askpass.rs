@@ -72,7 +72,8 @@ impl AskPassSession {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
-        let zed_path = std::env::current_exe()?;
+        let zed_path = std::env::current_exe()
+            .context("Failed to figure out current executable path for use in askpass")?;
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
@@ -111,17 +112,10 @@ impl AskPassSession {
             drop(temp_dir)
         });
 
-        anyhow::ensure!(
-            which::which("nc").is_ok(),
-            "Cannot find `nc` command (netcat), which is required to connect over SSH."
-        );
-
         // Create an askpass script that communicates back to this process.
         let askpass_script = format!(
-            "{shebang}\n{print_args} | {nc} --askpass={askpass_socket} 2> /tmp/zed-askpass.log \n", // todo! send stderr to /dev/null
-            // on macOS `brew install netcat` provides the GNU netcat implementation
-            // which does not support -U.
-            nc = zed_path.display(),
+            "{shebang}\n{print_args} | {zed_exe} --askpass={askpass_socket} 2> /dev/null \n",
+            zed_exe = zed_path.display(),
             askpass_socket = askpass_socket.display(),
             print_args = "printf '%s\\0' \"$@\"",
             shebang = "#!/bin/sh",
@@ -188,7 +182,10 @@ pub fn main(socket: &str) {
         exit(1);
     }
 
-    buffer.push(0);
+    if buffer.last() != Some(&b'\0') {
+        buffer.push(b'\0');
+    }
+
     if let Err(err) = stream.write_all(&buffer) {
         eprintln!("Error writing to socket: {}", err);
         exit(1);
