@@ -1,15 +1,14 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, AppContext, Entity, Task};
+use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use gpui::{App, AppContext, Context, Entity, IntoElement, Task, Window};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
-use ui::IconName;
+use ui::{Disclosure, IconName, prelude::*};
 use util::paths::PathMatcher;
-use worktree::Snapshot;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct PathSearchToolInput {
@@ -59,7 +58,7 @@ impl Tool for PathSearchTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<PathSearchToolInput>(input.clone()) {
-            Ok(input) => format!("Find paths matching “`{}`”", input.glob),
+            Ok(input) => format!("Find paths matching \"`{}`\"", input.glob),
             Err(_) => "Search paths".to_string(),
         }
     }
@@ -72,7 +71,7 @@ impl Tool for PathSearchTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> ToolResult {
-        let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
+        let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input.clone()) {
             Ok(input) => (input.offset, input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
@@ -84,58 +83,189 @@ impl Tool for PathSearchTool {
             Ok(matcher) => matcher,
             Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))).into(),
         };
-        let snapshots: Vec<Snapshot> = project
-            .read(cx)
-            .worktrees(cx)
-            .map(|worktree| worktree.read(cx).snapshot())
-            .collect();
 
-        cx.background_spawn(async move {
-            let mut matches = Vec::new();
+        // Get all worktrees from the project
+        let project_handle = project.read(cx);
+        let worktrees: Vec<_> = project_handle.worktrees(cx).collect();
 
-            for worktree in snapshots {
-                let root_name = worktree.root_name();
+        // Collect all matching paths
+        let mut matches = Vec::new();
+        for worktree_handle in &worktrees {
+            let worktree = worktree_handle.read(cx);
+            let snapshot = worktree.snapshot();
+            let root_name = snapshot.root_name();
 
-                // Don't consider ignored entries.
-                for entry in worktree.entries(false, 0) {
-                    if path_matcher.is_match(&entry.path) {
-                        matches.push(
-                            PathBuf::from(root_name)
-                                .join(&entry.path)
-                                .to_string_lossy()
-                                .to_string(),
-                        );
-                    }
+            // Don't consider ignored entries
+            for entry in snapshot.entries(false, 0) {
+                if path_matcher.is_match(&entry.path) {
+                    matches.push(
+                        PathBuf::from(root_name)
+                            .join(&entry.path)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
                 }
             }
+        }
 
-            if matches.is_empty() {
-                Ok(format!("No paths in the project matched the glob {glob:?}"))
+        // Sort to group entries in the same directory together
+        matches.sort();
+        let total_matches = matches.len();
+
+        // Create the card
+        let glob_for_card = glob.clone();
+        let card = if !matches.is_empty() {
+            let matches_for_card: Vec<_> = matches
+                .iter()
+                .skip(offset as usize)
+                .take(RESULTS_PER_PAGE)
+                .cloned()
+                .collect();
+
+            Some(
+                cx.new(|cx| {
+                    PathSearchToolCard::new(glob_for_card, total_matches, matches_for_card, cx)
+                })
+                .into(),
+            )
+        } else {
+            Some(
+                cx.new(|cx| PathSearchToolCard::new(glob_for_card, 0, Vec::new(), cx))
+                    .into(),
+            )
+        };
+
+        // Format the output text
+        let result = if matches.is_empty() {
+            format!("No paths in the project matched the glob {glob:?}")
+        } else {
+            let paginated_matches: Vec<_> = matches
+                .into_iter()
+                .skip(offset as usize)
+                .take(RESULTS_PER_PAGE)
+                .collect();
+
+            if total_matches > RESULTS_PER_PAGE + offset as usize {
+                format!(
+                    "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
+                    total_matches,
+                    offset + 1,
+                    offset as usize + paginated_matches.len(),
+                    paginated_matches.join("\n")
+                )
             } else {
-                // Sort to group entries in the same directory together.
-                matches.sort();
-
-                let total_matches = matches.len();
-                let response = if total_matches > RESULTS_PER_PAGE + offset as usize {
-                let paginated_matches: Vec<_> = matches
-                      .into_iter()
-                      .skip(offset as usize)
-                      .take(RESULTS_PER_PAGE)
-                      .collect();
-
-                    format!(
-                        "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
-                        total_matches,
-                        offset + 1,
-                        offset as usize + paginated_matches.len(),
-                        paginated_matches.join("\n")
-                    )
-                } else {
-                    matches.join("\n")
-                };
-
-                Ok(response)
+                paginated_matches.join("\n")
             }
-        }).into()
+        };
+
+        ToolResult {
+            output: Task::ready(Ok(result)),
+            card,
+        }
+    }
+}
+
+struct PathSearchToolCard {
+    glob: String,
+    total_matches: usize,
+    paths: Vec<String>,
+    expanded: bool,
+}
+
+impl PathSearchToolCard {
+    fn new(
+        glob: String,
+        total_matches: usize,
+        paths: Vec<String>,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            glob,
+            total_matches,
+            paths,
+            expanded: false,
+        }
+    }
+}
+
+impl ToolCard for PathSearchToolCard {
+    fn render(
+        &mut self,
+        _status: &ToolUseStatus,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+
+        let matches_label: SharedString = if self.total_matches == 0 {
+            "No matches".into()
+        } else if self.total_matches == 1 {
+            "1 match".into()
+        } else {
+            format!("{} matches", self.total_matches).into()
+        };
+
+        let header = h_flex()
+            .id("tool-label-container")
+            .group("tool-label-container")
+            .gap_1p5()
+            .max_w_full()
+            .justify_between()
+            .child({
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::SearchCode)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(&self.glob)
+                            .size(LabelSize::Small)
+                            .buffer_font(cx),
+                    )
+                    .child(Label::new(matches_label).size(LabelSize::Small))
+                    .into_any_element()
+            })
+            .child(
+                div().visible_on_hover("tool-label-container").child(
+                    Disclosure::new("path-search-disclosure", self.expanded)
+                        .opened_icon(IconName::ChevronUp)
+                        .closed_icon(IconName::ChevronDown)
+                        .disabled(self.paths.is_empty())
+                        .on_click(cx.listener(move |this, _event, _window, _cx| {
+                            this.expanded = !this.expanded;
+                        })),
+                ),
+            )
+            .into_any();
+
+        let content = if !self.paths.is_empty() {
+            Some(
+                v_flex()
+                    .ml_1p5()
+                    .pl_1p5()
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .gap_1()
+                    .map(|container| {
+                        if self.expanded {
+                            container.h_full()
+                        } else {
+                            container.max_h_80()
+                        }
+                    })
+                    .children(self.paths.iter().enumerate().map(|(index, path)| {
+                        Button::new(("path", index), path.clone())
+                            .label_size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate(true)
+                    }))
+                    .into_any(),
+            )
+        } else {
+            None
+        };
+
+        v_flex().my_2().gap_1().child(header).children(content)
     }
 }
