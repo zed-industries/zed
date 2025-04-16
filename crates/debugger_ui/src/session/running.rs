@@ -11,12 +11,12 @@ use crate::persistence::{self, DebuggerPaneItem, SerializedPaneLayout};
 
 use super::DebugPanelItemEvent;
 use breakpoint_list::BreakpointList;
-use collections::HashMap;
+use collections::{HashMap, IndexMap};
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
 use gpui::{
     Action as _, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    NoAction, Subscription, Task, WeakEntity,
+    NoAction, Pixels, Point, Subscription, Task, WeakEntity,
 };
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
@@ -49,8 +49,10 @@ pub struct RunningState {
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
-    _module_list: Entity<module_list::ModuleList>,
+    loaded_sources_list: Entity<LoadedSourceList>,
+    module_list: Entity<module_list::ModuleList>,
     _console: Entity<Console>,
+    breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     _schedule_serialize: Option<Task<()>>,
@@ -383,7 +385,6 @@ impl RunningState {
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
-        #[expect(unused)]
         let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), cx));
 
         let console = cx.new(|cx| {
@@ -396,7 +397,7 @@ impl RunningState {
             )
         });
 
-        let breakpoints = BreakpointList::new(session.clone(), workspace.clone(), &project, cx);
+        let breakpoint_list = BreakpointList::new(session.clone(), workspace.clone(), &project, cx);
 
         let _subscriptions = vec![
             cx.observe(&module_list, |_, _, cx| cx.notify()),
@@ -436,7 +437,8 @@ impl RunningState {
                 &variable_list,
                 &module_list,
                 &console,
-                &breakpoints,
+                &breakpoint_list,
+                &loaded_source_list,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -452,7 +454,7 @@ impl RunningState {
                 &variable_list,
                 &module_list,
                 &console,
-                breakpoints,
+                &breakpoint_list,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -472,11 +474,137 @@ impl RunningState {
             stack_frame_list,
             session_id,
             panes,
-            _module_list: module_list,
+            module_list,
             _console: console,
+            breakpoint_list,
+            loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
             _schedule_serialize: None,
         }
+    }
+
+    pub(crate) fn remove_pane_item(
+        &mut self,
+        item_kind: DebuggerPaneItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        debug_assert!(
+            item_kind.is_supported(self.session.read(cx).capabilities()),
+            "We should only allow removing supported item kinds"
+        );
+
+        if let Some((pane, item_id)) = self.panes.panes().iter().find_map(|pane| {
+            Some(pane).zip(
+                pane.read(cx)
+                    .items()
+                    .find(|item| {
+                        item.act_as::<SubView>(cx)
+                            .is_some_and(|view| view.read(cx).kind == item_kind)
+                    })
+                    .map(|item| item.item_id()),
+            )
+        }) {
+            pane.update(cx, |pane, cx| {
+                pane.remove_item(item_id, false, true, window, cx)
+            })
+        }
+    }
+
+    pub(crate) fn has_pane_at_position(&self, position: Point<Pixels>) -> bool {
+        self.panes.pane_at_pixel_position(position).is_some()
+    }
+
+    pub(crate) fn add_pane_item(
+        &mut self,
+        item_kind: DebuggerPaneItem,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        debug_assert!(
+            item_kind.is_supported(self.session.read(cx).capabilities()),
+            "We should only allow adding supported item kinds"
+        );
+
+        if let Some(pane) = self.panes.pane_at_pixel_position(position) {
+            let sub_view = match item_kind {
+                DebuggerPaneItem::Console => {
+                    let weak_console = self._console.clone().downgrade();
+
+                    Box::new(SubView::new(
+                        pane.focus_handle(cx),
+                        self._console.clone().into(),
+                        item_kind,
+                        Some(Box::new(move |cx| {
+                            weak_console
+                                .read_with(cx, |console, cx| console.show_indicator(cx))
+                                .unwrap_or_default()
+                        })),
+                        cx,
+                    ))
+                }
+                DebuggerPaneItem::Variables => Box::new(SubView::new(
+                    self.variable_list.focus_handle(cx),
+                    self.variable_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
+                    self.breakpoint_list.focus_handle(cx),
+                    self.breakpoint_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::Frames => Box::new(SubView::new(
+                    self.stack_frame_list.focus_handle(cx),
+                    self.stack_frame_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::Modules => Box::new(SubView::new(
+                    self.module_list.focus_handle(cx),
+                    self.module_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
+                    self.loaded_sources_list.focus_handle(cx),
+                    self.loaded_sources_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+            };
+
+            pane.update(cx, |pane, cx| {
+                pane.add_item(sub_view, false, false, None, window, cx);
+            })
+        }
+    }
+
+    pub(crate) fn pane_items_status(&self, cx: &App) -> IndexMap<DebuggerPaneItem, bool> {
+        let caps = self.session.read(cx).capabilities();
+        let mut pane_item_status = IndexMap::from_iter(
+            DebuggerPaneItem::all()
+                .iter()
+                .filter(|kind| kind.is_supported(&caps))
+                .map(|kind| (*kind, false)),
+        );
+        self.panes.panes().iter().for_each(|pane| {
+            pane.read(cx)
+                .items()
+                .filter_map(|item| item.act_as::<SubView>(cx))
+                .for_each(|view| {
+                    pane_item_status.insert(view.read(cx).kind, true);
+                });
+        });
+
+        pane_item_status
     }
 
     pub(crate) fn serialize_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -533,6 +661,10 @@ impl RunningState {
         }
     }
 
+    pub(crate) fn has_open_context_menu(&self, cx: &App) -> bool {
+        self.variable_list.read(cx).has_open_context_menu()
+    }
+
     pub fn session(&self) -> &Entity<Session> {
         &self.session
     }
@@ -557,7 +689,7 @@ impl RunningState {
 
     #[cfg(test)]
     pub(crate) fn module_list(&self) -> &Entity<ModuleList> {
-        &self._module_list
+        &self.module_list
     }
 
     #[cfg(test)]
@@ -793,7 +925,7 @@ impl RunningState {
         variable_list: &Entity<VariableList>,
         module_list: &Entity<ModuleList>,
         console: &Entity<Console>,
-        breakpoints: Entity<BreakpointList>,
+        breakpoints: &Entity<BreakpointList>,
         subscriptions: &mut HashMap<EntityId, Subscription>,
         window: &mut Window,
         cx: &mut Context<'_, RunningState>,
@@ -817,7 +949,7 @@ impl RunningState {
             this.add_item(
                 Box::new(SubView::new(
                     breakpoints.focus_handle(cx),
-                    breakpoints.into(),
+                    breakpoints.clone().into(),
                     DebuggerPaneItem::BreakpointList,
                     None,
                     cx,

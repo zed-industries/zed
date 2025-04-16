@@ -12,8 +12,9 @@ use dap::{
 };
 use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
-    Action, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity, actions,
+    Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
+    actions, anchored, deferred,
 };
 
 use project::{
@@ -64,6 +65,7 @@ pub struct DebugPanel {
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -126,6 +128,7 @@ impl DebugPanel {
                 focus_handle: cx.focus_handle(),
                 project: project.downgrade(),
                 workspace: workspace.weak_handle(),
+                context_menu: None,
             };
 
             debug_panel
@@ -573,6 +576,57 @@ impl DebugPanel {
         )
     }
 
+    fn deploy_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(running_state) = self
+            .active_session
+            .as_ref()
+            .and_then(|session| session.read(cx).mode().as_running().cloned())
+        {
+            let pane_items_status = running_state.read(cx).pane_items_status(cx);
+            let this = cx.weak_entity();
+
+            let context_menu = ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                for (item_kind, is_visible) in pane_items_status.into_iter() {
+                    menu = menu.toggleable_entry(item_kind, is_visible, IconPosition::End, None, {
+                        let this = this.clone();
+                        move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                if let Some(running_state) =
+                                    this.active_session.as_ref().and_then(|session| {
+                                        session.read(cx).mode().as_running().cloned()
+                                    })
+                                {
+                                    running_state.update(cx, |state, cx| {
+                                        if is_visible {
+                                            state.remove_pane_item(item_kind, window, cx);
+                                        } else {
+                                            state.add_pane_item(item_kind, position, window, cx);
+                                        }
+                                    })
+                                }
+                            })
+                            .ok();
+                        }
+                    });
+                }
+
+                menu
+            });
+
+            window.focus(&context_menu.focus_handle(cx));
+            let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                this.context_menu.take();
+                cx.notify();
+            });
+            self.context_menu = Some((context_menu, position, subscription));
+        }
+    }
+
     fn top_controls_strip(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let active_session = self.active_session.clone();
 
@@ -897,11 +951,49 @@ impl Render for DebugPanel {
         let has_sessions = self.sessions.len() > 0;
         debug_assert_eq!(has_sessions, self.active_session.is_some());
 
+        if self
+            .active_session
+            .as_ref()
+            .and_then(|session| session.read(cx).mode().as_running().cloned())
+            .map(|state| state.read(cx).has_open_context_menu(cx))
+            .unwrap_or(false)
+        {
+            self.context_menu.take();
+        }
+
         v_flex()
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
             .track_focus(&self.focus_handle(cx))
+            .when(self.active_session.is_some(), |this| {
+                this.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        if this
+                            .active_session
+                            .as_ref()
+                            .and_then(|session| {
+                                session.read(cx).mode().as_running().map(|state| {
+                                    state.read(cx).has_pane_at_position(event.position)
+                                })
+                            })
+                            .unwrap_or(false)
+                        {
+                            this.deploy_context_menu(event.position, window, cx);
+                        }
+                    }),
+                )
+                .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                    deferred(
+                        anchored()
+                            .position(*position)
+                            .anchor(gpui::Corner::TopLeft)
+                            .child(menu.clone()),
+                    )
+                    .with_priority(1)
+                }))
+            })
             .map(|this| {
                 if has_sessions {
                     this.children(self.active_session.clone())
