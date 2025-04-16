@@ -568,10 +568,14 @@ impl InlayMap {
 
             let offset = inlay_to_insert.position.to_offset(&snapshot.buffer);
             match self.inlays.binary_search_by(|probe| {
-                probe
+                let anchor_cmp = probe
                     .position
-                    .cmp(&inlay_to_insert.position, &snapshot.buffer)
-                    .then(std::cmp::Ordering::Less)
+                    .cmp(&inlay_to_insert.position, &snapshot.buffer);
+                let offset_cmp = probe
+                    .position
+                    .to_offset(&snapshot.buffer)
+                    .cmp(&inlay_to_insert.position.to_offset(&snapshot.buffer));
+                anchor_cmp.then(std::cmp::Ordering::Less)
             }) {
                 Ok(ix) | Err(ix) => {
                     self.inlays.insert(ix, inlay_to_insert);
