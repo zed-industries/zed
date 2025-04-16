@@ -1,5 +1,8 @@
-use gpui::{AnyElement, AnyView, ClickEvent, Hsla, Rems, transparent_black};
-use gpui::{CursorStyle, DefiniteLength, MouseButton, MouseDownEvent, MouseUpEvent, relative};
+use documented::Documented;
+use gpui::{
+    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, Hsla, MouseButton,
+    MouseDownEvent, MouseUpEvent, Rems, relative, transparent_black,
+};
 use smallvec::SmallVec;
 
 use crate::{DynamicSpacing, ElevationIndex, prelude::*};
@@ -343,7 +346,7 @@ impl ButtonSize {
 /// unconstrained and may make the UI feel less consistent.
 ///
 /// This is also used to build the prebuilt buttons.
-#[derive(IntoElement)]
+#[derive(IntoElement, Documented, RegisterComponent)]
 pub struct ButtonLike {
     pub(super) base: Div,
     id: ElementId,
@@ -583,5 +586,101 @@ impl RenderOnce for ButtonLike {
                 this.tooltip(move |window, cx| tooltip(window, cx))
             })
             .children(self.children)
+    }
+}
+
+impl Component for ButtonLike {
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn sort_name() -> &'static str {
+        // ButtonLike should be at the bottom of the button list
+        "ButtonZ"
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(ButtonLike::DOCS)
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group(vec![
+                        single_example(
+                            "Default",
+                            ButtonLike::new("default")
+                                .child(Label::new("Default"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Filled",
+                            ButtonLike::new("filled")
+                                .style(ButtonStyle::Filled)
+                                .child(Label::new("Filled"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Subtle",
+                            ButtonLike::new("outline")
+                                .style(ButtonStyle::Subtle)
+                                .child(Label::new("Subtle"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Tinted",
+                            ButtonLike::new("tinted_accent_style")
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .child(Label::new("Accent"))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Transparent",
+                            ButtonLike::new("transparent")
+                                .style(ButtonStyle::Transparent)
+                                .child(Label::new("Transparent"))
+                                .into_any_element(),
+                        ),
+                    ]),
+                    example_group_with_title(
+                        "Button Group Constructors",
+                        vec![
+                            single_example(
+                                "Left Rounded",
+                                ButtonLike::new_rounded_left("left_rounded")
+                                    .child(Label::new("Left Rounded"))
+                                    .style(ButtonStyle::Filled)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Right Rounded",
+                                ButtonLike::new_rounded_right("right_rounded")
+                                    .child(Label::new("Right Rounded"))
+                                    .style(ButtonStyle::Filled)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Button Group",
+                                h_flex()
+                                    .gap_px()
+                                    .child(
+                                        ButtonLike::new_rounded_left("bg_left")
+                                            .child(Label::new("Left"))
+                                            .style(ButtonStyle::Filled),
+                                    )
+                                    .child(
+                                        ButtonLike::new_rounded_right("bg_right")
+                                            .child(Label::new("Right"))
+                                            .style(ButtonStyle::Filled),
+                                    )
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

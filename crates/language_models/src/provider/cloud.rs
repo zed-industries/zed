@@ -1,4 +1,4 @@
-use anthropic::{AnthropicError, AnthropicModelMode};
+use anthropic::{AnthropicError, AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::{
     Client, EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
@@ -14,7 +14,7 @@ use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Ta
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
-    LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelKnownError, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
     LanguageModelToolSchemaFormat, RateLimiter, ZED_CLOUD_PROVIDER_ID,
 };
@@ -33,6 +33,7 @@ use std::{
     time::Duration,
 };
 use strum::IntoEnumIterator;
+use thiserror::Error;
 use ui::{TintColor, prelude::*};
 
 use crate::AllLanguageModelSettings;
@@ -225,6 +226,20 @@ impl CloudLanguageModelProvider {
             _maintain_client_status: maintain_client_status,
         }
     }
+
+    fn create_language_model(
+        &self,
+        model: CloudModel,
+        llm_api_token: LlmApiToken,
+    ) -> Arc<dyn LanguageModel> {
+        Arc::new(CloudLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            llm_api_token: llm_api_token.clone(),
+            client: self.client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }) as Arc<dyn LanguageModel>
+    }
 }
 
 impl LanguageModelProviderState for CloudLanguageModelProvider {
@@ -258,6 +273,17 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
         }))
+    }
+
+    fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let llm_api_token = self.state.read(cx).llm_api_token.clone();
+        [
+            CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
+            CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+        ]
+        .into_iter()
+        .map(|model| self.create_language_model(model, llm_api_token.clone()))
+        .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -345,15 +371,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
         models
             .into_values()
-            .map(|model| {
-                Arc::new(CloudLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    llm_api_token: llm_api_token.clone(),
-                    client: self.client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model, llm_api_token.clone()))
             .collect()
     }
 
@@ -504,10 +522,14 @@ impl CloudLanguageModel {
         let mut retry_delay = Duration::from_secs(1);
 
         loop {
-            let request_builder = http_client::Request::builder();
+            let request_builder = http_client::Request::builder().method(Method::POST);
+            let request_builder = if let Ok(completions_url) = std::env::var("ZED_COMPLETIONS_URL")
+            {
+                request_builder.uri(completions_url)
+            } else {
+                request_builder.uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
+            };
             let request = request_builder
-                .method(Method::POST)
-                .uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .body(serde_json::to_string(&body)?.into())?;
@@ -554,12 +576,17 @@ impl CloudLanguageModel {
             } else {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;
-                return Err(anyhow!(
-                    "cloud language model completion failed with status {status}: {body}",
-                ));
+                return Err(anyhow!(ApiError { status, body }));
             }
         }
     }
+}
+
+#[derive(Debug, Error)]
+#[error("cloud language model completion failed with status {status}: {body}")]
+struct ApiError {
+    status: StatusCode,
+    body: String,
 }
 
 impl LanguageModel for CloudLanguageModel {
@@ -569,10 +596,6 @@ impl LanguageModel for CloudLanguageModel {
 
     fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn icon(&self) -> Option<IconName> {
-        self.model.icon()
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
@@ -679,7 +702,23 @@ impl LanguageModel for CloudLanguageModel {
                             )?)?,
                         },
                     )
-                    .await?;
+                    .await
+                    .map_err(|err| match err.downcast::<ApiError>() {
+                        Ok(api_err) => {
+                            if api_err.status == StatusCode::BAD_REQUEST {
+                                if let Some(tokens) = parse_prompt_too_long(&api_err.body) {
+                                    return anyhow!(
+                                        LanguageModelKnownError::ContextWindowLimitExceeded {
+                                            tokens
+                                        }
+                                    );
+                                }
+                            }
+                            anyhow!(api_err)
+                        }
+                        Err(err) => anyhow!(err),
+                    })?;
+
                     Ok(
                         crate::provider::anthropic::map_to_language_model_completion_events(
                             Box::pin(response_lines(response).map_err(AnthropicError::Other)),

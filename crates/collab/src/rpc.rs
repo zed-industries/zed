@@ -318,6 +318,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtOpenDocs>)
+            .add_request_handler(forward_mutating_project_request::<proto::LspExtRunnables>)
             .add_request_handler(
                 forward_read_only_project_request::<proto::LspExtSwitchSourceHeader>,
             )
@@ -4134,7 +4135,8 @@ async fn get_llm_api_token(
         Err(anyhow!("terms of service not accepted"))?
     }
 
-    let has_llm_subscription = session.has_llm_subscription(&db).await?;
+    let has_legacy_llm_subscription = session.has_llm_subscription(&db).await?;
+    let billing_subscription = db.get_active_billing_subscription(user.id).await?;
     let billing_preferences = db.get_billing_preferences(user.id).await?;
 
     let token = LlmTokenClaims::create(
@@ -4142,8 +4144,9 @@ async fn get_llm_api_token(
         session.is_staff(),
         billing_preferences,
         &flags,
-        has_llm_subscription,
+        has_legacy_llm_subscription,
         session.current_plan(&db).await?,
+        billing_subscription,
         session.system_id.clone(),
         &session.app_state.config,
     )?;
@@ -4153,13 +4156,13 @@ async fn get_llm_api_token(
 
 fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
     let message = match message {
-        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload),
-        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload),
-        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload),
-        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload),
+        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload.as_str().to_string()),
+        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
+        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
+        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
         TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
             code: frame.code.into(),
-            reason: frame.reason,
+            reason: frame.reason.as_str().to_owned().into(),
         })),
         // We should never receive a frame while reading the message, according
         // to the `tungstenite` maintainers:
@@ -4179,14 +4182,14 @@ fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
 
 fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
     match message {
-        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload),
-        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload),
-        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload),
-        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload),
+        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload.into()),
+        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload.into()),
+        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload.into()),
+        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload.into()),
         AxumMessage::Close(frame) => {
             TungsteniteMessage::Close(frame.map(|frame| TungsteniteCloseFrame {
                 code: frame.code.into(),
-                reason: frame.reason,
+                reason: frame.reason.as_ref().into(),
             }))
         }
     }

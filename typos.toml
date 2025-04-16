@@ -41,6 +41,10 @@ extend-exclude = [
     "docs/theme/css/",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
+    # Eval examples for prompts and criteria
+    "crates/eval/examples/checkpoint_stability/criteria.md",
+    "crates/eval/examples/tax_id_validation/prompt.md",
+    "crates/eval/examples/tax_id_validation/criteria.md"
 ]
 
 [default]
@@ -55,6 +59,8 @@ extend-ignore-re = [
     "protols",
     # x11rb SelectionNotifyEvent struct field
     "requestor",
+    # macOS version
+    "Big Sur",
     # Not an actual typo but an intentionally invalid color, in `color_extractor`
     "#fof"
 ]

@@ -29,7 +29,7 @@ use ignore::IgnoreStack;
 use language::DiskState;
 
 use parking_lot::Mutex;
-use paths::local_settings_folder_relative_path;
+use paths::{local_settings_folder_relative_path, local_vscode_folder_relative_path};
 use postage::{
     barrier,
     prelude::{Sink as _, Stream as _},
@@ -45,6 +45,7 @@ use smallvec::{SmallVec, smallvec};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
+    borrow::Borrow as _,
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
@@ -383,12 +384,23 @@ struct LocalRepositoryEntry {
     work_directory: WorkDirectory,
     work_directory_abs_path: Arc<Path>,
     git_dir_scan_id: usize,
-    original_dot_git_abs_path: Arc<Path>,
-    /// Absolute path to the actual .git folder.
-    /// Note: if .git is a file, this points to the folder indicated by the .git file
-    dot_git_dir_abs_path: Arc<Path>,
-    /// Absolute path to the .git file, if we're in a git worktree.
-    dot_git_worktree_abs_path: Option<Arc<Path>>,
+    /// Absolute path to the original .git entry that caused us to create this repository.
+    ///
+    /// This is normally a directory, but may be a "gitfile" that points to a directory elsewhere
+    /// (whose path we then store in `repository_dir_abs_path`).
+    dot_git_abs_path: Arc<Path>,
+    /// Absolute path to the "commondir" for this repository.
+    ///
+    /// This is always a directory. For a normal repository, this is the same as dot_git_abs_path,
+    /// but in the case of a submodule or a worktree it is the path to the "parent" .git directory
+    /// from which the submodule/worktree was derived.
+    common_dir_abs_path: Arc<Path>,
+    /// Absolute path to the directory holding the repository's state.
+    ///
+    /// For a normal repository, this is a directory and coincides with `dot_git_abs_path` and
+    /// `common_dir_abs_path`. For a submodule or worktree, this is some subdirectory of the
+    /// commondir like `/project/.git/modules/foo`.
+    repository_dir_abs_path: Arc<Path>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -1171,6 +1183,31 @@ impl Worktree {
     pub fn is_single_file(&self) -> bool {
         self.root_dir().is_none()
     }
+
+    /// For visible worktrees, returns the path with the worktree name as the first component.
+    /// Otherwise, returns an absolute path.
+    pub fn full_path(&self, worktree_relative_path: &Path) -> PathBuf {
+        let mut full_path = PathBuf::new();
+
+        if self.is_visible() {
+            full_path.push(self.root_name());
+        } else {
+            let path = self.abs_path();
+
+            if self.is_local() && path.starts_with(home_dir().as_path()) {
+                full_path.push("~");
+                full_path.push(path.strip_prefix(home_dir().as_path()).unwrap());
+            } else {
+                full_path.push(path)
+            }
+        }
+
+        if worktree_relative_path.components().next().is_some() {
+            full_path.push(&worktree_relative_path);
+        }
+
+        full_path
+    }
 }
 
 impl LocalWorktree {
@@ -1325,7 +1362,11 @@ impl LocalWorktree {
                                 new_work_directory_abs_path: Some(
                                     new_repo.work_directory_abs_path.clone(),
                                 ),
-                                dot_git_abs_path: Some(new_repo.original_dot_git_abs_path.clone()),
+                                dot_git_abs_path: Some(new_repo.dot_git_abs_path.clone()),
+                                repository_dir_abs_path: Some(
+                                    new_repo.repository_dir_abs_path.clone(),
+                                ),
+                                common_dir_abs_path: Some(new_repo.common_dir_abs_path.clone()),
                             });
                             new_repos.next();
                         }
@@ -1342,9 +1383,11 @@ impl LocalWorktree {
                                     new_work_directory_abs_path: Some(
                                         new_repo.work_directory_abs_path.clone(),
                                     ),
-                                    dot_git_abs_path: Some(
-                                        new_repo.original_dot_git_abs_path.clone(),
+                                    dot_git_abs_path: Some(new_repo.dot_git_abs_path.clone()),
+                                    repository_dir_abs_path: Some(
+                                        new_repo.repository_dir_abs_path.clone(),
                                     ),
+                                    common_dir_abs_path: Some(new_repo.common_dir_abs_path.clone()),
                                 });
                             }
                             new_repos.next();
@@ -1358,6 +1401,8 @@ impl LocalWorktree {
                                 ),
                                 new_work_directory_abs_path: None,
                                 dot_git_abs_path: None,
+                                repository_dir_abs_path: None,
+                                common_dir_abs_path: None,
                             });
                             old_repos.next();
                         }
@@ -1368,7 +1413,9 @@ impl LocalWorktree {
                         work_directory_id: entry_id,
                         old_work_directory_abs_path: None,
                         new_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
-                        dot_git_abs_path: Some(repo.original_dot_git_abs_path.clone()),
+                        dot_git_abs_path: Some(repo.dot_git_abs_path.clone()),
+                        repository_dir_abs_path: Some(repo.repository_dir_abs_path.clone()),
+                        common_dir_abs_path: Some(repo.common_dir_abs_path.clone()),
                     });
                     new_repos.next();
                 }
@@ -1377,7 +1424,9 @@ impl LocalWorktree {
                         work_directory_id: entry_id,
                         old_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
                         new_work_directory_abs_path: None,
-                        dot_git_abs_path: Some(repo.original_dot_git_abs_path.clone()),
+                        dot_git_abs_path: Some(repo.dot_git_abs_path.clone()),
+                        repository_dir_abs_path: Some(repo.repository_dir_abs_path.clone()),
+                        common_dir_abs_path: Some(repo.common_dir_abs_path.clone()),
                     });
                     old_repos.next();
                 }
@@ -2816,6 +2865,7 @@ impl BackgroundScannerState {
         (!entry.is_external && (!entry.is_ignored || entry.is_always_included))
             || entry.path.file_name() == Some(*DOT_GIT)
             || entry.path.file_name() == Some(local_settings_folder_relative_path().as_os_str())
+            || entry.path.file_name() == Some(local_vscode_folder_relative_path().as_os_str())
             || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
             || self
                 .paths_to_scan
@@ -2941,7 +2991,7 @@ impl BackgroundScannerState {
     }
 
     fn remove_path(&mut self, path: &Path) {
-        log::debug!("background scanner removing path {path:?}");
+        log::trace!("background scanner removing path {path:?}");
         let mut new_entries;
         let removed_entries;
         {
@@ -3011,21 +3061,18 @@ impl BackgroundScannerState {
             Some(parent_dir) => {
                 // Guard against repositories inside the repository metadata
                 if parent_dir.iter().any(|component| component == *DOT_GIT) {
-                    log::info!(
+                    log::debug!(
                         "not building git repository for nested `.git` directory, `.git` path in the worktree: {dot_git_path:?}"
                     );
                     return;
                 };
-                log::info!(
-                    "building git repository, `.git` path in the worktree: {dot_git_path:?}"
-                );
 
                 parent_dir.into()
             }
             None => {
                 // `dot_git_path.parent().is_none()` means `.git` directory is the opened worktree itself,
                 // no files inside that directory are tracked by git, so no need to build the repo around it
-                log::info!(
+                log::debug!(
                     "not building git repository for the worktree itself, `.git` path in the worktree: {dot_git_path:?}"
                 );
                 return;
@@ -3049,7 +3096,6 @@ impl BackgroundScannerState {
         fs: &dyn Fs,
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
-        log::info!("insert git repository for {dot_git_path:?}");
         let work_dir_entry = self.snapshot.entry_for_path(work_directory.path_key().0)?;
         let work_directory_abs_path = self
             .snapshot
@@ -3062,57 +3108,42 @@ impl BackgroundScannerState {
             .get(&work_dir_entry.id)
             .is_some()
         {
-            log::info!("existing git repository for {work_directory:?}");
+            log::trace!("existing git repository for {work_directory:?}");
             return None;
         }
 
-        let dot_git_abs_path = self.snapshot.abs_path.as_path().join(&dot_git_path);
+        let dot_git_abs_path: Arc<Path> = self
+            .snapshot
+            .abs_path
+            .as_path()
+            .join(&dot_git_path)
+            .as_path()
+            .into();
 
-        // TODO add these watchers without building a whole repository by parsing .git-with-indirection
-        let t0 = Instant::now();
-        let repository = fs.open_repo(&dot_git_abs_path)?;
-        log::info!("opened git repo for {dot_git_abs_path:?}");
-
-        let repository_path = repository.path();
-        watcher.add(&repository_path).log_err()?;
-
-        let actual_dot_git_dir_abs_path = repository.main_repository_path();
-        let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path == dot_git_abs_path {
-            None
-        } else {
-            // The two paths could be different because we opened a git worktree.
-            // When that happens:
-            //
-            // * `dot_git_abs_path` is a file that points to the worktree-subdirectory in the actual
-            // .git directory.
-            //
-            // * `repository_path` is the worktree-subdirectory.
-            //
-            // * `actual_dot_git_dir_abs_path` is the path to the actual .git directory. In git
-            // documentation this is called the "commondir".
-            watcher.add(&dot_git_abs_path).log_err()?;
-            Some(Arc::from(dot_git_abs_path.as_path()))
-        };
-
-        log::trace!("constructed libgit2 repo in {:?}", t0.elapsed());
+        let (repository_dir_abs_path, common_dir_abs_path) =
+            discover_git_paths(&dot_git_abs_path, fs);
+        watcher.add(&common_dir_abs_path).log_err();
+        if !repository_dir_abs_path.starts_with(&common_dir_abs_path) {
+            watcher.add(&repository_dir_abs_path).log_err();
+        }
 
         let work_directory_id = work_dir_entry.id;
 
         let local_repository = LocalRepositoryEntry {
             work_directory_id,
             work_directory,
-            git_dir_scan_id: 0,
-            original_dot_git_abs_path: dot_git_abs_path.as_path().into(),
-            dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
             work_directory_abs_path: work_directory_abs_path.as_path().into(),
-            dot_git_worktree_abs_path,
+            git_dir_scan_id: 0,
+            dot_git_abs_path,
+            common_dir_abs_path,
+            repository_dir_abs_path,
         };
 
         self.snapshot
             .git_repositories
             .insert(work_directory_id, local_repository.clone());
 
-        log::info!("inserting new local git repository");
+        log::trace!("inserting new local git repository");
         Some(local_repository)
     }
 }
@@ -3228,27 +3259,7 @@ impl language::File for File {
     }
 
     fn full_path(&self, cx: &App) -> PathBuf {
-        let mut full_path = PathBuf::new();
-        let worktree = self.worktree.read(cx);
-
-        if worktree.is_visible() {
-            full_path.push(worktree.root_name());
-        } else {
-            let path = worktree.abs_path();
-
-            if worktree.is_local() && path.starts_with(home_dir().as_path()) {
-                full_path.push("~");
-                full_path.push(path.strip_prefix(home_dir().as_path()).unwrap());
-            } else {
-                full_path.push(path)
-            }
-        }
-
-        if self.path.components().next().is_some() {
-            full_path.push(&self.path);
-        }
-
-        full_path
+        self.worktree.read(cx).full_path(&self.path)
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
@@ -3261,10 +3272,6 @@ impl language::File for File {
 
     fn worktree_id(&self, cx: &App) -> WorktreeId {
         self.worktree.read(cx).id()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn to_proto(&self, cx: &App) -> rpc::proto::File {
@@ -3284,11 +3291,11 @@ impl language::File for File {
 
 impl language::LocalFile for File {
     fn abs_path(&self, cx: &App) -> PathBuf {
-        let worktree_path = &self.worktree.read(cx).as_local().unwrap().abs_path;
+        let worktree_path = &self.worktree.read(cx).abs_path();
         if self.path.as_ref() == Path::new("") {
-            worktree_path.as_path().to_path_buf()
+            worktree_path.to_path_buf()
         } else {
-            worktree_path.as_path().join(&self.path)
+            worktree_path.join(&self.path)
         }
     }
 
@@ -3359,7 +3366,11 @@ impl File {
     }
 
     pub fn from_dyn(file: Option<&Arc<dyn language::File>>) -> Option<&Self> {
-        file.and_then(|f| f.as_any().downcast_ref())
+        file.and_then(|f| {
+            let f: &dyn language::File = f.borrow();
+            let f: &dyn Any = f;
+            f.downcast_ref()
+        })
     }
 
     pub fn worktree_id(&self, cx: &App) -> WorktreeId {
@@ -3448,6 +3459,8 @@ pub struct UpdatedGitRepository {
     /// For a normal git repository checkout, the absolute path to the .git directory.
     /// For a worktree, the absolute path to the worktree's subdirectory inside the .git directory.
     pub dot_git_abs_path: Option<Arc<Path>>,
+    pub repository_dir_abs_path: Option<Arc<Path>>,
+    pub common_dir_abs_path: Option<Arc<Path>>,
 }
 
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
@@ -3767,69 +3780,21 @@ impl BackgroundScanner {
         // the git repository in an ancestor directory. Find any gitignore files
         // in ancestor directories.
         let root_abs_path = self.state.lock().snapshot.abs_path.clone();
-        let mut containing_git_repository = None;
-        for (index, ancestor) in root_abs_path.as_path().ancestors().enumerate() {
-            if index != 0 {
-                if Some(ancestor) == self.fs.home_dir().as_deref() {
-                    // Unless $HOME is itself the worktree root, don't consider it as a
-                    // containing git repository---expensive and likely unwanted.
-                    break;
-                } else if let Ok(ignore) =
-                    build_gitignore(&ancestor.join(*GITIGNORE), self.fs.as_ref()).await
-                {
-                    self.state
-                        .lock()
-                        .snapshot
-                        .ignores_by_parent_abs_path
-                        .insert(ancestor.into(), (ignore.into(), false));
-                }
-            }
-
-            let ancestor_dot_git = ancestor.join(*DOT_GIT);
-            log::info!("considering ancestor: {ancestor_dot_git:?}");
-            // Check whether the directory or file called `.git` exists (in the
-            // case of worktrees it's a file.)
-            if self
-                .fs
-                .metadata(&ancestor_dot_git)
-                .await
-                .is_ok_and(|metadata| metadata.is_some())
-            {
-                if index != 0 {
-                    // We canonicalize, since the FS events use the canonicalized path.
-                    if let Some(ancestor_dot_git) =
-                        self.fs.canonicalize(&ancestor_dot_git).await.log_err()
-                    {
-                        let location_in_repo = root_abs_path
-                            .as_path()
-                            .strip_prefix(ancestor)
-                            .unwrap()
-                            .into();
-                        log::info!(
-                            "inserting parent git repo for this worktree: {location_in_repo:?}"
-                        );
-                        // We associate the external git repo with our root folder and
-                        // also mark where in the git repo the root folder is located.
-                        let local_repository = self.state.lock().insert_git_repository_for_path(
-                            WorkDirectory::AboveProject {
-                                absolute_path: ancestor.into(),
-                                location_in_repo,
-                            },
-                            ancestor_dot_git.clone().into(),
-                            self.fs.as_ref(),
-                            self.watcher.as_ref(),
-                        );
-
-                        if local_repository.is_some() {
-                            containing_git_repository = Some(ancestor_dot_git)
-                        }
-                    };
-                }
-
-                // Reached root of git repository.
-                break;
-            }
-        }
+        let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
+        self.state
+            .lock()
+            .snapshot
+            .ignores_by_parent_abs_path
+            .extend(ignores);
+        let containing_git_repository = repo.and_then(|(ancestor_dot_git, work_directory)| {
+            self.state.lock().insert_git_repository_for_path(
+                work_directory,
+                ancestor_dot_git.as_path().into(),
+                self.fs.as_ref(),
+                self.watcher.as_ref(),
+            )?;
+            Some(ancestor_dot_git)
+        });
 
         log::info!("containing git repository: {containing_git_repository:?}");
 
@@ -4052,8 +4017,8 @@ impl BackgroundScanner {
 
                 if abs_path.0.file_name() == Some(*GITIGNORE) {
                     for (_, repo) in snapshot.git_repositories.iter().filter(|(_, repo)| repo.directory_contains(&relative_path)) {
-                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.dot_git_dir_abs_path.as_ref()) {
-                            dot_git_abs_paths.push(repo.dot_git_dir_abs_path.to_path_buf());
+                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.common_dir_abs_path.as_ref()) {
+                            dot_git_abs_paths.push(repo.common_dir_abs_path.to_path_buf());
                         }
                     }
                 }
@@ -4112,7 +4077,6 @@ impl BackgroundScanner {
             }
         }
         self.send_status_update(false, SmallVec::new());
-        // send_status_update_inner(phase, state, status_update_tx, false, SmallVec::new());
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<Path>]) -> bool {
@@ -4247,7 +4211,7 @@ impl BackgroundScanner {
                 log::error!("skipping excluded directory {:?}", job.path);
                 return Ok(());
             }
-            log::info!("scanning directory {:?}", job.path);
+            log::trace!("scanning directory {:?}", job.path);
             root_abs_path = snapshot.abs_path().clone();
             root_char_bag = snapshot.root_char_bag;
         }
@@ -4481,6 +4445,15 @@ impl BackgroundScanner {
         )
         .await;
 
+        let mut new_ancestor_repo = if relative_paths
+            .iter()
+            .any(|path| path.as_ref() == Path::new(""))
+        {
+            Some(discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await)
+        } else {
+            None
+        };
+
         let mut state = self.state.lock();
         let doing_recursive_update = scan_queue_tx.is_some();
 
@@ -4532,6 +4505,21 @@ impl BackgroundScanner {
                     }
 
                     state.insert_entry(fs_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
+
+                    if path.as_ref() == Path::new("") {
+                        if let Some((ignores, repo)) = new_ancestor_repo.take() {
+                            log::trace!("updating ancestor git repository");
+                            state.snapshot.ignores_by_parent_abs_path.extend(ignores);
+                            if let Some((ancestor_dot_git, work_directory)) = repo {
+                                state.insert_git_repository_for_path(
+                                    work_directory,
+                                    ancestor_dot_git.as_path().into(),
+                                    self.fs.as_ref(),
+                                    self.watcher.as_ref(),
+                                );
+                            }
+                        }
+                    }
                 }
                 Ok(None) => {
                     self.remove_repo_path(path, &mut state.snapshot);
@@ -4717,7 +4705,7 @@ impl BackgroundScanner {
     }
 
     fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) {
-        log::info!("reloading repositories: {dot_git_paths:?}");
+        log::trace!("reloading repositories: {dot_git_paths:?}");
         let mut state = self.state.lock();
         let scan_id = state.snapshot.scan_id;
         for dot_git_dir in dot_git_paths {
@@ -4727,8 +4715,8 @@ impl BackgroundScanner {
                     .git_repositories
                     .iter()
                     .find_map(|(_, repo)| {
-                        if repo.dot_git_dir_abs_path.as_ref() == &dot_git_dir
-                            || repo.dot_git_worktree_abs_path.as_deref() == Some(&dot_git_dir)
+                        if repo.common_dir_abs_path.as_ref() == &dot_git_dir
+                            || repo.repository_dir_abs_path.as_ref() == &dot_git_dir
                         {
                             Some(repo.clone())
                         } else {
@@ -4770,7 +4758,7 @@ impl BackgroundScanner {
 
             if exists_in_snapshot
                 || matches!(
-                    smol::block_on(self.fs.metadata(&entry.dot_git_dir_abs_path)),
+                    smol::block_on(self.fs.metadata(&entry.common_dir_abs_path)),
                     Ok(Some(_))
                 )
             {
@@ -4808,6 +4796,68 @@ impl BackgroundScanner {
         }
         Ok(request)
     }
+}
+
+async fn discover_ancestor_git_repo(
+    fs: Arc<dyn Fs>,
+    root_abs_path: &SanitizedPath,
+) -> (
+    HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
+    Option<(PathBuf, WorkDirectory)>,
+) {
+    let mut ignores = HashMap::default();
+    for (index, ancestor) in root_abs_path.as_path().ancestors().enumerate() {
+        if index != 0 {
+            if Some(ancestor) == fs.home_dir().as_deref() {
+                // Unless $HOME is itself the worktree root, don't consider it as a
+                // containing git repository---expensive and likely unwanted.
+                break;
+            } else if let Ok(ignore) =
+                build_gitignore(&ancestor.join(*GITIGNORE), fs.as_ref()).await
+            {
+                ignores.insert(ancestor.into(), (ignore.into(), false));
+            }
+        }
+
+        let ancestor_dot_git = ancestor.join(*DOT_GIT);
+        log::trace!("considering ancestor: {ancestor_dot_git:?}");
+        // Check whether the directory or file called `.git` exists (in the
+        // case of worktrees it's a file.)
+        if fs
+            .metadata(&ancestor_dot_git)
+            .await
+            .is_ok_and(|metadata| metadata.is_some())
+        {
+            if index != 0 {
+                // We canonicalize, since the FS events use the canonicalized path.
+                if let Some(ancestor_dot_git) = fs.canonicalize(&ancestor_dot_git).await.log_err() {
+                    let location_in_repo = root_abs_path
+                        .as_path()
+                        .strip_prefix(ancestor)
+                        .unwrap()
+                        .into();
+                    log::info!("inserting parent git repo for this worktree: {location_in_repo:?}");
+                    // We associate the external git repo with our root folder and
+                    // also mark where in the git repo the root folder is located.
+                    return (
+                        ignores,
+                        Some((
+                            ancestor_dot_git,
+                            WorkDirectory::AboveProject {
+                                absolute_path: ancestor.into(),
+                                location_in_repo,
+                            },
+                        )),
+                    );
+                };
+            }
+
+            // Reached root of git repository.
+            break;
+        }
+    }
+
+    (ignores, None)
 }
 
 fn build_diff(
@@ -5037,7 +5087,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .unwrap();
             (
                 tree.fs.clone(),
-                local_repo_entry.dot_git_dir_abs_path.clone(),
+                local_repo_entry.common_dir_abs_path.clone(),
                 local_repo_entry.git_dir_scan_id,
             )
         });
@@ -5437,4 +5487,41 @@ impl CreatedEntry {
             CreatedEntry::Excluded { .. } => None,
         }
     }
+}
+
+fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
+    let path = content
+        .strip_prefix("gitdir:")
+        .ok_or_else(|| anyhow!("failed to parse gitfile content {content:?}"))?;
+    Ok(Path::new(path.trim()))
+}
+
+fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {
+    let mut repository_dir_abs_path = dot_git_abs_path.clone();
+    let mut common_dir_abs_path = dot_git_abs_path.clone();
+
+    if let Some(path) = smol::block_on(fs.load(&dot_git_abs_path))
+        .ok()
+        .as_ref()
+        .and_then(|contents| parse_gitfile(contents).log_err())
+    {
+        let path = dot_git_abs_path
+            .parent()
+            .unwrap_or(Path::new(""))
+            .join(path);
+        if let Some(path) = smol::block_on(fs.canonicalize(&path)).log_err() {
+            repository_dir_abs_path = Path::new(&path).into();
+            common_dir_abs_path = repository_dir_abs_path.clone();
+            if let Some(commondir_contents) = smol::block_on(fs.load(&path.join("commondir"))).ok()
+            {
+                if let Some(commondir_path) =
+                    smol::block_on(fs.canonicalize(&path.join(commondir_contents.trim()))).log_err()
+                {
+                    common_dir_abs_path = commondir_path.as_path().into();
+                }
+            }
+        }
+    };
+
+    (repository_dir_abs_path, common_dir_abs_path)
 }

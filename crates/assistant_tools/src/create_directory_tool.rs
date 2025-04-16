@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -33,7 +33,7 @@ impl Tool for CreateDirectoryTool {
         "create_directory".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         true
     }
 
@@ -45,7 +45,7 @@ impl Tool for CreateDirectoryTool {
         IconName::Folder
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<CreateDirectoryToolInput>(format)
     }
 
@@ -68,14 +68,16 @@ impl Tool for CreateDirectoryTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<CreateDirectoryToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
         let project_path = match project.read(cx).find_project_path(&input.path, cx) {
             Some(project_path) => project_path,
-            None => return Task::ready(Err(anyhow!("Path to create was outside the project"))),
+            None => {
+                return Task::ready(Err(anyhow!("Path to create was outside the project"))).into();
+            }
         };
         let destination_path: Arc<str> = input.path.as_str().into();
 
@@ -89,5 +91,6 @@ impl Tool for CreateDirectoryTool {
 
             Ok(format!("Created directory {destination_path}"))
         })
+        .into()
     }
 }

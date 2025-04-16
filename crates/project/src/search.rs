@@ -71,6 +71,7 @@ pub enum SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        one_match_per_line: bool,
         inner: SearchInputs,
     },
 }
@@ -92,6 +93,21 @@ impl SearchQuery {
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let query = query.to_string();
+        if !case_sensitive && !query.is_ascii() {
+            // AhoCorasickBuilder doesn't support case-insensitive search with unicode characters
+            // Fallback to regex search as recommended by
+            // https://docs.rs/aho-corasick/1.1/aho_corasick/struct.AhoCorasickBuilder.html#method.ascii_case_insensitive
+            return Self::regex(
+                regex::escape(&query),
+                whole_word,
+                case_sensitive,
+                include_ignored,
+                false,
+                files_to_include,
+                files_to_exclude,
+                buffers,
+            );
+        }
         let search = AhoCorasickBuilder::new()
             .ascii_case_insensitive(!case_sensitive)
             .build([&query])?;
@@ -116,6 +132,7 @@ impl SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        one_match_per_line: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
         buffers: Option<Vec<Entity<Buffer>>>,
@@ -156,6 +173,7 @@ impl SearchQuery {
             case_sensitive,
             include_ignored,
             inner,
+            one_match_per_line,
         })
     }
 
@@ -166,6 +184,7 @@ impl SearchQuery {
                 message.whole_word,
                 message.case_sensitive,
                 message.include_ignored,
+                false,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
                 None, // search opened only don't need search remote
@@ -457,6 +476,19 @@ impl SearchQuery {
     pub fn as_inner(&self) -> &SearchInputs {
         match self {
             Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
+        }
+    }
+
+    /// Whether this search should replace only one match per line, instead of
+    /// all matches.
+    /// Returns `None` for text searches, as only regex searches support this
+    /// option.
+    pub fn one_match_per_line(&self) -> Option<bool> {
+        match self {
+            Self::Regex {
+                one_match_per_line, ..
+            } => Some(*one_match_per_line),
+            Self::Text { .. } => None,
         }
     }
 }

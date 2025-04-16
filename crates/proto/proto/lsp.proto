@@ -198,8 +198,8 @@ message ApplyCompletionAdditionalEditsResponse {
 }
 
 message Completion {
-    Anchor old_start = 1;
-    Anchor old_end = 2;
+    Anchor old_replace_start = 1;
+    Anchor old_replace_end = 2;
     string new_text = 3;
     uint64 server_id = 4;
     bytes lsp_completion = 5;
@@ -208,6 +208,8 @@ message Completion {
     optional bytes lsp_defaults = 8;
     optional Anchor buffer_word_start = 9;
     optional Anchor buffer_word_end = 10;
+    Anchor old_insert_start = 11;
+    Anchor old_insert_end = 12;
 
     enum Source {
         Lsp = 0;
@@ -428,10 +430,12 @@ message ResolveCompletionDocumentation {
 message ResolveCompletionDocumentationResponse {
     string documentation = 1;
     bool documentation_is_markdown = 2;
-    Anchor old_start = 3;
-    Anchor old_end = 4;
+    Anchor old_replace_start = 3;
+    Anchor old_replace_end = 4;
     string new_text = 5;
     bytes lsp_completion = 6;
+    Anchor old_insert_start = 7;
+    Anchor old_insert_end = 8;
 }
 
 message ResolveInlayHint {
@@ -698,4 +702,19 @@ message LanguageServerIdForName {
 
 message LanguageServerIdForNameResponse {
     optional uint64 server_id = 1;
+}
+
+message LspExtRunnables {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    optional Anchor position = 3;
+}
+
+message LspExtRunnablesResponse {
+    repeated LspRunnable runnables = 1;
+}
+
+message LspRunnable {
+    bytes task_template = 1;
+    optional LocationLink location = 2;
 }

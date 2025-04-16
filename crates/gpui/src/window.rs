@@ -646,6 +646,7 @@ pub struct Window {
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
+    pub(crate) client_inset: Option<Pixels>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -845,6 +846,7 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
+                        window.modifiers = window.platform_window.modifiers();
                         window
                             .activation_observers
                             .clone()
@@ -930,6 +932,7 @@ impl Window {
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
+            client_inset: None,
         })
     }
 
@@ -1386,8 +1389,14 @@ impl Window {
     }
 
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
-    pub fn set_client_inset(&self, inset: Pixels) {
+    pub fn set_client_inset(&mut self, inset: Pixels) {
+        self.client_inset = Some(inset);
         self.platform_window.set_client_inset(inset);
+    }
+
+    /// Returns the client_inset value by [`Self::set_client_inset`].
+    pub fn client_inset(&self) -> Option<Pixels> {
+        self.client_inset
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
@@ -3092,6 +3101,7 @@ impl Window {
                             value: Arc::new(paths.clone()),
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
+                            cursor_style: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {

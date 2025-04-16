@@ -1311,10 +1311,10 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "include_warnings": true,
     "inline": {
       "enabled": false
-    }
+    },
     "update_with_cursor": false,
     "primary_only": false,
-    "use_rendered": false,
+    "use_rendered": false
   }
 }
 ```
@@ -2998,11 +2998,11 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "default_height": 320,
   "default_model": {
     "provider": "zed.dev",
-    "model": "claude-3-5-sonnet-latest"
+    "model": "claude-3-7-sonnet-latest"
   },
   "editor_model": {
     "provider": "zed.dev",
-    "model": "claude-3-5-sonnet-latest"
+    "model": "claude-3-7-sonnet-latest"
   }
 }
 ```

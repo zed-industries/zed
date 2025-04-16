@@ -33,6 +33,8 @@ pub enum Model {
     Gpt4o,
     #[serde(alias = "gpt-4", rename = "gpt-4")]
     Gpt4,
+    #[serde(alias = "gpt-4.1", rename = "gpt-4.1")]
+    Gpt4_1,
     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
     Gpt3_5Turbo,
     #[serde(alias = "o1", rename = "o1")]
@@ -50,6 +52,8 @@ pub enum Model {
     Claude3_7SonnetThinking,
     #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
     Gemini20Flash,
+    #[serde(alias = "gemini-2.5-pro", rename = "gemini-2.5-pro")]
+    Gemini25Pro,
 }
 
 impl Model {
@@ -57,11 +61,12 @@ impl Model {
         match self {
             Self::Gpt4o
             | Self::Gpt4
+            | Self::Gpt4_1
             | Self::Gpt3_5Turbo
             | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking => true,
-            Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
+            Self::O3Mini | Self::O1 | Self::Gemini20Flash | Self::Gemini25Pro => false,
         }
     }
 
@@ -69,6 +74,7 @@ impl Model {
         match id {
             "gpt-4o" => Ok(Self::Gpt4o),
             "gpt-4" => Ok(Self::Gpt4),
+            "gpt-4.1" => Ok(Self::Gpt4_1),
             "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
             "o1" => Ok(Self::O1),
             "o3-mini" => Ok(Self::O3Mini),
@@ -76,6 +82,7 @@ impl Model {
             "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
             "claude-3.7-sonnet-thought" => Ok(Self::Claude3_7SonnetThinking),
             "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
+            "gemini-2.5-pro" => Ok(Self::Gemini25Pro),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
     }
@@ -84,6 +91,7 @@ impl Model {
         match self {
             Self::Gpt3_5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
+            Self::Gpt4_1 => "gpt-4.1",
             Self::Gpt4o => "gpt-4o",
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
@@ -91,6 +99,7 @@ impl Model {
             Self::Claude3_7Sonnet => "claude-3-7-sonnet",
             Self::Claude3_7SonnetThinking => "claude-3.7-sonnet-thought",
             Self::Gemini20Flash => "gemini-2.0-flash-001",
+            Self::Gemini25Pro => "gemini-2.5-pro",
         }
     }
 
@@ -98,6 +107,7 @@ impl Model {
         match self {
             Self::Gpt3_5Turbo => "GPT-3.5",
             Self::Gpt4 => "GPT-4",
+            Self::Gpt4_1 => "GPT-4.1",
             Self::Gpt4o => "GPT-4o",
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
@@ -105,6 +115,7 @@ impl Model {
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
             Self::Gemini20Flash => "Gemini 2.0 Flash",
+            Self::Gemini25Pro => "Gemini 2.5 Pro",
         }
     }
 
@@ -112,13 +123,15 @@ impl Model {
         match self {
             Self::Gpt4o => 64_000,
             Self::Gpt4 => 32_768,
+            Self::Gpt4_1 => 1_047_576,
             Self::Gpt3_5Turbo => 12_288,
             Self::O3Mini => 64_000,
             Self::O1 => 20_000,
             Self::Claude3_5Sonnet => 200_000,
             Self::Claude3_7Sonnet => 90_000,
             Self::Claude3_7SonnetThinking => 90_000,
-            Model::Gemini20Flash => 128_000,
+            Self::Gemini20Flash => 128_000,
+            Self::Gemini25Pro => 128_000,
         }
     }
 }

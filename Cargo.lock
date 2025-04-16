@@ -64,6 +64,7 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
+ "component",
  "context_server",
  "convert_case 0.8.0",
  "db",
@@ -84,6 +85,7 @@ dependencies = [
  "language",
  "language_model",
  "language_model_selector",
+ "linkme",
  "log",
  "lsp",
  "markdown",
@@ -113,13 +115,13 @@ dependencies = [
  "terminal_view",
  "text",
  "theme",
+ "thiserror 2.0.12",
  "time",
  "time_format",
  "ui",
  "ui_input",
  "util",
  "uuid",
- "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -324,7 +326,6 @@ dependencies = [
  "serde_json",
  "strum",
  "thiserror 2.0.12",
- "util",
  "workspace-hack",
 ]
 
@@ -581,43 +582,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assistant_eval"
-version = "0.1.0"
-dependencies = [
- "agent",
- "anyhow",
- "assistant_tool",
- "assistant_tools",
- "clap",
- "client",
- "collections",
- "context_server",
- "dap",
- "env_logger 0.11.8",
- "fs",
- "futures 0.3.31",
- "gpui",
- "gpui_tokio",
- "language",
- "language_model",
- "language_models",
- "node_runtime",
- "project",
- "prompt_store",
- "release_channel",
- "reqwest_client",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "settings",
- "smol",
- "tempfile",
- "util",
- "walkdir",
- "workspace-hack",
-]
-
-[[package]]
 name = "assistant_settings"
 version = "0.1.0"
 dependencies = [
@@ -747,7 +711,6 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
- "lsp",
  "open",
  "project",
  "rand 0.8.5",
@@ -912,18 +875,6 @@ dependencies = [
  "event-listener 5.4.0",
  "event-listener-strategy",
  "pin-project-lite",
-]
-
-[[package]]
-name = "async-native-tls"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9343dc5acf07e79ff82d0c37899f079db3534d99f189a1837c8e549c99405bec"
-dependencies = [
- "futures-util",
- "native-tls",
- "thiserror 1.0.69",
- "url",
 ]
 
 [[package]]
@@ -1096,18 +1047,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
-name = "async-tls"
-version = "0.13.0"
-source = "git+https://github.com/zed-industries/async-tls?rev=1e759a4b5e370f87dc15e40756ac4f8815b61d9d#1e759a4b5e370f87dc15e40756ac4f8815b61d9d"
-dependencies = [
- "futures-core",
- "futures-io",
- "rustls 0.23.25",
- "rustls-pemfile 2.2.0",
- "webpki-roots",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1120,12 +1059,10 @@ dependencies = [
 
 [[package]]
 name = "async-tungstenite"
-version = "0.28.2"
+version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c348fb0b6d132c596eca3dcd941df48fb597aafcb07a738ec41c004b087dc99"
+checksum = "ef0f7efedeac57d9b26170f72965ecfd31473ca52ca7a64e925b0b6f5f079886"
 dependencies = [
- "async-std",
- "async-tls",
  "atomic-waker",
  "futures-core",
  "futures-io",
@@ -1133,7 +1070,10 @@ dependencies = [
  "futures-util",
  "log",
  "pin-project-lite",
- "tungstenite 0.24.0",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls 0.26.2",
+ "tungstenite 0.26.2",
 ]
 
 [[package]]
@@ -1238,6 +1178,18 @@ dependencies = [
  "tempfile",
  "which 6.0.3",
  "workspace",
+ "workspace-hack",
+]
+
+[[package]]
+name = "auto_update_helper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "simplelog",
+ "windows 0.61.1",
+ "winresource",
  "workspace-hack",
 ]
 
@@ -1649,7 +1601,7 @@ dependencies = [
  "hyper-util",
  "pin-project-lite",
  "rustls 0.21.12",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-native-certs 0.8.1",
  "rustls-pki-types",
  "tokio",
@@ -2839,7 +2791,6 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-native-tls",
  "async-recursion 0.3.2",
  "async-tungstenite",
  "chrono",
@@ -2850,6 +2801,7 @@ dependencies = [
  "feature_flags",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
  "http_client",
  "http_client_tls",
  "log",
@@ -2871,6 +2823,7 @@ dependencies = [
  "thiserror 2.0.12",
  "time",
  "tiny_http",
+ "tokio",
  "tokio-socks",
  "url",
  "util",
@@ -2989,7 +2942,6 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "assistant",
  "assistant_context_editor",
@@ -3233,14 +3185,18 @@ dependencies = [
 name = "component_preview"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "collections",
  "component",
+ "db",
  "gpui",
  "languages",
  "notifications",
  "project",
+ "serde",
  "ui",
+ "ui_input",
  "workspace",
  "workspace-hack",
 ]
@@ -3352,6 +3308,15 @@ name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
+
+[[package]]
+name = "convert_case"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
+dependencies = [
+ "unicode-segmentation",
+]
 
 [[package]]
 name = "convert_case"
@@ -4036,7 +4001,6 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "paths",
- "regex",
  "schemars",
  "serde",
  "serde_json",
@@ -4051,7 +4015,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types?rev=bfd4af0#bfd4af084bbaa5f344e6925370d7642e41d0b5b8"
+source = "git+https://github.com/zed-industries/dap-types?rev=be69a016ba710191b9fdded28c8b042af4b617f7#be69a016ba710191b9fdded28c8b042af4b617f7"
 dependencies = [
  "schemars",
  "serde",
@@ -4068,7 +4032,6 @@ dependencies = [
  "gpui",
  "language",
  "paths",
- "regex",
  "serde",
  "serde_json",
  "task",
@@ -4212,6 +4175,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "dap",
+ "db",
  "editor",
  "env_logger 0.11.8",
  "feature_flags",
@@ -4230,6 +4194,7 @@ dependencies = [
  "settings",
  "sysinfo",
  "task",
+ "tasks_ui",
  "terminal_view",
  "theme",
  "ui",
@@ -4350,19 +4315,24 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "component",
  "ctor",
  "editor",
  "env_logger 0.11.8",
  "gpui",
+ "indoc",
  "language",
+ "linkme",
  "log",
  "lsp",
+ "markdown",
  "pretty_assertions",
  "project",
  "rand 0.8.5",
  "serde",
  "serde_json",
  "settings",
+ "text",
  "theme",
  "ui",
  "unindent",
@@ -4486,6 +4456,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "documented"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc6db32f0995bc4553d2de888999075acd0dbeef75ba923503f6a724263dc6f3"
+dependencies = [
+ "documented-macros",
+ "phf",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "documented-macros"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a394bb35929b58f9a5fd418f7c6b17a4b616efcc1e53e6995ca123948f87e5fa"
+dependencies = [
+ "convert_case 0.6.0",
+ "itertools 0.13.0",
+ "optfield",
+ "proc-macro2",
+ "quote",
+ "strum",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4574,6 +4570,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "command_palette_hooks",
  "convert_case 0.8.0",
  "ctor",
  "db",
@@ -4875,6 +4872,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "eval"
+version = "0.1.0"
+dependencies = [
+ "agent",
+ "anyhow",
+ "assistant_tool",
+ "assistant_tools",
+ "async-watch",
+ "chrono",
+ "clap",
+ "client",
+ "collections",
+ "context_server",
+ "dap",
+ "dirs 5.0.1",
+ "env_logger 0.11.8",
+ "extension",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "gpui_tokio",
+ "handlebars 4.5.0",
+ "language",
+ "language_extension",
+ "language_model",
+ "language_models",
+ "languages",
+ "node_runtime",
+ "paths",
+ "project",
+ "prompt_store",
+ "release_channel",
+ "reqwest_client",
+ "serde",
+ "settings",
+ "shellexpand 2.1.2",
+ "telemetry",
+ "toml 0.8.20",
+ "unindent",
+ "util",
+ "uuid",
+ "workspace-hack",
+]
+
+[[package]]
 name = "evals"
 version = "0.1.0"
 dependencies = [
@@ -4965,10 +5007,10 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
- "convert_case 0.8.0",
  "fs",
  "futures 0.3.31",
  "gpui",
+ "heck 0.5.0",
  "http_client",
  "language",
  "log",
@@ -6609,7 +6651,7 @@ dependencies = [
 name = "http_client_tls"
 version = "0.1.0"
 dependencies = [
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-platform-verifier",
  "workspace-hack",
 ]
@@ -6708,7 +6750,7 @@ dependencies = [
  "http 1.3.1",
  "hyper 1.6.0",
  "hyper-util",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-native-certs 0.8.1",
  "rustls-pki-types",
  "tokio",
@@ -7161,9 +7203,12 @@ name = "install_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "gpui",
+ "release_channel",
  "smol",
  "util",
+ "workspace",
  "workspace-hack",
 ]
 
@@ -7453,8 +7498,7 @@ dependencies = [
 [[package]]
 name = "jupyter-protocol"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9ae6296f9476658b3550293c113996daf75fa542cd8d078abb4c60207bded14"
+source = "git+https://github.com/ConradIrwin/runtimed?rev=7130c804216b6914355d15d0b91ea91f6babd734#7130c804216b6914355d15d0b91ea91f6babd734"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7469,8 +7513,7 @@ dependencies = [
 [[package]]
 name = "jupyter-websocket-client"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49c1ba895c5271ff8dcae51c347fd3588905ba0025a57e20955fd231fe1228cc"
+source = "git+https://github.com/ConradIrwin/runtimed?rev=7130c804216b6914355d15d0b91ea91f6babd734#7130c804216b6914355d15d0b91ea91f6babd734"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7642,6 +7685,7 @@ dependencies = [
 name = "language_model_selector"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "feature_flags",
  "gpui",
  "language_model",
@@ -7692,6 +7736,7 @@ dependencies = [
  "smol",
  "strum",
  "theme",
+ "thiserror 2.0.12",
  "tiktoken-rs",
  "tokio",
  "ui",
@@ -8363,6 +8408,7 @@ dependencies = [
  "node_runtime",
  "pulldown-cmark 0.12.2",
  "settings",
+ "sum_tree",
  "theme",
  "ui",
  "util",
@@ -8776,8 +8822,7 @@ dependencies = [
 [[package]]
 name = "nbformat"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "244c1673f02b4d5f3c51b6f8ed28d57182cb166a50a6dbf651a3d53e23dc81c0"
+source = "git+https://github.com/ConradIrwin/runtimed?rev=7130c804216b6914355d15d0b91ea91f6babd734#7130c804216b6914355d15d0b91ea91f6babd734"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9557,15 +9602,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
-name = "openssl-src"
-version = "300.4.2+3.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "168ce4e058f975fe43e89d9ccf78ca668601887ae736090aacc23ae353c298e2"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "openssl-sys"
 version = "0.9.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9573,9 +9609,19 @@ checksum = "8288979acd84749c744a9014b4382d42b8f7b2592847b5afb2ed29e5d16ede07"
 dependencies = [
  "cc",
  "libc",
- "openssl-src",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "optfield"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa59f025cde9c698fcb4fcb3533db4621795374065bee908215263488f2d2a1d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -9997,7 +10043,7 @@ dependencies = [
 [[package]]
 name = "pet"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "clap",
  "env_logger 0.10.2",
@@ -10034,7 +10080,7 @@ dependencies = [
 [[package]]
 name = "pet-conda"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "env_logger 0.10.2",
  "lazy_static",
@@ -10053,7 +10099,7 @@ dependencies = [
 [[package]]
 name = "pet-core"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "clap",
  "lazy_static",
@@ -10068,7 +10114,7 @@ dependencies = [
 [[package]]
 name = "pet-env-var-path"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "lazy_static",
  "log",
@@ -10084,7 +10130,7 @@ dependencies = [
 [[package]]
 name = "pet-fs"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10093,7 +10139,7 @@ dependencies = [
 [[package]]
 name = "pet-global-virtualenvs"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10106,7 +10152,7 @@ dependencies = [
 [[package]]
 name = "pet-homebrew"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "lazy_static",
  "log",
@@ -10124,7 +10170,7 @@ dependencies = [
 [[package]]
 name = "pet-jsonrpc"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "env_logger 0.10.2",
  "log",
@@ -10137,7 +10183,7 @@ dependencies = [
 [[package]]
 name = "pet-linux-global-python"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10150,7 +10196,7 @@ dependencies = [
 [[package]]
 name = "pet-mac-commandlinetools"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10163,7 +10209,7 @@ dependencies = [
 [[package]]
 name = "pet-mac-python-org"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10176,7 +10222,7 @@ dependencies = [
 [[package]]
 name = "pet-mac-xcode"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10189,7 +10235,7 @@ dependencies = [
 [[package]]
 name = "pet-pipenv"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10202,7 +10248,7 @@ dependencies = [
 [[package]]
 name = "pet-pixi"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10214,7 +10260,7 @@ dependencies = [
 [[package]]
 name = "pet-poetry"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "base64 0.22.1",
  "lazy_static",
@@ -10235,7 +10281,7 @@ dependencies = [
 [[package]]
 name = "pet-pyenv"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "lazy_static",
  "log",
@@ -10253,7 +10299,7 @@ dependencies = [
 [[package]]
 name = "pet-python-utils"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "env_logger 0.10.2",
  "lazy_static",
@@ -10270,7 +10316,7 @@ dependencies = [
 [[package]]
 name = "pet-reporter"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "env_logger 0.10.2",
  "log",
@@ -10284,7 +10330,7 @@ dependencies = [
 [[package]]
 name = "pet-telemetry"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "env_logger 0.10.2",
  "lazy_static",
@@ -10299,7 +10345,7 @@ dependencies = [
 [[package]]
 name = "pet-venv"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10311,7 +10357,7 @@ dependencies = [
 [[package]]
 name = "pet-virtualenv"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10323,7 +10369,7 @@ dependencies = [
 [[package]]
 name = "pet-virtualenvwrapper"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "log",
  "msvc_spectre_libs",
@@ -10336,7 +10382,7 @@ dependencies = [
 [[package]]
 name = "pet-windows-registry"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "lazy_static",
  "log",
@@ -10348,13 +10394,13 @@ dependencies = [
  "pet-virtualenv",
  "pet-windows-store",
  "regex",
- "winreg 0.52.0",
+ "winreg 0.55.0",
 ]
 
 [[package]]
 name = "pet-windows-store"
 version = "0.1.0"
-source = "git+https://github.com/microsoft/python-environment-tools.git?rev=1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0#1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=845945b830297a50de0e24020b980a65e4820559#845945b830297a50de0e24020b980a65e4820559"
 dependencies = [
  "lazy_static",
  "log",
@@ -10364,7 +10410,7 @@ dependencies = [
  "pet-python-utils",
  "pet-virtualenv",
  "regex",
- "winreg 0.52.0",
+ "winreg 0.55.0",
 ]
 
 [[package]]
@@ -10924,9 +10970,9 @@ dependencies = [
 
 [[package]]
 name = "prometheus"
-version = "0.13.4"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d33c28a30771f7f96db69893f78b857f7450d7e0237e9c8fc6427a81bae7ed1"
+checksum = "3ca5326d8d0b950a9acd87e6a3f94745394f62e4dae1b1ee22b2bc0c394af43a"
 dependencies = [
  "cfg-if",
  "fnv",
@@ -10934,7 +10980,7 @@ dependencies = [
  "memchr",
  "parking_lot",
  "protobuf",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -11109,9 +11155,23 @@ dependencies = [
 
 [[package]]
 name = "protobuf"
-version = "2.28.0"
+version = "3.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "106dd99e98437432fed6519dedecfade6a06a73bb7b2a1e019fdd2bee5778d94"
+checksum = "d65a1d4ddae7d8b5de68153b48f6aa3bba8cb002b243dbdbc55a5afbc98f99f4"
+dependencies = [
+ "once_cell",
+ "protobuf-support",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "protobuf-support"
+version = "3.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
+dependencies = [
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "psm"
@@ -11237,7 +11297,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash 2.1.1",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "socket2",
  "thiserror 2.0.12",
  "tokio",
@@ -11256,7 +11316,7 @@ dependencies = [
  "rand 0.9.0",
  "ring",
  "rustc-hash 2.1.1",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-pki-types",
  "slab",
  "thiserror 2.0.12",
@@ -11864,7 +11924,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-native-certs 0.8.1",
  "rustls-pemfile 2.2.0",
  "rustls-pki-types",
@@ -12102,8 +12162,7 @@ dependencies = [
 [[package]]
 name = "runtimelib"
 version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9af6ed9fd10d7ee940676945510c197c2a472806bb652096a713985c44ffd643"
+source = "git+https://github.com/ConradIrwin/runtimed?rev=7130c804216b6914355d15d0b91ea91f6babd734#7130c804216b6914355d15d0b91ea91f6babd734"
 dependencies = [
  "anyhow",
  "async-dispatcher",
@@ -12256,9 +12315,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.25"
+version = "0.23.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "822ee9188ac4ec04a2f0531e55d035fb2de73f18b41a63c70c2712503b6fb13c"
+checksum = "df51b5869f3a441595eac5e8ff14d486ff285f7b8c0df8770e49c3b56351f0f0"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -12332,7 +12391,7 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-native-certs 0.8.1",
  "rustls-platform-verifier-android",
  "rustls-webpki 0.103.1",
@@ -13430,7 +13489,7 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "rust_decimal",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
@@ -14164,12 +14223,12 @@ name = "tasks_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "debugger_ui",
+ "collections",
  "editor",
- "feature_flags",
  "file_icons",
  "fuzzy",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "menu",
  "picker",
@@ -14659,9 +14718,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.44.1"
+version = "1.44.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f382da615b842244d4b8738c82ed1275e6c5dd90c459a30941cd07080b06c91a"
+checksum = "e6b88822cbe49de4185e3a4cbf8321dd487cf5fe0c5c65695fef6346371e9c48"
 dependencies = [
  "backtrace",
  "bytes 1.10.1",
@@ -14723,7 +14782,7 @@ version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e727b36a1a0e8b74c376ac2211e40c2c8af09fb4013c60d910495810f008e9b"
 dependencies = [
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "tokio",
 ]
 
@@ -14783,7 +14842,7 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.2",
@@ -15332,24 +15391,6 @@ dependencies = [
 
 [[package]]
 name = "tungstenite"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18e5b8366ee7a95b16d32197d0b2604b43a0be89dc5fac9f8e96ccafbaedda8a"
-dependencies = [
- "byteorder",
- "bytes 1.10.1",
- "data-encoding",
- "http 1.3.1",
- "httparse",
- "log",
- "rand 0.8.5",
- "sha1",
- "thiserror 1.0.69",
- "utf-8",
-]
-
-[[package]]
-name = "tungstenite"
 version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4793cb5e56680ecbb1d843515b23b6de9a75eb04b66643e256a396d43be33c13"
@@ -15360,7 +15401,7 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.0",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-pki-types",
  "sha1",
  "thiserror 2.0.12",
@@ -15402,6 +15443,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "component",
+ "documented",
  "gpui",
  "icons",
  "itertools 0.14.0",
@@ -17252,6 +17294,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winreg"
+version = "0.55.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb5a765337c50e9ec252c2069be9bf91c7df47afb103b642ba3a53bf8101be97"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "winresource"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17580,6 +17632,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "windows 0.61.1",
  "workspace-hack",
  "zed_actions",
 ]
@@ -17657,6 +17710,7 @@ dependencies = [
  "indexmap",
  "inout",
  "itertools 0.12.1",
+ "itertools 0.13.0",
  "lazy_static",
  "libc",
  "libsqlite3-sys",
@@ -17696,12 +17750,11 @@ dependencies = [
  "rust_decimal",
  "rustix 0.38.44",
  "rustix 1.0.5",
- "rustls 0.23.25",
+ "rustls 0.23.26",
  "rustls-webpki 0.103.1",
  "scopeguard",
  "sea-orm",
  "sea-query-binder",
- "security-framework 2.11.1",
  "security-framework 3.2.0",
  "security-framework-sys",
  "semver",
@@ -17732,6 +17785,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-core",
+ "tungstenite 0.26.2",
  "unicode-properties",
  "url",
  "uuid",
@@ -17741,6 +17795,8 @@ dependencies = [
  "wasmtime-cranelift",
  "wasmtime-environ",
  "winapi",
+ "windows-core 0.61.0",
+ "windows-numerics",
  "windows-sys 0.48.0",
  "windows-sys 0.52.0",
  "windows-sys 0.59.0",
@@ -18085,7 +18141,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.182.0"
+version = "0.184.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -18181,7 +18237,6 @@ dependencies = [
  "settings",
  "settings_ui",
  "shellexpand 2.1.2",
- "simplelog",
  "smol",
  "snippet_provider",
  "snippets_ui",
@@ -18216,6 +18271,7 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zeta",
+ "zlog",
  "zlog_settings",
 ]
 
@@ -18265,7 +18321,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -18528,7 +18584,10 @@ dependencies = [
 name = "zlog"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
  "log",
+ "tempfile",
  "workspace-hack",
 ]
 

@@ -746,19 +746,20 @@ fn test_expand_excerpts(cx: &mut App) {
     drop(snapshot);
 
     multibuffer.update(cx, |multibuffer, cx| {
+        let line_zero = multibuffer.snapshot(cx).anchor_before(Point::new(0, 0));
         multibuffer.expand_excerpts(
             multibuffer.excerpt_ids(),
             1,
             ExpandExcerptDirection::UpAndDown,
             cx,
-        )
+        );
+        let snapshot = multibuffer.snapshot(cx);
+        let line_two = snapshot.anchor_before(Point::new(2, 0));
+        assert_eq!(line_two.cmp(&line_zero, &snapshot), cmp::Ordering::Greater);
     });
 
     let snapshot = multibuffer.read(cx).snapshot(cx);
 
-    // Expanding context lines causes the line containing 'fff' to appear in two different excerpts.
-    // We don't attempt to merge them, because removing the excerpt could create inconsistency with other layers
-    // that are tracking excerpt ids.
     assert_eq!(
         snapshot.text(),
         concat!(
@@ -1796,6 +1797,88 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         );
     });
+}
+
+#[gpui::test]
+fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
+    let buf1 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "zero
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            ",
+            },
+            cx,
+        )
+    });
+    let path: PathKey = PathKey::namespaced(0, Path::new("/").into());
+    let buf2 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "000
+            111
+            222
+            333
+            "
+            },
+            cx,
+        )
+    });
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buf1.clone(),
+            vec![Point::row_range(1..1), Point::row_range(4..5)],
+            1,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {
+        "-----
+        zero
+        one
+        two
+        -----
+        three
+        four
+        five
+        six
+        "
+        },
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path.clone(),
+            buf2.clone(),
+            vec![Point::row_range(0..1)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                000
+                111
+                222
+                333
+                "},
+    );
 }
 
 #[gpui::test]
