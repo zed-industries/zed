@@ -3577,6 +3577,15 @@ impl GitPanel {
                                 items
                             }
                         })
+                        .when(
+                            !self.horizontal_scrollbar.show_track
+                                && self.horizontal_scrollbar.show_scrollbar,
+                            |this| {
+                                // when not showing the horizontal scrollbar track, make sure we don't
+                                // obscure the last entry
+                                this.pb(scroll_track_size)
+                            },
+                        )
                         .size_full()
                         .flex_grow()
                         .with_sizing_behavior(ListSizingBehavior::Auto)
