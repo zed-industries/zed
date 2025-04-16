@@ -2,17 +2,24 @@ use crate::{replace::replace_with_flexible_indent, schema::json_schema_for};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, MultiBuffer, PathKey};
 use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, IntoElement, Task, Window,
 };
-use language::{self, Buffer, Capability, LanguageRegistry, LineEnding, Rope, TextBuffer};
+use language::{
+    self, Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt as _, Rope,
+    TextBuffer,
+};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use ui::{Tooltip, prelude::*};
+use util::ResultExt;
 
 use crate::replace::replace_exact;
 
@@ -173,14 +180,33 @@ impl FindReplaceFileToolCard {
         }
     }
 
-    fn set_diff(&mut self, old_text: String, new_text: String, cx: &mut Context<Self>) {
+    fn set_diff(
+        &mut self,
+        path: Arc<Path>,
+        old_text: String,
+        new_text: String,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         self.diff_task = Some(cx.spawn(async move |this, cx| {
-            let buffer = build_buffer(new_text, &language_registry, cx).await?;
+            let buffer = build_buffer(new_text, path.clone(), &language_registry, cx).await?;
             let buffer_diff = build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
 
             this.update(cx, |this, cx| {
                 this.multibuffer.update(cx, |multibuffer, cx| {
+                    let snapshot = buffer.read(cx).snapshot();
+                    let diff = buffer_diff.read(cx);
+                    let diff_hunk_ranges = diff
+                        .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+                        .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+                        .collect::<Vec<_>>();
+                    let _is_newly_added = multibuffer.set_excerpts_for_path(
+                        PathKey::for_buffer(&buffer, cx),
+                        buffer,
+                        diff_hunk_ranges,
+                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        cx,
+                    );
                     multibuffer.add_diff(buffer_diff, cx);
                 });
                 cx.notify();
@@ -191,23 +217,17 @@ impl FindReplaceFileToolCard {
 
 async fn build_buffer(
     mut text: String,
+    path: Arc<Path>,
     language_registry: &Arc<language::LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<Buffer>> {
     let line_ending = LineEnding::detect(&text);
     LineEnding::normalize(&mut text);
     let text = Rope::from(text);
-    // todo! set language
-    // let language = cx.update(|cx| language_registry.language_for_file(&blob, Some(&text), cx))?;
-    // let language = if let Some(language) = language {
-    //     language_registry
-    //         .load_language(&language)
-    //         .await
-    //         .ok()
-    //         .and_then(|e| e.log_err())
-    // } else {
-    //     None
-    // };
+    let language = cx
+        .update(|_cx| language_registry.language_for_file_path(&path))?
+        .await
+        .ok();
     let buffer = cx.new(|cx| {
         let buffer = TextBuffer::new_normalized(
             0,
@@ -216,8 +236,7 @@ async fn build_buffer(
             text,
         );
         let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite);
-        // todo!
-        // buffer.set_language(language, cx);
+        buffer.set_language(language, cx);
         buffer
     })?;
     Ok(buffer)
@@ -369,7 +388,10 @@ impl ToolCard for FindReplaceFileToolCard {
                     // .child(Label::new(&self.description).size(LabelSize::Small))
                     .into_any_element()
             }
-            ToolUseStatus::Finished(_) => self.editor.clone().into_any_element(),
+            ToolUseStatus::Finished(str) => {
+                dbg!(&str);
+                self.editor.clone().into_any_element()
+            }
             ToolUseStatus::Error(error) => div()
                 .child(
                     Label::new(error.to_string())
@@ -459,7 +481,7 @@ impl Tool for FindReplaceFileTool {
             })??;
 
             let buffer = project
-                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                .update(cx, |project, cx| project.open_buffer(project_path.clone(), cx))?
                 .await?;
 
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
@@ -544,8 +566,8 @@ impl Tool for FindReplaceFileTool {
 
             if let Some(card) = card {
                 card.update(cx, |card, cx| {
-                    card.set_diff(old_text, new_text, cx);
-                });
+                    card.set_diff(project_path.path.clone(), old_text, new_text, cx);
+                }).log_err();
             }
 
             Ok(format!("Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str))

@@ -128,7 +128,7 @@ impl Tool for CodeSymbolsTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
-        window: Option<AnyWindowHandle>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CodeSymbolsInput>(input) {
