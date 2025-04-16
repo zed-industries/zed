@@ -3,7 +3,7 @@ use crate::db::{billing_subscription, user};
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::{Config, db::billing_preference};
 use anyhow::{Result, anyhow};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -84,13 +84,10 @@ impl LlmTokenClaims {
             plan,
             subscription_period: maybe!({
                 let subscription = subscription?;
-                let period_start = subscription.stripe_current_period_start?;
-                let period_start = DateTime::from_timestamp(period_start, 0)?;
+                let period_start_at = subscription.current_period_start_at()?;
+                let period_end_at = subscription.current_period_end_at()?;
 
-                let period_end = subscription.stripe_current_period_end?;
-                let period_end = DateTime::from_timestamp(period_end, 0)?;
-
-                Some((period_start.naive_utc(), period_end.naive_utc()))
+                Some((period_start_at.naive_utc(), period_end_at.naive_utc()))
             }),
         };
 
