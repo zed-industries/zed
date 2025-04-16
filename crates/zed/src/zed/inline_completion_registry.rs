@@ -67,12 +67,14 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         async move |cx| {
             let mut status = client.status();
             while let Some(_status) = status.next().await {
-                let user_store = user_store.clone();
-                let editors = editors.clone();
-                let client = client.clone();
-
-                cx.update(move |cx| {
-                    assign_edit_prediction_providers(&editors, provider, &client, user_store, cx);
+                cx.update(|cx| {
+                    assign_edit_prediction_providers(
+                        &editors,
+                        provider,
+                        &client,
+                        user_store.clone(),
+                        cx,
+                    );
                 })
                 .log_err();
             }
