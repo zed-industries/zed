@@ -43,13 +43,6 @@ pub struct ChatPanelSettingsContent {
     pub default_width: Option<f32>,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct NotificationPanelSettings {
-    pub button: bool,
-    pub dock: DockPosition,
-    pub default_width: Pixels,
-}
-
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
@@ -92,19 +85,6 @@ impl Settings for ChatPanelSettings {
     const KEY: Option<&'static str> = Some("chat_panel");
 
     type FileContent = ChatPanelSettingsContent;
-
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::App,
-    ) -> anyhow::Result<Self> {
-        sources.json_merge()
-    }
-}
-
-impl Settings for NotificationPanelSettings {
-    const KEY: Option<&'static str> = Some("notification_panel");
-
-    type FileContent = PanelSettingsContent;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,

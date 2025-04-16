@@ -411,10 +411,6 @@ fn initialize_panels(
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let chat_panel =
             collab_ui::chat_panel::ChatPanel::load(workspace_handle.clone(), cx.clone());
-        let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
-            workspace_handle.clone(),
-            cx.clone(),
-        );
 
         let (
             project_panel,
@@ -422,14 +418,12 @@ fn initialize_panels(
             terminal_panel,
             channels_panel,
             chat_panel,
-            notification_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
             terminal_panel,
             channels_panel,
             chat_panel,
-            notification_panel,
         )?;
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
@@ -438,7 +432,6 @@ fn initialize_panels(
             workspace.add_panel(terminal_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
-            workspace.add_panel(notification_panel, window, cx);
             cx.when_flag_enabled::<Debugger>(window, |_, window, cx| {
                 cx.spawn_in(
                     window,
@@ -815,16 +808,6 @@ fn register_actions(
              window: &mut Window,
              cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(window, cx);
-            },
-        )
-        .register_action(
-            |workspace: &mut Workspace,
-             _: &collab_ui::notification_panel::ToggleFocus,
-             window: &mut Window,
-             cx: &mut Context<Workspace>| {
-                workspace.toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(
-                    window, cx,
-                );
             },
         )
         .register_action(

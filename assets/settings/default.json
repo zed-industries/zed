@@ -597,14 +597,6 @@
     // For example: typing `:wave:` gets replaced with `👋`.
     "auto_replace_emoji_shortcode": true
   },
-  "notification_panel": {
-    // Whether to show the notification panel button in the status bar.
-    "button": true,
-    // Where to dock the notification panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the notification panel.
-    "default_width": 380
-  },
   "assistant": {
     // Version of this setting.
     "version": "2",
