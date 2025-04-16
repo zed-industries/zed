@@ -14,7 +14,7 @@ struct Socks5Auth {
 /// Socks Proxy types including data needed for Authorization
 #[derive(Clone)]
 enum SocksProxyType {
-    // TOOD: Socks4 identification using userid
+    // TODO: Socks4 identification using userid
     Socks4,
     Socks5(Option<Socks5Auth>),
 }
