@@ -25,7 +25,6 @@ pub struct LlmTokenClaims {
     pub is_staff: bool,
     pub has_llm_closed_beta_feature_flag: bool,
     pub bypass_account_age_check: bool,
-    pub has_predict_edits_feature_flag: bool,
     pub has_llm_subscription: bool,
     pub max_monthly_spend_in_cents: u32,
     pub custom_llm_monthly_allowance_in_cents: Option<u32>,
@@ -70,9 +69,6 @@ impl LlmTokenClaims {
             bypass_account_age_check: feature_flags
                 .iter()
                 .any(|flag| flag == "bypass-account-age-check"),
-            has_predict_edits_feature_flag: feature_flags
-                .iter()
-                .any(|flag| flag == "predict-edits"),
             has_llm_subscription: has_legacy_llm_subscription,
             max_monthly_spend_in_cents: billing_preferences
                 .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
