@@ -6465,9 +6465,20 @@ impl Editor {
         breakpoint_display_points
     }
 
-    fn breakpoint_context_menu(
+    fn edit_breakpoint_context_menu(
         &self,
         anchor: Anchor,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ui::ContextMenu> {
+        todo!()
+    }
+
+    fn basic_breakpoint_context_menu(
+        &self,
+        anchor: Anchor,
+        edit_menu_position: (Anchor, gpui::Point<Pixels>),
+        is_edit_menu: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ui::ContextMenu> {
@@ -6484,12 +6495,6 @@ impl Editor {
         let breakpoint = self
             .breakpoint_at_row(row, window, cx)
             .map(|(anchor, bp)| (anchor, Arc::from(bp)));
-
-        let log_breakpoint_msg = if breakpoint.as_ref().is_some_and(|bp| bp.1.message.is_some()) {
-            "Edit Log Breakpoint"
-        } else {
-            "Set Log Breakpoint"
-        };
 
         let condition_breakpoint_msg = if breakpoint
             .as_ref()
@@ -6518,9 +6523,13 @@ impl Editor {
         let run_to_cursor = command_palette_hooks::CommandPaletteFilter::try_global(cx)
             .map_or(false, |filter| !filter.is_hidden(&DebuggerRunToCursor));
 
-        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
-            BreakpointState::Enabled => Some("Disable"),
-            BreakpointState::Disabled => Some("Enable"),
+        let breakpoint_is_at_row = breakpoint.is_some();
+        let log_editor = cx.new(|cx| {
+            let mut log_editor = Editor::single_line(window, cx);
+            if let Some(text) = &breakpoint.as_ref().and_then(|bp| bp.1.message.clone()) {
+                log_editor.insert(text.as_ref(), window, cx);
+            }
+            log_editor
         });
 
         let (anchor, breakpoint) =
@@ -6544,8 +6553,73 @@ impl Editor {
                     })
                     .separator()
                 })
-                .when_some(toggle_state_msg, |this, msg| {
-                    this.entry(msg, None, {
+                .entry("edit breakpoint", None, {
+                    let weak_editor = weak_editor.clone();
+                    move |window, cx| {
+                        weak_editor
+                            .update(cx, |editor, cx| {
+                                let context_menu =
+                                    editor.edit_breakpoint_context_menu(anchor, window, cx);
+                                let (source, clicked_point) = edit_menu_position;
+
+                                editor.mouse_context_menu = MouseContextMenu::pinned_to_editor(
+                                    editor,
+                                    source,
+                                    clicked_point,
+                                    context_menu,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    }
+                })
+                .when(breakpoint_is_at_row, |this| {
+                    let weak_editor = weak_editor.clone();
+                    let breakpoint = breakpoint.clone();
+
+                    this.custom_row(move |window, cx| {
+                        let breakpoint = weak_editor
+                            .update(cx, |editor, cx| {
+                                editor.breakpoint_at_row(row, window, cx).map(|bp| bp.1)
+                            })
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| breakpoint.as_ref().clone());
+
+                        let is_enabled = match breakpoint.is_enabled() {
+                            true => ToggleState::Selected,
+                            false => ToggleState::Unselected,
+                        };
+
+                        ui::CheckboxWithLabel::new(
+                            "enable-breakpoint",
+                            Label::new("Enable"),
+                            is_enabled,
+                            {
+                                let weak_editor = weak_editor.clone();
+                                let breakpoint = breakpoint.clone();
+
+                                move |_, _, cx| {
+                                    weak_editor
+                                        .update(cx, |this, cx| {
+                                            this.edit_breakpoint_at_anchor(
+                                                anchor,
+                                                breakpoint.clone(),
+                                                BreakpointEditAction::InvertState,
+                                                cx,
+                                            );
+                                        })
+                                        .log_err();
+                                }
+                            },
+                        )
+                        .checkbox_position(IconPosition::End)
+                        .into_any_element()
+                    })
+                })
+                .when(!breakpoint_is_at_row, |this| {
+                    this.entry(set_breakpoint_msg, None, {
                         let weak_editor = weak_editor.clone();
                         let breakpoint = breakpoint.clone();
                         move |_window, cx| {
@@ -6554,7 +6628,7 @@ impl Editor {
                                     this.edit_breakpoint_at_anchor(
                                         anchor,
                                         breakpoint.as_ref().clone(),
-                                        BreakpointEditAction::InvertState,
+                                        BreakpointEditAction::Toggle,
                                         cx,
                                     );
                                 })
@@ -6562,69 +6636,72 @@ impl Editor {
                         }
                     })
                 })
-                .entry(set_breakpoint_msg, None, {
-                    let weak_editor = weak_editor.clone();
-                    let breakpoint = breakpoint.clone();
-                    move |_window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.edit_breakpoint_at_anchor(
-                                    anchor,
-                                    breakpoint.as_ref().clone(),
-                                    BreakpointEditAction::Toggle,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
-                .entry(log_breakpoint_msg, None, {
-                    let breakpoint = breakpoint.clone();
-                    let weak_editor = weak_editor.clone();
-                    move |window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.add_edit_breakpoint_block(
-                                    anchor,
-                                    breakpoint.as_ref(),
-                                    BreakpointPromptEditAction::Log,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
-                .entry(condition_breakpoint_msg, None, {
-                    let breakpoint = breakpoint.clone();
-                    let weak_editor = weak_editor.clone();
-                    move |window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.add_edit_breakpoint_block(
-                                    anchor,
-                                    breakpoint.as_ref(),
-                                    BreakpointPromptEditAction::Condition,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
-                .entry(hit_condition_breakpoint_msg, None, move |window, cx| {
-                    weak_editor
-                        .update(cx, |this, cx| {
-                            this.add_edit_breakpoint_block(
+                .when(is_edit_menu, |this| {
+                    this.custom_entry(
+                        {
+                            breakpoint_message_editor_element(
                                 anchor,
-                                breakpoint.as_ref(),
-                                BreakpointPromptEditAction::HitCondition,
-                                window,
-                                cx,
-                            );
-                        })
-                        .log_err();
+                                breakpoint.clone(),
+                                BreakpointMessageKind::Log,
+                                log_editor.clone(),
+                                weak_editor.clone(),
+                            )
+                        },
+                        {
+                            let breakpoint = breakpoint.clone();
+                            let weak_editor = weak_editor.clone();
+                            let log_editor = log_editor.clone();
+
+                            move |_, cx| {
+                                let log_message = log_editor.read(cx).text(cx);
+
+                                weak_editor
+                                    .update(cx, |this, cx| {
+                                        this.edit_breakpoint_at_anchor(
+                                            anchor,
+                                            breakpoint.as_ref().clone(),
+                                            BreakpointEditAction::EditLogMessage(
+                                                log_message.into(),
+                                            ),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        },
+                    )
                 })
+
+            // .entry(condition_breakpoint_msg, None, {
+            //     let breakpoint = breakpoint.clone();
+            //     let weak_editor = weak_editor.clone();
+            //     move |window, cx| {
+            //         weak_editor
+            //             .update(cx, |this, cx| {
+            //                 this.add_edit_breakpoint_block(
+            //                     anchor,
+            //                     breakpoint.as_ref(),
+            //                     BreakpointPromptEditAction::Condition,
+            //                     window,
+            //                     cx,
+            //                 );
+            //             })
+            //             .log_err();
+            //     }
+            // })
+            // .entry(hit_condition_breakpoint_msg, None, move |window, cx| {
+            //     weak_editor
+            //         .update(cx, |this, cx| {
+            //             this.add_edit_breakpoint_block(
+            //                 anchor,
+            //                 breakpoint.as_ref(),
+            //                 BreakpointPromptEditAction::HitCondition,
+            //                 window,
+            //                 cx,
+            //             );
+            //         })
+            //         .log_err();
+            // })
         })
     }
 
@@ -8845,6 +8922,48 @@ impl Editor {
         }
     }
 
+    fn render_breakpoint_menu_editor(
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &App,
+    ) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let theme = cx.theme();
+
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_size: AbsoluteLength::Rems(Rems(0.75)),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
+            background_color: Some(theme.colors().editor_background),
+            ..Default::default()
+        };
+
+        let element = EditorElement::new(
+            editor,
+            EditorStyle {
+                background: theme.colors().editor_background,
+                local_player: theme.players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        );
+
+        div()
+            .rounded_sm()
+            .when(
+                editor.focus_handle(cx).contains_focused(window, cx),
+                |this| this.border_color(theme.colors().border_focused),
+            )
+            .child(element)
+            .min_w(Pixels(300.0))
+            .size_full()
+            .bg(theme.colors().editor_background)
+            .h_4()
+    }
+
     fn set_breakpoint_context_menu(
         &mut self,
         display_row: DisplayRow,
@@ -8862,7 +8981,13 @@ impl Editor {
             .snapshot(cx)
             .anchor_before(Point::new(display_row.0, 0u32));
 
-        let context_menu = self.breakpoint_context_menu(position.unwrap_or(source), window, cx);
+        let context_menu = self.basic_breakpoint_context_menu(
+            position.unwrap_or(source),
+            (source, clicked_point),
+            false,
+            window,
+            cx,
+        );
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
@@ -18158,6 +18283,58 @@ impl Editor {
         }
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
+    }
+}
+
+enum BreakpointMessageKind {
+    Log,
+    Conditional,
+    HitConditional,
+}
+
+fn breakpoint_message_editor_element(
+    anchor: Anchor,
+    breakpoint: Arc<Breakpoint>,
+    message_kind: BreakpointMessageKind,
+    message_editor: Entity<Editor>,
+    weak_editor: WeakEntity<Editor>,
+) -> impl Fn(&mut Window, &mut App) -> AnyElement {
+    let log_editor = message_editor.clone();
+    let breakpoint = breakpoint.clone();
+    let weak_editor = weak_editor.clone();
+
+    move |window, cx| {
+        let label = Label::new("Log message");
+        let log_editor = log_editor.clone();
+        let breakpoint = breakpoint.clone();
+        let weak_editor = weak_editor.clone();
+
+        h_flex()
+            .gap_1()
+            .size_full()
+            .child(label)
+            .child(Editor::render_breakpoint_menu_editor(
+                &log_editor.clone(),
+                window,
+                cx,
+            ))
+            .on_action(move |_: &menu::Confirm, _, cx| {
+                let log_message = log_editor.read(cx).text(cx);
+
+                weak_editor
+                    .update(cx, |this, cx| {
+                        this.edit_breakpoint_at_anchor(
+                            anchor,
+                            breakpoint.as_ref().clone(),
+                            BreakpointEditAction::EditLogMessage(log_message.into()),
+                            cx,
+                        );
+
+                        this.mouse_context_menu = None;
+                    })
+                    .ok();
+            })
+            .into_any_element()
     }
 }
 
