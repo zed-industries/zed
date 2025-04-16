@@ -26,6 +26,9 @@ use ui_input::SingleLineInput;
 use workspace::{AppState, ItemId, SerializableItem};
 use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 
+#[allow(unused)]
+use ui_parking_lot::*; // Import for component registry, gets culled otherwise
+
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);
 

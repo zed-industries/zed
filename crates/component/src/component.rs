@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
@@ -15,9 +16,20 @@ pub trait Component {
     fn scope() -> ComponentScope {
         ComponentScope::None
     }
+
+    fn init_component(_weak_workspace: Box<dyn Any>) {}
+
+    // In theory we could downcast to a WeakEntity<Workspace> and use that to build
+    // whatever you need to initialize the component, but I haven't tested it yet.
+    //
+    // fn init_component(weak_workspace: Box<dyn Any>) {
+    //     let weak_workspace = weak_workspace.downcast::<WeakEntity<Workspace>>().unwrap();
+    // }
+
     fn name() -> &'static str {
         std::any::type_name::<Self>()
     }
+
     /// Returns a name that the component should be sorted by.
     ///
     /// Implement this if the component should be sorted in an alternate order than its name.

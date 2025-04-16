@@ -3197,6 +3197,7 @@ dependencies = [
  "serde",
  "ui",
  "ui_input",
+ "ui_parking_lot",
  "workspace",
  "workspace-hack",
 ]
@@ -15497,6 +15498,7 @@ dependencies = [
  "linkme",
  "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -17642,7 +17644,6 @@ dependencies = [
  "tempfile",
  "theme",
  "ui",
- "ui_parking_lot",
  "util",
  "uuid",
  "windows 0.61.1",
