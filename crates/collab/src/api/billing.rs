@@ -330,8 +330,10 @@ async fn create_billing_subscription(
                 .await?
         }
         None => {
-            let default_model =
-                llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-7-sonnet")?;
+            let default_model = llm_db.model(
+                zed_llm_client::LanguageModelProvider::Anthropic,
+                "claude-3-7-sonnet",
+            )?;
             let stripe_model = stripe_billing.register_model(default_model).await?;
             stripe_billing
                 .checkout(customer_id, &user.github_login, &stripe_model, &success_url)

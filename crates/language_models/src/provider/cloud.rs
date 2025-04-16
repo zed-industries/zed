@@ -1,9 +1,6 @@
 use anthropic::{AnthropicError, AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
-use client::{
-    Client, EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
-    PerformCompletionParams, UserStore, zed_urls,
-};
+use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
 use futures::{
@@ -26,7 +23,6 @@ use language_model::{
 use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::value::RawValue;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
 use smol::io::{AsyncReadExt, BufReader};
@@ -38,7 +34,10 @@ use std::{
 use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
-use zed_llm_client::{CURRENT_PLAN_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME};
+use zed_llm_client::{
+    CURRENT_PLAN_HEADER_NAME, CompletionBody, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+};
 
 use crate::AllLanguageModelSettings;
 use crate::provider::anthropic::{count_anthropic_tokens, into_anthropic};
@@ -517,7 +516,7 @@ impl CloudLanguageModel {
     async fn perform_llm_completion(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
-        body: PerformCompletionParams,
+        body: CompletionBody,
     ) -> Result<Response<AsyncBody>> {
         let http_client = &client.http_client();
 
@@ -724,12 +723,10 @@ impl LanguageModel for CloudLanguageModel {
                     let response = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
-                        PerformCompletionParams {
-                            provider: client::LanguageModelProvider::Anthropic,
+                        CompletionBody {
+                            provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
-                            provider_request: RawValue::from_string(serde_json::to_string(
-                                &request,
-                            )?)?,
+                            provider_request: serde_json::to_value(&request)?,
                         },
                     )
                     .await
@@ -765,12 +762,10 @@ impl LanguageModel for CloudLanguageModel {
                     let response = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
-                        PerformCompletionParams {
-                            provider: client::LanguageModelProvider::OpenAi,
+                        CompletionBody {
+                            provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
-                            provider_request: RawValue::from_string(serde_json::to_string(
-                                &request,
-                            )?)?,
+                            provider_request: serde_json::to_value(&request)?,
                         },
                     )
                     .await?;
@@ -790,12 +785,10 @@ impl LanguageModel for CloudLanguageModel {
                     let response = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
-                        PerformCompletionParams {
-                            provider: client::LanguageModelProvider::Google,
+                        CompletionBody {
+                            provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.clone(),
-                            provider_request: RawValue::from_string(serde_json::to_string(
-                                &request,
-                            )?)?,
+                            provider_request: serde_json::to_value(&request)?,
                         },
                     )
                     .await?;
