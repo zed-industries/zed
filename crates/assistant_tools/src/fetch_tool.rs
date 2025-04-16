@@ -6,7 +6,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext as _, Entity, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -145,6 +145,7 @@ impl Tool for FetchTool {
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<FetchToolInput>(input) {

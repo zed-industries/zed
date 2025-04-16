@@ -5,8 +5,8 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt, TryFutureExt};
 use gpui::{
-    Animation, AnimationExt, App, AppContext, Context, Entity, IntoElement, Task, Window,
-    pulsating_between,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task,
+    Window, pulsating_between,
 };
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -55,6 +55,7 @@ impl Tool for WebSearchTool {
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<WebSearchToolInput>(input) {

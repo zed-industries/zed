@@ -1,13 +1,18 @@
 use crate::{replace::replace_with_flexible_indent, schema::json_schema_for};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use editor::{Editor, MultiBuffer};
+use gpui::{
+    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, IntoElement, Task, Window,
+};
+use language::{self, Buffer, Capability, LanguageRegistry, LineEnding, Rope, TextBuffer};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
-use ui::IconName;
+use ui::{Tooltip, prelude::*};
 
 use crate::replace::replace_exact;
 
@@ -132,6 +137,259 @@ pub struct FindReplaceFileToolInput {
     pub replace: String,
 }
 
+pub struct FindReplaceFileToolCard {
+    path: PathBuf,
+    description: String,
+    editor: Entity<Editor>,
+    multibuffer: Entity<MultiBuffer>,
+    project: Entity<Project>,
+    diff_task: Option<Task<Result<()>>>,
+}
+
+impl FindReplaceFileToolCard {
+    fn new(
+        path: PathBuf,
+        description: String,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadOnly));
+        let editor = cx.new(|cx| {
+            let mut editor =
+                Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
+            editor.disable_inline_diagnostics();
+            editor.set_expand_all_diff_hunks(cx);
+            editor
+        });
+
+        Self {
+            path,
+            description,
+            project,
+            editor,
+            multibuffer,
+            diff_task: None,
+        }
+    }
+
+    fn set_diff(&mut self, old_text: String, new_text: String, cx: &mut Context<Self>) {
+        let language_registry = self.project.read(cx).languages().clone();
+        self.diff_task = Some(cx.spawn(async move |this, cx| {
+            let buffer = build_buffer(new_text, &language_registry, cx).await?;
+            let buffer_diff = build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
+
+            this.update(cx, |this, cx| {
+                this.multibuffer.update(cx, |multibuffer, cx| {
+                    multibuffer.add_diff(buffer_diff, cx);
+                });
+                cx.notify();
+            })
+        }));
+    }
+}
+
+async fn build_buffer(
+    mut text: String,
+    language_registry: &Arc<language::LanguageRegistry>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<Buffer>> {
+    let line_ending = LineEnding::detect(&text);
+    LineEnding::normalize(&mut text);
+    let text = Rope::from(text);
+    // todo! set language
+    // let language = cx.update(|cx| language_registry.language_for_file(&blob, Some(&text), cx))?;
+    // let language = if let Some(language) = language {
+    //     language_registry
+    //         .load_language(&language)
+    //         .await
+    //         .ok()
+    //         .and_then(|e| e.log_err())
+    // } else {
+    //     None
+    // };
+    let buffer = cx.new(|cx| {
+        let buffer = TextBuffer::new_normalized(
+            0,
+            cx.entity_id().as_non_zero_u64().into(),
+            line_ending,
+            text,
+        );
+        let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite);
+        // todo!
+        // buffer.set_language(language, cx);
+        buffer
+    })?;
+    Ok(buffer)
+}
+
+async fn build_buffer_diff(
+    mut old_text: String,
+    buffer: &Entity<Buffer>,
+    language_registry: &Arc<LanguageRegistry>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<BufferDiff>> {
+    LineEnding::normalize(&mut old_text);
+
+    let buffer = cx.update(|cx| buffer.read(cx).snapshot())?;
+
+    let base_buffer = cx
+        .update(|cx| {
+            Buffer::build_snapshot(
+                old_text.clone().into(),
+                buffer.language().cloned(),
+                Some(language_registry.clone()),
+                cx,
+            )
+        })?
+        .await;
+
+    let diff_snapshot = cx
+        .update(|cx| {
+            BufferDiffSnapshot::new_with_base_buffer(
+                buffer.text.clone(),
+                Some(old_text.into()),
+                base_buffer,
+                cx,
+            )
+        })?
+        .await;
+
+    cx.new(|cx| {
+        let mut diff = BufferDiff::new(&buffer.text, cx);
+        diff.set_snapshot(diff_snapshot, &buffer.text, cx);
+        diff
+    })
+}
+
+impl ToolCard for FindReplaceFileToolCard {
+    fn render(
+        &mut self,
+        status: &ToolUseStatus,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let header = h_flex()
+            .id("tool-label-container")
+            .gap_1p5()
+            .max_w_full()
+            .overflow_x_scroll()
+            .child(
+                Icon::new(IconName::Pencil)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .child(Label::new("Edit ").size(LabelSize::Small))
+            .child(
+                div()
+                    .size(px(3.))
+                    .rounded_full()
+                    .bg(cx.theme().colors().text),
+            )
+            .child(Label::new(self.path.display().to_string()).size(LabelSize::Small))
+            .into_any_element();
+
+        let header2 = h_flex()
+            .id("code-block-header-label")
+            .w_full()
+            .max_w_full()
+            .px_1()
+            .gap_0p5()
+            .cursor_pointer()
+            .rounded_sm()
+            .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
+            .tooltip(Tooltip::text("Jump to File"));
+        // todo!
+        // .child(
+        //     h_flex()
+        //         .gap_0p5()
+        //         .children(
+        //             file_icons::FileIcons::get_icon(&path_range.path, cx)
+        //                 .map(Icon::from_path)
+        //                 .map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)),
+        //         )
+        //         .child(content)
+        //         .child(
+        //             Icon::new(IconName::ArrowUpRight)
+        //                 .size(IconSize::XSmall)
+        //                 .color(Color::Ignored),
+        //         ),
+        // )
+        // .on_click({
+        //     let path_range = path_range.clone();
+        //     move |_, window, cx| {
+        //         workspace
+        //             .update(cx, {
+        //                 |workspace, cx| {
+        //                     if let Some(project_path) = workspace
+        //                         .project()
+        //                         .read(cx)
+        //                         .find_project_path(&path_range.path, cx)
+        //                     {
+        //                         let target = path_range.range.as_ref().map(|range| {
+        //                             Point::new(
+        //                                 // Line number is 1-based
+        //                                 range.start.line.saturating_sub(1),
+        //                                 range.start.col.unwrap_or(0),
+        //                             )
+        //                         });
+        //                         let open_task =
+        //                             workspace.open_path(project_path, None, true, window, cx);
+        //                         window
+        //                             .spawn(cx, async move |cx| {
+        //                                 let item = open_task.await?;
+        //                                 if let Some(target) = target {
+        //                                     if let Some(active_editor) =
+        //                                         item.downcast::<Editor>()
+        //                                     {
+        //                                         active_editor
+        //                                             .downgrade()
+        //                                             .update_in(cx, |editor, window, cx| {
+        //                                                 editor.go_to_singleton_buffer_point(
+        //                                                     target, window, cx,
+        //                                                 );
+        //                                             })
+        //                                             .log_err();
+        //                                     }
+        //                                 }
+        //                                 anyhow::Ok(())
+        //                             })
+        //                             .detach_and_log_err(cx);
+        //                     }
+        //                 }
+        //             })
+        //             .ok();
+        //     }
+        // })
+        // .into_any_element();
+
+        let content = match status {
+            ToolUseStatus::NeedsConfirmation | ToolUseStatus::Pending | ToolUseStatus::Running => {
+                div()
+                    // .child(Label::new(&self.description).size(LabelSize::Small))
+                    .into_any_element()
+            }
+            ToolUseStatus::Finished(_) => self.editor.clone().into_any_element(),
+            ToolUseStatus::Error(error) => div()
+                .child(
+                    Label::new(error.to_string())
+                        .color(Color::Error)
+                        .size(LabelSize::Small),
+                )
+                .into_any_element(),
+        };
+
+        v_flex()
+            .my_2()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_sm()
+            .gap_1()
+            .child(header)
+            .child(content)
+    }
+}
+
 pub struct FindReplaceFileTool;
 
 impl Tool for FindReplaceFileTool {
@@ -168,14 +426,32 @@ impl Tool for FindReplaceFileTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<FindReplaceFileToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
+        let card = window.and_then(|window| {
+            window
+                .update(cx, |_, window, cx| {
+                    cx.new(|cx| {
+                        FindReplaceFileToolCard::new(
+                            input.path.clone(),
+                            input.display_description.clone(),
+                            project.clone(),
+                            window,
+                            cx,
+                        )
+                    })
+                })
+                .ok()
+        });
 
-        cx.spawn(async move |cx: &mut AsyncApp| {
+        let output = cx.spawn({
+            let card = card.clone();
+            async move |cx: &mut AsyncApp| {
             let project_path = project.read_with(cx, |project, cx| {
                 project
                     .find_project_path(&input.path, cx)
@@ -255,14 +531,29 @@ impl Tool for FindReplaceFileTool {
                 project.save_buffer(buffer, cx)
             })?.await?;
 
-            let diff_str = cx.background_spawn(async move {
-                let new_text = snapshot.text();
-                language::unified_diff(&old_text, &new_text)
+            let new_text = snapshot.text();
+
+            let diff_str = cx.background_spawn({
+                // todo! probably don't need this
+                let old_text = old_text.clone();
+                let new_text = new_text.clone();
+                async move {
+                    language::unified_diff(&old_text, &new_text)
+                }
             }).await;
 
+            if let Some(card) = card {
+                card.update(cx, |card, cx| {
+                    card.set_diff(old_text, new_text, cx);
+                });
+            }
 
             Ok(format!("Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str))
+        }});
 
-        }).into()
+        ToolResult {
+            output,
+            card: card.map(|card| card.into()),
+        }
     }
 }

@@ -263,6 +263,7 @@ impl MessageEditor {
         let context_store = self.context_store.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
+        let window_handle = window.window_handle();
 
         cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await.ok();
@@ -297,7 +298,7 @@ impl MessageEditor {
             // Send to model after summaries are done
             thread
                 .update(cx, |thread, cx| {
-                    thread.send_to_model(model, request_kind, cx);
+                    thread.send_to_model(model, request_kind, Some(window_handle), cx);
                 })
                 .log_err();
         })
@@ -305,9 +306,9 @@ impl MessageEditor {
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let cancelled = self
-            .thread
-            .update(cx, |thread, cx| thread.cancel_last_completion(cx));
+        let cancelled = self.thread.update(cx, |thread, cx| {
+            thread.cancel_last_completion(Some(window.window_handle()), cx)
+        });
 
         if cancelled {
             self.set_editor_is_expanded(false, cx);

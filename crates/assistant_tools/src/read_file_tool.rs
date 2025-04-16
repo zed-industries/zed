@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{code_symbols_tool::file_outline, schema::json_schema_for};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use itertools::Itertools;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -87,6 +87,7 @@ impl Tool for ReadFileTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {

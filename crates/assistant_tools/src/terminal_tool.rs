@@ -3,7 +3,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -78,6 +78,7 @@ impl Tool for TerminalTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input: TerminalToolInput = match serde_json::from_value(input) {

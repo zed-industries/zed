@@ -2,7 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::StreamExt;
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::OffsetRangeExt;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{
@@ -91,6 +91,7 @@ impl Tool for RegexSearchTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         const CONTEXT_LINES: u32 = 2;

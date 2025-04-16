@@ -702,8 +702,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_tool",
+ "buffer_diff",
  "chrono",
  "collections",
+ "editor",
  "feature_flags",
  "futures 0.3.31",
  "gpui",
@@ -712,6 +714,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "multi_buffer",
  "open",
  "project",
  "rand 0.8.5",

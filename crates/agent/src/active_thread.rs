@@ -767,10 +767,11 @@ impl ActiveThread {
         self.thread.read(cx).summary_or_default()
     }
 
-    pub fn cancel_last_completion(&mut self, cx: &mut App) -> bool {
+    pub fn cancel_last_completion(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.last_error.take();
-        self.thread
-            .update(cx, |thread, cx| thread.cancel_last_completion(cx))
+        self.thread.update(cx, |thread, cx| {
+            thread.cancel_last_completion(Some(window.window_handle()), cx)
+        })
     }
 
     pub fn last_error(&self) -> Option<ThreadError> {
@@ -1143,7 +1144,7 @@ impl ActiveThread {
     fn confirm_editing_message(
         &mut self,
         _: &menu::Confirm,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some((message_id, state)) = self.editing_message.take() else {
@@ -1172,7 +1173,12 @@ impl ActiveThread {
         }
 
         self.thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.model, RequestKind::Chat, cx)
+            thread.send_to_model(
+                model.model,
+                RequestKind::Chat,
+                Some(window.window_handle()),
+                cx,
+            )
         });
         cx.notify();
     }
@@ -2831,7 +2837,7 @@ impl ActiveThread {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         _: &ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(PendingToolUseStatus::NeedsConfirmation(c)) = self
@@ -2847,6 +2853,7 @@ impl ActiveThread {
                     c.input.clone(),
                     &c.messages,
                     c.tool.clone(),
+                    Some(window.window_handle()),
                     cx,
                 );
             });
@@ -2858,11 +2865,12 @@ impl ActiveThread {
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
         _: &ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let window_handle = window.window_handle();
         self.thread.update(cx, |thread, cx| {
-            thread.deny_tool_use(tool_use_id, tool_name, cx);
+            thread.deny_tool_use(tool_use_id, tool_name, Some(window_handle), cx);
         });
     }
 

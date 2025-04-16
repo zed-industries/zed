@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use icons::IconName;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -77,6 +77,7 @@ impl Tool for ContextServerTool {
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
