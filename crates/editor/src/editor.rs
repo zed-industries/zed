@@ -4740,8 +4740,8 @@ impl Editor {
         let lookahead = replace_range
             .end
             .saturating_sub(newest_anchor.end.text_anchor.to_offset(buffer));
-        let prefix = &old_text[..old_text.len() - lookahead];
-        let suffix = &old_text[lookbehind..];
+        let prefix = &old_text[..old_text.len().saturating_sub(lookahead)];
+        let suffix = &old_text[lookbehind.min(old_text.len())..];
 
         let selections = self.selections.all::<usize>(cx);
         let mut edits = Vec::new();
@@ -4756,7 +4756,7 @@ impl Editor {
 
                 // if prefix is present, don't duplicate it
                 if snapshot.contains_str_at(range.start.saturating_sub(lookbehind), prefix) {
-                    text = &new_text[lookbehind..];
+                    text = &new_text[lookbehind.min(new_text.len())..];
 
                     // if suffix is also present, mimic the newest cursor and replace it
                     if selection.id != newest_anchor.id
@@ -13726,8 +13726,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Navigated>>> {
-        self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
-
         let selection = self.selections.newest::<usize>(cx);
         let multi_buffer = self.buffer.read(cx);
         let head = selection.head();

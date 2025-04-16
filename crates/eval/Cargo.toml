@@ -16,6 +16,7 @@ client.workspace = true
 collections.workspace = true
 context_server.workspace = true
 dap.workspace = true
+dirs = "5.0"
 env_logger.workspace = true
 extension.workspace = true
 fs.workspace = true
@@ -37,9 +38,11 @@ reqwest_client.workspace = true
 serde.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
+telemetry.workspace = true
 toml.workspace = true
 unindent.workspace = true
 util.workspace = true
+uuid = { version = "1.6", features = ["v4"] }
 workspace-hack.workspace = true
 
 [[bin]]

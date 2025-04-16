@@ -438,7 +438,13 @@ impl DebugPanel {
         else {
             return;
         };
-
+        session.update(cx, |this, cx| {
+            if let Some(running) = this.mode().as_running() {
+                running.update(cx, |this, cx| {
+                    this.serialize_layout(window, cx);
+                });
+            }
+        });
         let session_id = session.update(cx, |this, cx| this.session_id(cx));
         let should_prompt = self
             .project

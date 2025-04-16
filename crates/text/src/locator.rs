@@ -13,7 +13,7 @@ static MAX: LazyLock<Locator> = LazyLock::new(Locator::max);
 /// The initial location for a collection should be `Locator::between(Locator::min(), Locator::max())`,
 /// leaving room for items to be inserted before and after it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Locator(pub SmallVec<[u64; 4]>);
+pub struct Locator(SmallVec<[u64; 4]>);
 
 impl Locator {
     pub fn min() -> Self {

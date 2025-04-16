@@ -421,6 +421,9 @@ impl RunningState {
                 }
                 cx.notify()
             }),
+            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+                this.serialize_layout(window, cx);
+            }),
         ];
 
         let mut pane_close_subscriptions = HashMap::default();
@@ -476,7 +479,7 @@ impl RunningState {
         }
     }
 
-    fn serialize_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn serialize_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self._schedule_serialize.is_none() {
             self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor()

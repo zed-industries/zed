@@ -19,6 +19,18 @@ pub struct Model {
     pub created_at: DateTime,
 }
 
+impl Model {
+    pub fn current_period_start_at(&self) -> Option<DateTimeUtc> {
+        let period_start = self.stripe_current_period_start?;
+        chrono::DateTime::from_timestamp(period_start, 0)
+    }
+
+    pub fn current_period_end_at(&self) -> Option<DateTimeUtc> {
+        let period_end = self.stripe_current_period_end?;
+        chrono::DateTime::from_timestamp(period_end, 0)
+    }
+}
+
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
@@ -43,6 +55,10 @@ impl ActiveModelBehavior for ActiveModel {}
 pub enum SubscriptionKind {
     #[sea_orm(string_value = "zed_pro")]
     ZedPro,
+    #[sea_orm(string_value = "zed_pro_trial")]
+    ZedProTrial,
+    #[sea_orm(string_value = "zed_free")]
+    ZedFree,
 }
 
 /// The status of a Stripe subscription.
