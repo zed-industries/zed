@@ -490,6 +490,8 @@ fn main() {
             app_state.fs.clone(),
             cx,
         );
+        web_search::init(cx);
+        web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
         inline_completion_registry::init(
             app_state.client.clone(),

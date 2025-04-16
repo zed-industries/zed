@@ -165,6 +165,8 @@ members = [
     "crates/util_macros",
     "crates/vim",
     "crates/vim_mode_setting",
+    "crates/web_search",
+    "crates/web_search_providers",
     "crates/welcome",
     "crates/workspace",
     "crates/worktree",
@@ -370,6 +372,8 @@ util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
+web_search = { path = "crates/web_search" }
+web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
@@ -601,7 +605,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.4.2"
+zed_llm_client = "0.5.0"
 zstd = "0.11"
 metal = "0.29"
 
