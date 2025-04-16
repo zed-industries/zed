@@ -47,6 +47,17 @@ pub struct ExampleBase {
     pub require_lsp: bool,
 }
 
+impl ExampleBase {
+    pub fn repo_name(&self) -> String {
+        self.url
+            .split('/')
+            .last()
+            .unwrap_or(&"")
+            .trim_end_matches(".git")
+            .into()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Example {
     pub name: String,
@@ -120,6 +131,7 @@ impl Example {
             .context(format!("No such directory {WORKTREES_DIR}"))
             .unwrap()
             .join(&self.name)
+            .join(self.base.repo_name())
     }
 
     /// Set up the example by checking out the specified Git revision
