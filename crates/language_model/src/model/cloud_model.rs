@@ -142,6 +142,24 @@ impl fmt::Display for MaxMonthlySpendReachedError {
     }
 }
 
+#[derive(Error, Debug)]
+pub struct ModelRequestLimitReachedError {
+    pub plan: Plan,
+}
+
+impl fmt::Display for ModelRequestLimitReachedError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let message = match self.plan {
+            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
+            Plan::ZedPro => {
+                "Model request limit reached. Upgrade to usage-based billing for more requests."
+            }
+        };
+
+        write!(f, "{message}")
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
