@@ -57,7 +57,9 @@ pub struct Example {
     /// Content of `criteria.md`
     pub criteria: String,
     /// Markdown output file to append to
-    pub output_file: Arc<Mutex<File>>,
+    pub output_file: Option<Arc<Mutex<File>>>,
+    /// Path to the output run directory.
+    pub run_dir: PathBuf,
     /// Path to markdown output file
     pub output_file_path: PathBuf,
     /// Prefix used for logging that identifies this example
@@ -97,14 +99,14 @@ impl Example {
             "{}.md",
             dir_path.file_name().unwrap().to_str().unwrap()
         ));
-        let output_file = Arc::new(Mutex::new(File::create(&output_file_path).unwrap()));
 
         Ok(Example {
             name: name.clone(),
             base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
             criteria: fs::read_to_string(criteria_path.clone())?,
-            output_file,
+            run_dir: run_dir.to_path_buf(),
+            output_file: None,
             output_file_path,
             log_prefix: name,
         })
@@ -132,7 +134,7 @@ impl Example {
     }
 
     /// Set up the example by checking out the specified Git revision
-    pub async fn setup(&self) -> Result<()> {
+    pub async fn setup(&mut self) -> Result<()> {
         let repo_path = repo_path_for_url(&self.base.url);
 
         println!("{}Fetching", self.log_prefix);
@@ -171,7 +173,18 @@ impl Example {
             .await?;
         }
 
+        // Create the output file
+        let output_file = Arc::new(Mutex::new(File::create(&self.output_file_path)?));
+        self.output_file = Some(output_file);
+
         Ok(())
+    }
+
+    /// Returns the output file, panicking if it's not set
+    fn output_file(&self) -> Arc<Mutex<File>> {
+        self.output_file
+            .clone()
+            .expect("Output file not created. Call setup() first.")
     }
 
     pub fn run(
@@ -287,7 +300,8 @@ impl Example {
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
 
             {
-                let mut output_file = this.output_file.lock().unwrap();
+                let output_file_ref = this.output_file();
+                let mut output_file = output_file_ref.lock().unwrap();
                 writeln!(&mut output_file, "👤 USER:").log_err();
                 writeln!(&mut output_file, "{}", this.prompt).log_err();
                 writeln!(&mut output_file, "🤖 ASSISTANT:").log_err();
@@ -304,7 +318,8 @@ impl Example {
             });
 
             let event_handler_task = cx.spawn({
-                let output_file = this.output_file.clone();
+                // Need to clone the Arc here because the reference from output_file() won't live long enough
+                let output_file = this.output_file.clone().unwrap();
                 let log_prefix = this.log_prefix.clone();
                 let tool_use_counts = tool_use_counts.clone();
                 let thread = thread.downgrade();
@@ -330,7 +345,11 @@ impl Example {
                                 Ok(StopReason::MaxTokens) => {
                                     return Err(anyhow!("Exceeded maximum tokens"));
                                 }
-                                Ok(StopReason::ToolUse) => {}
+                                Ok(StopReason::ToolUse) => {
+                                    if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                                        println!("{}StopReason: Tool use", log_prefix);
+                                    }
+                                }
                                 Err(error) => {
                                     return Err(anyhow!(error.clone()));
                                 }
@@ -371,7 +390,20 @@ impl Example {
                                     }
                                 })?;
                             }
-                            _ => {}
+                            ThreadEvent::ToolConfirmationNeeded => {
+                                panic!("{}Bug: Tool confirmation should not be required in eval", log_prefix);
+                            },
+                            ThreadEvent::StreamedCompletion |
+                            ThreadEvent::MessageAdded(_) |
+                            ThreadEvent::MessageEdited(_) |
+                            ThreadEvent::MessageDeleted(_) |
+                            ThreadEvent::SummaryChanged |
+                            ThreadEvent::SummaryGenerated |
+                            ThreadEvent::CheckpointChanged => {
+                                if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                                    println!("{}Event: {:#?}", log_prefix, event);
+                                }
+                            }
                         }
 
                         output_file.flush().log_err();
@@ -387,16 +419,26 @@ impl Example {
 
             event_handler_task.await?;
 
+            println!("{}Stopped", this.log_prefix);
+
             if let Some((_, lsp_store)) = lsp_open_handle_and_store.as_ref() {
                 wait_for_lang_server(lsp_store, this.log_prefix.clone(), cx).await?;
             }
 
+            println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
+
+            let repository_diff_path = this.run_dir.join(format!("{}.diff", this.name));
+            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
+            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
+
+            println!("{}Getting diagnostics", this.log_prefix);
             let diagnostics = cx
                 .update(move |cx| {
                     cx.spawn(async move |cx| query_lsp_diagnostics(project, cx).await)
                 })?
                 .await?;
+            println!("{}Got diagnostics", this.log_prefix);
 
             drop(subscription);
             drop(lsp_open_handle_and_store);
@@ -421,6 +463,7 @@ impl Example {
         &self,
         model: Arc<dyn LanguageModel>,
         repository_diff: String,
+        judge_repetitions: u32,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
         let judge_prompt = include_str!("judge_prompt.hbs");
@@ -448,13 +491,14 @@ impl Example {
 
         let response = send_language_model_request(model, request, cx).await?;
 
-        let mut output_file = self.output_file.lock().unwrap();
+        let judge_file_path = self.run_dir.join(format!(
+            "{}_judge_{}.md",
+            self.name, // This is the eval_name
+            judge_repetitions
+        ));
 
-        writeln!(&mut output_file, "\n\n").log_err();
-        writeln!(&mut output_file, "========================================").log_err();
-        writeln!(&mut output_file, "              JUDGE OUTPUT              ").log_err();
-        writeln!(&mut output_file, "========================================").log_err();
-        writeln!(&mut output_file, "\n{}", &response).log_err();
+        let mut judge_output_file = File::create(&judge_file_path)?;
+        writeln!(&mut judge_output_file, "{}", &response).log_err();
 
         parse_judge_output(&response)
     }

@@ -1311,10 +1311,10 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "include_warnings": true,
     "inline": {
       "enabled": false
-    }
+    },
     "update_with_cursor": false,
     "primary_only": false,
-    "use_rendered": false,
+    "use_rendered": false
   }
 }
 ```

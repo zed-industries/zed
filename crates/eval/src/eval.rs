@@ -1,7 +1,6 @@
 mod example;
 mod ids;
 
-use assistant_settings::AssistantSettings;
 use client::{Client, ProxySettings, UserStore};
 pub(crate) use example::*;
 use telemetry;
@@ -12,7 +11,7 @@ use clap::Parser;
 use extension::ExtensionHostProxy;
 use futures::future;
 use gpui::http_client::{Uri, read_proxy_from_env};
-use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task};
+use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{
@@ -44,6 +43,9 @@ struct Args {
     model: String,
     #[arg(long, value_delimiter = ',')]
     languages: Option<Vec<String>>,
+    /// How many times to run the judge on each example run.
+    #[arg(long, default_value = "3")]
+    judge_repetitions: u32,
 }
 
 fn main() {
@@ -210,22 +212,27 @@ fn main() {
 
             future::join_all(clone_tasks).await;
 
-            for example in examples.iter() {
+            for example in examples.iter_mut() {
                 example.setup().await?;
             }
 
+            let judge_repetitions = args.judge_repetitions;
             let tasks = examples
                 .into_iter()
                 .map(|example| {
                     let app_state = app_state.clone();
                     let model = model.clone();
                     cx.spawn(async move |cx| {
-                        (run_example(&example, model, app_state, cx).await, example)
+                        (
+                            run_example(&example, model, app_state, judge_repetitions, cx).await,
+                            example,
+                        )
                     })
                 })
                 .collect::<Vec<_>>();
 
-            let results: Vec<(Result<JudgeOutput>, Example)> = future::join_all(tasks).await;
+            let results: Vec<(Result<Vec<Result<JudgeOutput>>>, Example)> =
+                future::join_all(tasks).await;
 
             println!("\n\n");
             println!("========================================");
@@ -240,16 +247,25 @@ fn main() {
                     Err(err) => {
                         println!("💥 {}{:?}", example.log_prefix, err);
                     }
-                    Ok(judge_output) => {
-                        const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
+                    Ok(judge_results) => {
+                        for judge_result in judge_results {
+                            match judge_result {
+                                Ok(judge_output) => {
+                                    const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
 
-                        println!(
-                            "{} {}{}",
-                            SCORES[judge_output.score.min(5) as usize],
-                            example.log_prefix,
-                            judge_output.score,
-                        );
-                        judge_scores.push(judge_output.score);
+                                    println!(
+                                        "{} {}{}",
+                                        SCORES[judge_output.score.min(5) as usize],
+                                        example.log_prefix,
+                                        judge_output.score,
+                                    );
+                                    judge_scores.push(judge_output.score);
+                                }
+                                Err(err) => {
+                                    println!("💥 {}{:?}", example.log_prefix, err);
+                                }
+                            }
+                        }
                     }
                 }
                 println!(
@@ -282,40 +298,52 @@ async fn run_example(
     example: &Example,
     model: Arc<dyn LanguageModel>,
     app_state: Arc<AgentAppState>,
+    judge_repetitions: u32,
     cx: &mut AsyncApp,
-) -> Result<JudgeOutput> {
+) -> Result<Vec<Result<JudgeOutput>>> {
     let run_output = cx
         .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
         .await?;
     let diff = example.repository_diff().await?;
-    let judge_output = example.judge(model.clone(), diff.clone(), cx).await?;
 
-    let cohort_id = example
-        .output_file_path
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+    // Run judge for each repetition
+    let mut results = Vec::new();
+    for round in 0..judge_repetitions {
+        let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
+        
+        // Log telemetry for this judge result
+        if let Ok(judge_output) = &judge_result {
+            let cohort_id = example
+                .output_file_path
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
 
-    telemetry::event!(
-        "Agent Eval Completed",
-        cohort_id = cohort_id,
-        example_name = example.name.clone(),
-        score = judge_output.score,
-        analysis = judge_output.analysis,
-        tool_use_counts = run_output.tool_use_counts,
-        response_count = run_output.response_count,
-        token_usage = run_output.token_usage,
-        model = model.telemetry_id(),
-        model_provider = model.provider_id().to_string(),
-        repository_url = example.base.url.clone(),
-        repository_revision = example.base.revision.clone(),
-        diagnostics_summary = run_output.diagnostics
-    );
+            telemetry::event!(
+                "Agent Eval Completed",
+                cohort_id = cohort_id,
+                example_name = example.name.clone(),
+                round = round,
+                score = judge_output.score,
+                analysis = judge_output.analysis,
+                tool_use_counts = run_output.tool_use_counts,
+                response_count = run_output.response_count,
+                token_usage = run_output.token_usage,
+                model = model.telemetry_id(),
+                model_provider = model.provider_id().to_string(),
+                repository_url = example.base.url.clone(),
+                repository_revision = example.base.revision.clone(),
+                diagnostics_summary = run_output.diagnostics
+            );
+        }
+        
+        results.push(judge_result);
+    }
 
     app_state.client.telemetry().flush_events();
 
-    Ok(judge_output)
+    Ok(results)
 }
 
 fn list_all_examples() -> Result<Vec<PathBuf>> {
@@ -433,13 +461,10 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
     agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
 
-    AssistantSettings::override_global(
-        AssistantSettings {
-            always_allow_tool_actions: true,
-            ..AssistantSettings::get_global(cx).clone()
-        },
-        cx,
-    );
+    SettingsStore::update_global(cx, |store, cx| {
+        store.set_user_settings(include_str!("../runner_settings.json"), cx)
+    })
+    .unwrap();
 
     Arc::new(AgentAppState {
         languages,

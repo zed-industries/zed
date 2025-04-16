@@ -21,7 +21,10 @@ use futures::{
     channel::{mpsc, oneshot},
     future::{Shared, join_all},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
+    Task,
+};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
@@ -89,6 +92,17 @@ pub struct LocalDapStore {
 impl LocalDapStore {
     fn next_session_id(&self) -> SessionId {
         SessionId(self.next_session_id.fetch_add(1, SeqCst))
+    }
+    pub(crate) fn locate_binary(
+        &self,
+        mut definition: DebugTaskDefinition,
+        executor: BackgroundExecutor,
+    ) -> Task<DebugTaskDefinition> {
+        let locator_store = self.locator_store.clone();
+        executor.spawn(async move {
+            let _ = locator_store.resolve_debug_config(&mut definition).await;
+            definition
+        })
     }
 }
 
@@ -335,7 +349,7 @@ impl DapStore {
     pub fn new_session(
         &mut self,
         binary: DebugAdapterBinary,
-        mut config: DebugTaskDefinition,
+        config: DebugTaskDefinition,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> (SessionId, Task<Result<Entity<Session>>>) {
@@ -352,22 +366,10 @@ impl DapStore {
         }
 
         let (initialized_tx, initialized_rx) = oneshot::channel();
-        let locator_store = local_store.locator_store.clone();
 
         let start_debugging_tx = local_store.start_debugging_tx.clone();
 
         let task = cx.spawn(async move |this, cx| {
-            if config.locator.is_some() {
-                config = cx
-                    .background_spawn(async move {
-                        locator_store
-                            .resolve_debug_config(&mut config)
-                            .await
-                            .map(|_| config)
-                    })
-                    .await?;
-            }
-
             let start_client_task = this.update(cx, |this, cx| {
                 Session::local(
                     this.breakpoint_store.clone(),

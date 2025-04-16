@@ -1,13 +1,14 @@
 use crate::Cents;
-use crate::db::user;
+use crate::db::{billing_subscription, user};
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::{Config, db::billing_preference};
 use anyhow::{Result, anyhow};
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
+use util::maybe;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -29,6 +30,8 @@ pub struct LlmTokenClaims {
     pub max_monthly_spend_in_cents: u32,
     pub custom_llm_monthly_allowance_in_cents: Option<u32>,
     pub plan: rpc::proto::Plan,
+    #[serde(default)]
+    pub subscription_period: Option<(NaiveDateTime, NaiveDateTime)>,
 }
 
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
@@ -39,8 +42,9 @@ impl LlmTokenClaims {
         is_staff: bool,
         billing_preferences: Option<billing_preference::Model>,
         feature_flags: &Vec<String>,
-        has_llm_subscription: bool,
+        has_legacy_llm_subscription: bool,
         plan: rpc::proto::Plan,
+        subscription: Option<billing_subscription::Model>,
         system_id: Option<String>,
         config: &Config,
     ) -> Result<String> {
@@ -69,7 +73,7 @@ impl LlmTokenClaims {
             has_predict_edits_feature_flag: feature_flags
                 .iter()
                 .any(|flag| flag == "predict-edits"),
-            has_llm_subscription,
+            has_llm_subscription: has_legacy_llm_subscription,
             max_monthly_spend_in_cents: billing_preferences
                 .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
                     preferences.max_monthly_llm_usage_spending_in_cents as u32
@@ -78,6 +82,16 @@ impl LlmTokenClaims {
                 .custom_llm_monthly_allowance_in_cents
                 .map(|allowance| allowance as u32),
             plan,
+            subscription_period: maybe!({
+                let subscription = subscription?;
+                let period_start = subscription.stripe_current_period_start?;
+                let period_start = DateTime::from_timestamp(period_start, 0)?;
+
+                let period_end = subscription.stripe_current_period_end?;
+                let period_end = DateTime::from_timestamp(period_end, 0)?;
+
+                Some((period_start.naive_utc(), period_end.naive_utc()))
+            }),
         };
 
         Ok(jsonwebtoken::encode(

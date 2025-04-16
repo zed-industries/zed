@@ -421,6 +421,9 @@ impl RunningState {
                 }
                 cx.notify()
             }),
+            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+                this.serialize_layout(window, cx);
+            }),
         ];
 
         let mut pane_close_subscriptions = HashMap::default();
@@ -476,7 +479,7 @@ impl RunningState {
         }
     }
 
-    fn serialize_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn serialize_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self._schedule_serialize.is_none() {
             self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor()
@@ -768,7 +771,7 @@ impl RunningState {
         DropdownMenu::new(
             ("thread-list", self.session_id.0),
             selected_thread_name,
-            ContextMenu::build(window, cx, move |mut this, _, _| {
+            ContextMenu::build_eager(window, cx, move |mut this, _, _| {
                 for (thread, _) in threads {
                     let state = state.clone();
                     let thread_id = thread.id;
