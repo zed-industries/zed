@@ -417,7 +417,7 @@ impl AssistantPanel {
             )
         });
 
-        let active_thread_subcription =
+        let active_thread_subscription =
             cx.subscribe(&self.thread, |_, _, event, cx| match &event {
                 ActiveThreadEvent::EditingMessageTokenCountChanged => {
                     cx.notify();
@@ -446,7 +446,7 @@ impl AssistantPanel {
 
         self._active_thread_subscriptions = vec![
             thread_subcription,
-            active_thread_subcription,
+            active_thread_subscription,
             message_editor_subscription,
         ];
     }
@@ -593,7 +593,7 @@ impl AssistantPanel {
                     )
                 });
 
-                let active_thread_subcription =
+                let active_thread_subscription =
                     cx.subscribe(&this.thread, |_, _, event, cx| match &event {
                         ActiveThreadEvent::EditingMessageTokenCountChanged => {
                             cx.notify();
@@ -622,7 +622,7 @@ impl AssistantPanel {
 
                 this._active_thread_subscriptions = vec![
                     thread_subcription,
-                    active_thread_subcription,
+                    active_thread_subscription,
                     message_editor_subscription,
                 ];
             })
