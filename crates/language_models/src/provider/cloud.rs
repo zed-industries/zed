@@ -36,7 +36,8 @@ use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use zed_llm_client::{
     CURRENT_PLAN_HEADER_NAME, CompletionBody, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
+    SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
 };
 
 use crate::AllLanguageModelSettings;
@@ -560,7 +561,7 @@ impl CloudLanguageModel {
                     .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
                     .is_some()
             {
-                if let Some("model_requests") = response
+                if let Some(MODEL_REQUESTS_RESOURCE_HEADER_VALUE) = response
                     .headers()
                     .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
                     .and_then(|resource| resource.to_str().ok())
@@ -574,6 +575,7 @@ impl CloudLanguageModel {
                         let plan = match plan {
                             zed_llm_client::Plan::Free => Plan::Free,
                             zed_llm_client::Plan::ZedPro => Plan::ZedPro,
+                            zed_llm_client::Plan::ZedProTrial => Plan::ZedProTrial,
                         };
                         return Err(anyhow!(ModelRequestLimitReachedError { plan }));
                     }

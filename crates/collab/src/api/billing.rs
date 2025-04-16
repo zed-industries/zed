@@ -1020,8 +1020,20 @@ async fn get_current_usage(
         return Ok(Json(empty_usage));
     };
 
-    let model_requests_limit = Some(500);
-    let edit_prediction_limit = Some(2000);
+    let plan = match usage.plan {
+        SubscriptionKind::ZedPro => zed_llm_client::Plan::ZedPro,
+        SubscriptionKind::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+        SubscriptionKind::ZedFree => zed_llm_client::Plan::Free,
+    };
+
+    let model_requests_limit = match plan.model_requests_limit() {
+        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
+        zed_llm_client::UsageLimit::Unlimited => None,
+    };
+    let edit_prediction_limit = match plan.edit_predictions_limit() {
+        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
+        zed_llm_client::UsageLimit::Unlimited => None,
+    };
 
     Ok(Json(GetCurrentUsageResponse {
         model_requests: UsageCounts {
