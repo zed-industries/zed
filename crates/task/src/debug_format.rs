@@ -98,62 +98,6 @@ impl DebugRequestDisposition {
         }
     }
 }
-/// Represents the configuration for the debug adapter
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct DebugAdapterConfig {
-    /// Name of the debug task
-    pub label: String,
-    /// The type of adapter you want to use
-    pub adapter: String,
-    /// The type of request that should be called on the debug adapter
-    pub request: DebugRequestDisposition,
-    /// Additional initialization arguments to be sent on DAP initialization
-    pub initialize_args: Option<serde_json::Value>,
-    /// Optional TCP connection information
-    ///
-    /// If provided, this will be used to connect to the debug adapter instead of
-    /// spawning a new process. This is useful for connecting to a debug adapter
-    /// that is already running or is started by another process.
-    pub tcp_connection: Option<TCPHost>,
-    /// What Locator to use to configure the debug task
-    pub locator: Option<String>,
-    /// Whether to tell the debug adapter to stop on entry
-    pub stop_on_entry: Option<bool>,
-}
-
-impl From<DebugTaskDefinition> for DebugAdapterConfig {
-    fn from(def: DebugTaskDefinition) -> Self {
-        Self {
-            label: def.label,
-            adapter: def.adapter,
-            request: DebugRequestDisposition::UserConfigured(def.request),
-            initialize_args: def.initialize_args,
-            tcp_connection: def.tcp_connection,
-            locator: def.locator,
-            stop_on_entry: def.stop_on_entry,
-        }
-    }
-}
-
-impl TryFrom<DebugAdapterConfig> for DebugTaskDefinition {
-    type Error = ();
-    fn try_from(def: DebugAdapterConfig) -> Result<Self, Self::Error> {
-        let request = match def.request {
-            DebugRequestDisposition::UserConfigured(debug_request_type) => debug_request_type,
-            DebugRequestDisposition::ReverseRequest(_) => return Err(()),
-        };
-
-        Ok(Self {
-            label: def.label,
-            adapter: def.adapter,
-            request,
-            initialize_args: def.initialize_args,
-            tcp_connection: def.tcp_connection,
-            locator: def.locator,
-            stop_on_entry: def.stop_on_entry,
-        })
-    }
-}
 
 impl TryFrom<TaskTemplate> for DebugTaskDefinition {
     type Error = ();

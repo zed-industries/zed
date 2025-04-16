@@ -271,12 +271,12 @@ fn main() {
                             match judge_result {
                                 Ok(judge_output) => {
                                     const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
+                                    let score: u32 = judge_output.score;
+                                    let score_index = (score.min(5)) as usize;
 
                                     println!(
                                         "{} {}{}",
-                                        SCORES[judge_output.score.min(5) as usize],
-                                        example.log_prefix,
-                                        judge_output.score,
+                                        SCORES[score_index], example.log_prefix, judge_output.score,
                                     );
                                     judge_scores.push(judge_output.score);
                                 }
@@ -304,7 +304,6 @@ fn main() {
 
             std::thread::sleep(std::time::Duration::from_secs(2));
 
-            // Flush telemetry events before exiting
             app_state.client.telemetry().flush_events();
 
             cx.update(|cx| cx.quit())
@@ -330,7 +329,6 @@ async fn run_example(
     for round in 0..judge_repetitions {
         let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
 
-        // Log telemetry for this judge result
         if let Ok(judge_output) = &judge_result {
             let cohort_id = example
                 .output_file_path
@@ -338,6 +336,9 @@ async fn run_example(
                 .and_then(|p| p.file_name())
                 .map(|name| name.to_string_lossy().to_string())
                 .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+
+            let path = std::path::Path::new(".");
+            let commit_id = get_current_commit_id(path).await.unwrap_or_default();
 
             telemetry::event!(
                 "Agent Eval Completed",
@@ -353,7 +354,8 @@ async fn run_example(
                 model_provider = model.provider_id().to_string(),
                 repository_url = example.base.url.clone(),
                 repository_revision = example.base.revision.clone(),
-                diagnostics_summary = run_output.diagnostics
+                diagnostics_summary = run_output.diagnostics,
+                commit_id = commit_id
             );
         }
 
@@ -523,4 +525,14 @@ pub fn authenticate_model_provider(
     let model_registry = LanguageModelRegistry::read_global(cx);
     let model_provider = model_registry.provider(&provider_id).unwrap();
     model_provider.authenticate(cx)
+}
+
+pub async fn get_current_commit_id(repo_path: &Path) -> Option<String> {
+    (run_git(repo_path, &["rev-parse", "HEAD"]).await).ok()
+}
+
+pub fn get_current_commit_id_sync(repo_path: &Path) -> String {
+    futures::executor::block_on(async {
+        get_current_commit_id(repo_path).await.unwrap_or_default()
+    })
 }

@@ -540,7 +540,7 @@ smol = "2.0"
 sqlformat = "0.2"
 streaming-iterator = "0.1"
 strsim = "0.11"
-strum = { version = "0.26.0", features = ["derive"] }
+strum = { version = "0.27.0", features = ["derive"] }
 subtle = "2.5.0"
 syn = { version = "1.0.72", features = ["full", "extra-traits"] }
 sys-locale = "0.3.1"
@@ -605,7 +605,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.5.0"
+zed_llm_client = "0.5.1"
 zstd = "0.11"
 metal = "0.29"
 

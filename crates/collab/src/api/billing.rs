@@ -330,8 +330,10 @@ async fn create_billing_subscription(
                 .await?
         }
         None => {
-            let default_model =
-                llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-7-sonnet")?;
+            let default_model = llm_db.model(
+                zed_llm_client::LanguageModelProvider::Anthropic,
+                "claude-3-7-sonnet",
+            )?;
             let stripe_model = stripe_billing.register_model(default_model).await?;
             stripe_billing
                 .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
@@ -1018,8 +1020,20 @@ async fn get_current_usage(
         return Ok(Json(empty_usage));
     };
 
-    let model_requests_limit = Some(500);
-    let edit_prediction_limit = Some(2000);
+    let plan = match usage.plan {
+        SubscriptionKind::ZedPro => zed_llm_client::Plan::ZedPro,
+        SubscriptionKind::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+        SubscriptionKind::ZedFree => zed_llm_client::Plan::Free,
+    };
+
+    let model_requests_limit = match plan.model_requests_limit() {
+        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
+        zed_llm_client::UsageLimit::Unlimited => None,
+    };
+    let edit_prediction_limit = match plan.edit_predictions_limit() {
+        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
+        zed_llm_client::UsageLimit::Unlimited => None,
+    };
 
     Ok(Json(GetCurrentUsageResponse {
         model_requests: UsageCounts {

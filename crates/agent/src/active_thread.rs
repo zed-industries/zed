@@ -1,4 +1,4 @@
-use crate::context::{AssistantContext, ContextId};
+use crate::context::{AssistantContext, ContextId, format_context_as_string};
 use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
@@ -13,16 +13,18 @@ use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorElement, EditorStyle, MultiBuffer};
+use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardItem,
-    DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Hsla, ListAlignment, ListState,
-    MouseButton, PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription, Task,
-    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
+    DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla, ListAlignment,
+    ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription,
+    Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
 use language::{Buffer, LanguageRegistry};
-use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role, StopReason};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolUseId, Role, StopReason,
+};
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
 use project::ProjectItem as _;
@@ -682,6 +684,9 @@ fn open_markdown_link(
 
 struct EditMessageState {
     editor: Entity<Editor>,
+    last_estimated_token_count: Option<usize>,
+    _subscription: Subscription,
+    _update_token_count_task: Option<Task<anyhow::Result<()>>>,
 }
 
 impl ActiveThread {
@@ -779,6 +784,13 @@ impl ActiveThread {
 
     pub fn clear_last_error(&mut self) {
         self.last_error.take();
+    }
+
+    /// Returns the editing message id and the estimated token count in the content
+    pub fn editing_message_id(&self) -> Option<(MessageId, usize)> {
+        self.editing_message
+            .as_ref()
+            .map(|(id, state)| (*id, state.last_estimated_token_count.unwrap_or(0)))
     }
 
     fn push_message(
@@ -1126,13 +1138,89 @@ impl ActiveThread {
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor
         });
+        let subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
+            EditorEvent::BufferEdited => {
+                this.update_editing_message_token_count(true, cx);
+            }
+            _ => {}
+        });
         self.editing_message = Some((
             message_id,
             EditMessageState {
                 editor: editor.clone(),
+                last_estimated_token_count: None,
+                _subscription: subscription,
+                _update_token_count_task: None,
             },
         ));
+        self.update_editing_message_token_count(false, cx);
         cx.notify();
+    }
+
+    fn update_editing_message_token_count(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        let Some((message_id, state)) = self.editing_message.as_mut() else {
+            return;
+        };
+
+        cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
+        state._update_token_count_task.take();
+
+        let Some(default_model) = LanguageModelRegistry::read_global(cx).default_model() else {
+            state.last_estimated_token_count.take();
+            return;
+        };
+
+        let editor = state.editor.clone();
+        let thread = self.thread.clone();
+        let message_id = *message_id;
+
+        state._update_token_count_task = Some(cx.spawn(async move |this, cx| {
+            if debounce {
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+            }
+
+            let token_count = if let Some(task) = cx.update(|cx| {
+                let context = thread.read(cx).context_for_message(message_id);
+                let new_context = thread.read(cx).filter_new_context(context);
+                let context_text =
+                    format_context_as_string(new_context, cx).unwrap_or(String::new());
+                let message_text = editor.read(cx).text(cx);
+
+                let content = context_text + &message_text;
+
+                if content.is_empty() {
+                    return None;
+                }
+
+                let request = language_model::LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: language_model::Role::User,
+                        content: vec![content.into()],
+                        cache: false,
+                    }],
+                    tools: vec![],
+                    stop: vec![],
+                    temperature: None,
+                };
+
+                Some(default_model.model.count_tokens(request, cx))
+            })? {
+                task.await?
+            } else {
+                0
+            };
+
+            this.update(cx, |this, cx| {
+                let Some((_message_id, state)) = this.editing_message.as_mut() else {
+                    return;
+                };
+
+                state.last_estimated_token_count = Some(token_count);
+                cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
+            })
+        }));
     }
 
     fn cancel_editing_message(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -1676,6 +1764,9 @@ impl ActiveThread {
                                                         "confirm-edit-message",
                                                         "Regenerate",
                                                     )
+                                                    .disabled(
+                                                        edit_message_editor.read(cx).is_empty(cx),
+                                                    )
                                                     .label_size(LabelSize::Small)
                                                     .key_binding(
                                                         KeyBinding::for_action_in(
@@ -1738,8 +1829,16 @@ impl ActiveThread {
             ),
         };
 
+        let after_editing_message = self
+            .editing_message
+            .as_ref()
+            .map_or(false, |(editing_message_id, _)| {
+                message_id > *editing_message_id
+            });
+
         v_flex()
             .w_full()
+            .when(after_editing_message, |parent| parent.opacity(0.2))
             .when_some(checkpoint, |parent, checkpoint| {
                 let mut is_pending = false;
                 let mut error = None;
@@ -2964,6 +3063,12 @@ impl ActiveThread {
         }))
     }
 }
+
+pub enum ActiveThreadEvent {
+    EditingMessageTokenCountChanged,
+}
+
+impl EventEmitter<ActiveThreadEvent> for ActiveThread {}
 
 impl Render for ActiveThread {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

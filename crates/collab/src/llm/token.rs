@@ -10,6 +10,7 @@ use std::time::Duration;
 use thiserror::Error;
 use util::maybe;
 use uuid::Uuid;
+use zed_llm_client::Plan;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,7 +29,7 @@ pub struct LlmTokenClaims {
     pub has_llm_subscription: bool,
     pub max_monthly_spend_in_cents: u32,
     pub custom_llm_monthly_allowance_in_cents: Option<u32>,
-    pub plan: rpc::proto::Plan,
+    pub plan: Plan,
     #[serde(default)]
     pub subscription_period: Option<(NaiveDateTime, NaiveDateTime)>,
 }
@@ -77,7 +78,11 @@ impl LlmTokenClaims {
             custom_llm_monthly_allowance_in_cents: user
                 .custom_llm_monthly_allowance_in_cents
                 .map(|allowance| allowance as u32),
-            plan,
+            plan: match plan {
+                rpc::proto::Plan::Free => Plan::Free,
+                rpc::proto::Plan::ZedPro => Plan::ZedPro,
+                rpc::proto::Plan::ZedProTrial => Plan::ZedProTrial,
+            },
             subscription_period: maybe!({
                 let subscription = subscription?;
                 let period_start_at = subscription.current_period_start_at()?;
