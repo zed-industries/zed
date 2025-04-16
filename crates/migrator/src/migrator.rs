@@ -98,6 +98,10 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
             migrations::m_2025_03_06::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_03_06,
         ),
+        (
+            migrations::m_2025_04_15::KEYMAP_PATTERNS,
+            &KEYMAP_QUERY_2025_04_15,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -175,6 +179,10 @@ define_query!(
 define_query!(
     KEYMAP_QUERY_2025_03_06,
     migrations::m_2025_03_06::KEYMAP_PATTERNS
+);
+define_query!(
+    KEYMAP_QUERY_2025_04_15,
+    migrations::m_2025_04_15::KEYMAP_PATTERNS
 );
 
 // settings
