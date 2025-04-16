@@ -1561,14 +1561,18 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let error_message = match plan {
-            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
             Plan::ZedPro => {
                 "Model request limit reached. Upgrade to usage-based billing for more requests."
             }
+            Plan::ZedProTrial => {
+                "Model request limit reached. Upgrade to Zed Pro for more requests."
+            }
+            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
         };
         let call_to_action = match plan {
-            Plan::Free => "Upgrade to Zed Pro",
             Plan::ZedPro => "Upgrade to usage-based billing",
+            Plan::ZedProTrial => "Upgrade to Zed Pro",
+            Plan::Free => "Upgrade to Zed Pro",
         };
 
         v_flex()
