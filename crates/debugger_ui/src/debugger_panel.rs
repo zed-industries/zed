@@ -951,6 +951,16 @@ impl Render for DebugPanel {
         let has_sessions = self.sessions.len() > 0;
         debug_assert_eq!(has_sessions, self.active_session.is_some());
 
+        if self
+            .active_session
+            .as_ref()
+            .and_then(|session| session.read(cx).mode().as_running().cloned())
+            .map(|state| state.read(cx).has_open_context_menu(cx))
+            .unwrap_or(false)
+        {
+            self.context_menu.take();
+        }
+
         v_flex()
             .size_full()
             .key_context("DebugPanel")
@@ -960,7 +970,18 @@ impl Render for DebugPanel {
                 this.on_mouse_down(
                     MouseButton::Right,
                     cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                        this.deploy_context_menu(event.position, window, cx);
+                        if this
+                            .active_session
+                            .as_ref()
+                            .and_then(|session| {
+                                session.read(cx).mode().as_running().map(|state| {
+                                    state.read(cx).has_pane_at_position(event.position)
+                                })
+                            })
+                            .unwrap_or(false)
+                        {
+                            this.deploy_context_menu(event.position, window, cx);
+                        }
                     }),
                 )
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {

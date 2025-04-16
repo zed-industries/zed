@@ -506,9 +506,13 @@ impl RunningState {
             )
         }) {
             pane.update(cx, |pane, cx| {
-                pane.remove_item(item_id, false, false, window, cx)
+                pane.remove_item(item_id, false, true, window, cx)
             })
         }
+    }
+
+    pub(crate) fn has_pane_at_position(&self, position: Point<Pixels>) -> bool {
+        self.panes.pane_at_pixel_position(position).is_some()
     }
 
     pub(crate) fn add_pane_item(
@@ -655,6 +659,10 @@ impl RunningState {
             self.stack_frame_list
                 .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx));
         }
+    }
+
+    pub(crate) fn has_open_context_menu(&self, cx: &App) -> bool {
+        self.variable_list.read(cx).has_open_context_menu()
     }
 
     pub fn session(&self) -> &Entity<Session> {
