@@ -18203,6 +18203,7 @@ dependencies = [
  "agent",
  "anyhow",
  "ashpd",
+ "askpass",
  "assets",
  "assistant",
  "assistant_context_editor",

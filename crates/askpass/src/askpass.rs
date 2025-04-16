@@ -72,6 +72,7 @@ impl AskPassSession {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+        let zed_path = std::env::current_exe()?;
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
@@ -117,14 +118,10 @@ impl AskPassSession {
 
         // Create an askpass script that communicates back to this process.
         let askpass_script = format!(
-            "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
+            "{shebang}\n{print_args} | {nc} --askpass={askpass_socket} 2> /tmp/zed-askpass.log \n", // todo! send stderr to /dev/null
             // on macOS `brew install netcat` provides the GNU netcat implementation
             // which does not support -U.
-            nc = if cfg!(target_os = "macos") {
-                "/usr/bin/nc"
-            } else {
-                "nc"
-            },
+            nc = zed_path.display(),
             askpass_socket = askpass_socket.display(),
             print_args = "printf '%s\\0' \"$@\"",
             shebang = "#!/bin/sh",
@@ -167,6 +164,45 @@ impl AskPassSession {
                 return AskPassResult::Timedout
             }
         }
+    }
+}
+
+/// The main function for when Zed is running in netcat mode for use in askpass.
+/// Called from both the remote server binary and the zed binary in their respective main functions.
+pub fn main(socket: &str) {
+    use std::io::{self, Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::process::exit;
+
+    let mut stream = match UnixStream::connect(socket) {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("Error connecting to socket {}: {}", socket, err);
+            exit(1);
+        }
+    };
+
+    let mut buffer = Vec::new();
+    if let Err(err) = io::stdin().read_to_end(&mut buffer) {
+        eprintln!("Error reading from stdin: {}", err);
+        exit(1);
+    }
+
+    buffer.push(0);
+    if let Err(err) = stream.write_all(&buffer) {
+        eprintln!("Error writing to socket: {}", err);
+        exit(1);
+    }
+
+    let mut response = Vec::new();
+    if let Err(err) = stream.read_to_end(&mut response) {
+        eprintln!("Error reading from socket: {}", err);
+        exit(1);
+    }
+
+    if let Err(err) = io::stdout().write_all(&response) {
+        eprintln!("Error writing to stdout: {}", err);
+        exit(1);
     }
 }
 
