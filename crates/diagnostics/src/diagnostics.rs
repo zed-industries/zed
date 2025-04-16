@@ -46,7 +46,7 @@ use workspace::{
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
 
-struct IncludeWarnings(bool);
+pub(crate) struct IncludeWarnings(bool);
 impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut App) {
