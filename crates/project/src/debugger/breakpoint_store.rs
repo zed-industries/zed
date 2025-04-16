@@ -18,7 +18,7 @@ use text::{Point, PointUtf16};
 use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
 
 mod breakpoints_in_file {
-    use language::BufferEvent;
+    use language::{BufferEvent, DiskState};
 
     use super::*;
 
@@ -45,6 +45,16 @@ mod breakpoints_in_file {
                     }
                     BufferEvent::FileHandleChanged => {
                         let entity_id = buffer.entity_id();
+
+                        if buffer.read(cx).file().is_none_or(|f| f.disk_state() == DiskState::Deleted) {
+                            breakpoint_store.breakpoints.retain(|_, breakpoints_in_file| {
+                                breakpoints_in_file.buffer.entity_id() != entity_id
+                            });
+
+                            cx.notify();
+                            return;
+                        }
+
                         if let Some(abs_path) = BreakpointStore::abs_path_from_buffer(&buffer, cx) {
                             if breakpoint_store.breakpoints.contains_key(&abs_path) {
                                 return;
