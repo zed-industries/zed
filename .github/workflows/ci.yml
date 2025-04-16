@@ -325,7 +325,7 @@ jobs:
           cache-provider: "buildjet"
 
       - name: Install Clang & Mold
-        run: ./script/remote-server && ./script/install-mold 2.34.0
+        run: ./script/headless && ./script/install-mold 2.34.0
 
       - name: Configure CI
         run: |
