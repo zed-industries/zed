@@ -94,11 +94,7 @@ impl Example {
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
         let criteria_path = dir_path.join("criteria.md");
-
-        let output_file_path = run_dir.join(format!(
-            "{}.md",
-            dir_path.file_name().unwrap().to_str().unwrap()
-        ));
+        let output_file_path = run_dir.join(format!("{}.md", name));
 
         Ok(Example {
             name: name.clone(),
@@ -110,6 +106,13 @@ impl Example {
             output_file_path,
             log_prefix: name,
         })
+    }
+
+    pub fn set_repetition_number(&mut self, repetition_number: u32) {
+        if repetition_number > 0 {
+            self.name = format!("{}-{}", self.name, repetition_number);
+            self.output_file_path = self.run_dir.join(format!("{}.md", self.name));
+        }
     }
 
     pub fn set_log_prefix_style(&mut self, color: &str, name_width: usize) {

@@ -44,6 +44,10 @@ struct Args {
     model: String,
     #[arg(long, value_delimiter = ',')]
     languages: Option<Vec<String>>,
+    /// How many times to run each example. Note that this is currently not very efficient as N
+    /// worktrees will be created for the examples.
+    #[arg(long, default_value = "1")]
+    repetitions: u32,
     /// How many times to run the judge on each example run.
     #[arg(long, default_value = "3")]
     judge_repetitions: u32,
@@ -146,12 +150,20 @@ fn main() {
                     continue;
                 }
 
-                let name_len = example.name.len();
-                if name_len > max_name_width {
-                    max_name_width = example.name.len();
-                }
+                // TODO: This creates a worktree per repetition. Ideally these examples should
+                // either be run sequentially on the same worktree, or reuse worktrees when there
+                // are more examples to run than the concurrency limit.
+                for repetition_number in 0..args.repetitions {
+                    let mut example = example.clone();
+                    example.set_repetition_number(repetition_number);
 
-                examples.push(example);
+                    let name_len = example.name.len();
+                    if name_len > max_name_width {
+                        max_name_width = example.name.len();
+                    }
+
+                    examples.push(example);
+                }
             }
 
             println!("Skipped examples: {}\n", skipped.join(", "));
