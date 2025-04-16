@@ -3094,6 +3094,9 @@ impl Project {
             .map(|lister| lister.term())
     }
 
+    pub fn toolchain_store(&self) -> Option<Entity<ToolchainStore>> {
+        self.toolchain_store.clone()
+    }
     pub fn activate_toolchain(
         &self,
         path: ProjectPath,
