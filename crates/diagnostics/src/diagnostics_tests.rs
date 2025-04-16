@@ -672,7 +672,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
             }
 
             21..=50 => {
-                eprintln!("{}", editor_content_with_blocks(&editor, cx));
+                // eprintln!("{}", editor_content_with_blocks(&editor, cx));
 
                 mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
                     diagnostics.editor.update(cx, |editor, cx| {
