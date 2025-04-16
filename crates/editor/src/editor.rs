@@ -1156,6 +1156,7 @@ enum InlayHintRefreshReason {
     NewLinesShown,
     BufferEdited(HashSet<Arc<Language>>),
     RefreshRequested,
+    DebuggerStateChanged,
     ExcerptsRemoved(Vec<ExcerptId>),
 }
 
@@ -1169,6 +1170,7 @@ impl InlayHintRefreshReason {
             Self::BufferEdited(_) => "buffer edited",
             Self::RefreshRequested => "refresh requested",
             Self::ExcerptsRemoved(_) => "excerpts removed",
+            Self::DebuggerStateChanged => "debugger variables were updated",
         }
     }
 }
@@ -1664,9 +1666,8 @@ impl Editor {
         {
             let weak_editor = cx.weak_entity();
             this._subscriptions
-                .push(cx.observe_new::<project::debugger::session::Session>({
-                    let weak_editor = weak_editor.clone();
-                    move |session, window, cx| {
+                .push(
+                    cx.observe_new::<project::debugger::session::Session>(move |_, _, cx| {
                         let session_entity = cx.entity();
                         weak_editor
                             .update(cx, |editor, cx| {
@@ -1675,15 +1676,13 @@ impl Editor {
                                 );
                             })
                             .ok();
-                    }
-                }));
+                    }),
+                );
 
-            dap_store.update(cx, |store, cx| {
-                for session in store.sessions() {
-                    this._subscriptions
-                        .push(cx.subscribe(&session, Self::on_debug_session_event));
-                }
-            });
+            for session in dap_store.read(cx).sessions().cloned().collect::<Vec<_>>() {
+                this._subscriptions
+                    .push(cx.subscribe(&session, Self::on_debug_session_event));
+            }
         }
 
         this.end_selection(window, cx);
@@ -4107,6 +4106,7 @@ impl Editor {
                 | InlayHintRefreshReason::Toggle(_)
                 | InlayHintRefreshReason::ExcerptsRemoved(_)
                 | InlayHintRefreshReason::ModifiersChanged(_)
+                | InlayHintRefreshReason::DebuggerStateChanged
         );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::ModifiersChanged(enabled) => {
@@ -4182,7 +4182,8 @@ impl Editor {
             InlayHintRefreshReason::BufferEdited(buffer_languages) => {
                 (InvalidationStrategy::BufferEdited, Some(buffer_languages))
             }
-            InlayHintRefreshReason::RefreshRequested => {
+            InlayHintRefreshReason::RefreshRequested
+            | InlayHintRefreshReason::DebuggerStateChanged => {
                 (InvalidationStrategy::RefreshRequested, None)
             }
         };
@@ -17203,10 +17204,16 @@ impl Editor {
 
     fn on_debug_session_event(
         &mut self,
-        session: &Entity<Session>,
+        _session: Entity<Session>,
         event: &debugger::session::SessionEvent,
         cx: &mut Context<Self>,
     ) {
+        match event {
+            debugger::session::SessionEvent::InvalidateInlineValue => {
+                self.refresh_inlay_hints(InlayHintRefreshReason::DebuggerStateChanged, cx);
+            }
+            _ => {}
+        }
     }
 
     fn on_buffer_event(
