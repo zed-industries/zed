@@ -140,13 +140,21 @@ impl Example {
     pub async fn setup(&mut self) -> Result<()> {
         let repo_path = repo_path_for_url(&self.base.url);
 
-        println!("{}Fetching", self.log_prefix);
+        let revision_exists = run_git(&repo_path, &["rev-parse", "--verify", &self.base.revision])
+            .await
+            .is_ok();
 
-        run_git(
-            &repo_path,
-            &["fetch", "--depth", "1", "origin", &self.base.revision],
-        )
-        .await?;
+        if !revision_exists {
+            println!(
+                "{}Fetching revision {}",
+                self.log_prefix, &self.base.revision
+            );
+            run_git(
+                &repo_path,
+                &["fetch", "--depth", "1", "origin", &self.base.revision],
+            )
+            .await?;
+        }
 
         let worktree_path = self.worktree_path();
 
