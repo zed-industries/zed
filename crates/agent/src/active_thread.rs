@@ -5,11 +5,12 @@ use crate::thread::{
     ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
-use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
+use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::{AssistantPanel, OpenActiveThreadAsMarkdown};
 use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
+use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorElement, EditorStyle, MultiBuffer};
@@ -943,8 +944,8 @@ impl ActiveThread {
                         &tool_use.input,
                         self.thread
                             .read(cx)
-                            .tool_result(&tool_use.id)
-                            .map(|result| result.content.clone().into())
+                            .output_for_tool(&tool_use.id)
+                            .map(|output| output.clone().into())
                             .unwrap_or("".into()),
                         cx,
                     );
@@ -2279,12 +2280,15 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
+            return card.render(&tool_use.status, window, cx);
+        }
+
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)
             .copied()
             .unwrap_or_default();
-
         let is_status_finished = matches!(&tool_use.status, ToolUseStatus::Finished(_));
 
         let fs = self
@@ -2381,6 +2385,7 @@ impl ActiveThread {
                                         open_markdown_link(text, workspace.clone(), window, cx);
                                     }
                                 })
+                                .into_any_element()
                             }),
                         )),
                 ),
@@ -2437,6 +2442,7 @@ impl ActiveThread {
                                             open_markdown_link(text, workspace.clone(), window, cx);
                                         }
                                     })
+                                    .into_any_element()
                                 })),
                         ),
                 ),
@@ -2767,7 +2773,7 @@ impl ActiveThread {
                         )
                     })
             }
-        })
+        }).into_any_element()
     }
 
     fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {
