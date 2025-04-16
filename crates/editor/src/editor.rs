@@ -4170,10 +4170,13 @@ impl Editor {
                 if let Some(InlaySplice {
                     to_remove,
                     to_insert,
-                }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
+                }) = self.inlay_hint_cache.remove_excerpts(&excerpts_removed)
                 {
                     self.splice_inlays(&to_remove, to_insert, cx);
                 }
+                self.display_map.update(cx, |display_map, _| {
+                    display_map.remove_inlays_for_excerpts(&excerpts_removed)
+                });
                 return;
             }
             InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
