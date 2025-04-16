@@ -600,6 +600,8 @@ impl EditorElement {
 
         let text_hitbox = &position_map.text_hitbox;
         let gutter_hitbox = &position_map.gutter_hitbox;
+        let point_for_position = position_map.point_for_position(event.position);
+        let display_point = &point_for_position.previous_valid;
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
 
@@ -611,6 +613,14 @@ impl EditorElement {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_hitbox.is_hovered(window) {
             return;
+        }
+
+        if click_count == 1 {
+            if editor.is_intersect_drag_selection(display_point.clone(), window, cx) {
+                return;
+            } else {
+                editor.drag_selection_head = None;
+            }
         }
 
         let is_singleton = editor.buffer().read(cx).is_singleton();
@@ -801,6 +811,15 @@ impl EditorElement {
         let text_hitbox = &position_map.text_hitbox;
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
+        let point_for_position = position_map.point_for_position(event.position);
+        let display_point = &point_for_position.previous_valid;
+
+        if editor.drag_selection_head.is_some() {
+            cx.stop_propagation();
+            let is_cut = !event.modifiers.control;
+            editor.drop_selection(display_point.clone(), is_cut, window, cx);
+            return;
+        }
 
         if end_selection {
             editor.select(SelectPhase::End, window, cx);
@@ -808,6 +827,7 @@ impl EditorElement {
 
         if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
+            editor.drag_selection_head = Some(display_point.clone());
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
         {
@@ -868,12 +888,16 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        let text_bounds = position_map.text_hitbox.bounds;
+        let point_for_position = position_map.point_for_position(event.position);
+        let display_point = &point_for_position.previous_valid;
+        if editor.drag_selection_head.is_some() {
+            editor.update_drag_selection_head(Some(display_point.clone()));
+            return;
+        }
         if !editor.has_pending_selection() {
             return;
         }
-
-        let text_bounds = position_map.text_hitbox.bounds;
-        let point_for_position = position_map.point_for_position(event.position);
         let mut scroll_delta = gpui::Point::<f32>::default();
         let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
         let top = text_bounds.origin.y + vertical_margin;
@@ -1387,6 +1411,39 @@ impl EditorElement {
                     cursor.layout(content_origin, cursor_name, window, cx);
                     cursors.push(cursor);
                 }
+            }
+
+            if let Some(head) = editor.drag_selection_head.as_ref() {
+                let cursor_position = head;
+
+                let cursor_row_layout = &line_layouts
+                    [cursor_position.row().minus(visible_display_row_range.start) as usize];
+                let cursor_column = cursor_position.column() as usize;
+
+                let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                let mut block_width =
+                    cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+                if block_width == Pixels::ZERO {
+                    block_width = em_advance;
+                }
+
+                let x = cursor_character_x - scroll_pixel_position.x;
+                let y = (cursor_position.row().as_f32() - scroll_pixel_position.y / line_height)
+                    * line_height;
+
+                let color = cx.theme().players().0[7].cursor;
+                let mut cursor = CursorLayout {
+                    color,
+                    block_width,
+                    origin: point(x, y),
+                    line_height,
+                    shape: CursorShape::Bar,
+                    block_text: None,
+                    cursor_name: None,
+                };
+
+                cursor.layout(content_origin, None, window, cx);
+                cursors.push(cursor);
             }
 
             cursors
