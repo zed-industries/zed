@@ -19,8 +19,10 @@ use util::{ResultExt, get_system_shell};
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
+    /// Whether any worktree has a rules_file. Provided as a field because handlebars can't do this.
     pub has_rules: bool,
     pub default_user_rules: Vec<DefaultUserRulesContext>,
+    /// `!default_user_rules.is_empty()` - provided as a field because handlebars can't do this.
     pub has_default_user_rules: bool,
     pub os: String,
     pub arch: String,
@@ -397,26 +399,20 @@ mod test {
 
     #[test]
     fn test_assistant_system_prompt_renders() {
-        let project_context = ProjectContext {
-            worktrees: vec![WorktreeContext {
-                root_name: "path".into(),
-                abs_path: Path::new("/some/path").into(),
-                rules_file: Some(RulesFileContext {
-                    path_in_worktree: Path::new(".rules").into(),
-                    abs_path: Path::new("/some/path/.rules").into(),
-                    text: "".into(),
-                }),
-            }],
-            has_rules: true,
-            default_user_rules: vec![DefaultUserRulesContext {
-                title: Some("Rules title".into()),
-                contents: "Rules contents".into(),
-            }],
-            has_default_user_rules: true,
-            os: "OS".into(),
-            arch: "ARCH".into(),
-            shell: "SHELL".into(),
-        };
+        let worktrees = vec![WorktreeContext {
+            root_name: "path".into(),
+            abs_path: Path::new("/some/path").into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: Path::new(".rules").into(),
+                abs_path: Path::new("/some/path/.rules").into(),
+                text: "".into(),
+            }),
+        }];
+        let default_user_rules = vec![DefaultUserRulesContext {
+            title: Some("Rules title".into()),
+            contents: "Rules contents".into(),
+        }];
+        let project_context = ProjectContext::new(worktrees, default_user_rules);
         PromptBuilder::new(None)
             .unwrap()
             .generate_assistant_system_prompt(&project_context)
