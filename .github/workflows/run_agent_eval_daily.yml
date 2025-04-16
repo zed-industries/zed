@@ -21,6 +21,11 @@ jobs:
         with:
           clean: false
 
+      - name: Install mold linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mold
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
