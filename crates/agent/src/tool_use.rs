@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{Tool, ToolWorkingSet};
+use assistant_tool::{AnyToolCard, Tool, ToolUseStatus, ToolWorkingSet};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
@@ -27,26 +27,7 @@ pub struct ToolUse {
     pub needs_confirmation: bool,
 }
 
-#[derive(Debug, Clone)]
-pub enum ToolUseStatus {
-    NeedsConfirmation,
-    Pending,
-    Running,
-    Finished(SharedString),
-    Error(SharedString),
-}
-
-impl ToolUseStatus {
-    pub fn text(&self) -> SharedString {
-        match self {
-            ToolUseStatus::NeedsConfirmation => "".into(),
-            ToolUseStatus::Pending => "".into(),
-            ToolUseStatus::Running => "".into(),
-            ToolUseStatus::Finished(out) => out.clone(),
-            ToolUseStatus::Error(out) => out.clone(),
-        }
-    }
-}
+pub const USING_TOOL_MARKER: &str = "<using_tool>";
 
 pub struct ToolUseState {
     tools: Entity<ToolWorkingSet>,
@@ -54,9 +35,8 @@ pub struct ToolUseState {
     tool_uses_by_user_message: HashMap<MessageId, Vec<LanguageModelToolUseId>>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
+    tool_result_cards: HashMap<LanguageModelToolUseId, AnyToolCard>,
 }
-
-pub const USING_TOOL_MARKER: &str = "<using_tool>";
 
 impl ToolUseState {
     pub fn new(tools: Entity<ToolWorkingSet>) -> Self {
@@ -66,6 +46,7 @@ impl ToolUseState {
             tool_uses_by_user_message: HashMap::default(),
             tool_results: HashMap::default(),
             pending_tool_uses_by_id: HashMap::default(),
+            tool_result_cards: HashMap::default(),
         }
     }
 
@@ -255,6 +236,18 @@ impl ToolUseState {
         tool_use_id: &LanguageModelToolUseId,
     ) -> Option<&LanguageModelToolResult> {
         self.tool_results.get(tool_use_id)
+    }
+
+    pub fn tool_result_card(&self, tool_use_id: &LanguageModelToolUseId) -> Option<&AnyToolCard> {
+        self.tool_result_cards.get(tool_use_id)
+    }
+
+    pub fn insert_tool_result_card(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        card: AnyToolCard,
+    ) {
+        self.tool_result_cards.insert(tool_use_id, card);
     }
 
     pub fn request_tool_use(
