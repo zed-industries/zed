@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AssistantPanelDelegate, ConfigurationError, ContextEditor, SlashCommandCompletionProvider,
-    make_lsp_adapter_delegate, render_remaining_tokens,
+    humanize_token_count, make_lsp_adapter_delegate, render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -37,10 +37,10 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenPromptLibrary, ToggleFocus};
 
-use crate::active_thread::ActiveThread;
+use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore};
-use crate::message_editor::MessageEditor;
+use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
@@ -181,8 +181,8 @@ pub struct AssistantPanel {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<ActiveThread>,
-    _thread_subscription: Subscription,
     message_editor: Entity<MessageEditor>,
+    _active_thread_subscriptions: Vec<Subscription>,
     context_store: Entity<assistant_context_editor::ContextStore>,
     context_editor: Option<Entity<ContextEditor>>,
     configuration: Option<Entity<AssistantConfiguration>>,
@@ -264,6 +264,13 @@ impl AssistantPanel {
             )
         });
 
+        let message_editor_subscription =
+            cx.subscribe(&message_editor, |_, _, event, cx| match event {
+                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                    cx.notify();
+                }
+            });
+
         let history_store =
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
 
@@ -288,6 +295,12 @@ impl AssistantPanel {
             )
         });
 
+        let active_thread_subscription = cx.subscribe(&thread, |_, _, event, cx| match &event {
+            ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                cx.notify();
+            }
+        });
+
         Self {
             active_view,
             workspace,
@@ -296,8 +309,12 @@ impl AssistantPanel {
             language_registry,
             thread_store: thread_store.clone(),
             thread,
-            _thread_subscription: thread_subscription,
             message_editor,
+            _active_thread_subscriptions: vec![
+                thread_subscription,
+                active_thread_subscription,
+                message_editor_subscription,
+            ],
             context_store,
             context_editor: None,
             configuration: None,
@@ -382,6 +399,13 @@ impl AssistantPanel {
             .detach_and_log_err(cx);
         }
 
+        let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
+            if let ThreadEvent::MessageAdded(_) = &event {
+                // needed to leave empty state
+                cx.notify();
+            }
+        });
+
         self.thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
@@ -394,12 +418,12 @@ impl AssistantPanel {
             )
         });
 
-        self._thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
-            if let ThreadEvent::MessageAdded(_) = &event {
-                // needed to leave empty state
-                cx.notify();
-            }
-        });
+        let active_thread_subscription =
+            cx.subscribe(&self.thread, |_, _, event, cx| match &event {
+                ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                    cx.notify();
+                }
+            });
 
         self.message_editor = cx.new(|cx| {
             MessageEditor::new(
@@ -413,6 +437,19 @@ impl AssistantPanel {
             )
         });
         self.message_editor.focus_handle(cx).focus(window);
+
+        let message_editor_subscription =
+            cx.subscribe(&self.message_editor, |_, _, event, cx| match event {
+                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                    cx.notify();
+                }
+            });
+
+        self._active_thread_subscriptions = vec![
+            thread_subscription,
+            active_thread_subscription,
+            message_editor_subscription,
+        ];
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -538,6 +575,13 @@ impl AssistantPanel {
                         Some(this.thread_store.downgrade()),
                     )
                 });
+                let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
+                    if let ThreadEvent::MessageAdded(_) = &event {
+                        // needed to leave empty state
+                        cx.notify();
+                    }
+                });
+
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
                         thread.clone(),
@@ -549,6 +593,14 @@ impl AssistantPanel {
                         cx,
                     )
                 });
+
+                let active_thread_subscription =
+                    cx.subscribe(&this.thread, |_, _, event, cx| match &event {
+                        ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                            cx.notify();
+                        }
+                    });
+
                 this.message_editor = cx.new(|cx| {
                     MessageEditor::new(
                         this.fs.clone(),
@@ -561,6 +613,19 @@ impl AssistantPanel {
                     )
                 });
                 this.message_editor.focus_handle(cx).focus(window);
+
+                let message_editor_subscription =
+                    cx.subscribe(&this.message_editor, |_, _, event, cx| match event {
+                        MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                            cx.notify();
+                        }
+                    });
+
+                this._active_thread_subscriptions = vec![
+                    thread_subscription,
+                    active_thread_subscription,
+                    message_editor_subscription,
+                ];
             })
         })
     }
@@ -853,7 +918,7 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_title_view(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
         const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
 
         let content = match &self.active_view {
@@ -913,13 +978,8 @@ impl AssistantPanel {
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_thread = self.thread.read(cx);
         let thread = active_thread.thread().read(cx);
-        let token_usage = thread.total_token_usage(cx);
         let thread_id = thread.id().clone();
-
-        let is_generating = thread.is_generating();
         let is_empty = active_thread.is_empty();
-        let focus_handle = self.focus_handle(cx);
-
         let is_history = matches!(self.active_view, ActiveView::History);
 
         let show_token_count = match &self.active_view {
@@ -927,6 +987,8 @@ impl AssistantPanel {
             ActiveView::PromptEditor => self.context_editor.is_some(),
             _ => false,
         };
+
+        let focus_handle = self.focus_handle(cx);
 
         let go_back_button = match &self.active_view {
             ActiveView::History | ActiveView::Configuration => Some(
@@ -974,69 +1036,9 @@ impl AssistantPanel {
                 h_flex()
                     .h_full()
                     .gap_2()
-                    .when(show_token_count, |parent| match self.active_view {
-                        ActiveView::Thread { .. } => {
-                            if token_usage.total == 0 {
-                                return parent;
-                            }
-
-                            let token_color = match token_usage.ratio {
-                                TokenUsageRatio::Normal => Color::Muted,
-                                TokenUsageRatio::Warning => Color::Warning,
-                                TokenUsageRatio::Exceeded => Color::Error,
-                            };
-
-                            parent.child(
-                                h_flex()
-                                    .flex_shrink_0()
-                                    .gap_0p5()
-                                    .child(
-                                        Label::new(assistant_context_editor::humanize_token_count(
-                                            token_usage.total,
-                                        ))
-                                        .size(LabelSize::Small)
-                                        .color(token_color)
-                                        .map(|label| {
-                                            if is_generating {
-                                                label
-                                                    .with_animation(
-                                                        "used-tokens-label",
-                                                        Animation::new(Duration::from_secs(2))
-                                                            .repeat()
-                                                            .with_easing(pulsating_between(
-                                                                0.6, 1.,
-                                                            )),
-                                                        |label, delta| label.alpha(delta),
-                                                    )
-                                                    .into_any()
-                                            } else {
-                                                label.into_any_element()
-                                            }
-                                        }),
-                                    )
-                                    .child(
-                                        Label::new("/").size(LabelSize::Small).color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(assistant_context_editor::humanize_token_count(
-                                            token_usage.max,
-                                        ))
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                    ),
-                            )
-                        }
-                        ActiveView::PromptEditor => {
-                            let Some(editor) = self.context_editor.as_ref() else {
-                                return parent;
-                            };
-                            let Some(element) = render_remaining_tokens(editor, cx) else {
-                                return parent;
-                            };
-                            parent.child(element)
-                        }
-                        _ => parent,
-                    })
+                    .when(show_token_count, |parent|
+                        parent.children(self.render_token_count(&thread, cx))
+                    )
                     .child(
                         h_flex()
                             .h_full()
@@ -1130,6 +1132,111 @@ impl AssistantPanel {
                             ),
                     ),
             )
+    }
+
+    fn render_token_count(&self, thread: &Thread, cx: &App) -> Option<AnyElement> {
+        let is_generating = thread.is_generating();
+        let message_editor = self.message_editor.read(cx);
+
+        let conversation_token_usage = thread.total_token_usage(cx);
+        let (total_token_usage, is_estimating) = if let Some((editing_message_id, unsent_tokens)) =
+            self.thread.read(cx).editing_message_id()
+        {
+            let combined = thread
+                .token_usage_up_to_message(editing_message_id, cx)
+                .add(unsent_tokens);
+
+            (combined, unsent_tokens > 0)
+        } else {
+            let unsent_tokens = message_editor.last_estimated_token_count().unwrap_or(0);
+            let combined = conversation_token_usage.add(unsent_tokens);
+
+            (combined, unsent_tokens > 0)
+        };
+
+        let is_waiting_to_update_token_count = message_editor.is_waiting_to_update_token_count();
+
+        match self.active_view {
+            ActiveView::Thread { .. } => {
+                if total_token_usage.total == 0 {
+                    return None;
+                }
+
+                let token_color = match total_token_usage.ratio() {
+                    TokenUsageRatio::Normal if is_estimating => Color::Default,
+                    TokenUsageRatio::Normal => Color::Muted,
+                    TokenUsageRatio::Warning => Color::Warning,
+                    TokenUsageRatio::Exceeded => Color::Error,
+                };
+
+                let token_count = h_flex()
+                    .id("token-count")
+                    .flex_shrink_0()
+                    .gap_0p5()
+                    .when(!is_generating && is_estimating, |parent| {
+                        parent
+                            .child(
+                                h_flex()
+                                    .mr_0p5()
+                                    .size_2()
+                                    .justify_center()
+                                    .rounded_full()
+                                    .bg(cx.theme().colors().text.opacity(0.1))
+                                    .child(
+                                        div().size_1().rounded_full().bg(cx.theme().colors().text),
+                                    ),
+                            )
+                            .tooltip(move |window, cx| {
+                                Tooltip::with_meta(
+                                    "Estimated New Token Count",
+                                    None,
+                                    format!(
+                                        "Current Conversation Tokens: {}",
+                                        humanize_token_count(conversation_token_usage.total)
+                                    ),
+                                    window,
+                                    cx,
+                                )
+                            })
+                    })
+                    .child(
+                        Label::new(humanize_token_count(total_token_usage.total))
+                            .size(LabelSize::Small)
+                            .color(token_color)
+                            .map(|label| {
+                                if is_generating || is_waiting_to_update_token_count {
+                                    label
+                                        .with_animation(
+                                            "used-tokens-label",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.6, 1.)),
+                                            |label, delta| label.alpha(delta),
+                                        )
+                                        .into_any()
+                                } else {
+                                    label.into_any_element()
+                                }
+                            }),
+                    )
+                    .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                    .child(
+                        Label::new(humanize_token_count(total_token_usage.max))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .into_any();
+
+                Some(token_count)
+            }
+            ActiveView::PromptEditor => {
+                let editor = self.context_editor.as_ref()?;
+                let element = render_remaining_tokens(editor, cx)?;
+
+                Some(element.into_any_element())
+            }
+            _ => None,
+        }
     }
 
     fn render_active_thread_or_empty_state(
