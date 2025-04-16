@@ -3584,23 +3584,51 @@ impl Project {
             stack_frame.dap.end_column.unwrap_or(stack_frame.dap.column) as u32,
         ));
 
-        let task = self.lsp_store().update(cx, |lsp_store, cx| {
-            lsp_store.inline_values(
-                buffer_handle.clone(),
-                range.clone(),
-                active_stack_frame.stack_frame_id as i32,
-                stack_frame_start..stack_frame_end,
-                cx,
-            )
-        });
+        let inline_value_provider = session
+            .read(cx)
+            .configuration()
+            .and_then(|config| self.debug_adapters().adapter(&config.adapter))
+            .and_then(|adapter| adapter.inline_value_provider());
+
+        let inline_value_task = if let Some(inline_value_provider) = inline_value_provider {
+            let variable_ranges = snapshot
+                .debug_variable_ranges(
+                    range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot),
+                )
+                .filter_map(|range| {
+                    let lsp_range = language::range_to_lsp(
+                        range.range.start.to_point_utf16(&snapshot)
+                            ..range.range.end.to_point_utf16(&snapshot),
+                    )
+                    .ok()?;
+
+                    Some((
+                        snapshot.text_for_range(range.range).collect::<String>(),
+                        lsp_range,
+                    ))
+                })
+                .collect::<Vec<_>>();
+
+            Task::ready(Ok(Some(inline_value_provider.provide(variable_ranges))))
+        } else {
+            self.lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store.inline_values(
+                    buffer_handle.clone(),
+                    range.clone(),
+                    active_stack_frame.stack_frame_id as i32,
+                    stack_frame_start..stack_frame_end,
+                    cx,
+                )
+            })
+        };
 
         let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
-            let inline_values = task.await?.unwrap_or_default();
+            let inline_values = inline_value_task.await?.unwrap_or_default();
 
             this.update(cx, |project, cx| {
                 project.dap_store().update(cx, |dap_store, cx| {
-                    dap_store.map_inlay_hints(
+                    dap_store.resolve_inline_values(
                         session,
                         stack_frame_id,
                         buffer_handle,

@@ -36,6 +36,7 @@ gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
 log.workspace = true
+lsp-types.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true

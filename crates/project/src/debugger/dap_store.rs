@@ -748,7 +748,7 @@ impl DapStore {
         })
     }
 
-    pub fn map_inlay_hints(
+    pub fn resolve_inline_values(
         &self,
         session: Entity<Session>,
         stack_frame_id: u64,

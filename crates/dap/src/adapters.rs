@@ -213,6 +213,10 @@ pub async fn fetch_latest_adapter_version_from_github(
     })
 }
 
+pub trait InlineValueProvider {
+    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue>;
+}
+
 #[async_trait(?Send)]
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
@@ -294,6 +298,10 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     fn attach_processes_filter(&self) -> regex::Regex {
         EMPTY_REGEX.clone()
+    }
+
+    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
+        None
     }
 }
 
