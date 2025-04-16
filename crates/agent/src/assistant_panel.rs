@@ -36,7 +36,7 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenPromptLibrary, ToggleFocus};
 
-use crate::active_thread::ActiveThread;
+use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
@@ -180,9 +180,8 @@ pub struct AssistantPanel {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<ActiveThread>,
-    _thread_subscription: Subscription,
     message_editor: Entity<MessageEditor>,
-    _message_editor_subscription: Subscription,
+    _active_thread_subscriptions: Vec<Subscription>,
     context_store: Entity<assistant_context_editor::ContextStore>,
     context_editor: Option<Entity<ContextEditor>>,
     configuration: Option<Entity<AssistantConfiguration>>,
@@ -295,6 +294,12 @@ impl AssistantPanel {
             )
         });
 
+        let active_thread_subscription = cx.subscribe(&thread, |_, _, event, cx| match &event {
+            ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                cx.notify();
+            }
+        });
+
         Self {
             active_view,
             workspace,
@@ -303,9 +308,12 @@ impl AssistantPanel {
             language_registry,
             thread_store: thread_store.clone(),
             thread,
-            _thread_subscription: thread_subscription,
             message_editor,
-            _message_editor_subscription: message_editor_subscription,
+            _active_thread_subscriptions: vec![
+                thread_subscription,
+                active_thread_subscription,
+                message_editor_subscription,
+            ],
             context_store,
             context_editor: None,
             configuration: None,
@@ -390,6 +398,13 @@ impl AssistantPanel {
             .detach_and_log_err(cx);
         }
 
+        let thread_subcription = cx.subscribe(&thread, |_, _, event, cx| {
+            if let ThreadEvent::MessageAdded(_) = &event {
+                // needed to leave empty state
+                cx.notify();
+            }
+        });
+
         self.thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
@@ -402,12 +417,12 @@ impl AssistantPanel {
             )
         });
 
-        self._thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
-            if let ThreadEvent::MessageAdded(_) = &event {
-                // needed to leave empty state
-                cx.notify();
-            }
-        });
+        let active_thread_subcription =
+            cx.subscribe(&self.thread, |_, _, event, cx| match &event {
+                ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                    cx.notify();
+                }
+            });
 
         self.message_editor = cx.new(|cx| {
             MessageEditor::new(
@@ -421,6 +436,19 @@ impl AssistantPanel {
             )
         });
         self.message_editor.focus_handle(cx).focus(window);
+
+        let message_editor_subscription =
+            cx.subscribe(&self.message_editor, |_, _, event, cx| match event {
+                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                    cx.notify();
+                }
+            });
+
+        self._active_thread_subscriptions = vec![
+            thread_subcription,
+            active_thread_subcription,
+            message_editor_subscription,
+        ];
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -546,6 +574,13 @@ impl AssistantPanel {
                         Some(this.thread_store.downgrade()),
                     )
                 });
+                let thread_subcription = cx.subscribe(&thread, |_, _, event, cx| {
+                    if let ThreadEvent::MessageAdded(_) = &event {
+                        // needed to leave empty state
+                        cx.notify();
+                    }
+                });
+
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
                         thread.clone(),
@@ -557,6 +592,14 @@ impl AssistantPanel {
                         cx,
                     )
                 });
+
+                let active_thread_subcription =
+                    cx.subscribe(&this.thread, |_, _, event, cx| match &event {
+                        ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                            cx.notify();
+                        }
+                    });
+
                 this.message_editor = cx.new(|cx| {
                     MessageEditor::new(
                         this.fs.clone(),
@@ -569,6 +612,19 @@ impl AssistantPanel {
                     )
                 });
                 this.message_editor.focus_handle(cx).focus(window);
+
+                let message_editor_subscription =
+                    cx.subscribe(&this.message_editor, |_, _, event, cx| match event {
+                        MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                            cx.notify();
+                        }
+                    });
+
+                this._active_thread_subscriptions = vec![
+                    thread_subcription,
+                    active_thread_subcription,
+                    message_editor_subscription,
+                ];
             })
         })
     }
@@ -1082,8 +1138,21 @@ impl AssistantPanel {
         let message_editor = self.message_editor.read(cx);
 
         let conversation_token_usage = thread.total_token_usage(cx);
-        let unsent_tokens = message_editor.last_estimated_token_count().unwrap_or(0);
-        let total_token_usage = conversation_token_usage.add(unsent_tokens);
+        let (total_token_usage, is_estimating) = if let Some((editing_message_id, unsent_tokens)) =
+            self.thread.read(cx).editing_message_id()
+        {
+            let combined = thread
+                .token_usage_up_to_message(editing_message_id, cx)
+                .add(unsent_tokens);
+
+            (combined, unsent_tokens > 0)
+        } else {
+            let unsent_tokens = message_editor.last_estimated_token_count().unwrap_or(0);
+            let combined = conversation_token_usage.add(unsent_tokens);
+
+            (combined, unsent_tokens > 0)
+        };
+
         let is_waiting_to_update_token_count = message_editor.is_waiting_to_update_token_count();
 
         match self.active_view {
@@ -1093,7 +1162,7 @@ impl AssistantPanel {
                 }
 
                 let token_color = match total_token_usage.ratio() {
-                    TokenUsageRatio::Normal if unsent_tokens > 0 => Color::Default,
+                    TokenUsageRatio::Normal if is_estimating => Color::Default,
                     TokenUsageRatio::Normal => Color::Muted,
                     TokenUsageRatio::Warning => Color::Warning,
                     TokenUsageRatio::Exceeded => Color::Error,
@@ -1103,20 +1172,17 @@ impl AssistantPanel {
                     .id("token-count")
                     .flex_shrink_0()
                     .gap_0p5()
-                    .when(!is_generating && unsent_tokens > 0, |parent| {
+                    .when(!is_generating && is_estimating, |parent| {
                         parent
                             .child(
                                 h_flex()
-                                    .mr_1()
+                                    .mr_0p5()
                                     .size_2()
                                     .justify_center()
                                     .rounded_full()
-                                    .bg(cx.theme().colors().text_accent.opacity(0.05))
+                                    .bg(cx.theme().colors().text.opacity(0.1))
                                     .child(
-                                        div()
-                                            .size_1()
-                                            .rounded_full()
-                                            .bg(cx.theme().colors().text_accent),
+                                        div().size_1().rounded_full().bg(cx.theme().colors().text),
                                     ),
                             )
                             .tooltip(move |window, cx| {

@@ -665,6 +665,7 @@ impl Thread {
 
     /// Iterate over new context entries that aren't already added to the thread
     pub fn new_context<'a>(&self, context: Vec<AssistantContext>) -> Vec<AssistantContext> {
+        // todo! reconsider taking Vec here
         context
             .into_iter()
             .filter(|ctx| !self.context.contains_key(&ctx.id()))
@@ -1901,6 +1902,35 @@ impl Thread {
 
     pub fn cumulative_token_usage(&self) -> TokenUsage {
         self.cumulative_token_usage
+    }
+
+    pub fn token_usage_up_to_message(&self, message_id: MessageId, cx: &App) -> TotalTokenUsage {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
+            return TotalTokenUsage::default();
+        };
+
+        let max = model.model.max_token_count();
+
+        let index = self
+            .messages
+            .iter()
+            .position(|msg| msg.id == message_id)
+            .unwrap_or(0);
+
+        if index == 0 {
+            return TotalTokenUsage { total: 0, max };
+        }
+
+        let token_usage = &self
+            .request_token_usage
+            .get(index - 1)
+            .cloned()
+            .unwrap_or_default();
+
+        TotalTokenUsage {
+            total: token_usage.total_tokens() as usize,
+            max,
+        }
     }
 
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
