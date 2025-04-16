@@ -18,12 +18,13 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, TokenUsage,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, StopReason, TokenUsage,
 };
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use prompt_store::PromptBuilder;
+use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -1150,6 +1151,12 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::MaxMonthlySpendReached,
                                 ));
+                            } else if let Some(error) =
+                                error.downcast_ref::<ModelRequestLimitReachedError>()
+                            {
+                                cx.emit(ThreadEvent::ShowError(
+                                    ThreadError::ModelRequestLimitReached { plan: error.plan },
+                                ));
                             } else if let Some(known_error) =
                                 error.downcast_ref::<LanguageModelKnownError>()
                             {
@@ -1929,6 +1936,8 @@ pub enum ThreadError {
     PaymentRequired,
     #[error("Max monthly spend reached")]
     MaxMonthlySpendReached,
+    #[error("Model request limit reached")]
+    ModelRequestLimitReached { plan: Plan },
     #[error("Message {header}: {message}")]
     Message {
         header: SharedString,
