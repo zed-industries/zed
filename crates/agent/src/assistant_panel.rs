@@ -924,7 +924,7 @@ impl AssistantPanel {
         let message_editor = self.message_editor.read(cx);
         let is_waiting_to_update_token_count = message_editor.is_waiting_to_update_token_count();
         let unsent_tokens = message_editor.last_estimated_token_count().unwrap_or(0);
-        let token_usage = thread.total_token_usage(cx); //.add(unsent_tokens);
+        let token_usage = thread.total_token_usage(cx).add(unsent_tokens);
         let thread_id = thread.id().clone();
 
         let is_generating = thread.is_generating();
