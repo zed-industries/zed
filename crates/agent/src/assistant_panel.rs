@@ -39,7 +39,7 @@ use zed_actions::assistant::{OpenPromptLibrary, ToggleFocus};
 use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore};
-use crate::message_editor::MessageEditor;
+use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
@@ -182,6 +182,7 @@ pub struct AssistantPanel {
     thread: Entity<ActiveThread>,
     _thread_subscription: Subscription,
     message_editor: Entity<MessageEditor>,
+    _message_editor_subscription: Subscription,
     context_store: Entity<assistant_context_editor::ContextStore>,
     context_editor: Option<Entity<ContextEditor>>,
     configuration: Option<Entity<AssistantConfiguration>>,
@@ -263,6 +264,13 @@ impl AssistantPanel {
             )
         });
 
+        let message_editor_subscription =
+            cx.subscribe(&message_editor, |_, _, event, cx| match event {
+                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                    cx.notify();
+                }
+            });
+
         let history_store =
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
 
@@ -297,6 +305,7 @@ impl AssistantPanel {
             thread,
             _thread_subscription: thread_subscription,
             message_editor,
+            _message_editor_subscription: message_editor_subscription,
             context_store,
             context_editor: None,
             configuration: None,
@@ -912,7 +921,10 @@ impl AssistantPanel {
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_thread = self.thread.read(cx);
         let thread = active_thread.thread().read(cx);
-        let token_usage = thread.total_token_usage(cx);
+        let message_editor = self.message_editor.read(cx);
+        let is_waiting_to_update_token_count = message_editor.is_waiting_to_update_token_count();
+        let unsent_tokens = message_editor.last_estimated_token_count().unwrap_or(0);
+        let token_usage = thread.total_token_usage(cx); //.add(unsent_tokens);
         let thread_id = thread.id().clone();
 
         let is_generating = thread.is_generating();
@@ -979,7 +991,7 @@ impl AssistantPanel {
                                 return parent;
                             }
 
-                            let token_color = match token_usage.ratio {
+                            let token_color = match token_usage.ratio() {
                                 TokenUsageRatio::Normal => Color::Muted,
                                 TokenUsageRatio::Warning => Color::Warning,
                                 TokenUsageRatio::Exceeded => Color::Error,
@@ -989,6 +1001,13 @@ impl AssistantPanel {
                                 h_flex()
                                     .flex_shrink_0()
                                     .gap_0p5()
+                                    .when(unsent_tokens > 0, |parent| {
+                                        parent.child(
+                                            Label::new("~")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted)
+                                        )
+                                    })
                                     .child(
                                         Label::new(assistant_context_editor::humanize_token_count(
                                             token_usage.total,
@@ -996,7 +1015,7 @@ impl AssistantPanel {
                                         .size(LabelSize::Small)
                                         .color(token_color)
                                         .map(|label| {
-                                            if is_generating {
+                                            if is_generating || is_waiting_to_update_token_count {
                                                 label
                                                     .with_animation(
                                                         "used-tokens-label",

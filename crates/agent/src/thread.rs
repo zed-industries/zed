@@ -14,6 +14,7 @@ use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use itertools::Itertools;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
@@ -226,7 +227,33 @@ pub enum DetailedSummaryState {
 pub struct TotalTokenUsage {
     pub total: usize,
     pub max: usize,
-    pub ratio: TokenUsageRatio,
+}
+
+impl TotalTokenUsage {
+    pub fn ratio(&self) -> TokenUsageRatio {
+        #[cfg(debug_assertions)]
+        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
+            .unwrap_or("0.8".to_string())
+            .parse()
+            .unwrap();
+        #[cfg(not(debug_assertions))]
+        let warning_threshold: f32 = 0.8;
+
+        if self.total >= self.max {
+            TokenUsageRatio::Exceeded
+        } else if self.total as f32 / self.max as f32 >= warning_threshold {
+            TokenUsageRatio::Warning
+        } else {
+            TokenUsageRatio::Normal
+        }
+    }
+
+    pub fn add(self, tokens: usize) -> TotalTokenUsage {
+        TotalTokenUsage {
+            total: self.total + tokens,
+            max: self.max,
+        }
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -637,6 +664,14 @@ impl Thread {
         self.tool_use.message_has_tool_results(message_id)
     }
 
+    /// Iterate over new context entries that aren't already added to the thread
+    pub fn new_context<'a>(&self, context: Vec<AssistantContext>) -> Vec<AssistantContext> {
+        context
+            .into_iter()
+            .filter(|ctx| !self.context.contains_key(&ctx.id()))
+            .collect()
+    }
+
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
@@ -649,10 +684,7 @@ impl Thread {
         let message_id = self.insert_message(Role::User, vec![MessageSegment::Text(text)], cx);
 
         // Filter out contexts that have already been included in previous messages
-        let new_context: Vec<_> = context
-            .into_iter()
-            .filter(|ctx| !self.context.contains_key(&ctx.id()))
-            .collect();
+        let new_context: Vec<_> = self.new_context(context);
 
         if !new_context.is_empty() {
             if let Some(context_string) = format_context_as_string(new_context.iter(), cx) {
@@ -1017,7 +1049,6 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
-
         let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion(request, &cx);
             let initial_token_usage =
@@ -1043,12 +1074,11 @@ impl Thread {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
+                                thread.update_token_usage_at_last_message(token_usage.clone());
                                 thread.cumulative_token_usage = thread.cumulative_token_usage
                                     + token_usage
                                     - current_token_usage;
-                                current_token_usage = token_usage.clone();
-
-                                thread.update_token_usage_at_last_message(token_usage);
+                                current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
                                 if let Some(last_message) = thread.messages.last_mut() {
@@ -1887,33 +1917,16 @@ impl Thread {
                 return TotalTokenUsage {
                     total: exceeded_error.token_count,
                     max,
-                    ratio: TokenUsageRatio::Exceeded,
                 };
             }
         }
-
-        #[cfg(debug_assertions)]
-        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
-            .unwrap_or("0.8".to_string())
-            .parse()
-            .unwrap();
-        #[cfg(not(debug_assertions))]
-        let warning_threshold: f32 = 0.8;
 
         let total = self
             .token_usage_at_last_message()
             .unwrap_or_default()
             .total_tokens() as usize;
 
-        let ratio = if total >= max {
-            TokenUsageRatio::Exceeded
-        } else if total as f32 / max as f32 >= warning_threshold {
-            TokenUsageRatio::Warning
-        } else {
-            TokenUsageRatio::Normal
-        };
-
-        TotalTokenUsage { total, max, ratio }
+        TotalTokenUsage { total, max }
     }
 
     fn token_usage_at_last_message(&self) -> Option<TokenUsage> {
