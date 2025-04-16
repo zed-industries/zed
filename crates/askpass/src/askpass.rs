@@ -163,6 +163,7 @@ impl AskPassSession {
 
 /// The main function for when Zed is running in netcat mode for use in askpass.
 /// Called from both the remote server binary and the zed binary in their respective main functions.
+#[cfg(unix)]
 pub fn main(socket: &str) {
     use std::io::{self, Read, Write};
     use std::os::unix::net::UnixStream;
@@ -202,6 +203,8 @@ pub fn main(socket: &str) {
         exit(1);
     }
 }
+#[cfg(not(unix))]
+fn main(_socket: &str) {}
 
 #[cfg(not(unix))]
 pub struct AskPassSession {
