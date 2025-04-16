@@ -120,8 +120,12 @@ use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
     ProjectPath,
-    debugger::breakpoint_store::{
-        BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
+    debugger::{
+        self,
+        breakpoint_store::{
+            BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
+        },
+        session::Session,
     },
 };
 
@@ -1652,6 +1656,35 @@ impl Editor {
                 }
             },
         ));
+
+        if let Some(dap_store) = this
+            .project
+            .as_ref()
+            .map(|project| project.read(cx).dap_store())
+        {
+            let weak_editor = cx.weak_entity();
+            this._subscriptions
+                .push(cx.observe_new::<project::debugger::session::Session>({
+                    let weak_editor = weak_editor.clone();
+                    move |session, window, cx| {
+                        let session_entity = cx.entity();
+                        weak_editor
+                            .update(cx, |editor, cx| {
+                                editor._subscriptions.push(
+                                    cx.subscribe(&session_entity, Self::on_debug_session_event),
+                                );
+                            })
+                            .ok();
+                    }
+                }));
+
+            dap_store.update(cx, |store, cx| {
+                for session in store.sessions() {
+                    this._subscriptions
+                        .push(cx.subscribe(&session, Self::on_debug_session_event));
+                }
+            });
+        }
 
         this.end_selection(window, cx);
         this.scroll_manager.show_scrollbars(window, cx);
@@ -17166,6 +17199,14 @@ impl Editor {
 
     fn on_buffer_changed(&mut self, _: Entity<MultiBuffer>, cx: &mut Context<Self>) {
         cx.notify();
+    }
+
+    fn on_debug_session_event(
+        &mut self,
+        session: &Entity<Session>,
+        event: &debugger::session::SessionEvent,
+        cx: &mut Context<Self>,
+    ) {
     }
 
     fn on_buffer_event(
