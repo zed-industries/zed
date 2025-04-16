@@ -76,16 +76,14 @@ fn main() {
     app.run(move |cx| {
         let app_state = init(cx);
 
-        let system_id = ids::get_or_create_id(&ids::eval_system_id_path())
-            .unwrap_or_else(|_| "unknown-system-id".to_string());
-        let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path())
-            .unwrap_or_else(|_| "unknown-installation-id".to_string());
+        let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
+        let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
         let session_id = uuid::Uuid::new_v4().to_string();
 
         app_state
             .client
             .telemetry()
-            .start(Some(system_id), Some(installation_id), session_id, cx);
+            .start(system_id, installation_id, session_id, cx);
 
         let model = find_model("claude-3-7-sonnet-latest", cx).unwrap();
 
