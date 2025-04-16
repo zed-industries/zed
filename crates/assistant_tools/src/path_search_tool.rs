@@ -13,7 +13,7 @@ use worktree::Snapshot;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct PathSearchToolInput {
-    /// The glob to search all project paths for.
+    /// The glob to match against every path in the project.
     ///
     /// <example>
     /// If the project has the following root directories:
