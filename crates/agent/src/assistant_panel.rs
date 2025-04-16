@@ -398,7 +398,7 @@ impl AssistantPanel {
             .detach_and_log_err(cx);
         }
 
-        let thread_subcription = cx.subscribe(&thread, |_, _, event, cx| {
+        let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
             if let ThreadEvent::MessageAdded(_) = &event {
                 // needed to leave empty state
                 cx.notify();
@@ -445,7 +445,7 @@ impl AssistantPanel {
             });
 
         self._active_thread_subscriptions = vec![
-            thread_subcription,
+            thread_subscription,
             active_thread_subscription,
             message_editor_subscription,
         ];
@@ -574,7 +574,7 @@ impl AssistantPanel {
                         Some(this.thread_store.downgrade()),
                     )
                 });
-                let thread_subcription = cx.subscribe(&thread, |_, _, event, cx| {
+                let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
                     if let ThreadEvent::MessageAdded(_) = &event {
                         // needed to leave empty state
                         cx.notify();
@@ -621,7 +621,7 @@ impl AssistantPanel {
                     });
 
                 this._active_thread_subscriptions = vec![
-                    thread_subcription,
+                    thread_subscription,
                     active_thread_subscription,
                     message_editor_subscription,
                 ];
