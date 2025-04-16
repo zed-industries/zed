@@ -1,7 +1,9 @@
 mod example;
+mod ids;
 
 use client::{Client, ProxySettings, UserStore};
 pub(crate) use example::*;
+use telemetry;
 
 use ::fs::RealFs;
 use anyhow::{Result, anyhow};
@@ -39,7 +41,6 @@ struct Args {
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
-    /// Languages to run (comma-separated, e.g. "js,ts,py"). If unspecified, only Rust examples are run.
     #[arg(long, value_delimiter = ',')]
     languages: Option<Vec<String>>,
     /// How many times to run the judge on each example run.
@@ -76,6 +77,15 @@ fn main() {
 
     app.run(move |cx| {
         let app_state = init(cx);
+
+        let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
+        let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
+        let session_id = uuid::Uuid::new_v4().to_string();
+
+        app_state
+            .client
+            .telemetry()
+            .start(system_id, installation_id, session_id, cx);
 
         let model = find_model("claude-3-7-sonnet-latest", cx).unwrap();
 
@@ -273,6 +283,11 @@ fn main() {
                 / (score_count as f32);
             println!("\nAverage score: {average_score}");
 
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // Flush telemetry events before exiting
+            app_state.client.telemetry().flush_events();
+
             cx.update(|cx| cx.quit())
         })
         .detach_and_log_err(cx);
@@ -286,15 +301,49 @@ async fn run_example(
     judge_repetitions: u32,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Result<JudgeOutput>>> {
-    cx.update(|cx| example.run(model.clone(), app_state, cx))?
+    let run_output = cx
+        .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
         .await?;
     let diff = example.repository_diff().await?;
 
-    let judge_tasks = (0..judge_repetitions)
-        .map(|round| example.judge(model.clone(), diff.clone(), round, cx))
-        .collect::<Vec<_>>();
+    // Run judge for each repetition
+    let mut results = Vec::new();
+    for round in 0..judge_repetitions {
+        let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
 
-    Ok(future::join_all(judge_tasks).await)
+        // Log telemetry for this judge result
+        if let Ok(judge_output) = &judge_result {
+            let cohort_id = example
+                .output_file_path
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+
+            telemetry::event!(
+                "Agent Eval Completed",
+                cohort_id = cohort_id,
+                example_name = example.name.clone(),
+                round = round,
+                score = judge_output.score,
+                analysis = judge_output.analysis,
+                tool_use_counts = run_output.tool_use_counts,
+                response_count = run_output.response_count,
+                token_usage = run_output.token_usage,
+                model = model.telemetry_id(),
+                model_provider = model.provider_id().to_string(),
+                repository_url = example.base.url.clone(),
+                repository_revision = example.base.revision.clone(),
+                diagnostics_summary = run_output.diagnostics
+            );
+        }
+
+        results.push(judge_result);
+    }
+
+    app_state.client.telemetry().flush_events();
+
+    Ok(results)
 }
 
 fn list_all_examples() -> Result<Vec<PathBuf>> {
