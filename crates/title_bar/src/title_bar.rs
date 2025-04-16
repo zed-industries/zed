@@ -751,6 +751,7 @@ impl TitleBar {
                                         None => "",
                                         Some(proto::Plan::Free) => "Free",
                                         Some(proto::Plan::ZedPro) => "Pro",
+                                        Some(proto::Plan::ZedProTrial) => "Pro (Trial)",
                                     }
                                 ),
                                 zed_actions::OpenAccountSettings.boxed_clone(),

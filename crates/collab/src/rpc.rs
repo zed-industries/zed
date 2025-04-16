@@ -3707,7 +3707,9 @@ async fn count_language_model_tokens(
 
     let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProCountLanguageModelTokensRateLimit),
-        proto::Plan::Free => Box::new(FreeCountLanguageModelTokensRateLimit),
+        proto::Plan::Free | proto::Plan::ZedProTrial => {
+            Box::new(FreeCountLanguageModelTokensRateLimit)
+        }
     };
 
     session
@@ -3827,7 +3829,7 @@ async fn compute_embeddings(
 
     let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProComputeEmbeddingsRateLimit),
-        proto::Plan::Free => Box::new(FreeComputeEmbeddingsRateLimit),
+        proto::Plan::Free | proto::Plan::ZedProTrial => Box::new(FreeComputeEmbeddingsRateLimit),
     };
 
     session
