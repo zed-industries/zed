@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
-use collections::HashMap;
-
-use crate::{Action, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke};
+use crate::{
+    Action, EmptyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate, KeyboardMapper,
+    Keystroke,
+};
 use smallvec::SmallVec;
 
 /// A keybinding and its associated metadata, from the keymap.
@@ -30,7 +31,13 @@ impl KeyBinding {
         } else {
             None
         };
-        Self::load(keystrokes, Box::new(action), context_predicate, None).unwrap()
+        Self::load(
+            keystrokes,
+            Box::new(action),
+            context_predicate,
+            &EmptyKeyboardMapper,
+        )
+        .unwrap()
     }
 
     /// Load a keybinding from the given raw data.
@@ -38,22 +45,25 @@ impl KeyBinding {
         keystrokes: &str,
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
-        key_equivalents: Option<&HashMap<char, char>>,
+        // key_equivalents: Option<&HashMap<char, char>>,
+        keyboard_mapper: &dyn KeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
-        let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
+        let keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(Keystroke::parse)
+            .map(|source| {
+                Keystroke::parse(source).map(|keystroke| keyboard_mapper.map_keystroke(keystroke))
+            })
             .collect::<std::result::Result<_, _>>()?;
 
-        if let Some(equivalents) = key_equivalents {
-            for keystroke in keystrokes.iter_mut() {
-                if keystroke.key.chars().count() == 1 {
-                    if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
-                        keystroke.key = key.to_string();
-                    }
-                }
-            }
-        }
+        // if let Some(equivalents) = key_equivalents {
+        //     for keystroke in keystrokes.iter_mut() {
+        //         if keystroke.key.chars().count() == 1 {
+        //             if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
+        //                 keystroke.key = key.to_string();
+        //             }
+        //         }
+        //     }
+        // }
 
         Ok(Self {
             keystrokes,
