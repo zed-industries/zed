@@ -36,7 +36,7 @@ use ui::{
     IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
 };
 use util::ResultExt;
-use workspace::{BottomDockLayout, Workspace, notifications::NotifyResultExt};
+use workspace::{Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
