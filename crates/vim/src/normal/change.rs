@@ -425,6 +425,15 @@ mod test {
         )
         .await
         .assert_matches();
+        cx.simulate(
+            "c k",
+            indoc! {"
+            The quick
+              brown fox
+              ˇjumps over"},
+        )
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
@@ -463,6 +472,15 @@ mod test {
             The quick
             brown fox
             ˇ"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c j",
+            indoc! {"
+            The quick
+              ˇbrown fox
+              jumps over"},
         )
         .await
         .assert_matches();
