@@ -10,10 +10,10 @@ use windows::Win32::{
 
 use crate::util::map_ret;
 
-pub(crate) struct WindowsSocket(SOCKET);
+pub struct UnixSocket(SOCKET);
 
-impl WindowsSocket {
-    pub(crate) fn new() -> Result<Self> {
+impl UnixSocket {
+    pub fn new() -> Result<Self> {
         unsafe {
             let raw = WSASocketW(AF_UNIX as _, SOCK_STREAM.0, 0, None, 0, WSA_FLAG_OVERLAPPED)?;
             SetHandleInformation(
@@ -29,7 +29,7 @@ impl WindowsSocket {
         self.0
     }
 
-    pub(crate) fn accept(&self, storage: *mut SOCKADDR, len: &mut i32) -> Result<Self> {
+    pub fn accept(&self, storage: *mut SOCKADDR, len: &mut i32) -> Result<Self> {
         match unsafe { accept(self.0, Some(storage), Some(len)) } {
             Ok(sock) => Ok(Self(sock)),
             Err(err) => {
@@ -52,7 +52,7 @@ impl WindowsSocket {
     }
 }
 
-impl Drop for WindowsSocket {
+impl Drop for UnixSocket {
     fn drop(&mut self) {
         unsafe { closesocket(self.0) };
     }
