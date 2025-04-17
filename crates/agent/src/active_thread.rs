@@ -1836,9 +1836,10 @@ impl ActiveThread {
                 message_id > *editing_message_id
             });
 
+        let panel_background = cx.theme().colors().panel_background;
+
         v_flex()
             .w_full()
-            .when(after_editing_message, |parent| parent.opacity(0.2))
             .when_some(checkpoint, |parent, checkpoint| {
                 let mut is_pending = false;
                 let mut error = None;
@@ -1998,6 +1999,18 @@ impl ActiveThread {
                                 ),
                         )
                     },
+                )
+            })
+            .when(after_editing_message, |parent| {
+                // Backdrop to dim out the whole thread below the editing user message
+                parent.relative().child(
+                    div()
+                        .occlude()
+                        .absolute()
+                        .inset_0()
+                        .size_full()
+                        .bg(panel_background)
+                        .opacity(0.8),
                 )
             })
             .into_any()
