@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +13,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
 use client::zed_urls;
-use editor::{Editor, EditorEvent, MultiBuffer};
+use editor::{Editor, EditorEvent, MultiBuffer, MultiBufferSnapshot};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, Corner, Entity,
@@ -26,6 +27,7 @@ use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
 use proto::Plan;
+use rope::Point;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
@@ -1900,7 +1902,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
-        creases: Vec<(String, String)>,
+        selection_ranges: Vec<Range<Point>>,
+        snapshot: MultiBufferSnapshot,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -1917,7 +1920,9 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
                 if let Some(context) = panel.active_context_editor() {
-                    context.update(cx, |context, cx| context.quote_creases(creases, window, cx));
+                    context.update(cx, |context, cx| {
+                        context.quote_ranges(selection_ranges, snapshot, window, cx)
+                    });
                 };
             });
         });
