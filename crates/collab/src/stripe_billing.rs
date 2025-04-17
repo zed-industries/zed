@@ -416,15 +416,8 @@ impl StripeBilling {
         let mut params = stripe::CreateCheckoutSession::new();
         params.subscription_data = Some(stripe::CreateCheckoutSessionSubscriptionData {
             trial_period_days: Some(14),
-            trial_settings: Some(stripe::CreateCheckoutSessionSubscriptionDataTrialSettings {
-                end_behavior: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior {
-                    missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Pause,
-                }
-            }),
             ..Default::default()
         });
-        params.payment_method_collection =
-            Some(stripe::CheckoutSessionPaymentMethodCollection::IfRequired);
         params.mode = Some(stripe::CheckoutSessionMode::Subscription);
         params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
