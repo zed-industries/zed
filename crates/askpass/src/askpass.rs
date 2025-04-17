@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -48,7 +47,7 @@ impl AskPassDelegate {
 
 #[cfg(unix)]
 pub struct AskPassSession {
-    script_path: PathBuf,
+    script_path: std::path::PathBuf,
     _askpass_task: Task<()>,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
@@ -129,7 +128,7 @@ impl AskPassSession {
         })
     }
 
-    pub fn script_path(&self) -> &Path {
+    pub fn script_path(&self) -> &std::path::Path {
         &self.script_path
     }
 
@@ -201,12 +200,55 @@ pub fn main(socket: &str) {
         exit(1);
     }
 }
+
 #[cfg(not(unix))]
-pub fn main(_socket: &str) {}
+pub fn main(socket: &str) {
+    use std::io::{self, Read, Write};
+    use std::process::exit;
+
+    use windows_net::UnixStream;
+
+    let mut stream = match UnixStream::connect(socket) {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("Error connecting to socket {}: {}", socket, err);
+            exit(1);
+        }
+    };
+
+    let mut buffer = Vec::new();
+    if let Err(err) = io::stdin().read_to_end(&mut buffer) {
+        eprintln!("Error reading from stdin: {}", err);
+        exit(1);
+    }
+
+    while buffer.last().map_or(false, |&b| b == b'\n' || b == b'\r') {
+        buffer.pop();
+    }
+    if buffer.last() != Some(&b'\0') {
+        buffer.push(b'\0');
+    }
+
+    if let Err(err) = stream.write_all(&buffer) {
+        eprintln!("Error writing to socket: {}", err);
+        exit(1);
+    }
+
+    let mut response = Vec::new();
+    if let Err(err) = stream.read_to_end(&mut response) {
+        eprintln!("Error reading from socket: {}", err);
+        exit(1);
+    }
+
+    if let Err(err) = io::stdout().write_all(&response) {
+        eprintln!("Error writing to stdout: {}", err);
+        exit(1);
+    }
+}
 
 #[cfg(not(unix))]
 pub struct AskPassSession {
-    script_path: PathBuf,
+    askpass_helper: String,
     _askpass_task: Task<()>,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
@@ -219,15 +261,16 @@ impl AskPassSession {
         executor: &BackgroundExecutor,
         mut delegate: AskPassDelegate,
     ) -> anyhow::Result<Self> {
-        use windows_net::UnixListener;
+        use windows_net::async_net::UnixListener;
 
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
-        let askpass_script_path = temp_dir.path().join("askpass.cmd");
-        let askpass_script_pwsh_path = temp_dir.path().join("askpass.ps1");
+        let askpass_script_path = temp_dir.path().join("askpass.ps1");
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+        let zed_path = std::env::current_exe()
+            .context("Failed to figure out current executable path for use in askpass")?;
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
@@ -267,45 +310,30 @@ impl AskPassSession {
         });
 
         // Create an askpass script that communicates back to this process.
-        let askpass_pwsh_script = format!(
-            r#"
-            $prompt = $args -join ' ';
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($prompt + [char]0);
-            $socket = New-Object System.Net.Sockets.Socket([System.Net.Sockets.AddressFamily]::Unix, [System.Net.Sockets.SocketType]::Stream, [System.Net.Sockets.ProtocolType]::Unspecified);
-            $endpoint = New-Object System.Net.Sockets.UnixDomainSocketEndPoint("{}");
-            $socket.Connect($endpoint);
-            $socket.Send($bytes) | Out-Null;
-            $buffer = New-Object byte[] 1024;
-            $received = $socket.Receive($buffer);
-            $response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $received);
-            $socket.Close();
-            Write-Host $response
-            "#,
-            askpass_socket.display(),
-        );
-        println!("askpass_script: {}", askpass_pwsh_script);
-        fs::write(&askpass_script_pwsh_path, askpass_pwsh_script).await?;
         let askpass_script = format!(
             r#"
-            @echo off
-            setlocal enabledelayedexpansion
-            set args=%*
-            powershell -ExecutionPolicy Bypass -File "{}" %args%
+            $ErrorActionPreference = 'Stop';
+            ($args -join [char]0) | & "{zed_exe}" --askpass={askpass_socket} 2> $null
             "#,
-            askpass_script_pwsh_path.display()
+            zed_exe = zed_path.display(),
+            askpass_socket = askpass_socket.display(),
         );
         fs::write(&askpass_script_path, askpass_script).await?;
+        let askpass_helper = format!(
+            "powershell.exe -ExecutionPolicy Bypass -File {}",
+            askpass_script_path.display()
+        );
 
         Ok(Self {
-            script_path: askpass_script_path,
+            askpass_helper,
             _askpass_task: askpass_task,
             askpass_kill_master_rx: Some(askpass_kill_master_rx),
             askpass_opened_rx: Some(askpass_opened_rx),
         })
     }
 
-    pub fn script_path(&self) -> &Path {
-        &self.script_path
+    pub fn script_path(&self) -> &str {
+        &self.askpass_helper
     }
 
     // This will run the askpass task forever, resolving as many authentication requests as needed.
