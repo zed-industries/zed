@@ -6233,6 +6233,21 @@ impl LspStore {
         })
     }
 
+    pub fn language_server_state_for_local_buffer<'a>(
+        &'a self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> Option<impl Iterator<Item = &'a LanguageServerState>> {
+        let local = self.as_local()?;
+
+        Some(
+            local
+                .language_server_ids_for_buffer(buffer, cx)
+                .into_iter()
+                .filter_map(move |server_id| local.language_servers.get(&server_id)),
+        )
+    }
+
     pub fn language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &Buffer,

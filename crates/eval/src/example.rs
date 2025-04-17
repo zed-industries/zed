@@ -8,11 +8,12 @@ use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
-use language::{DiagnosticSeverity, OffsetRangeExt};
+use language::{Buffer, DiagnosticSeverity, OffsetRangeExt};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role, StopReason, TokenUsage,
 };
+use project::lsp_store::LanguageServerState;
 use project::{LspStore, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
@@ -255,28 +256,26 @@ impl Example {
                 cx.background_executor().timer(Duration::new(5, 0)).await;
                 wait_for_lang_server(&lsp_store, this.log_prefix.clone(), cx).await?;
 
-                lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_open_handle.update(cx, |buffer, cx| {
-                        buffer.update(cx, |buffer, cx| {
-                            let has_language_server = lsp_store
-                                .language_servers_for_local_buffer(buffer, cx)
-                                .next()
-                                .is_some();
-                            if has_language_server {
-                                Ok(())
-                            } else {
-                                Err(anyhow!(
-                                    "`{:?}` was opened to cause the language server to start, \
-                                    but no language servers are registered for its buffer. \
-                                    Set `require_lsp = false` in `base.toml` to skip this.",
-                                    language_file
-                                ))
-                            }
-                        })
-                    })
-                })??;
+                // Retry up to 10 times, with a delay in between, for the language server to
+                // transition from the Starting to Running state.
+                const LS_START_ATTEMPTS: usize = 10;
+                const DELAY_BETWEEN_ATTEMPTS: Duration = Duration::new(1, 0);
+                let mut answer = None;
 
-                Some((lsp_open_handle, lsp_store))
+                for _ in 0..LS_START_ATTEMPTS {
+                    if any_running(&language_file, lsp_store.clone(), lsp_open_handle.clone(), cx).await? {
+                        answer = Some((lsp_open_handle, lsp_store));
+                        break;
+                    }
+
+                    cx.background_executor().timer(DELAY_BETWEEN_ATTEMPTS).await;
+                }
+
+                if answer.is_none() {
+                   return Err(anyhow!("Timed out waiting for language server to transition from Starting to Running state."));
+                }
+
+                answer
             } else {
                 None
             };
@@ -550,6 +549,55 @@ fn has_pending_lang_server_work(lsp_store: &Entity<LspStore>, cx: &App) -> bool 
         .read(cx)
         .language_server_statuses()
         .any(|(_, status)| !status.pending_work.is_empty())
+}
+
+async fn any_running(
+    language_file: &ProjectPath,
+    lsp_store: Entity<LspStore>,
+    lsp_open_handle: Entity<Entity<Buffer>>,
+    cx: &mut AsyncApp,
+) -> Result<bool> {
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_open_handle.update(cx, |buffer, cx| {
+            buffer.update(cx, |buffer, cx| {
+                match lsp_store.language_server_state_for_local_buffer(buffer, cx) {
+                    Some(states) => {
+                        let mut any_starting = false;
+
+                        for state in states {
+                            match state {
+                                LanguageServerState::Starting { .. } => {
+                                  // A server in the "starting" state means we should keep waiting for
+                                  // it to advance to the "running" state.
+                                  any_starting = true;
+                                },
+                                LanguageServerState::Running { .. } => {
+                                    // We found one that's running, so we're done.
+                                    return Ok(true);
+                                }
+                            }
+                        }
+
+                        if any_starting {
+                            Ok(false)
+                        } else {
+                            Err(anyhow!(
+                                "`{language_file:?}` was opened to cause the language server to start, \
+                                but no language servers are registered for its buffer. \
+                                Set `require_lsp = false` in `base.toml` to skip using a language server for this file.",
+                            ))
+                        }
+                    }
+                    None => {
+                        Err(anyhow!(
+                            "`{language_file:?}` was opened locally to cause the language server to start, \
+                            but the language server's mode was not set to LspStoreMode::Local."
+                        ))
+                    }
+                }
+            })
+        })
+    })?
 }
 
 async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> Result<String> {
