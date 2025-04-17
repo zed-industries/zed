@@ -132,34 +132,6 @@ pub fn deploy_context_menu(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    let mut task = editor.code_actions_task.take();
-    cx.spawn_in(window, async move |editor, cx| {
-        while let Some(prev_task) = task {
-            prev_task.await.log_err();
-            task = editor.update(cx, |this, _| this.code_actions_task.take())?;
-        }
-
-        let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
-            deploy_context_menu_inner(editor, position, point, window, cx);
-            Some(Task::ready(Ok::<_, anyhow::Error>(())))
-        })?;
-
-        if let Some(task) = spawned_test_task {
-            task.await?;
-        }
-
-        Ok::<_, anyhow::Error>(())
-    })
-    .detach_and_log_err(cx);
-}
-
-fn deploy_context_menu_inner(
-    editor: &mut Editor,
-    position: Option<Point<Pixels>>,
-    point: DisplayPoint,
-    window: &mut Window,
-    cx: &mut Context<Editor>,
-) {
     if !editor.is_focused(window) {
         window.focus(&editor.focus_handle(cx));
     }
@@ -185,8 +157,7 @@ fn deploy_context_menu_inner(
         };
 
         let display_map = editor.selections.display_map(cx);
-        let editor_snapshot = &editor.snapshot(window, cx);
-        let buffer = &editor_snapshot.buffer_snapshot;
+        let buffer = &editor.snapshot(window, cx).buffer_snapshot;
         let anchor = buffer.anchor_before(point.to_point(&display_map));
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
             // Move the cursor to the clicked location so that dispatched actions make sense
@@ -196,161 +167,194 @@ fn deploy_context_menu_inner(
             });
         }
 
-        let focus = window.focused(cx);
-        let has_reveal_target = editor.target_file(cx).is_some();
-        let has_selections = editor
-            .selections
-            .all::<PointUtf16>(cx)
-            .into_iter()
-            .any(|s| !s.is_empty());
-        let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
-            project
-                .read(cx)
-                .git_store()
-                .read(cx)
-                .repository_and_path_for_buffer_id(buffer_id, cx)
-                .is_some()
-        });
+        let mut task = editor.code_actions_task.take();
+        cx.spawn_in(window, async move |editor, cx| {
+            while let Some(prev_task) = task {
+                prev_task.await.log_err();
+                task = editor.update(cx, |this, _| this.code_actions_task.take())?;
+            }
 
-        let evaluate_selection = command_palette_hooks::CommandPaletteFilter::try_global(cx)
-            .map_or(false, |filter| {
-                !filter.is_hidden(&DebuggerEvaluateSelectedText)
-            });
-
-        let code_action_state = {
-            if let Some((buffer, buffer_row)) = buffer
-                .buffer_line_for_row(MultiBufferRow(point.to_point(&editor_snapshot).row))
-                .and_then(|(buffer_snapshot, range)| {
-                    editor
-                        .buffer
+            let context_menu_task = editor.update_in(cx, |editor, window, cx| {
+                let focus = window.focused(cx);
+                let has_reveal_target = editor.target_file(cx).is_some();
+                let has_selections = editor
+                    .selections
+                    .all::<PointUtf16>(cx)
+                    .into_iter()
+                    .any(|s| !s.is_empty());
+                let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
+                    project
                         .read(cx)
-                        .buffer(buffer_snapshot.remote_id())
-                        .map(|buffer| (buffer, range.start.row))
-                })
-            {
-                editor
-                    .available_code_actions
-                    .clone()
-                    .and_then(|(location, code_actions)| {
-                        let snapshot = location.buffer.read(cx).snapshot();
-                        let point_range = location.range.to_point(&snapshot);
-                        let point_range = point_range.start.row..=point_range.end.row;
-                        if point_range.contains(&buffer_row) {
-                            Some(MouseCodeActionState {
-                                contents: CodeActionContents {
-                                    actions: Some(code_actions),
-                                    tasks: None,
-                                },
-                                buffer,
-                            })
-                        } else {
+                        .git_store()
+                        .read(cx)
+                        .repository_and_path_for_buffer_id(buffer_id, cx)
+                        .is_some()
+                });
+
+                let evaluate_selection =
+                    command_palette_hooks::CommandPaletteFilter::try_global(cx)
+                        .map_or(false, |filter| {
+                            !filter.is_hidden(&DebuggerEvaluateSelectedText)
+                        });
+
+                let editor_snapshot = &editor.snapshot(window, cx);
+                let code_action_state = {
+                    if let Some((buffer, buffer_row)) = editor_snapshot
+                        .buffer_snapshot
+                        .buffer_line_for_row(MultiBufferRow(point.to_point(editor_snapshot).row))
+                        .and_then(|(buffer_snapshot, range)| {
+                            editor
+                                .buffer
+                                .read(cx)
+                                .buffer(buffer_snapshot.remote_id())
+                                .map(|buffer| (buffer, range.start.row))
+                        })
+                    {
+                        editor.available_code_actions.clone().and_then(
+                            |(location, code_actions)| {
+                                let snapshot = location.buffer.read(cx).snapshot();
+                                let point_range = location.range.to_point(&snapshot);
+                                let point_range = point_range.start.row..=point_range.end.row;
+                                if point_range.contains(&buffer_row) {
+                                    Some(MouseCodeActionState {
+                                        contents: CodeActionContents {
+                                            actions: Some(code_actions),
+                                            tasks: None,
+                                        },
+                                        buffer,
+                                    })
+                                } else {
+                                    None
+                                }
+                            },
+                        )
+                    } else {
+                        None
+                    }
+                };
+
+                let action_labels = code_action_state
+                    .as_ref()
+                    .map(|state| {
+                        if state.contents.is_empty() {
                             None
+                        } else {
+                            Some(
+                                state
+                                    .contents
+                                    .iter()
+                                    .map(|item| item.label())
+                                    .collect::<Vec<_>>(),
+                            )
                         }
                     })
-            } else {
-                None
-            }
-        };
+                    .flatten();
 
-        let action_labels = code_action_state
-            .as_ref()
-            .map(|state| {
-                if state.contents.is_empty() {
-                    None
-                } else {
-                    Some(
-                        state
-                            .contents
-                            .iter()
-                            .map(|item| item.label())
-                            .collect::<Vec<_>>(),
-                    )
-                }
-            })
-            .flatten();
-
-        let menu = ui::ContextMenu::build(window, cx, |menu, _window, _| {
-            let menu = menu
-                .on_blur_subscription(Subscription::new(|| {}))
-                .when_some(action_labels, |menu, labels| {
-                    menu.map(|menu| {
-                        labels
-                            .into_iter()
-                            .enumerate()
-                            .fold(menu, |menu, (ix, label)| {
-                                menu.action(
-                                    label,
-                                    Box::new(ConfirmCodeAction {
-                                        item_ix: Some(ix),
-                                        from_mouse_context_menu: true,
-                                    }),
-                                )
+                let menu = ui::ContextMenu::build(window, cx, |menu, _window, _| {
+                    let menu = menu
+                        .on_blur_subscription(Subscription::new(|| {}))
+                        .when_some(action_labels, |menu, labels| {
+                            menu.map(|menu| {
+                                labels
+                                    .into_iter()
+                                    .enumerate()
+                                    .fold(menu, |menu, (ix, label)| {
+                                        menu.action(
+                                            label,
+                                            Box::new(ConfirmCodeAction {
+                                                item_ix: Some(ix),
+                                                from_mouse_context_menu: true,
+                                            }),
+                                        )
+                                    })
                             })
-                    })
-                    .separator()
-                })
-                .when(evaluate_selection && has_selections, |builder| {
-                    builder
-                        .action("Evaluate Selection", Box::new(DebuggerEvaluateSelectedText))
+                            .separator()
+                        })
+                        .when(evaluate_selection && has_selections, |builder| {
+                            builder
+                                .action(
+                                    "Evaluate Selection",
+                                    Box::new(DebuggerEvaluateSelectedText),
+                                )
+                                .separator()
+                        })
+                        .action("Go to Definition", Box::new(GoToDefinition))
+                        .action("Go to Declaration", Box::new(GoToDeclaration))
+                        .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+                        .action("Go to Implementation", Box::new(GoToImplementation))
+                        .action("Find All References", Box::new(FindAllReferences))
                         .separator()
-                })
-                .action("Go to Definition", Box::new(GoToDefinition))
-                .action("Go to Declaration", Box::new(GoToDeclaration))
-                .action("Go to Type Definition", Box::new(GoToTypeDefinition))
-                .action("Go to Implementation", Box::new(GoToImplementation))
-                .action("Find All References", Box::new(FindAllReferences))
-                .separator()
-                .action("Rename Symbol", Box::new(Rename))
-                .action("Format Buffer", Box::new(Format))
-                .when(has_selections, |cx| {
-                    cx.action("Format Selections", Box::new(FormatSelections))
-                })
-                .separator()
-                .action("Cut", Box::new(Cut))
-                .action("Copy", Box::new(Copy))
-                .action("Copy and trim", Box::new(CopyAndTrim))
-                .action("Paste", Box::new(Paste))
-                .separator()
-                .map(|builder| {
-                    let reveal_in_finder_label = if cfg!(target_os = "macos") {
-                        "Reveal in Finder"
-                    } else {
-                        "Reveal in File Manager"
-                    };
-                    const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
-                    if has_reveal_target {
-                        builder
-                            .action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    } else {
-                        builder
-                            .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .disabled_action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    }
-                })
-                .map(|builder| {
-                    const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
-                    if has_git_repo {
-                        builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
-                    } else {
-                        builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
+                        .action("Rename Symbol", Box::new(Rename))
+                        .action("Format Buffer", Box::new(Format))
+                        .when(has_selections, |cx| {
+                            cx.action("Format Selections", Box::new(FormatSelections))
+                        })
+                        .separator()
+                        .action("Cut", Box::new(Cut))
+                        .action("Copy", Box::new(Copy))
+                        .action("Copy and trim", Box::new(CopyAndTrim))
+                        .action("Paste", Box::new(Paste))
+                        .separator()
+                        .map(|builder| {
+                            let reveal_in_finder_label = if cfg!(target_os = "macos") {
+                                "Reveal in Finder"
+                            } else {
+                                "Reveal in File Manager"
+                            };
+                            const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
+                            if has_reveal_target {
+                                builder
+                                    .action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                                    .action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
+                            } else {
+                                builder
+                                    .disabled_action(
+                                        reveal_in_finder_label,
+                                        Box::new(RevealInFileManager),
+                                    )
+                                    .disabled_action(
+                                        OPEN_IN_TERMINAL_LABEL,
+                                        Box::new(OpenInTerminal),
+                                    )
+                            }
+                        })
+                        .map(|builder| {
+                            const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
+                            if has_git_repo {
+                                builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
+                            } else {
+                                builder.disabled_action(
+                                    COPY_PERMALINK_LABEL,
+                                    Box::new(CopyPermalinkToLine),
+                                )
+                            }
+                        });
+                    match focus {
+                        Some(focus) => menu.context(focus),
+                        None => menu,
                     }
                 });
-            match focus {
-                Some(focus) => menu.context(focus),
-                None => menu,
-            }
-        });
 
-        set_context_menu(
-            editor,
-            menu,
-            source_anchor,
-            position,
-            code_action_state,
-            window,
-            cx,
-        );
+                set_context_menu(
+                    editor,
+                    menu,
+                    source_anchor,
+                    position,
+                    code_action_state,
+                    window,
+                    cx,
+                );
+
+                Some(Task::ready(Ok::<_, anyhow::Error>(())))
+            })?;
+
+            if let Some(task) = context_menu_task {
+                task.await?;
+            }
+
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
     };
 }
 
