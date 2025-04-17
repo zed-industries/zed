@@ -96,7 +96,7 @@ use std::{
     sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
     time::Duration,
 };
-use task::{DebugAdapterConfig, SpawnInTerminal, TaskId};
+use task::{DebugTaskDefinition, SpawnInTerminal, TaskId};
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -106,6 +106,7 @@ use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
+use zed_actions::feedback::FileBugReport;
 
 use crate::notifications::NotificationId;
 use crate::persistence::{
@@ -858,7 +859,7 @@ pub struct Workspace {
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
-    debug_task_queue: HashMap<task::TaskId, DebugAdapterConfig>,
+    debug_task_queue: HashMap<task::TaskId, DebugTaskDefinition>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -5395,8 +5396,6 @@ enum ActivateInDirectionTarget {
 }
 
 fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncApp) {
-    const REPORT_ISSUE_URL: &str = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cbug&projects=&template=1_bug_report.yml";
-
     workspace
         .update(cx, |workspace, _, cx| {
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
@@ -5410,7 +5409,9 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                             MessageNotification::new("Failed to load the database file.", cx)
                                 .primary_message("File an Issue")
                                 .primary_icon(IconName::Plus)
-                                .primary_on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))
+                                .primary_on_click(|window, cx| {
+                                    window.dispatch_action(Box::new(FileBugReport), cx)
+                                })
                         })
                     },
                 );

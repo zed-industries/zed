@@ -1,6 +1,6 @@
 use crate::{
-    Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
-    Hover,
+    ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
+    EditorSnapshot, Hover,
     display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::{Autoscroll, ScrollAmount},
@@ -95,7 +95,7 @@ pub fn show_keyboard_hover(
 }
 
 pub struct InlayHover {
-    pub range: InlayHighlight,
+    pub(crate) range: InlayHighlight,
     pub tooltip: HoverBlock,
 }
 
@@ -276,6 +276,12 @@ fn show_hover(
     }
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+    let all_diagnostics_active = editor.active_diagnostics == ActiveDiagnostic::All;
+    let active_group_id = if let ActiveDiagnostic::Group(group) = &editor.active_diagnostics {
+        Some(group.group_id)
+    } else {
+        None
+    };
 
     let task = cx.spawn_in(window, async move |this, cx| {
         async move {
@@ -302,11 +308,16 @@ fn show_hover(
             }
 
             let offset = anchor.to_offset(&snapshot.buffer_snapshot);
-            let local_diagnostic = snapshot
-                .buffer_snapshot
-                .diagnostics_in_range::<usize>(offset..offset)
-                // Find the entry with the most specific range
-                .min_by_key(|entry| entry.range.len());
+            let local_diagnostic = if all_diagnostics_active {
+                None
+            } else {
+                snapshot
+                    .buffer_snapshot
+                    .diagnostics_in_range::<usize>(offset..offset)
+                    .filter(|diagnostic| Some(diagnostic.diagnostic.group_id) != active_group_id)
+                    // Find the entry with the most specific range
+                    .min_by_key(|entry| entry.range.len())
+            };
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
@@ -638,6 +649,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         },
         syntax: cx.theme().syntax().clone(),
         selection_background_color: { cx.theme().players().local().selection },
+        height_is_multiple_of_line_height: true,
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
             .text_base()
@@ -707,7 +719,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
 
 #[derive(Default)]
 pub struct HoverState {
-    pub info_popovers: Vec<InfoPopover>,
+    pub(crate) info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
     pub triggered_from: Option<Anchor>,
     pub info_task: Option<Task<Option<()>>>,
@@ -829,6 +841,7 @@ impl InfoPopover {
                             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    border: false,
                                 })
                                 .on_url_click(open_markdown_url),
                         ),
@@ -957,6 +970,7 @@ impl DiagnosticPopover {
                             })
                             .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                 copy_button: false,
+                                border: false,
                             })
                             .on_url_click(open_markdown_url),
                         )

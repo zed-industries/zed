@@ -39,7 +39,7 @@ use std::{env, mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, t
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
-    TryFutureExt as _, assert_set_eq, path,
+    TryFutureExt as _, assert_set_eq, maybe, path,
     paths::PathMatcher,
     separator,
     test::{TempTree, marked_text_offsets},
@@ -5426,6 +5426,87 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "// ПРИВЕТ? привет!",
+            "two.rs": "// ПРИВЕТ.",
+            "three.rs": "// привет",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let unicode_case_sensitive_query = SearchQuery::text(
+        "привет",
+        false,
+        true,
+        false,
+        Default::default(),
+        Default::default(),
+        None,
+    );
+    assert_matches!(unicode_case_sensitive_query, Ok(SearchQuery::Text { .. }));
+    assert_eq!(
+        search(&project, unicode_case_sensitive_query.unwrap(), cx)
+            .await
+            .unwrap(),
+        HashMap::from_iter([
+            (separator!("dir/one.rs").to_string(), vec![17..29]),
+            (separator!("dir/three.rs").to_string(), vec![3..15]),
+        ])
+    );
+
+    let unicode_case_insensitive_query = SearchQuery::text(
+        "привет",
+        false,
+        false,
+        false,
+        Default::default(),
+        Default::default(),
+        None,
+    );
+    assert_matches!(
+        unicode_case_insensitive_query,
+        Ok(SearchQuery::Regex { .. })
+    );
+    assert_eq!(
+        search(&project, unicode_case_insensitive_query.unwrap(), cx)
+            .await
+            .unwrap(),
+        HashMap::from_iter([
+            (separator!("dir/one.rs").to_string(), vec![3..15, 17..29]),
+            (separator!("dir/two.rs").to_string(), vec![3..15]),
+            (separator!("dir/three.rs").to_string(), vec![3..15]),
+        ])
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "привет.",
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default(),
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([(separator!("dir/two.rs").to_string(), vec![3..16]),])
+    );
+}
+
+#[gpui::test]
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -8192,16 +8273,33 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         json!({
             ".git": {
                 "worktrees": {
-                    "some-worktree": {}
+                    "some-worktree": {
+                        "commondir": "../..\n"
+                    }
                 },
+                "modules": {
+                    "subdir": {
+                        "some-submodule": {
+                            // For is_git_dir
+                            "HEAD": "",
+                            "config": "",
+                        }
+                    }
+                }
             },
             "src": {
                 "a.txt": "A",
             },
             "some-worktree": {
-                ".git": "gitdir: ../.git/worktrees/some-worktree",
+                ".git": "gitdir: ../.git/worktrees/some-worktree\n",
                 "src": {
                     "b.txt": "B",
+                }
+            },
+            "subdir": {
+                "some-submodule": {
+                    ".git": "gitdir: ../../.git/modules/subdir/some-submodule\n",
+                    "c.txt": "C",
                 }
             }
         }),
@@ -8234,9 +8332,11 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         [
             Path::new(path!("/project")).into(),
             Path::new(path!("/project/some-worktree")).into(),
+            Path::new(path!("/project/subdir/some-submodule")).into(),
         ]
     );
 
+    // Generate a git-related event for the worktree and check that it's refreshed.
     fs.with_git_state(
         path!("/project/some-worktree/.git").as_ref(),
         true,
@@ -8275,6 +8375,45 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     worktree_repo.update(cx, |repo, _| {
         pretty_assertions::assert_eq!(
             repo.status_for_path(&"src/b.txt".into()).unwrap().status,
+            StatusCode::Modified.worktree(),
+        );
+    });
+
+    // The same for the submodule.
+    fs.with_git_state(
+        path!("/project/subdir/some-submodule/.git").as_ref(),
+        true,
+        |state| {
+            state.head_contents.insert("c.txt".into(), "c".to_owned());
+            state.index_contents.insert("c.txt".into(), "c".to_owned());
+        },
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/subdir/some-submodule/c.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (submodule_repo, barrier) = project.update(cx, |project, cx| {
+        let (repo, _) = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+            .unwrap();
+        pretty_assertions::assert_eq!(
+            repo.read(cx).work_directory_abs_path,
+            Path::new(path!("/project/subdir/some-submodule")).into(),
+        );
+        let barrier = repo.update(cx, |repo, _| repo.barrier());
+        (repo.clone(), barrier)
+    });
+    barrier.await.unwrap();
+    submodule_repo.update(cx, |repo, _| {
+        pretty_assertions::assert_eq!(
+            repo.status_for_path(&"c.txt".into()).unwrap().status,
             StatusCode::Modified.worktree(),
         );
     });

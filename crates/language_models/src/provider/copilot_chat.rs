@@ -210,17 +210,24 @@ impl LanguageModel for CopilotChatLanguageModel {
             CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
             CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
             CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Gemini20Flash => count_google_tokens(request, cx),
+            CopilotChatModel::Gemini20Flash | CopilotChatModel::Gemini25Pro => {
+                count_google_tokens(request, cx)
+            }
             _ => {
                 let model = match self.model {
                     CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
+                    CopilotChatModel::Gpt4_1 => open_ai::Model::FourPointOne,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-                    CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
+                    CopilotChatModel::O1 => open_ai::Model::O1,
+                    CopilotChatModel::O3Mini => open_ai::Model::O3Mini,
+                    CopilotChatModel::O3 => open_ai::Model::O3,
+                    CopilotChatModel::O4Mini => open_ai::Model::O4Mini,
                     CopilotChatModel::Claude3_5Sonnet
                     | CopilotChatModel::Claude3_7Sonnet
                     | CopilotChatModel::Claude3_7SonnetThinking
-                    | CopilotChatModel::Gemini20Flash => {
+                    | CopilotChatModel::Gemini20Flash
+                    | CopilotChatModel::Gemini25Pro => {
                         unreachable!()
                     }
                 };

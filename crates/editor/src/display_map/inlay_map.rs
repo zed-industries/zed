@@ -36,7 +36,7 @@ enum Transform {
 
 #[derive(Debug, Clone)]
 pub struct Inlay {
-    pub(crate) id: InlayId,
+    pub id: InlayId,
     pub position: Anchor,
     pub text: text::Rope,
 }
@@ -482,6 +482,9 @@ impl InlayMap {
                 };
 
                 for inlay in &self.inlays[start_ix..] {
+                    if !inlay.position.is_valid(&buffer_snapshot) {
+                        continue;
+                    }
                     let buffer_offset = inlay.position.to_offset(&buffer_snapshot);
                     if buffer_offset > buffer_edit.new.end {
                         break;
@@ -494,9 +497,7 @@ impl InlayMap {
                         buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
                     );
 
-                    if inlay.position.is_valid(&buffer_snapshot) {
-                        new_transforms.push(Transform::Inlay(inlay.clone()), &());
-                    }
+                    new_transforms.push(Transform::Inlay(inlay.clone()), &());
                 }
 
                 // Apply the rest of the edit.
