@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
-    FunctionDeclaration, GenerateContentResponse, Part, SystemInstructions, UsageMetadata,
+    FunctionDeclaration, GenerateContentResponse, Part, SystemInstruction, UsageMetadata,
 };
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
@@ -405,7 +405,7 @@ pub fn into_google(
         .map_or(false, |msg| matches!(msg.role, Role::System))
     {
         let message = request.messages.remove(0);
-        Some(SystemInstructions {
+        Some(SystemInstruction {
             parts: map_content(message.content),
         })
     } else {
@@ -414,7 +414,7 @@ pub fn into_google(
 
     google_ai::GenerateContentRequest {
         model,
-        system_instructions,
+        system_instruction: system_instructions,
         contents: request
             .messages
             .into_iter()
