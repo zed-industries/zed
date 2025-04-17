@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::{IconName, Tooltip, prelude::*};
 use web_search::WebSearchRegistry;
-use zed_llm_client::WebSearchResponse;
+use zed_llm_client::{WebSearchCitation, WebSearchResponse};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchToolInput {
@@ -20,6 +20,7 @@ pub struct WebSearchToolInput {
     query: String,
 }
 
+#[derive(RegisterComponent)]
 pub struct WebSearchTool;
 
 impl Tool for WebSearchTool {
@@ -176,5 +177,113 @@ impl ToolCard for WebSearchToolCard {
             });
 
         v_flex().mb_3().gap_1().child(header).children(content)
+    }
+}
+
+impl Component for WebSearchTool {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+
+    fn sort_name() -> &'static str {
+        "ToolWebSearch"
+    }
+
+    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let in_progress_search = cx.new(|cx| WebSearchToolCard {
+            response: None,
+            _task: cx.spawn(async move |_this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_secs(60))
+                        .await
+                }
+            }),
+        });
+
+        let successful_search = cx.new(|_cx| WebSearchToolCard {
+            response: Some(Ok(example_search_response())),
+            _task: Task::ready(()),
+        });
+
+        let error_search = cx.new(|_cx| WebSearchToolCard {
+            response: Some(Err(anyhow!("Failed to resolve https://google.com"))),
+            _task: Task::ready(()),
+        });
+
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group(vec![
+                    single_example(
+                        "In Progress",
+                        div()
+                            .size_full()
+                            .child(in_progress_search.update(cx, |tool, cx| {
+                                tool.render(&ToolUseStatus::Pending, window, cx)
+                                    .into_any_element()
+                            }))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Successful",
+                        div()
+                            .size_full()
+                            .child(successful_search.update(cx, |tool, cx| {
+                                tool.render(&ToolUseStatus::Finished("".into()), window, cx)
+                                    .into_any_element()
+                            }))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Error",
+                        div()
+                            .size_full()
+                            .child(error_search.update(cx, |tool, cx| {
+                                tool.render(&ToolUseStatus::Error("".into()), window, cx)
+                                    .into_any_element()
+                            }))
+                            .into_any_element(),
+                    ),
+                ])])
+                .into_any_element(),
+        )
+    }
+}
+
+fn example_search_response() -> WebSearchResponse {
+    WebSearchResponse {
+        summary: r#"Toronto boasts a vibrant culinary scene with a diverse array of..."#
+            .to_string(),
+        citations: vec![
+            WebSearchCitation {
+                title: "Alo".to_string(),
+                url: "https://www.google.com/maps/search/Alo%2C+Toronto%2C+Canada".to_string(),
+                range: Some(147..213),
+            },
+            WebSearchCitation {
+                title: "Edulis".to_string(),
+                url: "https://www.google.com/maps/search/Edulis%2C+Toronto%2C+Canada".to_string(),
+                range: Some(447..519),
+            },
+            WebSearchCitation {
+                title: "Sushi Masaki Saito".to_string(),
+                url: "https://www.google.com/maps/search/Sushi+Masaki+Saito%2C+Toronto%2C+Canada"
+                    .to_string(),
+                range: Some(776..872),
+            },
+            WebSearchCitation {
+                title: "Shoushin".to_string(),
+                url: "https://www.google.com/maps/search/Shoushin%2C+Toronto%2C+Canada".to_string(),
+                range: Some(1072..1148),
+            },
+            WebSearchCitation {
+                title: "Restaurant 20 Victoria".to_string(),
+                url:
+                    "https://www.google.com/maps/search/Restaurant+20+Victoria%2C+Toronto%2C+Canada"
+                        .to_string(),
+                range: Some(1291..1395),
+            },
+        ],
     }
 }
