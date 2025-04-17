@@ -1477,9 +1477,8 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<MinimapLayout> {
-        let Some(minimap_editor) = self.editor.read_with(cx, |editor, _| editor.minimap()) else {
-            return None;
-        };
+        let minimap_editor = self.editor.read_with(cx, |editor, _| editor.minimap())?;
+
         let minimap_settings = self
             .editor
             .read_with(cx, |editor, _| editor.minimap_settings);

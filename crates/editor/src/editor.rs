@@ -17510,15 +17510,13 @@ impl Editor {
             if self.minimap_settings != old_minimap_settings {
                 if self.minimap_entity.is_some() != self.minimap_settings.requires_entity() {
                     self.minimap_entity = self.initialize_minimap(window, cx);
-                } else if self
-                    .minimap_settings
-                    .minimap_configuration_changed(&old_minimap_settings)
-                {
-                    self.minimap_entity.as_ref().map(|editor_entity| {
-                        editor_entity.update(cx, |minimap_editor, _cx| {
-                            minimap_editor.update_minimap_configuration(&self.minimap_settings)
-                        })
-                    });
+                } else if let Some(minimap_entity) = self.minimap_entity.as_ref().filter(|_| {
+                    self.minimap_settings
+                        .minimap_configuration_changed(&old_minimap_settings)
+                }) {
+                    minimap_entity.update(cx, |minimap_editor, _| {
+                        minimap_editor.update_minimap_configuration(&self.minimap_settings)
+                    })
                 }
             }
         }
