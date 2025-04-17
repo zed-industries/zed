@@ -409,17 +409,6 @@ impl<T: 'static> Entity<T> {
         }
     }
 
-    /// Upgrade the given weak pointer to a retaining pointer, if it still exists
-    pub fn upgrade_from(weak: &WeakEntity<T>) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        Some(Entity {
-            any_entity: weak.any_entity.upgrade()?,
-            entity_type: weak.entity_type,
-        })
-    }
-
     /// Convert this into a dynamically typed entity.
     pub fn into_any(self) -> AnyEntity {
         self.any_entity
@@ -669,8 +658,10 @@ impl<T> Clone for WeakEntity<T> {
 impl<T: 'static> WeakEntity<T> {
     /// Upgrade this weak entity reference into a strong entity reference
     pub fn upgrade(&self) -> Option<Entity<T>> {
-        // Delegate to the trait implementation to keep behavior in one place.
-        Entity::upgrade_from(self)
+        Some(Entity {
+            any_entity: self.any_entity.upgrade()?,
+            entity_type: self.entity_type,
+        })
     }
 
     /// Updates the entity referenced by this handle with the given function if

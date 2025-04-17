@@ -505,8 +505,8 @@ impl App {
         self.new_observer(
             entity_id,
             Box::new(move |cx| {
-                if let Some(handle) = Entity::<W>::upgrade_from(&handle) {
-                    on_notify(handle, cx)
+                if let Some(entity) = handle.upgrade() {
+                    on_notify(entity, cx)
                 } else {
                     false
                 }
@@ -550,15 +550,15 @@ impl App {
         Evt: 'static,
     {
         let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
+        let handle = entity.downgrade();
         self.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
                     let event: &Evt = event.downcast_ref().expect("invalid event type");
-                    if let Some(handle) = Entity::<T>::upgrade_from(&entity) {
-                        on_event(handle, event, cx)
+                    if let Some(entity) = handle.upgrade() {
+                        on_event(entity, event, cx)
                     } else {
                         false
                     }
