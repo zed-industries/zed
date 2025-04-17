@@ -15,10 +15,12 @@ impl RenderOnce for UsageBanner {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let severity = Severity::Info;
 
-        Banner::new()
-            .severity(severity)
-            .children(
-                h_flex().flex_1().gap_1().child(Label::new("Zed Pro")).child(
+        Banner::new().severity(severity).children(
+            h_flex()
+                .flex_1()
+                .gap_1()
+                .child(Label::new("Zed Pro"))
+                .child(
                     h_flex()
                         .flex_1()
                         .justify_end()
@@ -36,8 +38,8 @@ impl RenderOnce for UsageBanner {
                                 .color(Color::Muted),
                         ),
                 ),
-            )
-            // .action_slot(action)
+        )
+        // .action_slot(action)
     }
 }
 
