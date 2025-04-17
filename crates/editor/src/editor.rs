@@ -422,6 +422,10 @@ impl EditorMode {
     pub fn is_full(&self) -> bool {
         matches!(self, Self::Full { .. })
     }
+
+    fn is_minimap(&self) -> bool {
+        *self == Self::Minimap
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -6880,7 +6884,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        if self.mode() == EditorMode::Minimap {
+        if self.mode().is_minimap() {
             return None;
         }
         let active_inline_completion = self.active_inline_completion.as_ref()?;
@@ -16462,13 +16466,12 @@ impl Editor {
     }
 
     pub fn render_git_blame_gutter(&self, cx: &App) -> bool {
-        self.show_git_blame_gutter
-            && self.has_blame_entries(cx)
-            && self.mode() != EditorMode::Minimap
+        !self.mode().is_minimap() && self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
 
     pub fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
-        self.show_git_blame_inline
+        !self.mode.is_minimap()
+            && self.show_git_blame_inline
             && (self.focus_handle.is_focused(window)
                 || self
                     .git_blame_inline_tooltip
@@ -16477,7 +16480,6 @@ impl Editor {
                     .is_some())
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
-            && self.mode() != EditorMode::Minimap
     }
 
     fn has_blame_entries(&self, cx: &App) -> bool {

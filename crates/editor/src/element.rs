@@ -1751,7 +1751,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> HashMap<DisplayRow, AnyElement> {
-        if self.editor.read(cx).mode() == EditorMode::Minimap {
+        if self.editor.read(cx).mode().is_minimap() {
             return HashMap::default();
         }
         let max_severity = ProjectSettings::get_global(cx)
@@ -2055,7 +2055,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<IndentGuideLayout>> {
-        if self.editor.read(cx).mode() == EditorMode::Minimap {
+        if self.editor.read(cx).mode().is_minimap() {
             return None;
         }
         let indent_guides = self.editor.update(cx, |editor, cx| {
@@ -5794,7 +5794,7 @@ impl EditorElement {
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
-        if self.editor.read(cx).mode == EditorMode::Minimap {
+        if self.editor.read(cx).mode.is_minimap() {
             return;
         }
 
@@ -6924,7 +6924,6 @@ impl Element for EditorElement {
                                     Some(editor_width.min(column as f32 * em_advance))
                                 }
                             };
-                            editor_wrap_width = soft_wrap_width;
 
                             if editor.set_wrap_width(soft_wrap_width, cx) {
                                 editor.snapshot(window, cx)
@@ -7404,7 +7403,7 @@ impl Element for EditorElement {
                             false
                         };
 
-                        if (clamped || autoscrolled) && editor.mode != EditorMode::Minimap {
+                        if (clamped || autoscrolled) && editor.mode.is_minimap() {
                             snapshot = editor.snapshot(window, cx);
                             scroll_position = snapshot.scroll_position();
                         }
