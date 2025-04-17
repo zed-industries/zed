@@ -1,7 +1,7 @@
 use gpui::{
-    App, AppContext, Application, Bounds, ClickEvent, Context, ImageCache, KeyBinding, Menu,
-    MenuItem, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div,
-    img, prelude::*, px, rgb, size,
+    App, AppContext, Application, Bounds, ClickEvent, Context, Entity, ImageCache, KeyBinding,
+    Menu, MenuItem, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions,
+    div, image_cache, img, prelude::*, px, rgb, size,
 };
 use reqwest_client::ReqwestClient;
 use std::sync::Arc;
@@ -10,12 +10,13 @@ struct ImageGallery {
     image_key: String,
     items_count: usize,
     total_count: usize,
-    image_cache: ImageCache,
+    image_cache: Entity<ImageCache>,
 }
 
 impl ImageGallery {
     fn on_next_image(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.image_cache.clear(window, cx);
+        self.image_cache
+            .update(cx, |image_cache, cx| image_cache.clear(window, cx));
 
         let t = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -33,56 +34,57 @@ impl Render for ImageGallery {
         let image_url: SharedString =
             format!("https://picsum.photos/400/200?t={}", self.image_key).into();
 
-        div()
-            .id("main")
-            .font_family(".SystemUIFont")
-            .bg(rgb(0xE9E9E9))
-            .overflow_y_scroll()
-            .p_4()
-            .size_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .justify_between()
-                    .child(format!(
-                        "Example to show images and test memory usage (Rendered: {} images).",
-                        self.total_count
-                    ))
-                    .child(
-                        div()
-                            .id("btn")
-                            .py_1()
-                            .px_4()
-                            .bg(gpui::black())
-                            .hover(|this| this.opacity(0.8))
-                            .text_color(gpui::white())
-                            .text_center()
-                            .w_40()
-                            .child("Next Photos")
-                            .on_click(cx.listener(Self::on_next_image)),
-                    ),
-            )
-            .child(
-                div()
-                    .id("image-gallery")
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap_x_4()
-                    .gap_y_2()
-                    .justify_around()
-                    .children((0..self.items_count).map(|ix| {
-                        img(format!("{}-{}", image_url, ix))
-                            .cache(&self.image_cache)
-                            .size_20()
-                    })),
-            )
+        image_cache(&self.image_cache).child(
+            div()
+                .id("main")
+                .font_family(".SystemUIFont")
+                .bg(rgb(0xE9E9E9))
+                .overflow_y_scroll()
+                .p_4()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .justify_between()
+                        .child(format!(
+                            "Example to show images and test memory usage (Rendered: {} images).",
+                            self.total_count
+                        ))
+                        .child(
+                            div()
+                                .id("btn")
+                                .py_1()
+                                .px_4()
+                                .bg(gpui::black())
+                                .hover(|this| this.opacity(0.8))
+                                .text_color(gpui::white())
+                                .text_center()
+                                .w_40()
+                                .child("Next Photos")
+                                .on_click(cx.listener(Self::on_next_image)),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("image-gallery")
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap_x_4()
+                        .gap_y_2()
+                        .justify_around()
+                        .children(
+                            (0..self.items_count)
+                                .map(|ix| img(format!("{}-{}", image_url, ix)).size_20()),
+                        ),
+                ),
+        )
     }
 }
 
