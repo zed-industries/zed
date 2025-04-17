@@ -884,7 +884,7 @@ impl ActiveThread {
                 self.last_error = Some(error.clone());
             }
             ThreadEvent::UsageUpdated(usage) => {
-                self.last_usage = Some(usage.clone());
+                self.last_usage = Some(*usage);
             }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryGenerated
