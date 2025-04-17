@@ -1708,7 +1708,8 @@ impl ActiveThread {
                         this.pt_4()
                     }
                 })
-                .px_2p5()
+                .pl_2()
+                .pr_2p5()
                 .pb_4()
                 .child(
                     v_flex()
