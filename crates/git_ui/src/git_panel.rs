@@ -604,7 +604,7 @@ impl GitPanel {
             if let Ok(ix) = self.entries[conflicted_start..conflicted_start + self.conflicted_count]
                 .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
-                return Some(ix);
+                return Some(conflicted_start + ix);
             }
         }
         if self.tracked_count > 0 {
@@ -616,7 +616,7 @@ impl GitPanel {
             if let Ok(ix) = self.entries[tracked_start..tracked_start + self.tracked_count]
                 .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
-                return Some(ix);
+                return Some(tracked_start + ix);
             }
         }
         if self.new_count > 0 {
@@ -632,7 +632,7 @@ impl GitPanel {
             if let Ok(ix) = self.entries[untracked_start..untracked_start + self.new_count]
                 .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
-                return Some(ix);
+                return Some(untracked_start + ix);
             }
         }
         None
