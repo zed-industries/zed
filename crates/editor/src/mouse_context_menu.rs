@@ -2,7 +2,7 @@ use crate::{
     ConfirmCodeAction, Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DebuggerEvaluateSelectedText,
     DisplayPoint, DisplaySnapshot, Editor, FindAllReferences, GoToDeclaration, GoToDefinition,
     GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode,
-    ToDisplayPoint, ToggleCodeActions,
+    SelectionExt, ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
     code_context_menus::CodeActionContents,
     selections_collection::SelectionsCollection,
@@ -41,7 +41,8 @@ pub struct MouseContextMenu {
     pub(crate) position: MenuPosition,
     pub(crate) context_menu: Entity<ui::ContextMenu>,
     pub(crate) code_action: Option<MouseCodeAction>,
-    _subscription: Subscription,
+    _dismiss_subscription: Subscription,
+    _cursor_move_subscription: Subscription,
 }
 
 enum CodeActionLoadState {
@@ -80,6 +81,7 @@ impl MouseContextMenu {
             offset: position - (source_position + content_origin),
         };
         return Some(MouseContextMenu::new(
+            editor,
             menu_position,
             context_menu,
             code_action,
@@ -89,6 +91,7 @@ impl MouseContextMenu {
     }
 
     pub(crate) fn new(
+        editor: &Editor,
         position: MenuPosition,
         context_menu: Entity<ui::ContextMenu>,
         code_action: Option<MouseCodeAction>,
@@ -98,10 +101,36 @@ impl MouseContextMenu {
         let context_menu_focus = context_menu.focus_handle(cx);
         window.focus(&context_menu_focus);
 
-        let _subscription = cx.subscribe_in(
-            &context_menu,
-            window,
+        let _dismiss_subscription = cx.subscribe_in(&context_menu, window, {
+            let context_menu_focus = context_menu_focus.clone();
             move |editor, _, _event: &DismissEvent, window, cx| {
+                editor.mouse_context_menu.take();
+                if context_menu_focus.contains_focused(window, cx) {
+                    window.focus(&editor.focus_handle(cx));
+                }
+            }
+        });
+
+        let selection_init = editor.selections.newest_anchor().clone();
+
+        let _cursor_move_subscription = cx.subscribe_in(
+            &cx.entity(),
+            window,
+            move |editor, _, event: &crate::EditorEvent, window, cx| {
+                let crate::EditorEvent::SelectionsChanged { local: true } = event else {
+                    return;
+                };
+                let display_snapshot = &editor
+                    .display_map
+                    .update(cx, |display_map, cx| display_map.snapshot(cx));
+                let selection_init_range = selection_init.display_range(&display_snapshot);
+                let selection_now_range = editor
+                    .selections
+                    .newest_anchor()
+                    .display_range(&display_snapshot);
+                if selection_now_range == selection_init_range {
+                    return;
+                }
                 editor.mouse_context_menu.take();
                 if context_menu_focus.contains_focused(window, cx) {
                     window.focus(&editor.focus_handle(cx));
@@ -113,7 +142,8 @@ impl MouseContextMenu {
             position,
             context_menu,
             code_action,
-            _subscription,
+            _dismiss_subscription,
+            _cursor_move_subscription,
         }
     }
 }
@@ -423,6 +453,7 @@ fn set_context_menu(
                 offset: gpui::point(character_size.width, character_size.height),
             };
             Some(MouseContextMenu::new(
+                editor,
                 menu_position,
                 context_menu,
                 code_action,

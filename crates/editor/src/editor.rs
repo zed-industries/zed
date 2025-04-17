@@ -1787,6 +1787,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.mouse_context_menu = Some(MouseContextMenu::new(
+            self,
             crate::mouse_context_menu::MenuPosition::PinnedToScreen(position),
             context_menu,
             None,
