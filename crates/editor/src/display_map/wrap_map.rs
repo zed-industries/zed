@@ -161,6 +161,10 @@ impl WrapMap {
         true
     }
 
+    pub fn wrap_width(&self) -> Option<Pixels> {
+        self.wrap_width
+    }
+
     fn rewrap(&mut self, cx: &mut Context<Self>) {
         self.background_task.take();
         self.interpolated_edits.clear();

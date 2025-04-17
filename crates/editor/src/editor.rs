@@ -59,11 +59,11 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
-use editor_settings::GoToDefinitionFallback;
 pub use editor_settings::{
     CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, SearchSettings,
     ShowScrollbar,
 };
+use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 pub use editor_settings_controls::*;
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 pub use element::{
@@ -688,7 +688,6 @@ pub struct Editor {
     /// Map of how text in the buffer should be displayed.
     /// Handles soft wraps, folds, fake inlay text insertions, etc.
     pub display_map: Entity<DisplayMap>,
-    pub display_snapshot: Option<DisplaySnapshot>,
     pub selections: SelectionsCollection,
     pub scroll_manager: ScrollManager,
     /// When inline assist editors are linked, they all render cursors because
@@ -841,6 +840,8 @@ pub struct Editor {
     serialize_selections: Task<()>,
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
+    minimap_settings: MinimapSettings,
+    minimap_entity: Option<Entity<Self>>,
     hide_mouse_mode: HideMouseMode,
 }
 
@@ -1269,13 +1270,16 @@ impl Editor {
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut clone = Self::new(
-            self.mode,
-            self.buffer.clone(),
-            self.project.clone(),
-            window,
-            cx,
-        );
+        self.clone_with_mode(self.mode, window, cx)
+    }
+
+    fn clone_with_mode(
+        &self,
+        mode: EditorMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut clone = Self::new(mode, self.buffer.clone(), self.project.clone(), window, cx);
         self.display_map.update(cx, |display_map, cx| {
             let snapshot = display_map.snapshot(cx);
             clone.display_map.update(cx, |display_map, cx| {
@@ -1466,7 +1470,6 @@ impl Editor {
             last_focused_descendant: None,
             buffer: buffer.clone(),
             display_map: display_map.clone(),
-            display_snapshot: None,
             selections,
             scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
@@ -1624,6 +1627,8 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
             mouse_cursor_hidden: false,
+            minimap_settings: EditorSettings::get_global(cx).minimap,
+            minimap_entity: None,
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
                 .unwrap_or_default(),
@@ -1680,6 +1685,8 @@ impl Editor {
                         .insert(buffer.read(cx).remote_id(), handle);
                 }
             }
+
+            this.minimap_entity = this.initialize_minimap(window, cx);
         }
 
         this.report_editor_event("Editor Opened", None, cx);
@@ -1978,10 +1985,7 @@ impl Editor {
             show_runnables: self.show_runnables,
             show_breakpoints: self.show_breakpoints,
             git_blame_gutter_max_author_length,
-            display_snapshot: self
-                .display_snapshot
-                .clone()
-                .unwrap_or_else(|| self.display_map.update(cx, |map, cx| map.snapshot(cx))),
+            display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
@@ -1991,11 +1995,6 @@ impl Editor {
                 .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight),
             gutter_hovered: self.gutter_hovered,
         }
-    }
-
-    pub fn with_cached_snapshot(mut self, snapshot: DisplaySnapshot) -> Self {
-        self.display_snapshot = Some(snapshot);
-        self
     }
 
     pub fn language_at<T: ToOffset>(&self, point: T, cx: &App) -> Option<Arc<Language>> {
@@ -15873,6 +15872,35 @@ impl Editor {
             .text()
     }
 
+    fn initialize_minimap(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>> {
+        self.minimap_settings
+            .requires_entity()
+            .then(|| self.create_minimap(window, cx))
+    }
+
+    fn create_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Self> {
+        let mut minimap = self.clone_with_mode(EditorMode::Minimap, window, cx);
+        minimap.update_minimap_configuration(&self.minimap_settings);
+        cx.new(|_| minimap)
+    }
+
+    fn update_minimap_configuration(&mut self, minimap_settings: &MinimapSettings) {
+        self.set_mode(EditorMode::Minimap);
+        self.set_text_style_refinement(TextStyleRefinement {
+            font_size: Some(px(minimap_settings.font_size).into()),
+            font_weight: Some(gpui::FontWeight(900.)),
+            ..Default::default()
+        });
+    }
+
+    pub fn minimap(&self) -> Option<Entity<Self>> {
+        self.minimap_entity.clone()
+    }
+
     pub fn wrap_guides(&self, cx: &App) -> SmallVec<[(usize, bool); 2]> {
         let mut wrap_guides = smallvec::smallvec![];
 
@@ -15960,6 +15988,10 @@ impl Editor {
     pub(crate) fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut App) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
+    }
+
+    fn wrap_width(&self, cx: &App) -> Option<Pixels> {
+        self.display_map.read_with(cx, |map, cx| map.wrap_width(cx))
     }
 
     pub fn set_soft_wrap(&mut self) {
@@ -17427,6 +17459,27 @@ impl Editor {
 
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, window, cx);
+            }
+
+            let old_minimap_settings = self.minimap_settings;
+
+            {
+                self.minimap_settings = EditorSettings::get_global(cx).minimap;
+            }
+
+            if self.minimap_settings != old_minimap_settings {
+                if self.minimap_entity.is_some() != self.minimap_settings.requires_entity() {
+                    self.minimap_entity = self.initialize_minimap(window, cx);
+                } else if self
+                    .minimap_settings
+                    .minimap_configuration_changed(&old_minimap_settings)
+                {
+                    self.minimap_entity.as_ref().map(|editor_entity| {
+                        editor_entity.update(cx, |minimap_editor, _cx| {
+                            minimap_editor.update_minimap_configuration(&self.minimap_settings)
+                        })
+                    });
+                }
             }
         }
 
