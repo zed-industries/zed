@@ -453,13 +453,12 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) {
         let id = self.next_context_id.post_inc();
-        self.context
-            .push(AssistantContext::Excerpt(ExcerptContext {
-                id,
-                range,
-                line_range,
-                context_buffer,
-            }));
+        self.context.push(AssistantContext::Excerpt(ExcerptContext {
+            id,
+            range,
+            line_range,
+            context_buffer,
+        }));
         cx.notify();
     }
 
@@ -997,8 +996,7 @@ fn refresh_excerpt_text(
                         line_range,
                         context_buffer,
                     };
-                    context_store
-                        .replace_context(AssistantContext::Excerpt(new_excerpt_context));
+                    context_store.replace_context(AssistantContext::Excerpt(new_excerpt_context));
                 })
                 .ok();
         }))
