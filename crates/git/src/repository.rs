@@ -829,7 +829,6 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let repo = repo.lock();
-                    // /Users/mikaylamaki/projects/zed-work/zed/crates/git/src/repository.rs
                 let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
                     branch
                 } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
