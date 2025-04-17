@@ -505,7 +505,7 @@ fn render_markdown_code_block(
         .gap_1()
         .justify_between()
         .border_b_1()
-        .border_color(cx.theme().colors().border_variant)
+        .border_color(cx.theme().colors().border.opacity(0.6))
         .bg(codeblock_header_bg)
         .rounded_t_md()
         .children(label)
@@ -599,7 +599,7 @@ fn render_markdown_code_block(
         .overflow_hidden()
         .rounded_lg()
         .border_1()
-        .border_color(cx.theme().colors().border_variant)
+        .border_color(cx.theme().colors().border.opacity(0.6))
         .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
         .when(
