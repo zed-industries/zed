@@ -811,6 +811,7 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
+    force_code_action_task: bool,
     selection_highlight_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
@@ -1590,6 +1591,7 @@ impl Editor {
             code_action_providers,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
+            force_code_action_task: false,
             selection_highlight_task: Default::default(),
             document_highlights_task: Default::default(),
             linked_editing_range_task: Default::default(),
@@ -5323,11 +5325,14 @@ impl Editor {
         if start_buffer != end_buffer {
             return None;
         }
+        let force_code_action_task = self.force_code_action_task;
 
         self.code_actions_task = Some(cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor()
-                .timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT)
-                .await;
+            if !force_code_action_task {
+                cx.background_executor()
+                    .timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT)
+                    .await;
+            }
 
             let (providers, tasks) = this.update_in(cx, |this, window, cx| {
                 let providers = this.code_action_providers.clone();

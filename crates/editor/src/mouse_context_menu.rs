@@ -160,20 +160,21 @@ pub fn deploy_context_menu(
         let buffer = &editor.snapshot(window, cx).buffer_snapshot;
         let anchor = buffer.anchor_before(point.to_point(&display_map));
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
+            // We don't need to debounce in case of mouse click
+            editor.force_code_action_task = true;
             // Move the cursor to the clicked location so that dispatched actions make sense
             editor.change_selections(None, window, cx, |s| {
                 s.clear_disjoint();
                 s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
             });
+            editor.force_code_action_task = false;
         }
 
-        let mut task = editor.code_actions_task.take();
+        let code_action_task = editor.code_actions_task.take();
         cx.spawn_in(window, async move |editor, cx| {
-            while let Some(prev_task) = task {
-                prev_task.await.log_err();
-                task = editor.update(cx, |this, _| this.code_actions_task.take())?;
+            if let Some(code_action_task) = code_action_task {
+                code_action_task.await.log_err();
             }
-
             let context_menu_task = editor.update_in(cx, |editor, window, cx| {
                 let focus = window.focused(cx);
                 let has_reveal_target = editor.target_file(cx).is_some();
