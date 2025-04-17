@@ -85,7 +85,7 @@ impl Tool for PathSearchTool {
                 "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n",
                 matches.len(),
                 offset + 1,
-                offset as usize + paginated_matches.len(),
+                offset + paginated_matches.len(),
             );
             for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
                 write!(&mut message, "\n{}", mat.display()).unwrap();
@@ -101,7 +101,7 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         if glob.is_empty() { "*" } else { glob },
     ]) {
         Ok(matcher) => matcher,
-        Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))).into(),
+        Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
     };
     let snapshots: Vec<Snapshot> = project
         .read(cx)
