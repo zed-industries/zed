@@ -32,6 +32,7 @@ jobs:
           mkdir -p /home/runner/.config/zed
           mkdir -p ./crates/eval/repos
           mkdir -p ./crates/eval/worktrees
+          mkdir -p ./crates/eval/runs
 
       - name: Set up Anthropic API key
         run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
