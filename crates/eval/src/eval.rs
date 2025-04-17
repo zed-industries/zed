@@ -361,7 +361,8 @@ async fn run_example(
                 model_provider = model.provider_id().to_string(),
                 repository_url = example.base.url.clone(),
                 repository_revision = example.base.revision.clone(),
-                diagnostics_summary = run_output.diagnostics,
+                diagnostics_before = run_output.diagnostics_before,
+                diagnostics_after = run_output.diagnostics_after,
                 commit_id = commit_id
             );
         }
