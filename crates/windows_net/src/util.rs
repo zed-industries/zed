@@ -21,11 +21,12 @@ pub(crate) fn init() {
 }
 
 // https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/
-pub(crate) fn sockaddr_un(path: &Path) -> Result<(SOCKADDR_UN, usize)> {
+pub(crate) fn sockaddr_un<P: AsRef<Path>>(path: P) -> Result<(SOCKADDR_UN, usize)> {
     let mut addr = SOCKADDR_UN::default();
     addr.sun_family = ADDRESS_FAMILY(AF_UNIX);
 
     let bytes = path
+        .as_ref()
         .to_str()
         .map(|s| s.as_bytes())
         .ok_or(ErrorKind::InvalidInput)?;

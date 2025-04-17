@@ -21,7 +21,7 @@ impl WindowsStream {
         Self(socket)
     }
 
-    pub(crate) fn connect(path: &Path) -> Result<Self> {
+    pub(crate) fn connect<P: AsRef<Path>>(path: P) -> Result<Self> {
         init();
         unsafe {
             let inner = WindowsSocket::new()?;
