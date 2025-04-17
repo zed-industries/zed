@@ -1212,7 +1212,7 @@ async fn test_copy_file_into_remote_project(
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
-            "/code",
+            path!("/code"),
             json!({
                 "project1": {
                     ".git": {},
@@ -1228,7 +1228,7 @@ async fn test_copy_file_into_remote_project(
     let (project, _) = init_test(&remote_fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -1240,7 +1240,7 @@ async fn test_copy_file_into_remote_project(
         .as_fake();
     local_fs
         .insert_tree(
-            "/local-code",
+            path!("/local-code"),
             json!({
                 "dir1": {
                     "file1": "file 1 content",
@@ -1263,8 +1263,8 @@ async fn test_copy_file_into_remote_project(
             worktree.copy_external_entries(
                 Path::new("src").into(),
                 vec![
-                    Path::new("/local-code/dir1/file1").into(),
-                    Path::new("/local-code/dir1/dir2").into(),
+                    Path::new(path!("/local-code/dir1/file1")).into(),
+                    Path::new(path!("/local-code/dir1/dir2")).into(),
                 ],
                 local_fs.clone(),
                 cx,
@@ -1276,38 +1276,38 @@ async fn test_copy_file_into_remote_project(
     assert_eq!(
         remote_fs.paths(true),
         vec![
-            PathBuf::from("/"),
-            PathBuf::from("/code"),
-            PathBuf::from("/code/project1"),
-            PathBuf::from("/code/project1/.git"),
-            PathBuf::from("/code/project1/README.md"),
-            PathBuf::from("/code/project1/src"),
-            PathBuf::from("/code/project1/src/dir2"),
-            PathBuf::from("/code/project1/src/file1"),
-            PathBuf::from("/code/project1/src/main.rs"),
-            PathBuf::from("/code/project1/src/dir2/dir3"),
-            PathBuf::from("/code/project1/src/dir2/dir4"),
-            PathBuf::from("/code/project1/src/dir2/file2"),
-            PathBuf::from("/code/project1/src/dir2/dir3/file3"),
+            PathBuf::from(path!("/")),
+            PathBuf::from(path!("/code")),
+            PathBuf::from(path!("/code/project1")),
+            PathBuf::from(path!("/code/project1/.git")),
+            PathBuf::from(path!("/code/project1/README.md")),
+            PathBuf::from(path!("/code/project1/src")),
+            PathBuf::from(path!("/code/project1/src/dir2")),
+            PathBuf::from(path!("/code/project1/src/file1")),
+            PathBuf::from(path!("/code/project1/src/main.rs")),
+            PathBuf::from(path!("/code/project1/src/dir2/dir3")),
+            PathBuf::from(path!("/code/project1/src/dir2/dir4")),
+            PathBuf::from(path!("/code/project1/src/dir2/file2")),
+            PathBuf::from(path!("/code/project1/src/dir2/dir3/file3")),
         ]
     );
     assert_eq!(
         remote_fs
-            .load("/code/project1/src/file1".as_ref())
+            .load(path!("/code/project1/src/file1").as_ref())
             .await
             .unwrap(),
         "file 1 content"
     );
     assert_eq!(
         remote_fs
-            .load("/code/project1/src/dir2/file2".as_ref())
+            .load(path!("/code/project1/src/dir2/file2").as_ref())
             .await
             .unwrap(),
         "file 2 content"
     );
     assert_eq!(
         remote_fs
-            .load("/code/project1/src/dir2/dir3/file3".as_ref())
+            .load(path!("/code/project1/src/dir2/dir3/file3").as_ref())
             .await
             .unwrap(),
         ""
