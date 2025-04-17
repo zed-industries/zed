@@ -1501,7 +1501,7 @@ impl ActiveThread {
             });
 
         // For all items that should be aligned with the Assistant's response.
-        const RESPONSE_PADDING_X: Pixels = px(16.);
+        const RESPONSE_PADDING_X: Pixels = px(18.);
 
         let feedback_container = h_flex()
             .py_2()
@@ -2050,6 +2050,7 @@ impl ActiveThread {
             .message(message_id)
             .map(|m| m.role)
             .unwrap_or(Role::User);
+
         let is_assistant = message_role == Role::Assistant;
 
         v_flex()
@@ -2703,7 +2704,6 @@ impl ActiveThread {
                 )
             } else {
                 v_flex()
-                    .my_2()
                     .mb_2()
                     .rounded_lg()
                     .border_1()
