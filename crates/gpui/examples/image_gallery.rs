@@ -1,5 +1,5 @@
 use gpui::{
-    App, AppContext, Application, Bounds, ClickEvent, Context, Entity, ImageCache, KeyBinding,
+    App, AppContext, Application, Bounds, ClickEvent, Context, Entity, KeyBinding, LruImageCache,
     Menu, MenuItem, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions,
     div, image_cache, img, prelude::*, px, rgb, size,
 };
@@ -10,7 +10,7 @@ struct ImageGallery {
     image_key: String,
     items_count: usize,
     total_count: usize,
-    image_cache: Entity<ImageCache>,
+    image_cache: Entity<LruImageCache>,
 }
 
 impl ImageGallery {
@@ -126,7 +126,7 @@ fn main() {
                 image_key: "".into(),
                 items_count: 99,
                 total_count: 0,
-                image_cache: ImageCache::new(ctx),
+                image_cache: LruImageCache::new(ctx),
             })
         })
         .unwrap();

@@ -1,5 +1,5 @@
 use crate::{
-    AnyElement, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
+    AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
     GlobalElementId, ImageAssetLoader, ImageCacheError, IntoElement, LayoutId, ParentElement,
     Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window, hash,
 };
@@ -11,17 +11,65 @@ use smallvec::SmallVec;
 use std::{fmt, sync::Arc};
 
 /// An image cache element, all its child img elements will use the cache specified by this element.
-pub fn image_cache(image_cache: &Entity<ImageCache>) -> ImageCacheElement {
+pub fn image_cache<I: ImageCache>(image_cache: &Entity<I>) -> ImageCacheElement {
     ImageCacheElement {
-        image_cache: image_cache.clone(),
+        image_cache: image_cache.clone().into(),
         style: StyleRefinement::default(),
         children: SmallVec::default(),
     }
 }
 
+/// A dynamically typed image cache, which can be used to store any image cache
+#[derive(Clone)]
+pub struct AnyImageCache {
+    image_cache: AnyEntity,
+    load_fn: fn(
+        image_cache: &AnyEntity,
+        resource: &Resource,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>>,
+}
+
+impl<I: ImageCache> From<Entity<I>> for AnyImageCache {
+    fn from(image_cache: Entity<I>) -> Self {
+        Self {
+            image_cache: image_cache.into_any(),
+            load_fn: any_image_cache::load::<I>,
+        }
+    }
+}
+
+impl AnyImageCache {
+    /// Load an image given a resource
+    /// returns the result of loading the image if it has finished loading, or None if it is still loading
+    pub fn load(
+        &self,
+        resource: &Resource,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+        (self.load_fn)(&self.image_cache, resource, window, cx)
+    }
+}
+
+mod any_image_cache {
+    use super::*;
+
+    pub(crate) fn load<I: 'static + ImageCache>(
+        image_cache: &AnyEntity,
+        resource: &Resource,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+        let image_cache = image_cache.clone().downcast::<I>().unwrap();
+        return image_cache.update(cx, |image_cache, cx| image_cache.load(resource, window, cx));
+    }
+}
+
 /// An image cache element.
 pub struct ImageCacheElement {
-    image_cache: Entity<ImageCache>,
+    image_cache: AnyImageCache,
     style: StyleRefinement,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -123,13 +171,26 @@ impl CacheItem {
     }
 }
 
-/// An cache for loading images from external sources.
-pub struct ImageCache {
+/// An object that can handle the caching and unloading of images.
+/// Implementations of this trait should ensure that images are removed from all windows when they are no longer needed.
+pub trait ImageCache: 'static {
+    /// Load an image given a resource
+    /// returns the result of loading the image if it has finished loading, or None if it is still loading
+    fn load(
+        &mut self,
+        resource: &Resource,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>>;
+}
+
+/// An implementation of ImageCache, that uses an LRU caching strategy to unload images when the cache is full
+pub struct LruImageCache {
     images: LruCache<u64, CacheItem>,
     max_items: Option<usize>,
 }
 
-impl fmt::Debug for ImageCache {
+impl fmt::Debug for LruImageCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ImageCache")
             .field("num_images", &self.images.len())
@@ -137,9 +198,9 @@ impl fmt::Debug for ImageCache {
     }
 }
 
-impl ImageCache {
+impl LruImageCache {
     fn internal_new(max_items: Option<usize>, cx: &mut App) -> Entity<Self> {
-        let e = cx.new(|_cx| ImageCache {
+        let e = cx.new(|_cx| LruImageCache {
             images: LruCache::unbounded(),
             max_items,
         });
@@ -235,6 +296,17 @@ impl ImageCache {
     /// Returns the number of images in the cache.
     pub fn len(&self) -> usize {
         self.images.len()
+    }
+}
+
+impl ImageCache for LruImageCache {
+    fn load(
+        &mut self,
+        resource: &Resource,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+        self.load(resource, window, cx)
     }
 }
 
