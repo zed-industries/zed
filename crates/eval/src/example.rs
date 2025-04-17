@@ -85,6 +85,7 @@ pub struct RunOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeInput {
     pub repository_diff: String,
+    pub diagnostics: String,
     pub criteria: String,
 }
 
@@ -301,6 +302,7 @@ impl Example {
                 None
             };
 
+
             if std::env::var("ZED_EVAL_SETUP_ONLY").is_ok() {
                 return Err(anyhow!("Setup only mode"));
             }
@@ -470,7 +472,7 @@ impl Example {
     pub async fn judge(
         &self,
         model: Arc<dyn LanguageModel>,
-        repository_diff: String,
+        run_output: &RunOutput,
         judge_repetitions: u32,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
@@ -487,7 +489,8 @@ impl Example {
         let prompt = handlebars.render(
             judge_prompt_name,
             &JudgeInput {
-                repository_diff,
+                repository_diff: run_output.repository_diff.clone(),
+                diagnostics: run_output.diagnostics.clone(),
                 criteria: self.criteria.clone(),
             },
         )?;
@@ -515,7 +518,7 @@ impl Example {
         parse_judge_output(&response)
     }
 
-    pub async fn repository_diff(&self) -> Result<String> {
+    async fn repository_diff(&self) -> Result<String> {
         let worktree_path = self.worktree_path();
         run_git(&worktree_path, &["add", "-N"]).await?;
         run_git(&worktree_path, &["diff"]).await

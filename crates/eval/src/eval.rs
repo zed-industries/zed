@@ -331,12 +331,11 @@ async fn run_example(
     let run_output = cx
         .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
         .await?;
-    let diff = example.repository_diff().await?;
 
     // Run judge for each repetition
     let mut results = Vec::new();
     for round in 0..judge_repetitions {
-        let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
+        let judge_result = example.judge(model.clone(), &run_output, round, cx).await;
 
         if let Ok(judge_output) = &judge_result {
             let cohort_id = example
