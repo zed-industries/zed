@@ -1,6 +1,3 @@
-// todo(windows): remove
-#![cfg_attr(windows, allow(dead_code))]
-
 mod app_menu;
 mod keyboard;
 mod keystroke;
@@ -808,6 +805,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
             .update(|window, cx| self.handler.marked_text_range(window, cx))
@@ -815,7 +813,10 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -858,6 +859,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn unmark_text(&mut self) {
         self.cx
             .update(|window, cx| self.handler.unmark_text(window, cx))
@@ -1075,7 +1077,10 @@ pub(crate) struct WindowParams {
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     pub focus: bool,
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -1084,6 +1089,7 @@ pub(crate) struct WindowParams {
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub display_id: Option<DisplayId>,
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub window_min_size: Option<Size<Pixels>>,
 }
 
