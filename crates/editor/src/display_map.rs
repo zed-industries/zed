@@ -931,7 +931,7 @@ impl DisplaySnapshot {
                 inline_completion: Some(editor_style.inline_completion_styles),
             },
         )
-        .flat_map(move |chunk| {
+        .flat_map(|chunk| {
             let mut highlight_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(&editor_style.syntax));
