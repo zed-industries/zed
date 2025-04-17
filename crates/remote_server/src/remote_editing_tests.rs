@@ -1382,7 +1382,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
             headless_project.git_store.update(cx, |git_store, cx| {
                 git_store
                     .repositories()
-                    .values()
+                    .map(|(_, repository)| repository)
                     .next()
                     .unwrap()
                     .read(cx)
@@ -1422,7 +1422,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
             headless_project.git_store.update(cx, |git_store, cx| {
                 git_store
                     .repositories()
-                    .values()
+                    .map(|(_, repository)| repository)
                     .next()
                     .unwrap()
                     .read(cx)

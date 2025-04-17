@@ -4819,7 +4819,10 @@ impl Project {
             join_all(scans_complete).await;
             let barriers = this
                 .update(cx, |this, cx| {
-                    let repos = this.repositories(cx).values().cloned().collect::<Vec<_>>();
+                    let repos: Vec<Entity<Repository>> = this
+                        .repositories(cx)
+                        .map(|(_, repository)| repository)
+                        .collect::<Vec<_>>();
                     repos
                         .into_iter()
                         .map(|repo| repo.update(cx, |repo, _| repo.barrier()))
@@ -4834,7 +4837,10 @@ impl Project {
         self.git_store.read(cx).active_repository()
     }
 
-    pub fn repositories<'a>(&self, cx: &'a App) -> &'a HashMap<RepositoryId, Entity<Repository>> {
+    pub fn repositories<'a>(
+        &self,
+        cx: &'a App,
+    ) -> impl Iterator<Item = (RepositoryId, Entity<Repository>)> {
         self.git_store.read(cx).repositories()
     }
 

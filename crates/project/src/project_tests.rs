@@ -7423,7 +7423,12 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     let repository = project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+        project
+            .repositories(cx)
+            .map(|(_, repository)| repository)
+            .next()
+            .unwrap()
+            .clone()
     });
 
     // Check that the right git state is observed on startup
@@ -7548,7 +7553,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     let repository = project.read_with(cx, |project, cx| {
         project
             .repositories(cx)
-            .values()
+            .map(|(_, repository)| repository)
             .find(|repo| repo.read(cx).work_directory_abs_path.ends_with("project"))
             .unwrap()
             .clone()
@@ -7621,7 +7626,12 @@ async fn test_repository_subfolder_git_status(
     cx.run_until_parked();
 
     let repository = project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+        project
+            .repositories(cx)
+            .map(|(_, repository)| repository)
+            .next()
+            .unwrap()
+            .clone()
     });
 
     // Ensure that the git status is loaded correctly
@@ -7763,7 +7773,12 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     let repository = project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+        project
+            .repositories(cx)
+            .map(|(_, repository)| repository)
+            .next()
+            .unwrap()
+            .clone()
     });
 
     // One file is unmodified, the other is ignored.
@@ -7833,7 +7848,12 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     let repository = project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+        project
+            .repositories(cx)
+            .map(|(_, repository)| repository)
+            .next()
+            .unwrap()
+            .clone()
     });
 
     repository.read_with(cx, |repository, _| {
@@ -7933,7 +7953,12 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     let repository = project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+        project
+            .repositories(cx)
+            .map(|(_, repository)| repository)
+            .next()
+            .unwrap()
+            .clone()
     });
 
     // Check that the right git state is observed on startup
@@ -8100,7 +8125,7 @@ async fn test_repos_in_invisible_worktrees(
     let repos = project.read_with(cx, |project, cx| {
         project
             .repositories(cx)
-            .values()
+            .map(|(_, repository)| repository)
             .map(|repo| repo.read(cx).work_directory_abs_path.clone())
             .collect::<Vec<_>>()
     });
@@ -8121,7 +8146,7 @@ async fn test_repos_in_invisible_worktrees(
     let repos = project.read_with(cx, |project, cx| {
         project
             .repositories(cx)
-            .values()
+            .map(|(_, repository)| repository)
             .map(|repo| repo.read(cx).work_directory_abs_path.clone())
             .collect::<Vec<_>>()
     });
@@ -8174,7 +8199,12 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     let repository = project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+        project
+            .repositories(cx)
+            .map(|(_, repository)| repository)
+            .next()
+            .unwrap()
+            .clone()
     });
 
     tree.read_with(cx, |tree, _| {
@@ -8322,7 +8352,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     let mut repositories = project.update(cx, |project, cx| {
         project
             .repositories(cx)
-            .values()
+            .map(|(_, repository)| repository)
             .map(|repo| repo.read(cx).work_directory_abs_path.clone())
             .collect::<Vec<_>>()
     });
@@ -8458,7 +8488,7 @@ async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
     let repos = project.read_with(cx, |project, cx| {
         project
             .repositories(cx)
-            .values()
+            .map(|(_, repository)| repository)
             .map(|repo| repo.read(cx).work_directory_abs_path.clone())
             .collect::<Vec<_>>()
     });

@@ -1740,6 +1740,7 @@ impl Thread {
                 .update(cx, |git_store, cx| {
                     git_store
                         .repositories()
+                        .map(|(_, repository)| repository)
                         .values()
                         .find(|repo| {
                             repo.read(cx)

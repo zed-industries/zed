@@ -3026,7 +3026,7 @@ async fn test_git_status_sync(
         let file = file.as_ref();
         let repos = project
             .repositories(cx)
-            .values()
+            .map(|(_, repository)| repository)
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(repos.len(), 1);
@@ -6881,7 +6881,7 @@ async fn test_remote_git_branches(
         project_a.update(cx, |project, cx| {
             project
                 .repositories(cx)
-                .values()
+                .map(|(_, repository)| repository)
                 .next()
                 .unwrap()
                 .read(cx)
@@ -6919,7 +6919,7 @@ async fn test_remote_git_branches(
         project_a.update(cx, |project, cx| {
             project
                 .repositories(cx)
-                .values()
+                .map(|(_, repository)| repository)
                 .next()
                 .unwrap()
                 .read(cx)
