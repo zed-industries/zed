@@ -103,7 +103,7 @@ use std::{
 };
 
 use task_store::TaskStore;
-use terminals::Terminals;
+use terminals::{Terminals, wrap_for_ssh};
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
@@ -1475,16 +1475,34 @@ impl Project {
             .get(&adapter.name())
             .and_then(|s| s.binary.as_ref().map(PathBuf::from));
 
-        let result = cx.spawn(async move |this, cx| {
-            let delegate = this.update(cx, |project, cx| {
-                project
-                    .dap_store
-                    .update(cx, |dap_store, cx| dap_store.delegate(&worktree, cx))
-            })?;
+        let ssh_client = self.ssh_client().clone();
 
-            let binary = adapter
-                .get_binary(&delegate, &config, user_installed_path, cx)
-                .await?;
+        let result = cx.spawn(async move |this, cx| {
+            let binary = if let Some(ssh_client) = ssh_client {
+                let response = ssh_client
+                    .update(cx, |ssh, cx| {
+                        ssh.proto_client()
+                            .request(proto::DebuggerGetBinary { task: config })
+                    })?
+                    .await?;
+
+                let (program, args) = wrap_for_ssh(
+                    &command,
+                    Some((&binary.command, &binary.arguments)),
+                    binary.cwd.as_ref(),
+                    env,
+                    None,
+                )
+            } else {
+                let delegate = this.update(cx, |project, cx| {
+                    project
+                        .dap_store
+                        .update(cx, |dap_store, cx| dap_store.delegate(&worktree, cx))
+                })?;
+                adapter
+                    .get_binary(&delegate, &config, user_installed_path, cx)
+                    .await?
+            };
 
             let ret = this
                 .update(cx, |project, cx| {

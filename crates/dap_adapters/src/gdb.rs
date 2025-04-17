@@ -84,7 +84,7 @@ impl DebugAdapter for GdbDebugAdapter {
         Ok(DebugAdapterBinary {
             adapter_name: Self::ADAPTER_NAME.into(),
             command: gdb_path,
-            arguments: Some(vec!["-i=dap".into()]),
+            arguments: vec!["-i=dap".into()],
             envs: None,
             cwd: None,
             connection: None,

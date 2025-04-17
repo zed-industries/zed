@@ -113,11 +113,14 @@ impl DebugAdapter for JsDebugAdapter {
                 .await?
                 .to_string_lossy()
                 .into_owned(),
-            arguments: Some(vec![
-                adapter_path.join(Self::ADAPTER_PATH).into(),
-                port.to_string().into(),
-                host.to_string().into(),
-            ]),
+            arguments: vec![
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                port.to_string(),
+                host.to_string(),
+            ],
             cwd: None,
             envs: None,
             connection: Some(adapters::TcpArguments {

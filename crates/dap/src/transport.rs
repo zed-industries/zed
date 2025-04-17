@@ -546,9 +546,7 @@ impl TcpTransport {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
+        command.args(&binary.arguments);
 
         if let Some(envs) = &binary.envs {
             command.envs(envs);
@@ -635,9 +633,7 @@ impl StdioTransport {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
+        command.args(&binary.arguments);
 
         if let Some(envs) = &binary.envs {
             command.envs(envs);

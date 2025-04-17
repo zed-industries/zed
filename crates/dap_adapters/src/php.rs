@@ -22,17 +22,15 @@ impl PhpDebugAdapter {
             dap::DebugRequest::Attach(_) => {
                 anyhow::bail!("php adapter does not support attaching")
             }
-            dap::DebugRequest::Launch(launch_config) => {
-                Ok(dap::StartDebuggingRequestArguments {
-                    configuration: json!({
-                        "program": launch_config.program,
-                        "cwd": launch_config.cwd,
-                        "args": launch_config.args,
-                        "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
-                    }),
-                    request: config.request.to_dap(),
-                })
-            }
+            dap::DebugRequest::Launch(launch_config) => Ok(dap::StartDebuggingRequestArguments {
+                configuration: json!({
+                    "program": launch_config.program,
+                    "cwd": launch_config.cwd,
+                    "args": launch_config.args,
+                    "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
+                }),
+                request: config.request.to_dap(),
+            }),
         }
     }
 }
@@ -101,10 +99,13 @@ impl DebugAdapter for PhpDebugAdapter {
                 .await?
                 .to_string_lossy()
                 .into_owned(),
-            arguments: Some(vec![
-                adapter_path.join(Self::ADAPTER_PATH).into(),
-                format!("--server={}", port).into(),
-            ]),
+            arguments: vec![
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--server={}", port),
+            ],
             connection: Some(TcpArguments {
                 port,
                 host,

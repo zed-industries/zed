@@ -143,12 +143,12 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         Ok(DebugAdapterBinary {
             command,
             cwd: Some(adapter_dir),
-            arguments: Some(vec![
+            arguments: vec![
                 "--settings".into(),
                 json!({"sourceLanguages": ["cpp", "rust"]})
                     .to_string()
                     .into(),
-            ]),
+            ],
             request_args: self.request_args(config),
             adapter_name: "test".into(),
             envs: None,

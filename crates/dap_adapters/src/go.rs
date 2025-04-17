@@ -94,11 +94,11 @@ impl DebugAdapter for GoDebugAdapter {
         Ok(DebugAdapterBinary {
             adapter_name: self.name(),
             command: delve_path,
-            arguments: Some(vec![
+            arguments: vec![
                 "dap".into(),
                 "--listen".into(),
                 format!("{}:{}", host, port).into(),
-            ]),
+            ],
             cwd: None,
             envs: None,
             connection: Some(adapters::TcpArguments {

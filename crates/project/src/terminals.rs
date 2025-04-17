@@ -551,7 +551,7 @@ impl Project {
     }
 }
 
-fn wrap_for_ssh(
+pub fn wrap_for_ssh(
     ssh_command: &SshCommand,
     command: Option<(&String, &Vec<String>)>,
     path: Option<&Path>,

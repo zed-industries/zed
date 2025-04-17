@@ -15,7 +15,7 @@ use smol::{self, fs::File, lock::Mutex};
 use std::{
     borrow::Borrow,
     collections::{HashMap, HashSet},
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fmt::Debug,
     net::Ipv4Addr,
     ops::Deref,
@@ -97,7 +97,7 @@ pub struct TcpArguments {
 pub struct DebugAdapterBinary {
     pub adapter_name: DebugAdapterName,
     pub command: String,
-    pub arguments: Option<Vec<OsString>>,
+    pub arguments: Vec<String>,
     pub envs: Option<HashMap<String, String>>,
     pub cwd: Option<PathBuf>,
     pub connection: Option<TcpArguments>,
@@ -359,7 +359,7 @@ impl DebugAdapter for FakeAdapter {
         Ok(DebugAdapterBinary {
             adapter_name: Self::ADAPTER_NAME.into(),
             command: "command".into(),
-            arguments: None,
+            arguments: vec![],
             connection: None,
             envs: None,
             cwd: None,

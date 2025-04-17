@@ -143,11 +143,14 @@ impl DebugAdapter for PythonDebugAdapter {
         Ok(DebugAdapterBinary {
             adapter_name: self.name(),
             command: python_path.ok_or(anyhow!("failed to find binary path for python"))?,
-            arguments: Some(vec![
-                debugpy_dir.join(Self::ADAPTER_PATH).into(),
+            arguments: vec![
+                debugpy_dir
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
                 format!("--port={}", port).into(),
                 format!("--host={}", host).into(),
-            ]),
+            ],
             connection: Some(adapters::TcpArguments {
                 host,
                 port,

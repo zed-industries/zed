@@ -555,8 +555,14 @@ message DapModuleId {
 }
 
 message DebuggerGetBinary {
-    DebugTaskDefinition task = 1;
+    uint64 project_id = 1;
+    DebugTaskDefinition task = 2;
 }
+
 message DebuggerGetBinaryResponse {
-    string path = 1;
+    string adapter_name = 1;
+    string command = 2;
+    repeated string arguments = 3;
+    TCPHost tcp_connection = 6;
+    string configuration = 7;
 }
