@@ -262,10 +262,21 @@ pub trait LanguageModel: Send + Sync {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
-        let events = self.stream_completion(request, cx);
+        self.stream_completion_text_with_usage(request, cx)
+            .map(|result| result.map(|(stream, _usage)| stream))
+            .boxed()
+    }
+
+    fn stream_completion_text_with_usage(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<(LanguageModelTextStream, Option<RequestUsage>)>> {
+        let future = self.stream_completion_with_usage(request, cx);
 
         async move {
-            let mut events = events.await?.fuse();
+            let (events, usage) = future.await?;
+            let mut events = events.fuse();
             let mut message_id = None;
             let mut first_item_text = None;
             let last_token_usage = Arc::new(Mutex::new(TokenUsage::default()));
@@ -305,11 +316,14 @@ pub trait LanguageModel: Send + Sync {
                 }))
                 .boxed();
 
-            Ok(LanguageModelTextStream {
-                message_id,
-                stream,
-                last_token_usage,
-            })
+            Ok((
+                LanguageModelTextStream {
+                    message_id,
+                    stream,
+                    last_token_usage,
+                },
+                usage,
+            ))
         }
         .boxed()
     }
