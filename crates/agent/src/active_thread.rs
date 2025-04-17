@@ -1500,7 +1500,14 @@ impl ActiveThread {
                 window.dispatch_action(Box::new(OpenActiveThreadAsMarkdown), cx)
             });
 
-        let feedback_container = h_flex().py_2().px_4().gap_1().justify_between();
+        // For all items that should be aligned with the Assistant's response.
+        const RESPONSE_PADDING_X: Pixels = px(16.);
+
+        let feedback_container = h_flex()
+            .py_2()
+            .px(RESPONSE_PADDING_X)
+            .gap_1()
+            .justify_between();
         let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
@@ -1701,9 +1708,8 @@ impl ActiveThread {
                         this.pt_4()
                     }
                 })
+                .px_2p5()
                 .pb_4()
-                .pl_2()
-                .pr_2p5()
                 .child(
                     v_flex()
                         .bg(colors.editor_background)
@@ -1810,9 +1816,8 @@ impl ActiveThread {
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
-                .ml_2p5()
-                .pl_2()
-                .pr_4()
+                .px(RESPONSE_PADDING_X)
+                .gap_2()
                 .children(message_content)
                 .when(has_tool_uses, |parent| {
                     parent.children(
@@ -2592,11 +2597,10 @@ impl ActiveThread {
                 ))
         };
 
-        div().map(|element| {
+        v_flex().gap_1().mb_2().map(|element| {
             if !edit_tools {
                 element.child(
                     v_flex()
-                        .my_2()
                         .child(
                             h_flex()
                                 .group("disclosure-header")
@@ -2669,6 +2673,7 @@ impl ActiveThread {
             } else {
                 v_flex()
                     .my_2()
+                    .mb_2()
                     .rounded_lg()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
