@@ -5,7 +5,7 @@ use gpui::{
     TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::cell::RefCell;
@@ -219,21 +219,6 @@ impl Editor {
                             line_height: relative(settings.buffer_line_height.value()),
                             ..Default::default()
                         };
-                        let markdown_style = MarkdownStyle {
-                            base_text_style: text_style.clone(),
-                            syntax: cx.theme().syntax().clone(),
-                            selection_background_color: cx.theme().players().local().selection,
-                            code_block_overflow_x_scroll: true,
-                            link: gpui::TextStyleRefinement {
-                                underline: Some(gpui::UnderlineStyle {
-                                    thickness: px(1.),
-                                    color: Some(cx.theme().colors().editor_foreground),
-                                    wavy: false,
-                                }),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        };
                         let signature_help_popover = SignatureHelpPopover {
                             style: text_style,
                             signature: signature_help
@@ -245,7 +230,6 @@ impl Editor {
                                         cx.new(|cx| {
                                             Markdown::new(
                                                 documentation.into(),
-                                                markdown_style.clone(),
                                                 Some(languages.clone()),
                                                 None,
                                                 cx,
@@ -351,6 +335,31 @@ impl SignatureHelpPopover {
         let Some(signature) = self.signature.get(*self.current_signature.borrow()) else {
             return div().into_any_element();
         };
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
+            ..Default::default()
+        };
+        let markdown_style = MarkdownStyle {
+            base_text_style: text_style.clone(),
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: cx.theme().players().local().selection,
+            code_block_overflow_x_scroll: true,
+            link: gpui::TextStyleRefinement {
+                underline: Some(gpui::UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    wavy: false,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let label = signature
             .label
             .clone()
@@ -372,7 +381,7 @@ impl SignatureHelpPopover {
                 .id("signature_help_description")
                 .px_2()
                 .py_0p5()
-                .child(description)
+                .child(MarkdownElement::new(description, markdown_style))
                 .into_any_element();
         });
         let signature = div()
