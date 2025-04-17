@@ -1717,7 +1717,23 @@ impl GitPanel {
                     this.generate_commit_message_task.take();
                 });
 
-                let mut diff_text = diff.await??;
+                let mut diff_text = match diff.await {
+                    Ok(result) => match result {
+                        Ok(text) => text,
+                        Err(e) => {
+                            this.update(cx, |this, cx| {
+                                this.show_error_toast("generate commit message", e, cx)
+                            })?;
+                            return anyhow::Ok(());
+                        }
+                    },
+                    Err(e) => {
+                        this.update(cx, |this, cx| {
+                            this.show_error_toast("generate commit message", e.into(), cx)
+                        })?;
+                        return anyhow::Ok(());
+                    }
+                };
 
                 const ONE_MB: usize = 1_000_000;
                 if diff_text.len() > ONE_MB {
@@ -1750,26 +1766,41 @@ impl GitPanel {
                 };
 
                 let stream = model.stream_completion_text(request, &cx);
-                let mut messages = stream.await?;
+                match stream.await {
+                    Ok(mut messages) => {
+                        if !text_empty {
+                            this.update(cx, |this, cx| {
+                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                    let insert_position = buffer.anchor_before(buffer.len());
+                                    buffer.edit([(insert_position..insert_position, "\n")], None, cx)
+                                });
+                            })?;
+                        }
 
-                if !text_empty {
-                    this.update(cx, |this, cx| {
-                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                            let insert_position = buffer.anchor_before(buffer.len());
-                            buffer.edit([(insert_position..insert_position, "\n")], None, cx)
-                        });
-                    })?;
-                }
-
-                while let Some(message) = messages.stream.next().await {
-                    let text = message?;
-
-                    this.update(cx, |this, cx| {
-                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                            let insert_position = buffer.anchor_before(buffer.len());
-                            buffer.edit([(insert_position..insert_position, text)], None, cx);
-                        });
-                    })?;
+                        while let Some(message) = messages.stream.next().await {
+                            match message {
+                                Ok(text) => {
+                                    this.update(cx, |this, cx| {
+                                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                            let insert_position = buffer.anchor_before(buffer.len());
+                                            buffer.edit([(insert_position..insert_position, text)], None, cx);
+                                        });
+                                    })?;
+                                }
+                                Err(e) => {
+                                    this.update(cx, |this, cx| {
+                                        this.show_error_toast("generate commit message", e, cx)
+                                    })?;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        this.update(cx, |this, cx| {
+                            this.show_error_toast("generate commit message", e, cx)
+                        })?;
+                    }
                 }
 
                 anyhow::Ok(())
