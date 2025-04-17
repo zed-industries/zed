@@ -1180,8 +1180,8 @@ impl AssistantPanel {
                         parent
                             .child(
                                 h_flex()
-                                    .mr_0p5()
-                                    .size_2()
+                                    .mr_1()
+                                    .size_2p5()
                                     .justify_center()
                                     .rounded_full()
                                     .bg(cx.theme().colors().text.opacity(0.1))

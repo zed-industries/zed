@@ -501,11 +501,13 @@ fn render_markdown_code_block(
 
     let codeblock_header = h_flex()
         .group("codeblock_header")
-        .p_1()
+        .py_1()
+        .pl_1p5()
+        .pr_1()
         .gap_1()
         .justify_between()
         .border_b_1()
-        .border_color(cx.theme().colors().border_variant)
+        .border_color(cx.theme().colors().border.opacity(0.6))
         .bg(codeblock_header_bg)
         .rounded_t_md()
         .children(label)
@@ -599,7 +601,7 @@ fn render_markdown_code_block(
         .overflow_hidden()
         .rounded_lg()
         .border_1()
-        .border_color(cx.theme().colors().border_variant)
+        .border_color(cx.theme().colors().border.opacity(0.6))
         .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
         .when(
@@ -1504,7 +1506,14 @@ impl ActiveThread {
                 window.dispatch_action(Box::new(OpenActiveThreadAsMarkdown), cx)
             });
 
-        let feedback_container = h_flex().py_2().px_4().gap_1().justify_between();
+        // For all items that should be aligned with the Assistant's response.
+        const RESPONSE_PADDING_X: Pixels = px(18.);
+
+        let feedback_container = h_flex()
+            .py_2()
+            .px(RESPONSE_PADDING_X)
+            .gap_1()
+            .justify_between();
         let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
@@ -1705,9 +1714,9 @@ impl ActiveThread {
                         this.pt_4()
                     }
                 })
-                .pb_4()
                 .pl_2()
                 .pr_2p5()
+                .pb_4()
                 .child(
                     v_flex()
                         .bg(colors.editor_background)
@@ -1814,9 +1823,8 @@ impl ActiveThread {
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
-                .ml_2p5()
-                .pl_2()
-                .pr_4()
+                .px(RESPONSE_PADDING_X)
+                .gap_2()
                 .children(message_content)
                 .when(has_tool_uses, |parent| {
                     parent.children(
@@ -1840,9 +1848,10 @@ impl ActiveThread {
                 message_id > *editing_message_id
             });
 
+        let panel_background = cx.theme().colors().panel_background;
+
         v_flex()
             .w_full()
-            .when(after_editing_message, |parent| parent.opacity(0.2))
             .when_some(checkpoint, |parent, checkpoint| {
                 let mut is_pending = false;
                 let mut error = None;
@@ -2004,6 +2013,18 @@ impl ActiveThread {
                     },
                 )
             })
+            .when(after_editing_message, |parent| {
+                // Backdrop to dim out the whole thread below the editing user message
+                parent.relative().child(
+                    div()
+                        .occlude()
+                        .absolute()
+                        .inset_0()
+                        .size_full()
+                        .bg(panel_background)
+                        .opacity(0.8),
+                )
+            })
             .into_any()
     }
 
@@ -2030,6 +2051,15 @@ impl ActiveThread {
             None
         };
 
+        let message_role = self
+            .thread
+            .read(cx)
+            .message(message_id)
+            .map(|m| m.role)
+            .unwrap_or(Role::User);
+
+        let is_assistant = message_role == Role::Assistant;
+
         v_flex()
             .text_ui(cx)
             .gap_2()
@@ -2050,80 +2080,100 @@ impl ActiveThread {
                                 cx,
                             )
                             .into_any_element(),
-                        RenderedMessageSegment::Text(markdown) => div()
-                            .child(
-                                MarkdownElement::new(
-                                    markdown.clone(),
-                                    default_markdown_style(window, cx),
-                                )
-                                .code_block_renderer(markdown::CodeBlockRenderer::Custom {
-                                    render: Arc::new({
-                                        let workspace = workspace.clone();
-                                        let active_thread = cx.entity();
-                                        move |kind, parsed_markdown, range, metadata, window, cx| {
-                                            render_markdown_code_block(
-                                                message_id,
-                                                range.start,
-                                                kind,
-                                                parsed_markdown,
-                                                metadata,
-                                                active_thread.clone(),
-                                                workspace.clone(),
-                                                window,
-                                                cx,
-                                            )
-                                        }
-                                    }),
-                                    transform: Some(Arc::new({
-                                        let active_thread = cx.entity();
-                                        move |el, range, metadata, _, cx| {
-                                            let is_expanded = active_thread
-                                                .read(cx)
-                                                .expanded_code_blocks
-                                                .get(&(message_id, range.start))
-                                                .copied()
-                                                .unwrap_or(false);
+                        RenderedMessageSegment::Text(markdown) => {
+                            let markdown_element = MarkdownElement::new(
+                                markdown.clone(),
+                                default_markdown_style(window, cx),
+                            );
 
-                                            if is_expanded
-                                                || metadata.line_count
-                                                    <= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK
-                                            {
-                                                return el;
+                            let markdown_element = if is_assistant {
+                                markdown_element.code_block_renderer(
+                                    markdown::CodeBlockRenderer::Custom {
+                                        render: Arc::new({
+                                            let workspace = workspace.clone();
+                                            let active_thread = cx.entity();
+                                            move |kind,
+                                                  parsed_markdown,
+                                                  range,
+                                                  metadata,
+                                                  window,
+                                                  cx| {
+                                                render_markdown_code_block(
+                                                    message_id,
+                                                    range.start,
+                                                    kind,
+                                                    parsed_markdown,
+                                                    metadata,
+                                                    active_thread.clone(),
+                                                    workspace.clone(),
+                                                    window,
+                                                    cx,
+                                                )
                                             }
-                                            el.child(
-                                                div()
-                                                    .absolute()
-                                                    .bottom_0()
-                                                    .left_0()
-                                                    .w_full()
-                                                    .h_1_4()
-                                                    .rounded_b_lg()
-                                                    .bg(gpui::linear_gradient(
-                                                        0.,
-                                                        gpui::linear_color_stop(
-                                                            cx.theme().colors().editor_background,
+                                        }),
+                                        transform: Some(Arc::new({
+                                            let active_thread = cx.entity();
+                                            move |el, range, metadata, _, cx| {
+                                                let is_expanded = active_thread
+                                                    .read(cx)
+                                                    .expanded_code_blocks
+                                                    .get(&(message_id, range.start))
+                                                    .copied()
+                                                    .unwrap_or(false);
+
+                                                if is_expanded
+                                                    || metadata.line_count
+                                                        <= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK
+                                                {
+                                                    return el;
+                                                }
+                                                el.child(
+                                                    div()
+                                                        .absolute()
+                                                        .bottom_0()
+                                                        .left_0()
+                                                        .w_full()
+                                                        .h_1_4()
+                                                        .rounded_b_lg()
+                                                        .bg(gpui::linear_gradient(
                                                             0.,
-                                                        ),
-                                                        gpui::linear_color_stop(
-                                                            cx.theme()
-                                                                .colors()
-                                                                .editor_background
-                                                                .opacity(0.),
-                                                            1.,
-                                                        ),
-                                                    )),
-                                            )
-                                        }
-                                    })),
-                                })
-                                .on_url_click({
+                                                            gpui::linear_color_stop(
+                                                                cx.theme()
+                                                                    .colors()
+                                                                    .editor_background,
+                                                                0.,
+                                                            ),
+                                                            gpui::linear_color_stop(
+                                                                cx.theme()
+                                                                    .colors()
+                                                                    .editor_background
+                                                                    .opacity(0.),
+                                                                1.,
+                                                            ),
+                                                        )),
+                                                )
+                                            }
+                                        })),
+                                    },
+                                )
+                            } else {
+                                markdown_element.code_block_renderer(
+                                    markdown::CodeBlockRenderer::Default {
+                                        copy_button: false,
+                                        border: true,
+                                    },
+                                )
+                            };
+
+                            div()
+                                .child(markdown_element.on_url_click({
                                     let workspace = self.workspace.clone();
                                     move |text, window, cx| {
                                         open_markdown_link(text, workspace.clone(), window, cx);
                                     }
-                                }),
-                            )
-                            .into_any_element(),
+                                }))
+                                .into_any_element()
+                        }
                     },
                 ),
             )
@@ -2392,6 +2442,7 @@ impl ActiveThread {
             .get(&tool_use.id)
             .copied()
             .unwrap_or_default();
+
         let is_status_finished = matches!(&tool_use.status, ToolUseStatus::Finished(_));
 
         let fs = self
@@ -2452,6 +2503,7 @@ impl ActiveThread {
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    border: false,
                                 })
                                 .on_url_click({
                                     let workspace = self.workspace.clone();
@@ -2481,6 +2533,7 @@ impl ActiveThread {
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    border: false,
                                 })
                                 .on_url_click({
                                     let workspace = self.workspace.clone();
@@ -2583,11 +2636,10 @@ impl ActiveThread {
                 ))
         };
 
-        div().map(|element| {
+        v_flex().gap_1().mb_3().map(|element| {
             if !edit_tools {
                 element.child(
                     v_flex()
-                        .my_2()
                         .child(
                             h_flex()
                                 .group("disclosure-header")
@@ -2609,7 +2661,7 @@ impl ActiveThread {
                                                 .color(Color::Muted),
                                         )
                                         .child(
-                                            h_flex().pr_8().text_ui_sm(cx).children(
+                                            h_flex().pr_8().text_size(rems(0.8125)).children(
                                                 rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_url_click({let workspace = self.workspace.clone(); move |text, window, cx| {
                                                     open_markdown_link(text, workspace.clone(), window, cx);
                                                 }}))
@@ -2659,7 +2711,7 @@ impl ActiveThread {
                 )
             } else {
                 v_flex()
-                    .my_2()
+                    .mb_2()
                     .rounded_lg()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
