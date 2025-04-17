@@ -134,7 +134,6 @@ pub struct ScrollManager {
     dragging_scrollbar: Option<Axis>,
     visible_line_count: Option<f32>,
     forbid_vertical_scroll: bool,
-
     dragging_minimap: bool,
     show_minimap_thumb: bool,
 }

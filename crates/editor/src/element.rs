@@ -1477,16 +1477,17 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<MinimapLayout> {
+        let Some(minimap_editor) = self.editor.read_with(cx, |editor, _| editor.minimap()) else {
+            return None;
+        };
         let minimap_settings = self
             .editor
             .read_with(cx, |editor, _| editor.minimap_settings);
+
         if !Self::should_show_minimap(snapshot, &minimap_settings, scrollbar_layout) {
             return None;
         }
 
-        let Some(minimap_editor) = self.editor.read_with(cx, |editor, _| editor.minimap()) else {
-            return None;
-        };
 
         const MINIMAP_AXIS: ScrollbarAxis = ScrollbarAxis::Vertical;
         let minimap_font_size = px(minimap_settings.font_size);

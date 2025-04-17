@@ -15924,10 +15924,10 @@ impl Editor {
     ) -> Option<Entity<Self>> {
         self.minimap_settings
             .requires_entity()
-            .then(|| self.create_minimap(window, cx))
+            .then(|| self.new_minimap(window, cx))
     }
 
-    fn create_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Self> {
+    fn new_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Self> {
         let mut minimap = self.clone_with_mode(EditorMode::Minimap, window, cx);
         minimap.update_minimap_configuration(&self.minimap_settings);
         cx.new(|_| minimap)
@@ -17504,11 +17504,7 @@ impl Editor {
             }
 
             let old_minimap_settings = self.minimap_settings;
-
-            {
-                self.minimap_settings = EditorSettings::get_global(cx).minimap;
-            }
-
+            self.minimap_settings = EditorSettings::get_global(cx).minimap;
             if self.minimap_settings != old_minimap_settings {
                 if self.minimap_entity.is_some() != self.minimap_settings.requires_entity() {
                     self.minimap_entity = self.initialize_minimap(window, cx);

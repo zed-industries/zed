@@ -168,9 +168,9 @@ pub enum ShowScrollbar {
 pub enum ShowMinimap {
     /// Follow the visibility of the scrollbar.
     Auto,
-    /// Always show the scrollbar.
+    /// Always show the minimap.
     Always,
-    /// Never show the scrollbar.
+    /// Never show the minimap.
     #[default]
     Never,
 }
@@ -178,12 +178,13 @@ pub enum ShowMinimap {
 /// When to show the minimap thumb.
 ///
 /// Default: always
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumb {
     /// Show the minimap thumb only when the mouse is hovering over the minimap.
     Hover,
     /// Always show the minimap thumb.
+    #[default]
     Always,
 }
 
