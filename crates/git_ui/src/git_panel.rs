@@ -4333,7 +4333,7 @@ impl RenderOnce for PanelRepoFooter {
 
         let single_repo = project
             .as_ref()
-            .map(|project| project.read(cx).git_store().read(cx).repositories().len() == 1)
+            .map(|project| project.read(cx).git_store().read(cx).repositories().count() == 1)
             .unwrap_or(true);
 
         const MAX_BRANCH_LEN: usize = 16;

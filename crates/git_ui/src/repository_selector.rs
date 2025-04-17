@@ -41,7 +41,6 @@ impl RepositorySelector {
             git_store
                 .repositories()
                 .map(|(_, repository)| repository)
-                .cloned()
                 .collect::<Vec<_>>()
         });
         let filtered_repositories = repository_entries.clone();

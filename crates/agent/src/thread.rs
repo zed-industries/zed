@@ -1741,13 +1741,11 @@ impl Thread {
                     git_store
                         .repositories()
                         .map(|(_, repository)| repository)
-                        .values()
                         .find(|repo| {
                             repo.read(cx)
                                 .abs_path_to_repo_path(&worktree.read(cx).abs_path())
                                 .is_some()
                         })
-                        .cloned()
                 })
                 .ok()
                 .flatten()

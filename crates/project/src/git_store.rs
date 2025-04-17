@@ -756,7 +756,7 @@ impl GitStore {
     pub fn checkpoint(&self, cx: &mut App) -> Task<Result<GitStoreCheckpoint>> {
         let mut work_directory_abs_paths = Vec::new();
         let mut checkpoints = Vec::new();
-        for repository in self.repositories.values() {
+        for (_, repository) in self.repositories() {
             repository.update(cx, |repository, _| {
                 work_directory_abs_paths.push(repository.snapshot.work_directory_abs_path.clone());
                 checkpoints.push(repository.checkpoint().map(|checkpoint| checkpoint?));
@@ -1144,11 +1144,9 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let mut removed_ids = Vec::new();
+        self.repositories.retain(|_, weak| weak.is_upgradable());
         for update in updated_git_repositories.iter() {
-            if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
-                let Some(repo) = repo.upgrade() else {
-                    return false;
-                };
+            if let Some((id, existing)) = self.repositories().find(|(_, repo)| {
                 let existing_work_directory_abs_path =
                     repo.read(cx).work_directory_abs_path.clone();
                 Some(&existing_work_directory_abs_path)
@@ -1164,7 +1162,7 @@ impl GitStore {
                         existing.schedule_scan(updates_tx.clone(), cx);
                     });
                 } else {
-                    removed_ids.push(*id);
+                    removed_ids.push(id);
                 }
             } else if let UpdatedGitRepository {
                 new_work_directory_abs_path: Some(work_directory_abs_path),
@@ -1335,7 +1333,7 @@ impl GitStore {
         log::debug!("local worktree repos changed");
         debug_assert!(worktree.read(cx).is_local());
 
-        for repository in self.repositories.values() {
+        for (_, repository) in self.repositories() {
             repository.update(cx, |repository, cx| {
                 let repo_abs_path = &repository.work_directory_abs_path;
                 if changed_repos.iter().any(|update| {
@@ -1439,10 +1437,6 @@ impl GitStore {
                 .clone();
 
             let mut is_new = false;
-            debug_assert_eq!(
-                this.shared_repositories.get(&id).is_some(),
-                this.repositories.get(&id).is_some()
-            );
             let repo = this.shared_repositories.entry(id).or_insert_with(|| {
                 is_new = true;
                 let git_store = cx.weak_entity();
