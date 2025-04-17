@@ -3,9 +3,10 @@ use itertools::Itertools;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{AnchorRangeExt, MultiBufferSnapshot};
 use multi_buffer::{MultiBufferRow, MultiBufferRows, RowInfo, ToOffset};
-use std::cmp;
+use std::cmp::{self, Ordering};
+use std::collections::BTreeSet;
 use std::ops::{Add, AddAssign, Range, Sub, SubAssign};
-use sum_tree::{Bias, Cursor, SumTree};
+use sum_tree::{Bias, Cursor, SeekTarget, SumTree};
 use text::Patch;
 
 use super::{Highlights, custom_highlights::CustomHighlightsChunks};
@@ -64,9 +65,9 @@ impl sum_tree::Item for Transform {
                 input: *summary,
                 output: *summary,
             },
-            Transform::Highlight(_, summary) => TransformSummary {
+            Transform::Highlight(token, summary) => TransformSummary {
                 input: *summary,
-                output: *summary,
+                output: token.text.summary(),
             },
         }
     }
@@ -251,11 +252,7 @@ impl<'a> Iterator for TokenChunks<'a> {
             Transform::Highlight(token, _) => Chunk {
                 text: prefix,
                 syntax_highlight_id: None,
-                highlight_style: Some({
-                    let mut style = chunk.highlight_style.unwrap_or(HighlightStyle::default());
-                    style.highlight(token.style);
-                    style
-                }),
+                highlight_style: Some(token.style),
                 ..Default::default()
             },
         };
@@ -401,18 +398,33 @@ impl TokenMap {
                     &mut new_transforms,
                     prefix_start..prefix_end,
                 );
+                let transform_start = new_transforms.summary().output.len;
+                if transform_start < buffer_edit.new.start {
+                    push_isomorphic(
+                        &mut new_transforms,
+                        buffer_snapshot
+                            .text_summary_for_range(transform_start..buffer_edit.new.start),
+                    );
+                }
 
                 // Apply the rest of the edit.
                 let new_start = TokenOffset(new_transforms.summary().output.len);
+                let prefix_start = new_transforms.summary().input.len;
+                let prefix_end = buffer_edit.new.end;
+                push_semantic_tokens(
+                    &self.tokens,
+                    &buffer_snapshot,
+                    &mut new_transforms,
+                    prefix_start..prefix_end,
+                );
+
                 let transform_start = new_transforms.summary().input.len;
-                if transform_start <= buffer_edit.new.end {
+                if transform_start < buffer_edit.new.end {
                     push_isomorphic(
                         &mut new_transforms,
                         buffer_snapshot
                             .text_summary_for_range(transform_start..buffer_edit.new.end),
                     );
-                } else {
-                    log::error!("failed {transform_start} {buffer_edit:?}");
                 }
                 let new_end = TokenOffset(new_transforms.summary().output.len);
                 token_edits.push(Edit {
@@ -455,15 +467,20 @@ impl TokenMap {
     pub fn splice(
         &mut self,
         to_remove: &[usize],
-        to_insert: Vec<Token>,
+        mut to_insert: Vec<Token>,
     ) -> (TokenSnapshot, Vec<TokenEdit>) {
+        log::error!(
+            "splice(to_remove: {}, to_insert: {})",
+            to_remove.len(),
+            to_insert.len()
+        );
         let snapshot = &mut self.snapshot;
-        let mut edits = vec![];
+        let mut edits = Vec::new();
 
         self.tokens.retain(|token| {
             let retain = !to_remove.contains(&token.id);
             if !retain {
-                edits.push(token.range.to_offset(&snapshot.buffer))
+                edits.push(token.range.to_offset(&snapshot.buffer));
             }
             retain
         });
@@ -486,7 +503,7 @@ impl TokenMap {
                 old: range.start..range.start,
                 new: range.start..range.start,
             })
-            .sorted_by(|a, b| a.new.start.cmp(&b.new.start))
+            .sorted_by(|a, b| Ord::cmp(&a.new.start, &b.new.start))
             .collect_vec();
 
         let buffer_snapshot = snapshot.buffer.clone();
@@ -896,56 +913,29 @@ fn push_semantic_tokens(
     sum_tree: &mut SumTree<Transform>,
     range: Range<usize>,
 ) {
-    let (Ok(ix) | Err(ix)) = tokens.binary_search_by(|probe| {
-        probe
-            .range
-            .start
-            .to_offset(&buffer_snapshot)
-            .cmp(&range.start)
-            .then(std::cmp::Ordering::Greater)
-    });
-
-    if ix >= tokens.len() && range.start != range.end {
-        push_isomorphic(
-            sum_tree,
-            buffer_snapshot.text_summary_for_range(range.start..range.end),
-        );
-        return;
-    }
-
     let mut acc = range.start;
-    for token in &tokens[ix..] {
+    for token in tokens {
+        let start = token.range.start.to_offset(buffer_snapshot);
         let buffer_offset = token.range.end.to_offset(buffer_snapshot);
         if buffer_offset > range.end {
             break;
         }
-
-        if acc < token.range.start.to_offset(buffer_snapshot) {
+        if acc < start {
             push_isomorphic(
                 sum_tree,
-                buffer_snapshot
-                    .text_summary_for_range(acc..token.range.start.to_offset(buffer_snapshot)),
+                buffer_snapshot.text_summary_for_range(acc..(start - 1)),
             );
+        } else if acc == start {
         } else {
-            break;
+            log::error!("failed");
+            continue;
         }
 
-        let prefix_start = sum_tree.summary().input.len;
-        let prefix_end = buffer_offset;
         sum_tree.push(
-            Transform::Highlight(
-                token.clone(),
-                buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
-            ),
+            Transform::Highlight(token.clone(), token.text.summary()),
             &(),
         );
-        acc = prefix_end;
-    }
-    if acc < range.end {
-        push_isomorphic(
-            sum_tree,
-            buffer_snapshot.text_summary_for_range(acc..range.end),
-        );
+        acc = buffer_offset;
     }
 }
 

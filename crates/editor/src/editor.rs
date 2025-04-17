@@ -4071,7 +4071,9 @@ impl Editor {
             SemanticTokensRefreshReason::SettingsChange(_)
                 | SemanticTokensRefreshReason::Toggle(_)
                 | SemanticTokensRefreshReason::ExcerptsRemoved(_)
+                | SemanticTokensRefreshReason::NewLinesShown
         );
+        log::error!("{reason_description}");
         let (invalidate_cache, required_languages) = match reason {
             SemanticTokensRefreshReason::Toggle(enabled) => {
                 if self.semantic_tokens_cache.toggle(enabled) {

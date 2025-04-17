@@ -10,6 +10,7 @@ use clock::Global;
 use collections::{HashMap, HashSet, IndexMap};
 use futures::future;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
+use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, language_settings::SemanticTokensSettings};
 use multi_buffer::{ExcerptId, MultiBufferSnapshot};
 use parking_lot::RwLock;
@@ -28,7 +29,7 @@ use crate::{
     },
 };
 
-const MAX_CONCURRENT_LSP_REQUESTS: usize = 5;
+const MAX_CONCURRENT_LSP_REQUESTS: usize = 20;
 const INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS: u64 = 400;
 
 pub struct SemanticTokensCache {
@@ -418,15 +419,19 @@ async fn fetch_semantic_tokens(
     editor: WeakEntity<Editor>,
     invalidate: InvalidationStrategy,
     lsp_request_limiter: Arc<Semaphore>,
-    cached_excerpt_tokens: Option<Arc<RwLock<CachedExcerptTokens>>>,
-    visible_tokens: &[Token],
     fetch_range: &Range<language::Anchor>,
     fetch_range_to_log: &Range<language::Point>,
     buffer_snapshot: &BufferSnapshot,
     query: &ExcerptQuery,
     cx: &mut AsyncApp,
-) -> anyhow::Result<Option<Vec<SemanticToken>>> {
-    let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
+) -> anyhow::Result<
+    Option<(
+        Vec<SemanticToken>,
+        Option<Arc<RwLock<CachedExcerptTokens>>>,
+        Vec<Token>,
+    )>,
+> {
+    let (_, got_throttled) = if query.invalidate.should_invalidate() {
         (None, false)
     } else {
         match lsp_request_limiter.try_acquire() {
@@ -476,7 +481,7 @@ async fn fetch_semantic_tokens(
                 editor
                     .semantics_provider
                     .as_ref()?
-                    .semantic_tokens(buffer, fetch_range.clone(), cx)
+                    .semantic_tokens_full(buffer, fetch_range.clone(), cx)
             }
             (InvalidationStrategy::None, Some(tokens)) => {
                 Some(Task::ready(Ok::<_, anyhow::Error>(tokens.clone())))
@@ -490,6 +495,14 @@ async fn fetch_semantic_tokens(
         }
     });
 
+    let cached_excerpt_tokens = editor.update(cx, |editor, _| {
+        editor
+            .semantic_tokens_cache
+            .tokens
+            .get(&query.excerpt_id)
+            .cloned()
+    })?;
+    let visible_tokens = editor.update(cx, |editor, cx| editor.visible_semantic_tokens(cx))?;
     let new_tokens = match semantic_tokens_fetch_task.ok().flatten() {
         Some(fetch_task) => {
             log::debug!(
@@ -511,13 +524,12 @@ async fn fetch_semantic_tokens(
         InvalidationStrategy::BufferEdited => editor.semantic_tokens_cache.lsp_request_cache = None,
         InvalidationStrategy::None => {}
     })?;
-    drop(lsp_request_guard);
     log::debug!(
         "Fetched {} semantic tokens for range {fetch_range_to_log:?}",
         new_tokens.len()
     );
     log::trace!("Fetched semantic tokens: {new_tokens:?}");
-    Ok(Some(new_tokens))
+    Ok(Some((new_tokens, cached_excerpt_tokens, visible_tokens)))
 }
 
 fn fetch_and_update_tokens(
@@ -534,22 +546,12 @@ fn fetch_and_update_tokens(
             let lsp_request_limiter = Arc::clone(&editor.semantic_tokens_cache.lsp_request_limiter);
             (lsp_request_limiter, multi_buffer_snapshot)
         })?;
-        let visible_tokens = editor.update(cx, |editor, cx| editor.visible_semantic_tokens(cx))?;
-        let cached_excerpt_tokens = editor.update(cx, |editor, _| {
-            editor
-                .semantic_tokens_cache
-                .tokens
-                .get(&query.excerpt_id)
-                .cloned()
-        })?;
         let fetch_range_to_log =
             fetch_range.start.to_point(&buffer_snapshot)..fetch_range.end.to_point(&buffer_snapshot);
-        let Some(new_tokens) = fetch_semantic_tokens(
+        let Some((new_tokens, cached_excerpt_tokens,  visible_tokens)) = fetch_semantic_tokens(
             editor.clone(),
             invalidate,
             lsp_request_limiter,
-            cached_excerpt_tokens.as_ref().map(|arc| arc.clone()),
-            &visible_tokens,
             &fetch_range,
             &fetch_range_to_log,
             &buffer_snapshot,
@@ -611,9 +613,6 @@ fn calculate_token_updates(
     let mut excerpt_tokens_to_persist = HashMap::default();
     for new_token in new_excerpt_tokens {
         if !contains_position(&fetch_range, new_token.range.start, buffer_snapshot) {
-            continue;
-        }
-        if !contains_position(&fetch_range, new_token.range.end, buffer_snapshot) {
             continue;
         }
         let missing_from_cache = match &cached_excerpt_tokens {
@@ -729,7 +728,7 @@ fn apply_token_update(
         .retain(|token_id, _| !new_update.remove_from_cache.contains(token_id));
     let mut splice = TokenSplice::default();
     splice.to_remove.extend(new_update.remove_from_visible);
-    for new_token in new_update.add_to_cache {
+    'outer: for new_token in new_update.add_to_cache {
         let Some(mut token_highlight) = cx.theme().tokens().get(new_token.r#type.as_str()) else {
             continue;
         };
@@ -739,21 +738,24 @@ fn apply_token_update(
             };
             token_highlight.style.highlight(r#mod);
         }
-        let insert_position = match cached_excerpt_tokens
-            .ordered_tokens
-            .binary_search_by(|probe| {
-                cached_excerpt_tokens.tokens_by_id[probe]
-                    .range
-                    .cmp(&new_token.range, &buffer_snapshot)
-            }) {
-            Ok(i) => {
-                // When a token is added to the same position where existing ones are present,
-                // do not deduplicate it: we split token queries into non-overlapping ranges
-                // and each token batch returned by the server should already contain unique tokens.
-                i + cached_excerpt_tokens.ordered_tokens[i..].len() + 1
-            }
-            Err(i) => i,
-        };
+        // let mut insert_position = 0;
+        // for idx in cached_excerpt_tokens.ordered_tokens.iter() {
+        //     // here we add a new token to the insert tokens but we must remove the existing one by adding it
+        //     // to the to_remove list, so we don't have overlapping tokens
+        //     let probe = cached_excerpt_tokens.tokens_by_id[idx].clone();
+        //     if probe.range.start.offset >= new_token.range.start.offset
+        //         && probe.range.end.offset <= new_token.range.end.offset
+        //     {
+        //         log::error!("overlapping token, we're doomed");
+        //         splice.to_remove.push(*idx);
+        //         insert_position += 1;
+        //     }
+        //     if new_token.range.start.offset >= probe.range.end.offset {
+        //         insert_position += 1;
+        //     } else {
+        //         log::error!("failed to add token {}", new_token.r#type.as_str());
+        //     }
+        // }
 
         let new_token_id = post_inc(&mut editor.next_semantic_id);
         if let (Some(new_start), Some(new_end)) = (
@@ -773,13 +775,25 @@ fn apply_token_update(
         cached_excerpt_tokens
             .tokens_by_id
             .insert(new_token_id, new_token);
-        if cached_excerpt_tokens.ordered_tokens.len() <= insert_position {
-            cached_excerpt_tokens.ordered_tokens.push(new_token_id);
-        } else {
-            cached_excerpt_tokens
-                .ordered_tokens
-                .insert(insert_position, new_token_id);
-        }
+        cached_excerpt_tokens.ordered_tokens.push(new_token_id);
+        let new_tokens = cached_excerpt_tokens
+            .ordered_tokens
+            .iter()
+            .sorted_by(|a, b| {
+                let a = cached_excerpt_tokens.tokens_by_id[*a].clone();
+                let b = cached_excerpt_tokens.tokens_by_id[*b].clone();
+                a.range.start.cmp(&b.range.end, &buffer_snapshot)
+            })
+            .copied()
+            .collect_vec();
+        cached_excerpt_tokens.ordered_tokens = new_tokens;
+        // if cached_excerpt_tokens.ordered_tokens.len() <= insert_position {
+        //     cached_excerpt_tokens.ordered_tokens.push(new_token_id);
+        // } else {
+        //     cached_excerpt_tokens
+        //         .ordered_tokens
+        //         .insert(insert_position, new_token_id);
+        // }
 
         cached_tokens_changed = true;
     }

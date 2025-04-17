@@ -18,6 +18,7 @@ use crate::{
     display_map::Inlay,
     tasks_for_ranges::{
         ExcerptQuery, InvalidationStrategy, QueryRanges, TasksForRanges, contains_position,
+        determine_query_ranges,
     },
 };
 use anyhow::Context as _;
@@ -31,7 +32,6 @@ use project::{InlayHint, ResolveState};
 use collections::{HashMap, HashSet, hash_map};
 use language::language_settings::InlayHintSettings;
 use smol::lock::Semaphore;
-use sum_tree::Bias;
 use text::{BufferId, ToOffset, ToPoint};
 use util::{ResultExt, post_inc};
 
@@ -559,74 +559,6 @@ fn spawn_new_update_tasks(
             }
         }
     }
-}
-
-fn determine_query_ranges(
-    multi_buffer: &mut MultiBuffer,
-    excerpt_id: ExcerptId,
-    excerpt_buffer: &Entity<Buffer>,
-    excerpt_visible_range: Range<usize>,
-    cx: &mut Context<MultiBuffer>,
-) -> Option<QueryRanges> {
-    let buffer = excerpt_buffer.read(cx);
-    let full_excerpt_range = multi_buffer
-        .excerpts_for_buffer(buffer.remote_id(), cx)
-        .into_iter()
-        .find(|(id, _)| id == &excerpt_id)
-        .map(|(_, range)| range.context)?;
-    let snapshot = buffer.snapshot();
-    let excerpt_visible_len = excerpt_visible_range.end - excerpt_visible_range.start;
-
-    let visible_range = if excerpt_visible_range.start == excerpt_visible_range.end {
-        return None;
-    } else {
-        vec![
-            buffer.anchor_before(snapshot.clip_offset(excerpt_visible_range.start, Bias::Left))
-                ..buffer.anchor_after(snapshot.clip_offset(excerpt_visible_range.end, Bias::Right)),
-        ]
-    };
-
-    let full_excerpt_range_end_offset = full_excerpt_range.end.to_offset(&snapshot);
-    let after_visible_range_start = excerpt_visible_range
-        .end
-        .saturating_add(1)
-        .min(full_excerpt_range_end_offset)
-        .min(buffer.len());
-    let after_visible_range = if after_visible_range_start == full_excerpt_range_end_offset {
-        Vec::new()
-    } else {
-        let after_range_end_offset = after_visible_range_start
-            .saturating_add(excerpt_visible_len)
-            .min(full_excerpt_range_end_offset)
-            .min(buffer.len());
-        vec![
-            buffer.anchor_before(snapshot.clip_offset(after_visible_range_start, Bias::Left))
-                ..buffer.anchor_after(snapshot.clip_offset(after_range_end_offset, Bias::Right)),
-        ]
-    };
-
-    let full_excerpt_range_start_offset = full_excerpt_range.start.to_offset(&snapshot);
-    let before_visible_range_end = excerpt_visible_range
-        .start
-        .saturating_sub(1)
-        .max(full_excerpt_range_start_offset);
-    let before_visible_range = if before_visible_range_end == full_excerpt_range_start_offset {
-        Vec::new()
-    } else {
-        let before_range_start_offset = before_visible_range_end
-            .saturating_sub(excerpt_visible_len)
-            .max(full_excerpt_range_start_offset);
-        vec![
-            buffer.anchor_before(snapshot.clip_offset(before_range_start_offset, Bias::Left))
-                ..buffer.anchor_after(snapshot.clip_offset(before_visible_range_end, Bias::Right)),
-        ]
-    };
-
-    Some(QueryRanges {
-        before_visible: before_visible_range,
-        visible: visible_range,
-        after_visible: after_visible_range,
-    })
 }
 
 const MAX_CONCURRENT_LSP_REQUESTS: usize = 5;
