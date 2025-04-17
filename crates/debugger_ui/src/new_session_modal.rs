@@ -13,7 +13,7 @@ use gpui::{
 };
 use project::Project;
 use settings::Settings;
-use task::{DebugTaskDefinition, LaunchRequest};
+use task::{DebugTaskDefinition, DebugTaskTemplate, LaunchRequest};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -130,20 +130,18 @@ impl NewSessionModal {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
 
             let task = project.update(cx, |this, cx| {
+                let template = DebugTaskTemplate {
+                    locator: None,
+                    definition: config.clone(),
+                };
                 if let Some(debug_config) =
-                    config
-                        .clone()
-                        .to_zed_format()
-                        .ok()
-                        .and_then(|task_template| {
-                            task_template
-                                .resolve_task("debug_task", &task_context)
-                                .and_then(|resolved_task| {
-                                    resolved_task.resolved_debug_adapter_config()
-                                })
-                        })
+                    template.to_zed_format().ok().and_then(|task_template| {
+                        task_template
+                            .resolve_task("debug_task", &task_context)
+                            .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
+                    })
                 {
-                    this.start_debug_session(debug_config, cx)
+                    this.start_debug_session(debug_config.definition, cx)
                 } else {
                     this.start_debug_session(config, cx)
                 }
@@ -284,7 +282,7 @@ impl NewSessionModal {
                     }
                 };
 
-                let available_adapters: Vec<DebugTaskDefinition> = workspace
+                let available_adapters: Vec<DebugTaskTemplate> = workspace
                     .update(cx, |this, cx| {
                         this.project()
                             .read(cx)
@@ -302,9 +300,9 @@ impl NewSessionModal {
 
                 for debug_definition in available_adapters {
                     menu = menu.entry(
-                        debug_definition.label.clone(),
+                        debug_definition.definition.label.clone(),
                         None,
-                        setter_for_name(debug_definition),
+                        setter_for_name(debug_definition.definition),
                     );
                 }
                 menu

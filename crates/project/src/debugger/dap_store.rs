@@ -21,10 +21,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future::{Shared, join_all},
 };
-use gpui::{
-    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
-    Task,
-};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
@@ -96,7 +93,7 @@ impl LocalDapStore {
     pub fn run_locator(
         &self,
         definition: DebugTaskTemplate,
-        executor: &App,
+        cx: &App,
     ) -> Task<Result<DebugTaskDefinition>> {
         let locator_store = self.locator_store.clone();
         cx.background_spawn(async move { locator_store.resolve_debug_config(definition).await })

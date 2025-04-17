@@ -5179,7 +5179,10 @@ impl Editor {
                             project
                                 .update(cx, |project, cx| {
                                     project.start_debug_session(
-                                        resolved_task.resolved_debug_adapter_config().unwrap(),
+                                        resolved_task
+                                            .resolved_debug_adapter_config()
+                                            .unwrap()
+                                            .definition,
                                         cx,
                                     )
                                 })

@@ -5231,30 +5231,30 @@ impl Workspace {
             .ok();
     }
 
-    pub fn debug_task_ready(&mut self, task_id: &TaskId, cx: &mut App) {
+    pub fn debug_task_ready(&mut self, task_id: &TaskId, cx: &mut Context<Self>) {
         let Some(debug_config) = self.debug_task_queue.remove(task_id) else {
-            return
+            return;
         };
-            let task =
-            self.project.update(cx, |project, cx| {
-                project.dap_store().update(cx, |dap_store, cx| {
-                    if let Some(as_local) = dap_store.as_local() {
-                        as_local.run_locator(debug_config, cx)
-                    } else {
-                        Task::ready(Err(anyhow::Error::new("unreachable")))
-                    }
-                });
-            });
-
-            cx.spawn(|this, cx| {
-            task.await?
-                project
-                    .start_debug_session(debug_config, cx)
-                    .detach_and_log_err(cx);
+        let task = self.project.update(cx, |project, cx| {
+            project.dap_store().update(cx, |dap_store, cx| {
+                if let Some(as_local) = dap_store.as_local() {
+                    as_local.run_locator(debug_config, cx)
+                } else {
+                    Task::ready(Err(anyhow!("unreachable")))
+                }
             })
+        });
 
-            })
-
+        cx.spawn(async move |this, cx| {
+            let debug_config = task.await?;
+            this.update(cx, |workspace, cx| {
+                workspace.project.update(cx, |project, cx| {
+                    project.start_debug_session(debug_config, cx)
+                })
+            })?
+            .await
+        })
+        .detach_and_log_err(cx);
     }
 }
 
