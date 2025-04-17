@@ -27,7 +27,7 @@ use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
     Task, WeakEntity,
 };
-use itertools::Itertools;
+
 use rpc::AnyProtoClient;
 use serde_json::{Value, json};
 use smol::stream::StreamExt;
@@ -459,26 +459,25 @@ impl LocalMode {
                         return;
                     };
 
-                    let mut error_list = errors_by_path
-                        .iter()
-                        .take(3)
-                        .map(|(failed_path, error)| {
-                            let failed_path = failed_path
-                                .strip_prefix(worktree.read(cx).abs_path())
-                                .unwrap_or(failed_path)
-                                .display();
-
-                            format!("* Path {failed_path}: {error}")
-                        })
-                        .join("\n");
-                    if errors_by_path.len() > 3 {
-                        error_list.push_str("\n...")
+                    for (path, error) in &errors_by_path {
+                        log::error!("failed to set breakpoints for {path:?}: {error}");
                     }
 
-                    if !error_list.is_empty() {
-                        cx.emit(super::dap_store::DapStoreEvent::Notification(format!(
-                            "Failed to set breakpoints:\n{error_list}"
-                        )));
+                    if let Some(failed_path) = errors_by_path.keys().next() {
+                        let failed_path = failed_path
+                            .strip_prefix(worktree.read(cx).abs_path())
+                            .unwrap_or(failed_path)
+                            .display();
+                        let message = format!(
+                            "Failed to set breakpoints for {failed_path}{}",
+                            match errors_by_path.len() {
+                                0 => unreachable!(),
+                                1 => "".into(),
+                                2 => " and 1 other path".into(),
+                                n => format!(" and {} other paths", n - 1),
+                            }
+                        );
+                        cx.emit(super::dap_store::DapStoreEvent::Notification(message));
                     }
                 })?;
 
