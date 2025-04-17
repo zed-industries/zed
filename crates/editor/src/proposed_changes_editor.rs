@@ -455,6 +455,15 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.inlay_hints(buffer, range, cx)
     }
 
+    fn inline_values(
+        &self,
+        _: Entity<Buffer>,
+        _: Range<text::Anchor>,
+        _: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
+        None
+    }
+
     fn resolve_inlay_hint(
         &self,
         hint: project::InlayHint,

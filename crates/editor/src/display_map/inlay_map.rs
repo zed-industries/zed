@@ -287,6 +287,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         })
                     }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
+                    InlayId::Value(_) => self.highlight_styles.inlay_hint,
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;

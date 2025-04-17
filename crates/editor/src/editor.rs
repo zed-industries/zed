@@ -121,7 +121,6 @@ use persistence::DB;
 use project::{
     ProjectPath,
     debugger::{
-        self,
         breakpoint_store::{
             BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
         },
@@ -254,6 +253,7 @@ const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
 pub enum InlayId {
     InlineCompletion(usize),
     Hint(usize),
+    Value(usize),
 }
 
 impl InlayId {
@@ -261,6 +261,7 @@ impl InlayId {
         match self {
             Self::InlineCompletion(id) => *id,
             Self::Hint(id) => *id,
+            Self::Value(id) => *id,
         }
     }
 }
@@ -4078,6 +4079,18 @@ impl Editor {
         }
     }
 
+    pub fn toggle_inline_values(
+        &mut self,
+        _: &ToggleInlineValues,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_inlay_hints(
+            InlayHintRefreshReason::Toggle(!self.inlay_hints_enabled()),
+            cx,
+        );
+    }
+
     pub fn toggle_inlay_hints(
         &mut self,
         _: &ToggleInlayHints,
@@ -4105,7 +4118,8 @@ impl Editor {
             InlayHintRefreshReason::SettingsChange(_)
                 | InlayHintRefreshReason::Toggle(_)
                 | InlayHintRefreshReason::ExcerptsRemoved(_)
-                | InlayHintRefreshReason::ModifiersChanged(_) // | InlayHintRefreshReason::DebuggerStateChanged
+                | InlayHintRefreshReason::ModifiersChanged(_)
+                | InlayHintRefreshReason::DebuggerStateChanged
         );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::ModifiersChanged(enabled) => {
@@ -4183,7 +4197,7 @@ impl Editor {
             }
             InlayHintRefreshReason::RefreshRequested
             | InlayHintRefreshReason::DebuggerStateChanged => {
-                (InvalidationStrategy::RefreshRequested, None)
+                (InvalidationStrategy::DebuggerRefresh, None)
             }
         };
 
@@ -17209,7 +17223,7 @@ impl Editor {
     ) {
         match event {
             SessionEvent::InvalidateInlineValue => {
-                // self.inlay_hint_cache.clear();
+                self.inlay_hint_cache.clear();
                 self.refresh_inlay_hints(InlayHintRefreshReason::DebuggerStateChanged, cx);
             }
             _ => {}
@@ -18735,6 +18749,13 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<Vec<project::Hover>>>;
 
+    fn inline_values(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>>;
+
     fn inlay_hints(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -19206,6 +19227,19 @@ impl SemanticsProvider for Entity<Project> {
         })
     }
 
+    fn inline_values(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
+        self.update(cx, |project, cx| {
+            let (session, active_stack_frame) = project.active_debug_session(cx)?;
+
+            Some(project.inline_values(session, active_stack_frame, buffer_handle, range, cx))
+        })
+    }
+
     fn inlay_hints(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -19213,16 +19247,6 @@ impl SemanticsProvider for Entity<Project> {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
         Some(self.update(cx, |project, cx| {
-            if let Some((session, active_stack_frame)) = project.active_debug_session(cx) {
-                return project.inline_values(
-                    session,
-                    active_stack_frame,
-                    buffer_handle,
-                    range,
-                    cx,
-                );
-            }
-
             project.inlay_hints(buffer_handle, range, cx)
         }))
     }

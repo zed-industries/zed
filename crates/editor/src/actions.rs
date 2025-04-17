@@ -417,6 +417,7 @@ actions!(
         OpenGitBlameCommit,
         ToggleIndentGuides,
         ToggleInlayHints,
+        ToggleInlineValues,
         ToggleInlineDiagnostics,
         ToggleEditPrediction,
         ToggleLineNumbers,
