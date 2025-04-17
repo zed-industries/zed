@@ -88,7 +88,7 @@ pub(crate) fn handle_msg(
         WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, lparam, state_ptr),
-        WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
+        WM_CHAR => handle_char_msg(wparam, state_ptr),
         WM_DEADCHAR => handle_dead_char_msg(wparam, lparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
@@ -446,37 +446,17 @@ fn handle_keyup_msg(
     result
 }
 
-fn handle_char_msg(
-    wparam: WPARAM,
-    lparam: LPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
+fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     println!("\nWM_CHAR: {:?}, {:x}", wparam, wparam.0);
-    let Some(keystroke) = parse_char_msg_keystroke(wparam) else {
-        return Some(1);
-    };
-    println!("\t{:#?}", keystroke);
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return Some(1);
-    };
-    drop(lock);
-    let key_char = keystroke.key_char.clone();
-    let event = KeyDownEvent {
-        keystroke,
-        is_held: lparam.0 & (0x1 << 30) > 0,
-    };
-    let dispatch_event_result = func(PlatformInput::KeyDown(event));
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
-        return Some(0);
-    }
-    let Some(ime_char) = key_char else {
-        return Some(1);
+    let input = {
+        let ch = char::from_u32(wparam.0 as u32)?;
+        if ch.is_control() {
+            return Some(1);
+        }
+        ch.to_string()
     };
     with_input_handler(&state_ptr, |input_handler| {
-        input_handler.replace_text_in_range(None, &ime_char);
+        input_handler.replace_text_in_range(None, &input);
     });
 
     Some(0)
@@ -1385,29 +1365,6 @@ fn generate_key_char(vkey: u32, scan_code: u32, modifiers: &Modifiers) -> Option
         }
     } else {
         None
-    }
-}
-
-fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
-    let first_char = char::from_u32((wparam.0 as u16).into())?;
-    if first_char.is_control() {
-        None
-    } else {
-        let mut modifiers = current_modifiers();
-        // for characters that use 'shift' to type it is expected that the
-        // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
-        if first_char.to_ascii_uppercase() == first_char.to_ascii_lowercase() {
-            modifiers.shift = false;
-        }
-        let key = match first_char {
-            ' ' => "space".to_string(),
-            first_char => first_char.to_lowercase().to_string(),
-        };
-        Some(Keystroke {
-            modifiers,
-            key,
-            key_char: Some(first_char.to_string()),
-        })
     }
 }
 
