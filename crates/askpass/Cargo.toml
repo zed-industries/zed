@@ -22,6 +22,3 @@ workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows_net.workspace = true
-
-[target.'cfg(not(windows))'.dependencies]
-which.workspace = true
