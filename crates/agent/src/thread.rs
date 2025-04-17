@@ -1302,8 +1302,15 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
-                let stream = model.model.stream_completion_text(request, &cx);
-                let mut messages = stream.await?;
+                let stream = model.model.stream_completion_text_with_usage(request, &cx);
+                let (mut messages, usage) = stream.await?;
+
+                if let Some(usage) = usage {
+                    this.update(cx, |_thread, cx| {
+                        cx.emit(ThreadEvent::UsageUpdated(usage));
+                    })
+                    .ok();
+                }
 
                 let mut new_summary = String::new();
                 while let Some(message) = messages.stream.next().await {
