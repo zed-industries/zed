@@ -725,6 +725,12 @@ impl Thread {
                                 cx,
                             );
                         }
+                        AssistantContext::Excerpt(excerpt_context) => {
+                            log.buffer_added_as_context(
+                                excerpt_context.context_buffer.buffer.clone(),
+                                cx,
+                            );
+                        }
                         AssistantContext::FetchedUrl(_) | AssistantContext::Thread(_) => {}
                     }
                 }

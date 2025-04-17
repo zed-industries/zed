@@ -756,6 +756,10 @@ impl ActiveThread {
         this
     }
 
+    pub fn context_store(&self) -> &Entity<ContextStore> {
+        &self.context_store
+    }
+
     pub fn thread(&self) -> &Entity<Thread> {
         &self.thread
     }
@@ -3145,28 +3149,21 @@ pub(crate) fn open_context(
                     .start
                     .to_point(&snapshot);
 
-                let open_task = workspace.update(cx, |workspace, cx| {
-                    workspace.open_path(project_path, None, true, window, cx)
-                });
-                window
-                    .spawn(cx, async move |cx| {
-                        if let Some(active_editor) = open_task
-                            .await
-                            .log_err()
-                            .and_then(|item| item.downcast::<Editor>())
-                        {
-                            active_editor
-                                .downgrade()
-                                .update_in(cx, |editor, window, cx| {
-                                    editor.go_to_singleton_buffer_point(
-                                        target_position,
-                                        window,
-                                        cx,
-                                    );
-                                })
-                                .log_err();
-                        }
-                    })
+                open_editor_at_position(project_path, target_position, &workspace, window, cx)
+                    .detach();
+            }
+        }
+        AssistantContext::Excerpt(excerpt_context) => {
+            if let Some(project_path) = excerpt_context
+                .context_buffer
+                .buffer
+                .read(cx)
+                .project_path(cx)
+            {
+                let snapshot = excerpt_context.context_buffer.buffer.read(cx).snapshot();
+                let target_position = excerpt_context.range.start.to_point(&snapshot);
+
+                open_editor_at_position(project_path, target_position, &workspace, window, cx)
                     .detach();
             }
         }
@@ -3186,4 +3183,30 @@ pub(crate) fn open_context(
             })
         }
     }
+}
+
+fn open_editor_at_position(
+    project_path: project::ProjectPath,
+    target_position: Point,
+    workspace: &Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<()> {
+    let open_task = workspace.update(cx, |workspace, cx| {
+        workspace.open_path(project_path, None, true, window, cx)
+    });
+    window.spawn(cx, async move |cx| {
+        if let Some(active_editor) = open_task
+            .await
+            .log_err()
+            .and_then(|item| item.downcast::<Editor>())
+        {
+            active_editor
+                .downgrade()
+                .update_in(cx, |editor, window, cx| {
+                    editor.go_to_singleton_buffer_point(target_position, window, cx);
+                })
+                .log_err();
+        }
+    })
 }
