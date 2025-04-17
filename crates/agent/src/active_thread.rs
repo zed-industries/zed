@@ -2630,7 +2630,7 @@ impl ActiveThread {
                 ))
         };
 
-        v_flex().gap_1().mb_2().map(|element| {
+        v_flex().gap_1().mb_3().map(|element| {
             if !edit_tools {
                 element.child(
                     v_flex()
@@ -2655,7 +2655,7 @@ impl ActiveThread {
                                                 .color(Color::Muted),
                                         )
                                         .child(
-                                            h_flex().pr_8().text_ui_sm(cx).children(
+                                            h_flex().pr_8().text_size(rems(0.8125)).children(
                                                 rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_url_click({let workspace = self.workspace.clone(); move |text, window, cx| {
                                                     open_markdown_link(text, workspace.clone(), window, cx);
                                                 }}))
