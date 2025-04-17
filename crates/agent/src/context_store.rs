@@ -16,7 +16,7 @@ use util::{ResultExt as _, maybe};
 use crate::ThreadStore;
 use crate::context::{
     AssistantContext, ContextBuffer, ContextId, ContextSymbol, ContextSymbolId, DirectoryContext,
-    FetchedUrlContext, FileContext, SelectionContext, SymbolContext, ThreadContext,
+    ExcerptContext, FetchedUrlContext, FileContext, SymbolContext, ThreadContext,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -419,7 +419,7 @@ impl ContextStore {
         cx.notify();
     }
 
-    pub fn add_selection(
+    pub fn add_excerpt(
         &mut self,
         range: Range<Anchor>,
         buffer: Entity<Buffer>,
@@ -433,7 +433,7 @@ impl ContextStore {
             let text = text_task.await;
 
             this.update(cx, |this, cx| {
-                this.insert_selection(
+                this.insert_excerpt(
                     make_context_buffer(buffer_info, text),
                     range,
                     line_range,
@@ -445,7 +445,7 @@ impl ContextStore {
         })
     }
 
-    fn insert_selection(
+    fn insert_excerpt(
         &mut self,
         context_buffer: ContextBuffer,
         range: Range<Anchor>,
@@ -454,7 +454,7 @@ impl ContextStore {
     ) {
         let id = self.next_context_id.post_inc();
         self.context
-            .push(AssistantContext::Selection(SelectionContext {
+            .push(AssistantContext::Excerpt(ExcerptContext {
                 id,
                 range,
                 line_range,
@@ -512,7 +512,7 @@ impl ContextStore {
                 self.symbol_buffers.remove(&symbol.context_symbol.id);
                 self.symbols.retain(|_, context_id| *context_id != id);
             }
-            AssistantContext::Selection(_) => {}
+            AssistantContext::Excerpt(_) => {}
             AssistantContext::FetchedUrl(_) => {
                 self.fetched_urls.retain(|_, context_id| *context_id != id);
             }
@@ -640,7 +640,7 @@ impl ContextStore {
                 }
                 AssistantContext::Directory(_)
                 | AssistantContext::Symbol(_)
-                | AssistantContext::Selection(_)
+                | AssistantContext::Excerpt(_)
                 | AssistantContext::FetchedUrl(_)
                 | AssistantContext::Thread(_) => None,
             })
@@ -859,12 +859,12 @@ pub fn refresh_context_store_text(
                         return refresh_symbol_text(context_store, symbol_context, cx);
                     }
                 }
-                AssistantContext::Selection(selection_context) => {
+                AssistantContext::Excerpt(excerpt_context) => {
                     if changed_buffers.is_empty()
-                        || changed_buffers.contains(&selection_context.context_buffer.buffer)
+                        || changed_buffers.contains(&excerpt_context.context_buffer.buffer)
                     {
                         let context_store = context_store.clone();
-                        return refresh_selection_text(context_store, selection_context, cx);
+                        return refresh_excerpt_text(context_store, excerpt_context, cx);
                     }
                 }
                 AssistantContext::Thread(thread_context) => {
@@ -978,27 +978,27 @@ fn refresh_symbol_text(
     }
 }
 
-fn refresh_selection_text(
+fn refresh_excerpt_text(
     context_store: Entity<ContextStore>,
-    selection_context: &SelectionContext,
+    excerpt_context: &ExcerptContext,
     cx: &App,
 ) -> Option<Task<()>> {
-    let id = selection_context.id;
-    let range = selection_context.range.clone();
-    let task = refresh_context_selection(&selection_context.context_buffer, range.clone(), cx);
+    let id = excerpt_context.id;
+    let range = excerpt_context.range.clone();
+    let task = refresh_context_excerpt(&excerpt_context.context_buffer, range.clone(), cx);
     if let Some(task) = task {
         Some(cx.spawn(async move |cx| {
             let (line_range, context_buffer) = task.await;
             context_store
                 .update(cx, |context_store, _| {
-                    let new_selection_context = SelectionContext {
+                    let new_excerpt_context = ExcerptContext {
                         id,
                         range,
                         line_range,
                         context_buffer,
                     };
                     context_store
-                        .replace_context(AssistantContext::Selection(new_selection_context));
+                        .replace_context(AssistantContext::Excerpt(new_excerpt_context));
                 })
                 .ok();
         }))
@@ -1042,7 +1042,7 @@ fn refresh_context_buffer(
     }
 }
 
-fn refresh_context_selection(
+fn refresh_context_excerpt(
     context_buffer: &ContextBuffer,
     range: Range<Anchor>,
     cx: &App,

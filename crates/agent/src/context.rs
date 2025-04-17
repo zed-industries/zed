@@ -24,7 +24,7 @@ pub enum ContextKind {
     File,
     Directory,
     Symbol,
-    Selection,
+    Excerpt,
     FetchedUrl,
     Thread,
 }
@@ -35,7 +35,7 @@ impl ContextKind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
-            ContextKind::Selection => IconName::Code,
+            ContextKind::Excerpt => IconName::Code,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
         }
@@ -49,7 +49,7 @@ pub enum AssistantContext {
     Symbol(SymbolContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
-    Selection(SelectionContext),
+    Excerpt(ExcerptContext),
 }
 
 impl AssistantContext {
@@ -60,7 +60,7 @@ impl AssistantContext {
             Self::Symbol(symbol) => symbol.id,
             Self::FetchedUrl(url) => url.id,
             Self::Thread(thread) => thread.id,
-            Self::Selection(selection) => selection.id,
+            Self::Excerpt(excerpt) => excerpt.id,
         }
     }
 }
@@ -161,7 +161,7 @@ pub struct ContextSymbolId {
 }
 
 #[derive(Debug, Clone)]
-pub struct SelectionContext {
+pub struct ExcerptContext {
     pub id: ContextId,
     pub range: Range<Anchor>,
     pub line_range: Range<Point>,
@@ -176,7 +176,7 @@ pub fn format_context_as_string<'a>(
     let mut file_context = Vec::new();
     let mut directory_context = Vec::new();
     let mut symbol_context = Vec::new();
-    let mut selection_context = Vec::new();
+    let mut excerpt_context = Vec::new();
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
 
@@ -185,7 +185,7 @@ pub fn format_context_as_string<'a>(
             AssistantContext::File(context) => file_context.push(context),
             AssistantContext::Directory(context) => directory_context.push(context),
             AssistantContext::Symbol(context) => symbol_context.push(context),
-            AssistantContext::Selection(context) => selection_context.push(context),
+            AssistantContext::Excerpt(context) => excerpt_context.push(context),
             AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context),
         }
@@ -194,7 +194,7 @@ pub fn format_context_as_string<'a>(
     if file_context.is_empty()
         && directory_context.is_empty()
         && symbol_context.is_empty()
-        && selection_context.is_empty()
+        && excerpt_context.is_empty()
         && fetch_context.is_empty()
         && thread_context.is_empty()
     {
@@ -232,13 +232,13 @@ pub fn format_context_as_string<'a>(
         result.push_str("</symbols>\n");
     }
 
-    if !selection_context.is_empty() {
-        result.push_str("<selections>\n");
-        for context in selection_context {
+    if !excerpt_context.is_empty() {
+        result.push_str("<excerpts>\n");
+        for context in excerpt_context {
             result.push_str(&context.context_buffer.text);
             result.push('\n');
         }
-        result.push_str("</selections>\n");
+        result.push_str("</excerpts>\n");
     }
 
     if !fetch_context.is_empty() {

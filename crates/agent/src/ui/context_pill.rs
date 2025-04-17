@@ -299,8 +299,8 @@ impl AddedContext {
                 summarizing: false,
             },
 
-            AssistantContext::Selection(selection_context) => {
-                let full_path = selection_context.context_buffer.file.full_path(cx);
+            AssistantContext::Excerpt(excerpt_context) => {
+                let full_path = excerpt_context.context_buffer.file.full_path(cx);
                 let mut full_path_string = full_path.to_string_lossy().into_owned();
                 let mut name = full_path
                     .file_name()
@@ -309,8 +309,8 @@ impl AddedContext {
 
                 let line_range_text = format!(
                     " ({}-{})",
-                    selection_context.line_range.start.row + 1,
-                    selection_context.line_range.end.row + 1
+                    excerpt_context.line_range.start.row + 1,
+                    excerpt_context.line_range.end.row + 1
                 );
 
                 full_path_string.push_str(&line_range_text);
@@ -322,8 +322,8 @@ impl AddedContext {
                     .map(|n| n.to_string_lossy().into_owned().into());
 
                 AddedContext {
-                    id: selection_context.id,
-                    kind: ContextKind::File,
+                    id: excerpt_context.id,
+                    kind: ContextKind::File, // Use File icon for excerpts
                     name: name.into(),
                     parent,
                     tooltip: Some(full_path_string.into()),

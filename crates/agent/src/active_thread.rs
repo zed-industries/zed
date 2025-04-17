@@ -3153,15 +3153,15 @@ pub(crate) fn open_context(
                     .detach();
             }
         }
-        AssistantContext::Selection(selection_context) => {
-            if let Some(project_path) = selection_context
+        AssistantContext::Excerpt(excerpt_context) => {
+            if let Some(project_path) = excerpt_context
                 .context_buffer
                 .buffer
                 .read(cx)
                 .project_path(cx)
             {
-                let snapshot = selection_context.context_buffer.buffer.read(cx).snapshot();
-                let target_position = selection_context.range.start.to_point(&snapshot);
+                let snapshot = excerpt_context.context_buffer.buffer.read(cx).snapshot();
+                let target_position = excerpt_context.range.start.to_point(&snapshot);
 
                 open_editor_at_position(project_path, target_position, &workspace, window, cx)
                     .detach();
