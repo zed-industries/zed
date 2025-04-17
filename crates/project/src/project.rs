@@ -1882,7 +1882,7 @@ impl Project {
             ))));
         };
         worktree.update(cx, |worktree, cx| {
-            worktree.create_entry(project_path.path, is_directory, cx)
+            worktree.create_entry(project_path.path, is_directory, None, cx)
         })
     }
 
