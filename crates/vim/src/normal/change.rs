@@ -62,7 +62,10 @@ impl Vim {
                                     &text_layout_details,
                                     forced_motion,
                                 );
-                                if let Motion::CurrentLine = motion {
+                                if matches!(
+                                    motion,
+                                    Motion::CurrentLine | Motion::Down { .. } | Motion::Up { .. }
+                                ) {
                                     let mut start_offset =
                                         selection.start.to_offset(map, Bias::Left);
                                     let classifier = map
