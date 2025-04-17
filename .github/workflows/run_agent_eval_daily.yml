@@ -43,4 +43,4 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run cargo eval
-        run: cargo run -p eval metal_i64_support
+        run: cargo run -p eval
