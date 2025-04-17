@@ -501,7 +501,9 @@ fn render_markdown_code_block(
 
     let codeblock_header = h_flex()
         .group("codeblock_header")
-        .p_1()
+        .py_1()
+        .pl_1p5()
+        .pr_1()
         .gap_1()
         .justify_between()
         .border_b_1()
