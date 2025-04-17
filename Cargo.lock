@@ -13319,6 +13319,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "indoc",
  "parking_lot",
  "paths",
  "schemars",
