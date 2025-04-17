@@ -45,6 +45,7 @@ use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
+use crate::ui::UsageBanner;
 use crate::{
     AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
@@ -1541,6 +1542,12 @@ impl AssistantPanel {
             })
     }
 
+    fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let usage = self.thread.read(cx).last_usage()?;
+
+        Some(UsageBanner::new(zed_llm_client::Plan::ZedProTrial, usage.amount).into_any_element())
+    }
+
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let last_error = self.thread.read(cx).last_error()?;
 
@@ -1802,6 +1809,7 @@ impl Render for AssistantPanel {
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
+                    .children(self.render_usage_banner(cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),

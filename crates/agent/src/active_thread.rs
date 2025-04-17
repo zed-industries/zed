@@ -23,7 +23,8 @@ use gpui::{
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolUseId, Role, StopReason,
+    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolUseId, RequestUsage, Role,
+    StopReason,
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
@@ -63,6 +64,7 @@ pub struct ActiveThread {
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     expanded_code_blocks: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
+    last_usage: Option<RequestUsage>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     copied_code_block_ids: HashSet<(MessageId, usize)>,
     _subscriptions: Vec<Subscription>,
@@ -734,6 +736,7 @@ impl ActiveThread {
             hide_scrollbar_task: None,
             editing_message: None,
             last_error: None,
+            last_usage: None,
             copied_code_block_ids: HashSet::default(),
             notifications: Vec::new(),
             _subscriptions: subscriptions,
@@ -790,6 +793,10 @@ impl ActiveThread {
 
     pub fn clear_last_error(&mut self) {
         self.last_error.take();
+    }
+
+    pub fn last_usage(&self) -> Option<RequestUsage> {
+        self.last_usage
     }
 
     /// Returns the editing message id and the estimated token count in the content
@@ -875,6 +882,9 @@ impl ActiveThread {
         match event {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
+            }
+            ThreadEvent::UsageUpdated(usage) => {
+                self.last_usage = Some(*usage);
             }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryGenerated

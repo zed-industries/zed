@@ -19,7 +19,8 @@ use language_model::{
     LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, Role, StopReason, TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
+    TokenUsage,
 };
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
@@ -31,7 +32,6 @@ use settings::Settings;
 use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::UsageLimit;
 
 use crate::context::{AssistantContext, ContextId, format_context_as_string};
 use crate::thread_store::{
@@ -1080,11 +1080,11 @@ impl Thread {
                 let mut current_token_usage = TokenUsage::default();
 
                 if let Some(usage) = usage {
-                    let limit = match usage.limit {
-                        UsageLimit::Limited(limit) => limit.to_string(),
-                        UsageLimit::Unlimited => "unlimited".to_string(),
-                    };
-                    log::info!("model request usage: {} / {}", usage.amount, limit);
+                    thread
+                        .update(cx, |_thread, cx| {
+                            cx.emit(ThreadEvent::UsageUpdated(usage));
+                        })
+                        .ok();
                 }
 
                 while let Some(event) = events.next().await {
@@ -2050,6 +2050,7 @@ pub enum ThreadError {
 #[derive(Debug, Clone)]
 pub enum ThreadEvent {
     ShowError(ThreadError),
+    UsageUpdated(RequestUsage),
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
