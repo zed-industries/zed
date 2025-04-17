@@ -187,6 +187,7 @@ fn main() {
                 );
 
                 let repo_url = example.base.url.clone();
+                let revision = example.base.revision.clone();
                 if repo_urls.insert(repo_url.clone()) {
                     let repo_path = repo_path_for_url(&repo_url);
 
@@ -201,7 +202,20 @@ fn main() {
                         let git_task = cx.spawn(async move |_cx| {
                             std::fs::create_dir_all(&repo_path)?;
                             run_git(&repo_path, &["init"]).await?;
-                            run_git(&repo_path, &["remote", "add", "origin", &repo_url]).await
+                            run_git(&repo_path, &["remote", "add", "origin", &repo_url]).await?;
+                            run_git(
+                                &repo_path,
+                                &[
+                                    "fetch",
+                                    "--depth",
+                                    "1",
+                                    "origin",
+                                    "+refs/heads/*:refs/remotes/origin/*",
+                                ],
+                            )
+                            .await?;
+                            run_git(&repo_path, &["fetch", "--depth", "1", "origin", &revision])
+                                .await
                         });
 
                         clone_tasks.push(git_task);
