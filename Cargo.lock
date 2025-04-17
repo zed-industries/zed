@@ -4920,36 +4920,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "evals"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "client",
- "clock",
- "collections",
- "dap",
- "env_logger 0.11.8",
- "feature_flags",
- "fs",
- "gpui",
- "http_client",
- "language",
- "languages",
- "node_runtime",
- "open_ai",
- "project",
- "reqwest_client",
- "semantic_index",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "util",
- "workspace-hack",
-]
-
-[[package]]
 name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
