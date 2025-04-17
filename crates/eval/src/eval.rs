@@ -260,7 +260,7 @@ fn main() {
             println!("");
 
             let mut diff_scores = Vec::new();
-            let mut process_scores = Vec::new();
+            let mut thread_scores = Vec::new();
             let mut error_count = 0;
 
             for (result, example) in results {
@@ -285,15 +285,15 @@ fn main() {
                                     );
                                     diff_scores.push(judge_output.diff.score);
 
-                                    let process_score: u32 = judge_output.thread.score;
-                                    let score_index = (process_score.min(5)) as usize;
-                                    println!(
-                                        "Thread: {} {}{}",
-                                        SCORES[score_index],
-                                        example.log_prefix,
-                                        judge_output.thread.score,
-                                    );
-                                    process_scores.push(judge_output.thread.score);
+                                    if let Some(thread) = judge_output.thread {
+                                        let process_score: u32 = thread.score;
+                                        let score_index = (process_score.min(5)) as usize;
+                                        println!(
+                                            "Thread: {} {}{}",
+                                            SCORES[score_index], example.log_prefix, thread.score,
+                                        );
+                                        thread_scores.push(thread.score);
+                                    }
                                 }
                                 Err(err) => {
                                     println!("💥 {}{:?}", example.log_prefix, err);
@@ -308,13 +308,6 @@ fn main() {
                     example.example_output_directory().display()
                 );
             }
-
-            let process_score_count = process_scores.len();
-            let average_process_score = process_scores
-                .into_iter()
-                .map(|score| score as f32)
-                .sum::<f32>()
-                / (process_score_count as f32);
 
             let diff_score_count = diff_scores.len();
             let average_diff_score = diff_scores
@@ -331,8 +324,19 @@ fn main() {
                 println!("\nAverage code diff score: {average_diff_score}");
             }
 
-            if diff_score_count > 0 {
-                println!("\nAverage process score: {average_process_score}");
+            let thread_score_count = thread_scores.len();
+
+            // We might have gotten no thread scores if we weren't asked to judge the thread.
+            if thread_score_count > 0 {
+                let average_process_score = thread_scores
+                    .into_iter()
+                    .map(|score| score as f32)
+                    .sum::<f32>()
+                    / (thread_score_count as f32);
+
+                if diff_score_count > 0 {
+                    println!("\nAverage process score: {average_process_score}");
+                }
             }
 
             std::thread::sleep(std::time::Duration::from_secs(2));
@@ -380,25 +384,45 @@ async fn run_example(
             let path = std::path::Path::new(".");
             let commit_id = get_current_commit_id(path).await.unwrap_or_default();
 
-            telemetry::event!(
-                "Agent Eval Completed",
-                cohort_id = cohort_id,
-                example_name = example.name.clone(),
-                round = round,
-                diff_score = judge_output.diff.score,
-                diff_analysis = judge_output.diff.analysis,
-                process_score = judge_output.thread.score,
-                process_analysis = judge_output.thread.analysis,
-                tool_use_counts = run_output.tool_use_counts,
-                response_count = run_output.response_count,
-                token_usage = run_output.token_usage,
-                model = model.telemetry_id(),
-                model_provider = model.provider_id().to_string(),
-                repository_url = example.base.url.clone(),
-                repository_revision = example.base.revision.clone(),
-                diagnostics_summary = run_output.diagnostics,
-                commit_id = commit_id
-            );
+            if let Some(thread) = &judge_output.thread {
+                telemetry::event!(
+                    "Agent Eval Completed",
+                    cohort_id = cohort_id,
+                    example_name = example.name.clone(),
+                    round = round,
+                    diff_score = judge_output.diff.score,
+                    diff_analysis = judge_output.diff.analysis,
+                    thread_score = thread.score,
+                    thread_analysis = thread.analysis,
+                    tool_use_counts = run_output.tool_use_counts,
+                    response_count = run_output.response_count,
+                    token_usage = run_output.token_usage,
+                    model = model.telemetry_id(),
+                    model_provider = model.provider_id().to_string(),
+                    repository_url = example.base.url.clone(),
+                    repository_revision = example.base.revision.clone(),
+                    diagnostics_summary = run_output.diagnostics,
+                    commit_id = commit_id
+                );
+            } else {
+                telemetry::event!(
+                    "Agent Eval Completed",
+                    cohort_id = cohort_id,
+                    example_name = example.name.clone(),
+                    round = round,
+                    diff_score = judge_output.diff.score,
+                    diff_analysis = judge_output.diff.analysis,
+                    tool_use_counts = run_output.tool_use_counts,
+                    response_count = run_output.response_count,
+                    token_usage = run_output.token_usage,
+                    model = model.telemetry_id(),
+                    model_provider = model.provider_id().to_string(),
+                    repository_url = example.base.url.clone(),
+                    repository_revision = example.base.revision.clone(),
+                    diagnostics_summary = run_output.diagnostics,
+                    commit_id = commit_id
+                );
+            }
         }
 
         results.push(judge_result);

@@ -69,8 +69,8 @@ pub struct Example {
     pub prompt: String,
     /// Content of `diff_criteria.md`
     pub diff_criteria: String,
-    /// Content of `thread_criteria.md`
-    pub thread_criteria: String,
+    /// Content of `thread_criteria.md`, if that file exists (it's optional)
+    pub thread_criteria: Option<String>,
     /// Path to the directory containing the requests and responses for the agentic loop
     pub run_directory_path: PathBuf,
     /// Prefix used for logging that identifies this example
@@ -107,7 +107,7 @@ pub struct JudgeResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeOutput {
-    pub thread: JudgeResponse,
+    pub thread: Option<JudgeResponse>,
     pub diff: JudgeResponse,
 }
 
@@ -119,12 +119,17 @@ impl Example {
         let prompt_path = dir_path.join("prompt.md");
         let diff_criteria_path = dir_path.join("diff_criteria.md");
         let thread_criteria_path = dir_path.join("thread_criteria.md");
+        let thread_criteria = if thread_criteria_path.exists() {
+            Some(fs::read_to_string(thread_criteria_path.clone())?)
+        } else {
+            None
+        };
 
         Ok(Example {
             name: name.clone(),
             base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
-            thread_criteria: fs::read_to_string(thread_criteria_path.clone())?,
+            thread_criteria,
             diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
             run_directory_path: run_dir.to_path_buf(),
             log_prefix: name,
@@ -544,13 +549,16 @@ impl Example {
             send_language_model_request(model.clone(), request, cx).await?
         };
 
-        let judge_thread_response = {
+        let thread_response;
+        let thread_output;
+
+        if let Some(criteria) = self.thread_criteria.clone() {
             let request_markdown = RequestMarkdown::new(&last_request);
             let thread_prompt = handlebars.render(
                 judge_thread_prompt_name,
                 &JudgeThreadInput {
                     messages: request_markdown.messages,
-                    criteria: self.thread_criteria.clone(),
+                    criteria,
                 },
             )?;
 
@@ -565,22 +573,26 @@ impl Example {
                 stop: Vec::new(),
             };
 
-            send_language_model_request(model, request, cx).await?
-        };
+            thread_response = send_language_model_request(model, request, cx).await?;
+            thread_output = Some(JudgeResponse::parse(&thread_response)?);
+        } else {
+            thread_response = "There were no criteria specified for this thread, so this example was not judged on its thread.".to_string();
+            thread_output = None;
+        }
 
         writeln!(
             &mut output_file,
             "# Judgment ({})\n
             ## Thread\n
-            {judge_thread_response}\n
+            {thread_response}\n
             ## Diff\n
             {diff_response}",
-            judge_repetitions + 1
+            judge_repetitions + 1,
         )
         .log_err();
 
         Ok(JudgeOutput {
-            thread: JudgeResponse::parse(&judge_thread_response)?,
+            thread: thread_output,
             diff: JudgeResponse::parse(&diff_response)?,
         })
     }
