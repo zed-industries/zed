@@ -6912,7 +6912,7 @@ impl Element for EditorElement {
                         ) {
                             snapshot
                         } else {
-                            let soft_wrap_width = match editor.soft_wrap_mode(cx) {
+                            let wrap_width = match editor.soft_wrap_mode(cx) {
                                 SoftWrap::GitDiff => None,
                                 SoftWrap::None => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                                 SoftWrap::EditorWidth => Some(editor_width),
@@ -6922,7 +6922,7 @@ impl Element for EditorElement {
                                 }
                             };
 
-                            if editor.set_wrap_width(soft_wrap_width, cx) {
+                            if editor.set_wrap_width(wrap_width, cx) {
                                 editor.snapshot(window, cx)
                             } else {
                                 snapshot
@@ -6996,11 +6996,10 @@ impl Element for EditorElement {
                     });
 
                     let mut scroll_position = snapshot.scroll_position();
-
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
-                    let max_row = snapshot.max_point().row();
                     let start_row = DisplayRow(scroll_position.y as u32);
+                    let max_row = snapshot.max_point().row();
                     let end_row = cmp::min(
                         (scroll_position.y + height_in_lines).ceil() as u32,
                         max_row.next_row().0,
@@ -7400,7 +7399,7 @@ impl Element for EditorElement {
                             false
                         };
 
-                        if (clamped || autoscrolled) && editor.mode.is_minimap() {
+                        if clamped || autoscrolled {
                             snapshot = editor.snapshot(window, cx);
                             scroll_position = snapshot.scroll_position();
                         }
