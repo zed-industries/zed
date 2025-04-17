@@ -22,6 +22,7 @@ pub struct WebSearchToolInput {
     query: String,
 }
 
+#[derive(RegisterComponent)]
 pub struct WebSearchTool;
 
 impl Tool for WebSearchTool {
@@ -209,5 +210,44 @@ impl ToolCard for WebSearchToolCard {
             });
 
         v_flex().my_2().gap_1().child(header).children(content)
+    }
+}
+
+impl Component for WebSearchTool {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+
+    fn sort_name() -> &'static str {
+        "ToolWebSearch"
+    }
+
+    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let new_search = cx.new(|_cx| WebSearchToolCard {
+            response: Some(Ok(WebSearchResponse {
+                summary: "".into(),
+                citations: vec![],
+            })),
+            _task: Task::ready(()),
+        });
+
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group_with_title(
+                    "Default",
+                    vec![single_example(
+                        "New Search",
+                        div()
+                            .size_full()
+                            .child(new_search.update(cx, |tool, cx| {
+                                tool.render(&ToolUseStatus::Pending, window, cx)
+                                    .into_any_element()
+                            }))
+                            .into_any_element(),
+                    )],
+                )])
+                .into_any_element(),
+        )
     }
 }
