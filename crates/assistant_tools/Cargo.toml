@@ -26,7 +26,7 @@ itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 linkme.workspace = true
-open = { workspace = true }
+open.workspace = true
 project.workspace = true
 regex.workspace = true
 schemars.workspace = true
