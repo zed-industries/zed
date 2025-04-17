@@ -15,9 +15,11 @@ use language_model::{
 };
 use project::{LspStore, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::Write as _;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{
@@ -65,8 +67,10 @@ pub struct Example {
     pub base: ExampleBase,
     /// Content of `prompt.md`
     pub prompt: String,
-    /// Content of `criteria.md`
-    pub criteria: String,
+    /// Content of `diff_criteria.md`
+    pub diff_criteria: String,
+    /// Content of `thread_criteria.md`
+    pub thread_criteria: String,
     /// Path to the directory containing the requests and responses for the agentic loop
     pub run_directory_path: PathBuf,
     /// Prefix used for logging that identifies this example
@@ -80,18 +84,31 @@ pub struct RunOutput {
     pub response_count: usize,
     pub token_usage: TokenUsage,
     pub tool_use_counts: HashMap<Arc<str>, u32>,
+    pub last_request: LanguageModelRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JudgeInput {
+pub struct JudgeDiffInput {
     pub repository_diff: String,
     pub criteria: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JudgeOutput {
+pub struct JudgeThreadInput {
+    pub messages: String,
+    pub criteria: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeResponse {
     pub analysis: String,
     pub score: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeOutput {
+    pub process: JudgeResponse,
+    pub diff: JudgeResponse,
 }
 
 impl Example {
@@ -100,13 +117,15 @@ impl Example {
         let name = Self::name_from_path(dir_path);
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
-        let criteria_path = dir_path.join("criteria.md");
+        let diff_criteria_path = dir_path.join("diff_criteria.md");
+        let thread_criteria_path = dir_path.join("thread_criteria.md");
 
         Ok(Example {
             name: name.clone(),
             base: toml::from_str(&fs::read_to_string(&base_path)?)?,
             prompt: fs::read_to_string(prompt_path.clone())?,
-            criteria: fs::read_to_string(criteria_path.clone())?,
+            thread_criteria: fs::read_to_string(thread_criteria_path.clone())?,
+            diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
             run_directory_path: run_dir.to_path_buf(),
             log_prefix: name,
         })
@@ -308,19 +327,27 @@ impl Example {
             let thread_store = thread_store.await;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
+            let last_request = Rc::new(RefCell::new(None));
 
             thread.update(cx, |thread, _cx| {
                 let mut request_count = 0;
                 let example_dir_path = this.example_output_directory();
+
+                let last_request = Rc::clone(&last_request);
                 thread.set_request_callback(move |request, response_events| {
+                    *last_request.borrow_mut() = Some(request.clone());
+
                     request_count += 1;
                     let messages_file_path = example_dir_path.join(format!("{request_count}.messages.md"));
-                    let markdown = RequestMarkdown::new(request, response_events);
-                    fs::write(messages_file_path, markdown.messages).expect("failed to write messages file");
+                    let request_markdown = RequestMarkdown::new(request);
+                    let response_events_markdown = response_events_to_markdown(response_events);
+
+                    let messages = format!("{}\n\n{}", request_markdown.messages, response_events_markdown);
+                    fs::write(messages_file_path, messages).expect("failed to write messages file");
 
                     if request_count == 1 {
                         let tools_file_path = example_dir_path.join(format!("tools.md"));
-                        fs::write(tools_file_path, markdown.tools).expect("failed to write tools file");
+                        fs::write(tools_file_path, request_markdown.tools).expect("failed to write tools file");
                     }
                 });
             })?;
@@ -445,6 +472,10 @@ impl Example {
                 .await?;
             println!("{}Got diagnostics", this.log_prefix);
 
+            let Some(last_request) = last_request.borrow_mut().take() else {
+                return Err(anyhow!("No requests ran."));
+            };
+
             drop(subscription);
             drop(lsp_open_handle_and_store);
 
@@ -459,6 +490,7 @@ impl Example {
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
                     tool_use_counts: tool_use_counts.lock().unwrap().clone(),
+                    last_request,
                 }
             })
         })
@@ -467,6 +499,7 @@ impl Example {
     pub async fn judge(
         &self,
         model: Arc<dyn LanguageModel>,
+        last_request: LanguageModelRequest,
         repository_diff: String,
         judge_repetitions: u32,
         cx: &AsyncApp,
@@ -477,39 +510,72 @@ impl Example {
         )
         .expect("failed to create judge.md");
 
-        let judge_prompt = include_str!("judge_prompt.hbs");
-        let judge_prompt_name = "judge_prompt";
+        let judge_thread_prompt = include_str!("judge_thread_prompt.hbs");
+        let judge_diff_prompt = include_str!("judge_diff_prompt.hbs");
+        let judge_thread_prompt_name = "judge_thread_prompt";
+        let judge_diff_prompt_name = "judge_diff_prompt";
         let mut handlebars = Handlebars::new();
-        handlebars.register_template_string(judge_prompt_name, judge_prompt)?;
-        let prompt = handlebars.render(
-            judge_prompt_name,
-            &JudgeInput {
-                repository_diff,
-                criteria: self.criteria.clone(),
-            },
-        )?;
+        handlebars.register_template_string(judge_diff_prompt_name, judge_diff_prompt)?;
 
-        let request = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text(prompt)],
-                cache: false,
-            }],
-            temperature: None,
-            tools: Vec::new(),
-            stop: Vec::new(),
+        handlebars.register_template_string(judge_thread_prompt_name, judge_thread_prompt)?;
+
+        let diff_response = {
+            let repository_diff_prompt = handlebars.render(
+                judge_diff_prompt_name,
+                &JudgeDiffInput {
+                    repository_diff,
+                    criteria: self.diff_criteria.clone(),
+                },
+            )?;
+
+            let request = LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text(repository_diff_prompt)],
+                    cache: false,
+                }],
+                temperature: None,
+                tools: Vec::new(),
+                stop: Vec::new(),
+            };
+
+            send_language_model_request(model.clone(), request, cx).await?
         };
 
-        let response = send_language_model_request(model, request, cx).await?;
+        let judge_thread_response = {
+            let request_markdown = RequestMarkdown::new(&last_request);
+            let thread_prompt = handlebars.render(
+                judge_thread_prompt_name,
+                &JudgeThreadInput {
+                    messages: request_markdown.messages,
+                    criteria: self.thread_criteria.clone(),
+                },
+            )?;
+
+            let request = LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text(thread_prompt)],
+                    cache: false,
+                }],
+                temperature: None,
+                tools: Vec::new(),
+                stop: Vec::new(),
+            };
+
+            send_language_model_request(model, request, cx).await?
+        };
 
         writeln!(
             &mut output_file,
-            "# Judgment ({})\n{}",
-            judge_repetitions, &response
+            "# Judgment ({judge_repetitions})\n{judge_thread_response}\n{diff_response}",
         )
         .log_err();
 
-        parse_judge_output(&response)
+        Ok(JudgeOutput {
+            process: JudgeResponse::parse(&judge_thread_response)?,
+            diff: JudgeResponse::parse(&diff_response)?,
+        })
     }
 
     pub async fn repository_diff(&self) -> Result<String> {
@@ -620,13 +686,15 @@ async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> R
     anyhow::Ok(output)
 }
 
-fn parse_judge_output(response: &str) -> Result<JudgeOutput> {
-    let analysis = get_tag("analysis", response)?.to_string();
-    let score = get_tag("score", response)?
-        .parse()
-        .context("error parsing score")?;
+impl JudgeResponse {
+    fn parse(response: &str) -> Result<Self> {
+        let analysis = get_tag("analysis", response)?.to_string();
+        let score = get_tag("score", response)?
+            .parse()
+            .context("error parsing score")?;
 
-    Ok(JudgeOutput { analysis, score })
+        Ok(Self { analysis, score })
+    }
 }
 
 fn get_tag(name: &'static str, response: &str) -> Result<String> {
@@ -714,10 +782,7 @@ struct RequestMarkdown {
 }
 
 impl RequestMarkdown {
-    fn new(
-        request: &LanguageModelRequest,
-        response_events: &[Result<LanguageModelCompletionEvent, String>],
-    ) -> Self {
+    fn new(request: &LanguageModelRequest) -> Self {
         let mut tools = String::new();
         let mut messages = String::new();
 
@@ -775,60 +840,65 @@ impl RequestMarkdown {
             }
         }
 
-        // Print the response events if any
-        if !response_events.is_empty() {
-            messages.push_str("# Response\n\n");
-            let mut text_buffer = String::new();
-            let mut thinking_buffer = String::new();
-
-            let flush_buffers =
-                |output: &mut String, text_buffer: &mut String, thinking_buffer: &mut String| {
-                    if !text_buffer.is_empty() {
-                        output.push_str(&format!("**Text**:\n{}\n\n", text_buffer));
-                        text_buffer.clear();
-                    }
-                    if !thinking_buffer.is_empty() {
-                        output.push_str(&format!("**Thinking**:\n{}\n\n", thinking_buffer));
-                        thinking_buffer.clear();
-                    }
-                };
-
-            for event in response_events {
-                match event {
-                    Ok(LanguageModelCompletionEvent::Text(text)) => {
-                        text_buffer.push_str(text);
-                    }
-                    Ok(LanguageModelCompletionEvent::Thinking(text)) => {
-                        thinking_buffer.push_str(text);
-                    }
-                    Ok(LanguageModelCompletionEvent::Stop(reason)) => {
-                        flush_buffers(&mut messages, &mut text_buffer, &mut thinking_buffer);
-                        messages.push_str(&format!("**Stop**: {:?}\n\n", reason));
-                    }
-                    Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
-                        flush_buffers(&mut messages, &mut text_buffer, &mut thinking_buffer);
-                        messages.push_str(&format!(
-                            "**Tool Use**: {} (ID: {})\n",
-                            tool_use.name, tool_use.id
-                        ));
-                        messages.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
-                    }
-                    Ok(
-                        LanguageModelCompletionEvent::UsageUpdate(_)
-                        | LanguageModelCompletionEvent::StartMessage { .. },
-                    ) => {}
-                    Err(error) => {
-                        flush_buffers(&mut messages, &mut text_buffer, &mut thinking_buffer);
-                        messages.push_str(&format!("**Error**: {}\n\n", error));
-                    }
-                }
-            }
-
-            flush_buffers(&mut messages, &mut text_buffer, &mut thinking_buffer);
-        }
-
         Self { tools, messages }
     }
+}
+
+fn response_events_to_markdown(
+    response_events: &[std::result::Result<LanguageModelCompletionEvent, String>],
+) -> String {
+    let mut response = String::new();
+    // Print the response events if any
+    response.push_str("# Response\n\n");
+    let mut text_buffer = String::new();
+    let mut thinking_buffer = String::new();
+
+    let flush_buffers =
+        |output: &mut String, text_buffer: &mut String, thinking_buffer: &mut String| {
+            if !text_buffer.is_empty() {
+                output.push_str(&format!("**Text**:\n{}\n\n", text_buffer));
+                text_buffer.clear();
+            }
+            if !thinking_buffer.is_empty() {
+                output.push_str(&format!("**Thinking**:\n{}\n\n", thinking_buffer));
+                thinking_buffer.clear();
+            }
+        };
+
+    for event in response_events {
+        match event {
+            Ok(LanguageModelCompletionEvent::Text(text)) => {
+                text_buffer.push_str(text);
+            }
+            Ok(LanguageModelCompletionEvent::Thinking(text)) => {
+                thinking_buffer.push_str(text);
+            }
+            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
+                response.push_str(&format!("**Stop**: {:?}\n\n", reason));
+            }
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
+                response.push_str(&format!(
+                    "**Tool Use**: {} (ID: {})\n",
+                    tool_use.name, tool_use.id
+                ));
+                response.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
+            }
+            Ok(
+                LanguageModelCompletionEvent::UsageUpdate(_)
+                | LanguageModelCompletionEvent::StartMessage { .. },
+            ) => {}
+            Err(error) => {
+                flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
+                response.push_str(&format!("**Error**: {}\n\n", error));
+            }
+        }
+
+        flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
+    }
+
+    response
 }
 
 #[cfg(test)]
@@ -843,7 +913,7 @@ mod test {
         "#
         .unindent();
 
-        let output = parse_judge_output(&response).unwrap();
+        let output = JudgeResponse::parse(&response).unwrap();
         assert_eq!(
             output.analysis,
             "The model did a good job but there were still compilations errors."
@@ -863,7 +933,7 @@ mod test {
         "#
         .unindent();
 
-        let output = parse_judge_output(&response).unwrap();
+        let output = JudgeResponse::parse(&response).unwrap();
         assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
         assert_eq!(output.score, 1);
     }

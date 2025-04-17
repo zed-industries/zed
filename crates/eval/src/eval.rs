@@ -259,7 +259,8 @@ fn main() {
             println!("========================================");
             println!("");
 
-            let mut judge_scores = Vec::new();
+            let mut diff_scores = Vec::new();
+            let mut process_scores = Vec::new();
             let mut error_count = 0;
 
             for (result, example) in results {
@@ -273,14 +274,26 @@ fn main() {
                             match judge_result {
                                 Ok(judge_output) => {
                                     const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
-                                    let score: u32 = judge_output.score;
-                                    let score_index = (score.min(5)) as usize;
+                                    let diff_score: u32 = judge_output.diff.score;
+                                    let score_index = (diff_score.min(5)) as usize;
 
                                     println!(
                                         "{} {}{}",
-                                        SCORES[score_index], example.log_prefix, judge_output.score,
+                                        SCORES[score_index],
+                                        example.log_prefix,
+                                        judge_output.diff.score,
                                     );
-                                    judge_scores.push(judge_output.score);
+                                    diff_scores.push(judge_output.diff.score);
+
+                                    let process_score: u32 = judge_output.process.score;
+                                    let score_index = (process_score.min(5)) as usize;
+                                    println!(
+                                        "{} {}{}",
+                                        SCORES[score_index],
+                                        example.log_prefix,
+                                        judge_output.process.score,
+                                    );
+                                    process_scores.push(judge_output.process.score);
                                 }
                                 Err(err) => {
                                     println!("💥 {}{:?}", example.log_prefix, err);
@@ -296,19 +309,30 @@ fn main() {
                 );
             }
 
-            let score_count = judge_scores.len();
-            let average_score = judge_scores
+            let process_score_count = process_scores.len();
+            let average_process_score = process_scores
                 .into_iter()
                 .map(|score| score as f32)
                 .sum::<f32>()
-                / (score_count as f32);
+                / (process_score_count as f32);
+
+            let diff_score_count = diff_scores.len();
+            let average_diff_score = diff_scores
+                .into_iter()
+                .map(|score| score as f32)
+                .sum::<f32>()
+                / (diff_score_count as f32);
 
             if error_count > 0 {
                 println!("\n{error_count} examples failed to run!");
             }
 
-            if score_count > 0 {
-                println!("\nAverage score: {average_score}");
+            if diff_score_count > 0 {
+                println!("\nAverage code diff score: {average_diff_score}");
+            }
+
+            if diff_score_count > 0 {
+                println!("\nAverage process score: {average_process_score}");
             }
 
             std::thread::sleep(std::time::Duration::from_secs(2));
@@ -336,7 +360,15 @@ async fn run_example(
     // Run judge for each repetition
     let mut results = Vec::new();
     for round in 0..judge_repetitions {
-        let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
+        let judge_result = example
+            .judge(
+                model.clone(),
+                run_output.last_request.clone(),
+                diff.clone(),
+                round,
+                cx,
+            )
+            .await;
 
         if let Ok(judge_output) = &judge_result {
             let cohort_id = example
@@ -353,8 +385,10 @@ async fn run_example(
                 cohort_id = cohort_id,
                 example_name = example.name.clone(),
                 round = round,
-                score = judge_output.score,
-                analysis = judge_output.analysis,
+                diff_score = judge_output.diff.score,
+                diff_analysis = judge_output.diff.analysis,
+                process_score = judge_output.process.score,
+                process_analysis = judge_output.process.analysis,
                 tool_use_counts = run_output.tool_use_counts,
                 response_count = run_output.response_count,
                 token_usage = run_output.token_usage,
