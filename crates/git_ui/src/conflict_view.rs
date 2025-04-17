@@ -22,7 +22,6 @@ use crate::commit_tooltip::{CommitDetails, CommitTooltip};
 
 pub(crate) struct ConflictAddon {
     buffers: HashMap<BufferId, BufferConflicts>,
-    next_inlay_id: usize,
 }
 
 impl ConflictAddon {
@@ -54,7 +53,6 @@ impl editor::Addon for ConflictAddon {
 pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mut Context<Editor>) {
     editor.register_addon(ConflictAddon {
         buffers: Default::default(),
-        next_inlay_id: 0,
     });
 
     let buffers = buffer.read(cx).all_buffers().clone();
