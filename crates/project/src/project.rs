@@ -1492,7 +1492,7 @@ impl Project {
                     binary.cwd.as_ref(),
                     env,
                     None,
-                )
+                );
             } else {
                 let delegate = this.update(cx, |project, cx| {
                     project

@@ -303,6 +303,7 @@ messages!(
     (GitDiffResponse, Background),
     (GitInit, Background),
     (DebuggerGetBinary, Background),
+    (DebuggerGetBinaryResponse, Background),
 );
 
 request_messages!(
@@ -581,7 +582,6 @@ entity_messages!(
     GitInit,
     BreakpointsForFile,
     ToggleBreakpoint,
-    DebuggerGetBinary,
 );
 
 entity_messages!(

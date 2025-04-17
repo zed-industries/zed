@@ -555,8 +555,7 @@ message DapModuleId {
 }
 
 message DebuggerGetBinary {
-    uint64 project_id = 1;
-    DebugTaskDefinition task = 2;
+    DebugTaskDefinition task = 1;
 }
 
 message DebuggerGetBinaryResponse {
