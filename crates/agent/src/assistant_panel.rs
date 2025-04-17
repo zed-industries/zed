@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +13,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
 use client::zed_urls;
-use editor::{Editor, EditorEvent, MultiBuffer};
+use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, Corner, Entity,
@@ -112,7 +113,9 @@ enum ActiveView {
         change_title_editor: Entity<Editor>,
         _subscriptions: Vec<gpui::Subscription>,
     },
-    PromptEditor,
+    PromptEditor {
+        context_editor: Entity<ContextEditor>,
+    },
     History,
     Configuration,
 }
@@ -184,7 +187,6 @@ pub struct AssistantPanel {
     message_editor: Entity<MessageEditor>,
     _active_thread_subscriptions: Vec<Subscription>,
     context_store: Entity<assistant_context_editor::ContextStore>,
-    context_editor: Option<Entity<ContextEditor>>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
@@ -316,7 +318,6 @@ impl AssistantPanel {
                 message_editor_subscription,
             ],
             context_store,
-            context_editor: None,
             configuration: None,
             configuration_subscription: None,
             local_timezone: UtcOffset::from_whole_seconds(
@@ -453,8 +454,6 @@ impl AssistantPanel {
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_active_view(ActiveView::PromptEditor, window, cx);
-
         let context = self
             .context_store
             .update(cx, |context_store, cx| context_store.create(cx));
@@ -462,7 +461,7 @@ impl AssistantPanel {
             .log_err()
             .flatten();
 
-        self.context_editor = Some(cx.new(|cx| {
+        let context_editor = cx.new(|cx| {
             let mut editor = ContextEditor::for_context(
                 context,
                 self.fs.clone(),
@@ -474,11 +473,16 @@ impl AssistantPanel {
             );
             editor.insert_default_prompt(window, cx);
             editor
-        }));
+        });
 
-        if let Some(context_editor) = self.context_editor.as_ref() {
-            context_editor.focus_handle(cx).focus(window);
-        }
+        self.set_active_view(
+            ActiveView::PromptEditor {
+                context_editor: context_editor.clone(),
+            },
+            window,
+            cx,
+        );
+        context_editor.focus_handle(cx).focus(window);
     }
 
     fn deploy_prompt_library(
@@ -545,8 +549,13 @@ impl AssistantPanel {
                         cx,
                     )
                 });
-                this.set_active_view(ActiveView::PromptEditor, window, cx);
-                this.context_editor = Some(editor);
+                this.set_active_view(
+                    ActiveView::PromptEditor {
+                        context_editor: editor,
+                    },
+                    window,
+                    cx,
+                );
 
                 anyhow::Ok(())
             })??;
@@ -777,8 +786,15 @@ impl AssistantPanel {
             .update(cx, |this, cx| this.delete_thread(thread_id, cx))
     }
 
+    pub(crate) fn has_active_thread(&self) -> bool {
+        matches!(self.active_view, ActiveView::Thread { .. })
+    }
+
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
-        self.context_editor.clone()
+        match &self.active_view {
+            ActiveView::PromptEditor { context_editor } => Some(context_editor.clone()),
+            _ => None,
+        }
     }
 
     pub(crate) fn delete_context(
@@ -816,16 +832,10 @@ impl AssistantPanel {
 
 impl Focusable for AssistantPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.active_view {
+        match &self.active_view {
             ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
-            ActiveView::PromptEditor => {
-                if let Some(context_editor) = self.context_editor.as_ref() {
-                    context_editor.focus_handle(cx)
-                } else {
-                    cx.focus_handle()
-                }
-            }
+            ActiveView::PromptEditor { context_editor } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
                 if let Some(configuration) = self.configuration.as_ref() {
                     configuration.focus_handle(cx)
@@ -949,15 +959,8 @@ impl AssistantPanel {
                         .into_any_element()
                 }
             }
-            ActiveView::PromptEditor => {
-                let title = self
-                    .context_editor
-                    .as_ref()
-                    .map(|context_editor| {
-                        SharedString::from(context_editor.read(cx).title(cx).to_string())
-                    })
-                    .unwrap_or_else(|| SharedString::from(LOADING_SUMMARY_PLACEHOLDER));
-
+            ActiveView::PromptEditor { context_editor } => {
+                let title = SharedString::from(context_editor.read(cx).title(cx).to_string());
                 Label::new(title).ml_2().truncate().into_any_element()
             }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
@@ -984,7 +987,7 @@ impl AssistantPanel {
 
         let show_token_count = match &self.active_view {
             ActiveView::Thread { .. } => !is_empty,
-            ActiveView::PromptEditor => self.context_editor.is_some(),
+            ActiveView::PromptEditor { .. } => true,
             _ => false,
         };
 
@@ -1156,7 +1159,7 @@ impl AssistantPanel {
 
         let is_waiting_to_update_token_count = message_editor.is_waiting_to_update_token_count();
 
-        match self.active_view {
+        match &self.active_view {
             ActiveView::Thread { .. } => {
                 if total_token_usage.total == 0 {
                     return None;
@@ -1229,9 +1232,8 @@ impl AssistantPanel {
 
                 Some(token_count)
             }
-            ActiveView::PromptEditor => {
-                let editor = self.context_editor.as_ref()?;
-                let element = render_remaining_tokens(editor, cx)?;
+            ActiveView::PromptEditor { context_editor } => {
+                let element = render_remaining_tokens(context_editor, cx)?;
 
                 Some(element.into_any_element())
             }
@@ -1769,7 +1771,7 @@ impl AssistantPanel {
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        if matches!(self.active_view, ActiveView::PromptEditor) {
+        if matches!(self.active_view, ActiveView::PromptEditor { .. }) {
             key_context.add("prompt_editor");
         }
         key_context
@@ -1797,13 +1799,13 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::go_back))
             .child(self.render_toolbar(window, cx))
-            .map(|parent| match self.active_view {
+            .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
-                ActiveView::PromptEditor => parent.children(self.context_editor.clone()),
+                ActiveView::PromptEditor { context_editor } => parent.child(context_editor.clone()),
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             })
     }
@@ -1868,7 +1870,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         cx: &mut Context<Workspace>,
     ) -> Option<Entity<ContextEditor>> {
         let panel = workspace.panel::<AssistantPanel>(cx)?;
-        panel.update(cx, |panel, _cx| panel.context_editor.clone())
+        panel.read(cx).active_context_editor()
     }
 
     fn open_saved_context(
@@ -1900,7 +1902,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
-        creases: Vec<(String, String)>,
+        selection_ranges: Vec<Range<Anchor>>,
+        buffer: Entity<MultiBuffer>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -1916,9 +1919,40 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             // Wait to create a new context until the workspace is no longer
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
-                if let Some(context) = panel.active_context_editor() {
-                    context.update(cx, |context, cx| context.quote_creases(creases, window, cx));
-                };
+                if panel.has_active_thread() {
+                    panel.thread.update(cx, |thread, cx| {
+                        thread.context_store().update(cx, |store, cx| {
+                            let buffer = buffer.read(cx);
+                            let selection_ranges = selection_ranges
+                                .into_iter()
+                                .flat_map(|range| {
+                                    let (start_buffer, start) =
+                                        buffer.text_anchor_for_position(range.start, cx)?;
+                                    let (end_buffer, end) =
+                                        buffer.text_anchor_for_position(range.end, cx)?;
+                                    if start_buffer != end_buffer {
+                                        return None;
+                                    }
+                                    Some((start_buffer, start..end))
+                                })
+                                .collect::<Vec<_>>();
+
+                            for (buffer, range) in selection_ranges {
+                                store.add_excerpt(range, buffer, cx).detach_and_log_err(cx);
+                            }
+                        })
+                    })
+                } else if let Some(context_editor) = panel.active_context_editor() {
+                    let snapshot = buffer.read(cx).snapshot(cx);
+                    let selection_ranges = selection_ranges
+                        .into_iter()
+                        .map(|range| range.to_point(&snapshot))
+                        .collect::<Vec<_>>();
+
+                    context_editor.update(cx, |context_editor, cx| {
+                        context_editor.quote_ranges(selection_ranges, snapshot, window, cx)
+                    });
+                }
             });
         });
     }
