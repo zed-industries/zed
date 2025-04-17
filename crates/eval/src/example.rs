@@ -433,7 +433,8 @@ impl Example {
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
 
-            let repository_diff_path = this.example_output_directory().join("patch.diff");
+            let example_output_dir = this.example_output_directory();
+            let repository_diff_path = example_output_dir.join("patch.diff");
             let mut repository_diff_output_file = File::create(&repository_diff_path)?;
             writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
 
@@ -447,6 +448,8 @@ impl Example {
 
             drop(subscription);
             drop(lsp_open_handle_and_store);
+
+            fs::write(example_output_dir.join("diagnostics.txt"), &diagnostics)?;
 
             thread.update(cx, |thread, _cx| {
                 let response_count = thread
