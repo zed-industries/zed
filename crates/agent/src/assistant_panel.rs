@@ -1911,8 +1911,6 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             return;
         };
 
-        dbg!("Got panel");
-
         if !panel.focus_handle(cx).contains_focused(window, cx) {
             workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
         }
@@ -1922,12 +1920,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
                 if panel.has_active_thread() {
-                    dbg!("Has active thread");
-
                     panel.thread.update(cx, |thread, cx| {
                         thread.context_store().update(cx, |store, cx| {
-                            dbg!("Getting ranges for {} ranges", selection_ranges.len());
-
                             let buffer = buffer.read(cx);
                             let selection_ranges = selection_ranges
                                 .into_iter()
@@ -1942,8 +1936,6 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
                                     Some((start_buffer, start..end))
                                 })
                                 .collect::<Vec<_>>();
-
-                            dbg!("Got {} ranges", selection_ranges.len());
 
                             for (buffer, range) in selection_ranges {
                                 store

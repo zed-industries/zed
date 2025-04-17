@@ -301,17 +301,20 @@ impl AddedContext {
 
             AssistantContext::Selection(selection_context) => {
                 let full_path = selection_context.context_buffer.file.full_path(cx);
-                let full_path_string = full_path.to_string_lossy().into_owned();
+                let mut full_path_string = full_path.to_string_lossy().into_owned();
                 let mut name = full_path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| full_path_string.clone());
 
-                name.push_str(&format!(
+                let line_range_text = format!(
                     " ({}-{})",
                     selection_context.line_range.start.row + 1,
                     selection_context.line_range.end.row + 1
-                ));
+                );
+
+                full_path_string.push_str(&line_range_text);
+                name.push_str(&line_range_text);
 
                 let parent = full_path
                     .parent()

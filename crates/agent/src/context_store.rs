@@ -453,7 +453,6 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) {
         let id = self.next_context_id.post_inc();
-        self.files.insert(context_buffer.id, id);
         self.context
             .push(AssistantContext::Selection(SelectionContext {
                 id,
