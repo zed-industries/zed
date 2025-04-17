@@ -181,7 +181,7 @@ impl Example {
     pub async fn setup(&mut self) -> Result<()> {
         let repo_path = repo_path_for_url(&self.base.url);
 
-        let revision_exists = run_git(&repo_path, &["rev-parse", "--verify", &self.base.revision])
+        let revision_exists = run_git(&repo_path, &["show", "--quiet", &self.base.revision])
             .await
             .is_ok();
 
