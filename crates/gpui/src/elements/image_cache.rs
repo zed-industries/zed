@@ -1,5 +1,5 @@
 use crate::{
-    AnyElement, App, AppContext, Asset, AssetLogger, AsyncApp, Bounds, Element, ElementId, Entity,
+    AnyElement, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
     GlobalElementId, ImageAssetLoader, ImageCacheError, IntoElement, LayoutId, ParentElement,
     Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window, hash,
 };
@@ -123,33 +123,8 @@ impl CacheItem {
     }
 }
 
-impl Drop for ImageCache {
-    fn drop(&mut self) {
-        let app = self.app.clone();
-        let images = std::mem::replace(&mut self.images, LruCache::unbounded())
-            .into_iter()
-            .filter_map(|(_, mut item)| item.get().transpose().ok().flatten())
-            .collect::<Vec<_>>();
-
-        // Spawn a task to drop the images in the background
-        self.app
-            .foreground_executor()
-            .spawn(async move {
-                _ = app.update(move |cx| {
-                    for image in images {
-                        for window in cx.windows.values_mut().flatten() {
-                            _ = window.drop_image(image.clone());
-                        }
-                    }
-                });
-            })
-            .detach();
-    }
-}
-
 /// An cache for loading images from external sources.
 pub struct ImageCache {
-    app: AsyncApp,
     images: LruCache<u64, CacheItem>,
     max_items: Option<usize>,
 }
@@ -163,23 +138,31 @@ impl fmt::Debug for ImageCache {
 }
 
 impl ImageCache {
+    fn internal_new(max_items: Option<usize>, cx: &mut App) -> Entity<Self> {
+        let e = cx.new(|_cx| ImageCache {
+            images: LruCache::unbounded(),
+            max_items,
+        });
+        cx.observe_release(&e, |image_cache, cx| {
+            for (_, mut item) in std::mem::replace(&mut image_cache.images, LruCache::unbounded()) {
+                if let Some(Ok(image)) = item.get() {
+                    remove_image_from_windows(image, None, cx);
+                }
+            }
+        })
+        .detach();
+        e
+    }
+
     /// Create a new image cache.
     #[inline]
     pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| ImageCache {
-            app: cx.to_async(),
-            images: LruCache::unbounded(),
-            max_items: None,
-        })
+        Self::internal_new(None, cx)
     }
 
     /// Create a new image cache with a maximum number of items.
-    pub fn lru(max_items: usize, cx: &mut App) -> Self {
-        ImageCache {
-            app: cx.to_async(),
-            images: LruCache::unbounded(),
-            max_items: Some(max_items),
-        }
+    pub fn lru(max_items: usize, cx: &mut App) -> Entity<Self> {
+        Self::internal_new(Some(max_items), cx)
     }
 
     /// Load an image from the given source.
@@ -196,7 +179,7 @@ impl ImageCache {
             while self.images.len() >= max_items {
                 if let Some((_, mut item)) = self.images.pop_lru() {
                     if let Some(Ok(image)) = item.get() {
-                        remove_image_from_windows(image, window, cx);
+                        remove_image_from_windows(image, Some(window), cx);
                     }
                 }
             }
@@ -233,7 +216,7 @@ impl ImageCache {
     pub fn clear(&mut self, window: &mut Window, cx: &mut App) {
         for (_, mut item) in std::mem::replace(&mut self.images, LruCache::unbounded()) {
             if let Some(Ok(image)) = item.get() {
-                remove_image_from_windows(image, window, cx);
+                remove_image_from_windows(image, Some(window), cx);
             }
         }
     }
@@ -243,7 +226,7 @@ impl ImageCache {
         let hash = hash(source);
         if let Some(mut item) = self.images.pop(&hash) {
             if let Some(Ok(image)) = item.get() {
-                remove_image_from_windows(image, window, cx);
+                remove_image_from_windows(image, Some(window), cx);
             }
         }
     }
@@ -254,12 +237,14 @@ impl ImageCache {
     }
 }
 
-fn remove_image_from_windows(image: Arc<RenderImage>, window: &mut Window, cx: &mut App) {
+fn remove_image_from_windows(image: Arc<RenderImage>, window: Option<&mut Window>, cx: &mut App) {
     // remove the texture from all other windows
     for window in cx.windows.values_mut().flatten() {
         _ = window.drop_image(image.clone());
     }
 
     // remove the texture from the current window
-    _ = window.drop_image(image);
+    if let Some(window) = window {
+        _ = window.drop_image(image);
+    }
 }
