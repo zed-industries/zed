@@ -235,23 +235,29 @@ fn main() {
             let judge_repetitions = args.judge_repetitions;
             let concurrency = args.concurrency;
 
-            let tasks = examples
-                .into_iter()
-                .map(|example| {
-                    let app_state = app_state.clone();
-                    let model = model.clone();
-                    cx.spawn(async move |cx| {
-                        let result =
-                            run_example(&example, model, app_state, judge_repetitions, cx).await;
-                        (result, example)
-                    })
-                })
-                .collect::<Vec<_>>();
+            let mut results = Vec::new();
 
-            let results = futures::stream::iter(tasks)
-                .buffer_unordered(concurrency)
-                .collect::<Vec<(Result<Vec<Result<JudgeOutput>>>, Example)>>()
-                .await;
+            for chunk in examples.chunks(concurrency) {
+                // Note: We used to use buffers_unordered here but we ran into issues
+                // with the admitedlly hacky lang server setup
+                let tasks = chunk
+                    .iter()
+                    .map(|example| {
+                        let app_state = app_state.clone();
+                        let model = model.clone();
+                        let example = example.clone();
+                        cx.spawn(async move |cx| {
+                            let result =
+                                run_example(&example, model, app_state, judge_repetitions, cx)
+                                    .await;
+                            (result, example)
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                let chunk_results = future::join_all(tasks).await;
+                results.extend(chunk_results);
+            }
 
             println!("\n\n");
             println!("========================================");
