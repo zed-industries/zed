@@ -9,6 +9,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  GIT_FETCH_DEPTH: 0
 
 jobs:
   run_eval:
@@ -30,6 +31,8 @@ jobs:
       - name: Create required directories
         run: |
           mkdir -p /home/runner/.config/zed
+          touch /home/runner/.config/zed/settings.json
+
           mkdir -p ./crates/eval/repos
           mkdir -p ./crates/eval/worktrees
           mkdir -p ./crates/eval/runs
