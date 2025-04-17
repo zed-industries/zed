@@ -321,7 +321,7 @@ impl ScrollbarProperties {
 }
 
 pub struct GitPanel {
-    pub(crate) active_repository: Option<Entity<Repository>>,
+    pub(crate) active_repository: Option<WeakEntity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
     conflicted_count: usize,
     conflicted_staged_count: usize,
@@ -397,7 +397,10 @@ impl GitPanel {
     ) -> Self {
         let fs = app_state.fs.clone();
         let git_store = project.read(cx).git_store().clone();
-        let active_repository = project.read(cx).active_repository(cx);
+        let active_repository = project
+            .read(cx)
+            .active_repository(cx)
+            .map(|repo| repo.downgrade());
         let workspace = workspace.downgrade();
 
         let focus_handle = cx.focus_handle();
@@ -425,7 +428,10 @@ impl GitPanel {
             window,
             move |this, git_store, event, window, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_) => {
-                    this.active_repository = git_store.read(cx).active_repository();
+                    this.active_repository = git_store
+                        .read(cx)
+                        .active_repository()
+                        .map(|repo| repo.downgrade());
                     this.schedule_update(true, window, cx);
                 }
                 GitStoreEvent::RepositoryUpdated(
@@ -644,7 +650,11 @@ impl GitPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(git_repo) = self.active_repository.as_ref() else {
+        let Some(git_repo) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
         let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path, cx) else {
@@ -813,6 +823,7 @@ impl GitPanel {
         let have_entries = self
             .active_repository
             .as_ref()
+            .and_then(|repo| repo.upgrade())
             .map_or(false, |active_repository| {
                 active_repository.read(cx).status_summary().count > 0
             });
@@ -843,7 +854,10 @@ impl GitPanel {
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
             let workspace = self.workspace.upgrade()?;
-            let git_repo = self.active_repository.as_ref()?;
+            let git_repo = self
+                .active_repository
+                .as_ref()
+                .and_then(|repo| repo.upgrade())?;
 
             if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx) {
                 if let Some(project_path) = project_diff.read(cx).active_path(cx) {
@@ -879,7 +893,10 @@ impl GitPanel {
     ) {
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
-            let active_repo = self.active_repository.as_ref()?;
+            let active_repo = self
+                .active_repository
+                .as_ref()
+                .and_then(|repo| repo.upgrade())?;
             let path = active_repo
                 .read(cx)
                 .repo_path_to_project_path(&entry.repo_path, cx)?;
@@ -955,7 +972,10 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         maybe!({
-            let active_repo = self.active_repository.clone()?;
+            let active_repo = self
+                .active_repository
+                .as_ref()
+                .and_then(|repo| repo.upgrade())?;
             let path = active_repo
                 .read(cx)
                 .repo_path_to_project_path(&entry.repo_path, cx)?;
@@ -998,7 +1018,11 @@ impl GitPanel {
 
     fn perform_checkout(&mut self, entries: Vec<GitStatusEntry>, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
-        let Some(active_repository) = self.active_repository.clone() else {
+        let Some(active_repository) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
 
@@ -1137,7 +1161,11 @@ impl GitPanel {
 
     fn clean_all(&mut self, _: &TrashUntrackedFiles, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
-        let Some(active_repo) = self.active_repository.clone() else {
+        let Some(active_repo) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
         let to_delete = self
@@ -1233,7 +1261,11 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
+        let Some(active_repository) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
         let (stage, repo_paths) = match entry {
@@ -1270,7 +1302,11 @@ impl GitPanel {
         entries: Vec<GitStatusEntry>,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_repository) = self.active_repository.clone() else {
+        let Some(active_repository) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
         let op_id = self.pending.iter().map(|p| p.op_id).max().unwrap_or(0) + 1;
@@ -1423,7 +1459,11 @@ impl GitPanel {
         if !self.commit_editor.read(cx).is_empty(cx) {
             return;
         }
-        let Some(active_repository) = self.active_repository.as_ref() else {
+        let Some(active_repository) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
         let Some(branch) = active_repository.read(cx).branch.as_ref() else {
@@ -1475,7 +1515,11 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_repository) = self.active_repository.clone() else {
+        let Some(active_repository) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
         let error_spawn = |message, window: &mut Window, cx: &mut App| {
@@ -1645,7 +1689,7 @@ impl GitPanel {
         if let Some(merge_message) = self
             .active_repository
             .as_ref()
-            .and_then(|repo| repo.read(cx).merge_message.as_ref())
+            .and_then(|repo| repo.upgrade()?.read(cx).merge_message.as_ref())
         {
             return Some(merge_message.to_string());
         }
@@ -1697,7 +1741,11 @@ impl GitPanel {
             None => return,
         };
 
-        let Some(repo) = self.active_repository.as_ref() else {
+        let Some(repo) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
 
@@ -1898,7 +1946,11 @@ impl GitPanel {
         if !self.can_push_and_pull(cx) {
             return;
         }
-        let Some(repo) = self.active_repository.clone() else {
+        let Some(repo) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
         let Some(branch) = repo.read(cx).branch.as_ref() else {
@@ -1950,7 +2002,11 @@ impl GitPanel {
         if !self.can_push_and_pull(cx) {
             return;
         }
-        let Some(repo) = self.active_repository.clone() else {
+        let Some(repo) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
         let Some(branch) = repo.read(cx).branch.as_ref() else {
@@ -2230,7 +2286,11 @@ impl GitPanel {
     }
 
     fn reopen_commit_buffer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(active_repo) = self.active_repository.as_ref() else {
+        let Some(active_repo) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return;
         };
         let load_buffer = active_repo.update(cx, |active_repo, cx| {
@@ -2293,7 +2353,11 @@ impl GitPanel {
         let mut staged_count = 0;
         let mut max_width_item: Option<(RepoPath, usize)> = None;
 
-        let Some(repo) = self.active_repository.as_ref() else {
+        let Some(repo) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             // Just clear entries if no repository is active.
             cx.notify();
             return;
@@ -2899,7 +2963,13 @@ impl GitPanel {
     }
 
     pub(crate) fn render_remote_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let branch = self.active_repository.as_ref()?.read(cx).branch.clone();
+        let branch = self
+            .active_repository
+            .as_ref()?
+            .upgrade()?
+            .read(cx)
+            .branch
+            .clone();
         if !self.can_push_and_pull(cx) {
             return None;
         }
@@ -2926,7 +2996,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        let active_repository = self.active_repository.clone()?;
+        let active_repository = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())?;
         let (can_commit, tooltip) = self.configure_commit_button(cx);
         let panel_editor_style = panel_editor_style(true, window, cx);
 
@@ -3242,7 +3315,10 @@ impl GitPanel {
     }
 
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let active_repository = self.active_repository.as_ref()?;
+        let active_repository = self
+            .active_repository
+            .as_ref()
+            .and_then(|weak| weak.upgrade())?;
         let branch = active_repository.read(cx).branch.as_ref()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
         let workspace = self.workspace.clone();
@@ -3287,7 +3363,7 @@ impl GitPanel {
                                 GitPanelMessageTooltip::new(
                                     this.clone(),
                                     commit.sha.clone(),
-                                    repo.clone(),
+                                    repo.downgrade(),
                                     window,
                                     cx,
                                 )
@@ -3322,6 +3398,10 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_repository = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade());
         h_flex()
             .h_full()
             .flex_grow()
@@ -3331,29 +3411,51 @@ impl GitPanel {
                 v_flex()
                     .gap_2()
                     .child(h_flex().w_full().justify_around().child(
-                        if self.active_repository.is_some() {
+                        if active_repository.is_some() {
                             "No changes to commit"
                         } else {
-                            "No Git repositories"
+                            // FIXME
+                            "No active repository"
                         },
                     ))
                     .children({
+                        let repo_count = self.project.read(cx).repositories(cx).count();
                         let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
-                        (worktree_count > 0 && self.active_repository.is_none()).then(|| {
-                            h_flex().w_full().justify_around().child(
-                                panel_filled_button("Initialize Repository")
-                                    .tooltip(Tooltip::for_action_title_in(
-                                        "git init",
-                                        &git::Init,
-                                        &self.focus_handle,
-                                    ))
-                                    .on_click(move |_, _, cx| {
-                                        cx.defer(move |cx| {
-                                            cx.dispatch_action(&git::Init);
-                                        })
-                                    }),
+                        if active_repository.is_none() && repo_count > 0 {
+                            Some(
+                                h_flex().w_full().justify_around().child(
+                                    panel_filled_button("Choose Repository")
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "FIXME",
+                                            &zed_actions::git::SelectRepo,
+                                            &self.focus_handle,
+                                        ))
+                                        .on_click(move |_, _, cx| {
+                                            cx.defer(move |cx| {
+                                                cx.dispatch_action(&zed_actions::git::SelectRepo);
+                                            })
+                                        }),
+                                ),
                             )
-                        })
+                        } else if active_repository.is_none() && worktree_count > 0 {
+                            Some(
+                                h_flex().w_full().justify_around().child(
+                                    panel_filled_button("Initialize Repository")
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "git init",
+                                            &git::Init,
+                                            &self.focus_handle,
+                                        ))
+                                        .on_click(move |_, _, cx| {
+                                            cx.defer(move |cx| {
+                                                cx.dispatch_action(&git::Init);
+                                            })
+                                        }),
+                                ),
+                            )
+                        } else {
+                            None
+                        }
                     })
                     .text_ui_sm(cx)
                     .mx_auto()
@@ -3472,7 +3574,7 @@ impl GitPanel {
         _: &Window,
         cx: &App,
     ) -> Option<AnyElement> {
-        let repo = self.active_repository.as_ref()?.read(cx);
+        let repo = self.active_repository.as_ref()?.upgrade()?.read(cx);
         let project_path = (file.worktree_id(cx), file.path()).into();
         let repo_path = repo.project_path_to_repo_path(&project_path, cx)?;
         let ix = self.entry_by_path(&repo_path)?;
@@ -3709,7 +3811,11 @@ impl GitPanel {
         sha: String,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<CommitDetails>> {
-        let Some(repo) = self.active_repository.clone() else {
+        let Some(repo) = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.upgrade())
+        else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
         repo.update(cx, |repo, cx| {
@@ -4236,7 +4342,7 @@ impl GitPanelMessageTooltip {
     fn new(
         git_panel: Entity<GitPanel>,
         sha: SharedString,
-        repository: Entity<Repository>,
+        repository: WeakEntity<Repository>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {

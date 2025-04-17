@@ -5,7 +5,7 @@ use git::repository::Branch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, Window, rems,
+    Subscription, Task, WeakEntity, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
@@ -47,7 +47,11 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = workspace.project().read(cx).active_repository(cx).clone();
+    let repository = workspace
+        .project()
+        .read(cx)
+        .active_repository(cx)
+        .map(|repo| repo.downgrade());
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(repository, style, rems(34.), window, cx)
@@ -55,7 +59,7 @@ pub fn open(
 }
 
 pub fn popover(
-    repository: Option<Entity<Repository>>,
+    repository: Option<WeakEntity<Repository>>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<BranchList> {
@@ -80,7 +84,7 @@ pub struct BranchList {
 
 impl BranchList {
     fn new(
-        repository: Option<Entity<Repository>>,
+        repository: Option<WeakEntity<Repository>>,
         style: BranchListStyle,
         width: Rems,
         window: &mut Window,
@@ -88,6 +92,7 @@ impl BranchList {
     ) -> Self {
         let all_branches_request = repository
             .clone()
+            .and_then(|repo| repo.upgrade())
             .map(|repository| repository.update(cx, |repository, _| repository.branches()));
 
         cx.spawn_in(window, async move |this, cx| {
@@ -172,7 +177,7 @@ struct BranchEntry {
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
     all_branches: Option<Vec<Branch>>,
-    repo: Option<Entity<Repository>>,
+    repo: Option<WeakEntity<Repository>>,
     style: BranchListStyle,
     selected_index: usize,
     last_query: String,
@@ -180,7 +185,7 @@ pub struct BranchListDelegate {
 }
 
 impl BranchListDelegate {
-    fn new(repo: Option<Entity<Repository>>, style: BranchListStyle) -> Self {
+    fn new(repo: Option<WeakEntity<Repository>>, style: BranchListStyle) -> Self {
         Self {
             matches: vec![],
             repo,
@@ -339,10 +344,11 @@ impl PickerDelegate for BranchListDelegate {
             return;
         }
 
-        let current_branch = self.repo.as_ref().map(|repo| {
+        let current_branch = self.repo.as_ref().and_then(|repo| {
             repo.update(cx, |repo, _| {
                 repo.branch.as_ref().map(|branch| branch.name.clone())
             })
+            .ok()
         });
 
         if current_branch
@@ -470,7 +476,11 @@ impl PickerDelegate for BranchListDelegate {
                                 let message = if entry.is_new {
                                     if let Some(current_branch) =
                                         self.repo.as_ref().and_then(|repo| {
-                                            repo.read(cx).branch.as_ref().map(|b| b.name.clone())
+                                            repo.upgrade()?
+                                                .read(cx)
+                                                .branch
+                                                .as_ref()
+                                                .map(|b| b.name.clone())
                                         })
                                     {
                                         format!("based off {}", current_branch)

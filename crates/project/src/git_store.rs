@@ -1108,7 +1108,19 @@ impl GitStore {
                 self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
             }
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
-                self.repositories_for_worktree.remove(worktree_id);
+                for repo in self
+                    .repositories_for_worktree
+                    .remove(worktree_id)
+                    .unwrap_or_default()
+                {
+                    let id = repo.read(cx).id;
+                    if self.active_repo_id == Some(id) {
+                        if !self.repositories_for_worktree.values().any(|repos| repos.iter().any(|repo| repo.read(cx).id == id) {
+                            self.active_repo_id = None;
+                            cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+                        }
+                    }
+                }
             }
             _ => {}
         }
