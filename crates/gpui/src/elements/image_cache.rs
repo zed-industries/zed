@@ -161,6 +161,7 @@ impl ImageCache {
     }
 
     /// Create a new image cache with a maximum number of items.
+    #[inline]
     pub fn lru(max_items: usize, cx: &mut App) -> Entity<Self> {
         Self::internal_new(Some(max_items), cx)
     }
