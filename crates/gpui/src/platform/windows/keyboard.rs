@@ -138,6 +138,12 @@ impl WindowsKeyboardMapper {
     }
 
     fn map_for_char(&self, key: &str, modifiers: &mut Modifiers) -> Result<String> {
+        if key.len() != 1 {
+            return Err(anyhow::anyhow!(
+                "Key must be a single character, but got: {}",
+                key
+            ));
+        }
         let key_char = key
             .encode_utf16()
             .next()
