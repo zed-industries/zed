@@ -110,7 +110,6 @@ pub enum Event {
     SelectionsChanged,
     NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
-    TaskLocatorReady { task_id: TaskId, success: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -1909,11 +1908,6 @@ impl Terminal {
             // After the task summary is output once, no more text is appended to the terminal.
             unsafe { append_text_to_term(&mut self.term.lock(), &lines_to_show) };
         }
-
-        cx.emit(Event::TaskLocatorReady {
-            task_id: task.id.clone(),
-            success: finished_successfully,
-        });
 
         match task.hide {
             HideStrategy::Never => {}

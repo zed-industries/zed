@@ -437,7 +437,7 @@ impl Inventory {
                 TaskKind::Script => serde_json::from_value::<TaskTemplate>(raw_template).log_err(),
                 TaskKind::Debug => serde_json::from_value::<DebugTaskTemplate>(raw_template)
                     .log_err()
-                    .and_then(|content| content.to_zed_format().log_err()),
+                    .map(|content| content.to_zed_format()),
             });
 
         let parsed_templates = &mut self.templates_from_settings;

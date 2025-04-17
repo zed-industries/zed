@@ -2,9 +2,8 @@ use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
-use util::ResultExt;
 
-use crate::{TaskTemplate, TaskTemplates, TaskType, task_template::DebugArgs};
+use crate::{TaskTemplate, TaskType, task_template::DebugArgs};
 
 impl Default for DebugConnectionType {
     fn default() -> Self {
@@ -110,7 +109,7 @@ impl TryFrom<TaskTemplate> for DebugTaskTemplate {
 
 impl DebugTaskTemplate {
     /// Translate from debug definition to a task template
-    pub fn to_zed_format(self) -> anyhow::Result<TaskTemplate> {
+    pub fn to_zed_format(self) -> TaskTemplate {
         let (command, cwd, request) = match self.definition.request {
             DebugRequest::Launch(launch_config) => (
                 launch_config.program,
@@ -137,14 +136,14 @@ impl DebugTaskTemplate {
 
         let label = self.definition.label.clone();
 
-        Ok(TaskTemplate {
+        TaskTemplate {
             label,
             command,
             args: vec![],
             task_type,
             cwd,
             ..Default::default()
-        })
+        }
     }
 }
 /// Represents the type of the debugger adapter connection
@@ -205,20 +204,6 @@ impl DebugTaskFile {
             .into_root_schema_for::<Self>();
 
         serde_json_lenient::to_value(schema).unwrap()
-    }
-}
-
-impl TryFrom<DebugTaskFile> for TaskTemplates {
-    type Error = anyhow::Error;
-
-    fn try_from(value: DebugTaskFile) -> Result<Self, Self::Error> {
-        let templates = value
-            .0
-            .into_iter()
-            .filter_map(|debug_definition| debug_definition.to_zed_format().log_err())
-            .collect();
-
-        Ok(Self(templates))
     }
 }
 

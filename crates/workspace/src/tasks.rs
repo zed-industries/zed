@@ -53,14 +53,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let debug_config = resolved_task.resolved_debug_adapter_config();
-
         if let Some(spawn_in_terminal) = resolved_task.resolved.take() {
-            if let Some(debug_config) = debug_config {
-                self.debug_task_queue
-                    .insert(resolved_task.id.clone(), debug_config);
-            }
-
             if !omit_history {
                 resolved_task.resolved = Some(spawn_in_terminal.clone());
                 self.project().update(cx, |project, cx| {
@@ -80,6 +73,52 @@ impl Workspace {
                     .detach_and_log_err(cx);
             }
         }
+    }
+
+    pub fn schedule_debug_task(
+        &mut self,
+        task: ResolvedTask,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(debug_config) = task.resolved_debug_adapter_config() else {
+            log::error!("Debug task has no debug adapter config");
+            return;
+        };
+
+        let project = self.project().clone();
+        cx.spawn_in(window, async move |workspace, cx| {
+            let config = if debug_config.locator.is_some() {
+                let task = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.spawn_in_terminal(task.resolved.unwrap(), window, cx)
+                })?;
+
+                let exit_code = task.await?;
+                if !exit_code.success() {
+                    return anyhow::Ok(());
+                }
+
+                project
+                    .update(cx, |project, cx| {
+                        project.dap_store().update(cx, |dap_store, cx| {
+                            if let Some(as_local) = dap_store.as_local() {
+                                as_local.run_locator(debug_config, cx)
+                            } else {
+                                Task::ready(Err(anyhow!("unreachable")))
+                            }
+                        })
+                    })?
+                    .await?
+            } else {
+                debug_config.definition
+            };
+
+            project
+                .update(cx, |project, cx| project.start_debug_session(config, cx))?
+                .await?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn spawn_in_terminal(

@@ -134,12 +134,10 @@ impl NewSessionModal {
                     locator: None,
                     definition: config.clone(),
                 };
-                if let Some(debug_config) =
-                    template.to_zed_format().ok().and_then(|task_template| {
-                        task_template
-                            .resolve_task("debug_task", &task_context)
-                            .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
-                    })
+                if let Some(debug_config) = template
+                    .to_zed_format()
+                    .resolve_task("debug_task", &task_context)
+                    .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
                 {
                     this.start_debug_session(debug_config.definition, cx)
                 } else {

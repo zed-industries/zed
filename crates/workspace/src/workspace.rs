@@ -97,7 +97,7 @@ use std::{
     sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
     time::Duration,
 };
-use task::{DebugTaskTemplate, SpawnInTerminal, TaskId};
+use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -867,7 +867,6 @@ pub struct Workspace {
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
-    debug_task_queue: HashMap<task::TaskId, DebugTaskTemplate>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1187,7 +1186,6 @@ impl Workspace {
             _items_serializer,
             session_id: Some(session_id),
             serialized_ssh_project: None,
-            debug_task_queue: Default::default(),
         }
     }
 
@@ -5242,32 +5240,6 @@ impl Workspace {
         prev_window
             .update(cx, |_, window, _| window.activate_window())
             .ok();
-    }
-
-    pub fn debug_task_ready(&mut self, task_id: &TaskId, cx: &mut Context<Self>) {
-        let Some(debug_config) = self.debug_task_queue.remove(task_id) else {
-            return;
-        };
-        let task = self.project.update(cx, |project, cx| {
-            project.dap_store().update(cx, |dap_store, cx| {
-                if let Some(as_local) = dap_store.as_local() {
-                    as_local.run_locator(debug_config, cx)
-                } else {
-                    Task::ready(Err(anyhow!("unreachable")))
-                }
-            })
-        });
-
-        cx.spawn(async move |this, cx| {
-            let debug_config = task.await?;
-            this.update(cx, |workspace, cx| {
-                workspace.project.update(cx, |project, cx| {
-                    project.start_debug_session(debug_config, cx)
-                })
-            })?
-            .await
-        })
-        .detach_and_log_err(cx);
     }
 }
 
