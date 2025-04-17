@@ -1421,18 +1421,21 @@ impl Render for LspLogToolbarItemView {
                                                         })
                                                     })?;
 
-                                                ContextMenu::build(window, cx, |mut menu, _, _| {
-                                                    let log_view = log_view.clone();
+                                                ContextMenu::build(
+                                                    window,
+                                                    cx,
+                                                    |mut menu, window, cx| {
+                                                        let log_view = log_view.clone();
 
-                                                    for (option, label) in [
-                                                        (TraceValue::Off, "Off"),
-                                                        (TraceValue::Messages, "Messages"),
-                                                        (TraceValue::Verbose, "Verbose"),
-                                                    ] {
-                                                        menu = menu.entry(label, None, {
-                                                            let log_view = log_view.clone();
-                                                            move |_, cx| {
-                                                                log_view.update(cx, |this, cx| {
+                                                        for (option, label) in [
+                                                            (TraceValue::Off, "Off"),
+                                                            (TraceValue::Messages, "Messages"),
+                                                            (TraceValue::Verbose, "Verbose"),
+                                                        ] {
+                                                            menu = menu.entry(label, None, {
+                                                                let log_view = log_view.clone();
+                                                                move |_, cx| {
+                                                                    log_view.update(cx, |this, cx| {
                                                                     if let Some(id) =
                                                                         this.current_server_id
                                                                     {
@@ -1441,15 +1444,16 @@ impl Render for LspLogToolbarItemView {
                                                                         );
                                                                     }
                                                                 });
+                                                                }
+                                                            });
+                                                            if option == trace_level {
+                                                                menu.select_last(window, cx);
                                                             }
-                                                        });
-                                                        if option == trace_level {
-                                                            menu.select_last();
                                                         }
-                                                    }
 
-                                                    menu
-                                                })
+                                                        menu
+                                                    },
+                                                )
                                                 .into()
                                             }
                                         }),
@@ -1480,19 +1484,22 @@ impl Render for LspLogToolbarItemView {
                                                         })
                                                     })?;
 
-                                                ContextMenu::build(window, cx, |mut menu, _, _| {
-                                                    let log_view = log_view.clone();
+                                                ContextMenu::build(
+                                                    window,
+                                                    cx,
+                                                    |mut menu, window, cx| {
+                                                        let log_view = log_view.clone();
 
-                                                    for (option, label) in [
-                                                        (MessageType::LOG, "Log"),
-                                                        (MessageType::INFO, "Info"),
-                                                        (MessageType::WARNING, "Warning"),
-                                                        (MessageType::ERROR, "Error"),
-                                                    ] {
-                                                        menu = menu.entry(label, None, {
-                                                            let log_view = log_view.clone();
-                                                            move |window, cx| {
-                                                                log_view.update(cx, |this, cx| {
+                                                        for (option, label) in [
+                                                            (MessageType::LOG, "Log"),
+                                                            (MessageType::INFO, "Info"),
+                                                            (MessageType::WARNING, "Warning"),
+                                                            (MessageType::ERROR, "Error"),
+                                                        ] {
+                                                            menu = menu.entry(label, None, {
+                                                                let log_view = log_view.clone();
+                                                                move |window, cx| {
+                                                                    log_view.update(cx, |this, cx| {
                                                                     if let Some(id) =
                                                                         this.current_server_id
                                                                     {
@@ -1501,15 +1508,16 @@ impl Render for LspLogToolbarItemView {
                                                                         );
                                                                     }
                                                                 });
+                                                                }
+                                                            });
+                                                            if option == log_level {
+                                                                menu.select_last(window, cx);
                                                             }
-                                                        });
-                                                        if option == log_level {
-                                                            menu.select_last();
                                                         }
-                                                    }
 
-                                                    menu
-                                                })
+                                                        menu
+                                                    },
+                                                )
                                                 .into()
                                             }
                                         }),

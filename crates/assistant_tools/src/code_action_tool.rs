@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language::{self, Anchor, Buffer, ToPointUtf16};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{self, LspAction, Project};
 use regex::Regex;
 use schemars::JsonSchema;
@@ -97,10 +97,7 @@ impl Tool for CodeActionTool {
         IconName::Wand
     }
 
-    fn input_schema(
-        &self,
-        format: language_model::LanguageModelToolSchemaFormat,
-    ) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<CodeActionToolInput>(format)
     }
 
@@ -144,10 +141,10 @@ impl Tool for CodeActionTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<CodeActionToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         cx.spawn(async move |cx| {
@@ -322,7 +319,7 @@ impl Tool for CodeActionTool {
 
                 Ok(response)
             }
-        })
+        }).into()
     }
 }
 

@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language::{self, Buffer, ToPointUtf16};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -68,10 +68,7 @@ impl Tool for RenameTool {
         IconName::Pencil
     }
 
-    fn input_schema(
-        &self,
-        format: language_model::LanguageModelToolSchemaFormat,
-    ) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<RenameToolInput>(format)
     }
 
@@ -91,10 +88,10 @@ impl Tool for RenameTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<RenameToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         cx.spawn(async move |cx| {
@@ -141,7 +138,7 @@ impl Tool for RenameTool {
             })?;
 
             Ok(format!("Renamed '{}' to '{}'", input.symbol, input.new_name))
-        })
+        }).into()
     }
 }
 

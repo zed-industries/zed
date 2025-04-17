@@ -77,8 +77,6 @@ mod macos {
 
     fn generate_dispatch_bindings() {
         println!("cargo:rustc-link-lib=framework=System");
-        // weak link to support Catalina
-        println!("cargo:rustc-link-arg=-Wl,-weak_framework,ScreenCaptureKit");
 
         let bindings = bindgen::Builder::default()
             .header("src/platform/mac/dispatch.h")

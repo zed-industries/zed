@@ -39,7 +39,6 @@ log.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
-regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
