@@ -1488,7 +1488,6 @@ impl EditorElement {
             return None;
         }
 
-
         const MINIMAP_AXIS: ScrollbarAxis = ScrollbarAxis::Vertical;
         let minimap_font_size = px(minimap_settings.font_size);
 

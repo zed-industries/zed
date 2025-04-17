@@ -473,6 +473,7 @@ pub struct EditorStyle {
     pub inlay_hints_style: HighlightStyle,
     pub inline_completion_styles: InlineCompletionStyles,
     pub unnecessary_code_fade: f32,
+    pub show_underlines: bool,
 }
 
 impl Default for EditorStyle {
@@ -493,6 +494,7 @@ impl Default for EditorStyle {
                 whitespace: HighlightStyle::default(),
             },
             unnecessary_code_fade: Default::default(),
+            show_underlines: true,
         }
     }
 }
@@ -19831,6 +19833,8 @@ impl Render for Editor {
             EditorMode::Full { .. } | EditorMode::Minimap => cx.theme().colors().editor_background,
         };
 
+        let show_underlines = !self.mode.is_minimap();
+
         EditorElement::new(
             &cx.entity(),
             EditorStyle {
@@ -19843,6 +19847,7 @@ impl Render for Editor {
                 inlay_hints_style: make_inlay_hints_style(cx),
                 inline_completion_styles: make_suggestion_styles(cx),
                 unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
+                show_underlines,
             },
         )
     }
