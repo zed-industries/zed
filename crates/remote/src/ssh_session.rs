@@ -1472,25 +1472,35 @@ impl SshRemoteConnection {
         // via a control socket.
         let socket_path = temp_dir.path().join("ssh.sock");
 
-        let mut master_process = process::Command::new("ssh")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env("SSH_ASKPASS_REQUIRE", "force")
-            .env("SSH_ASKPASS", &askpass.script_path())
-            .args(connection_options.additional_args())
-            .args([
+        let mut master_process = {
+            #[cfg(not(target_os = "windows"))]
+            let args = [
                 "-N",
-                // "-o",
-                // "ControlPersist=no",
-                // "-o",
-                // "ControlMaster=yes",
-                // "-o",
-            ])
-            // .arg(format!("ControlPath={}", socket_path.display()))
-            .arg(&url)
-            .kill_on_drop(true)
-            .spawn()?;
+                "-o",
+                "ControlPersist=no",
+                "-o",
+                "ControlMaster=yes",
+                "-o",
+            ];
+            // On Windows, `ControlMaster` and `ControlPath` are not supported:
+            // https://github.com/PowerShell/Win32-OpenSSH/issues/405
+            // https://github.com/PowerShell/Win32-OpenSSH/wiki/Project-Scope
+            #[cfg(target_os = "windows")]
+            let args = ["-N"];
+            let mut master_process = process::Command::new("ssh");
+            master_process
+                .kill_on_drop(true)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .env("SSH_ASKPASS_REQUIRE", "force")
+                .env("SSH_ASKPASS", askpass.script_path())
+                .args(connection_options.additional_args())
+                .args(args);
+            #[cfg(not(target_os = "windows"))]
+            master_process.arg(format!("ControlPath={}", socket_path.display()));
+            master_process.arg(&url).spawn()?
+        };
         // Wait for this ssh process to close its stdout, indicating that authentication
         // has completed.
         let mut stdout = master_process.stdout.take().unwrap();
@@ -1533,6 +1543,7 @@ impl SshRemoteConnection {
             anyhow::bail!(error_message);
         }
 
+        let askpass_helper = askpass::AskPassSecret::new(askpass.get_password())?;
         drop(askpass);
 
         let socket = SshSocket {
