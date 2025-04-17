@@ -6901,8 +6901,28 @@ impl Element for EditorElement {
                         .unwrap_or_default();
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
-                    let editor_width =
-                        text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
+                    let scrollbar_width;
+                    let minimap_width;
+                    {
+                        let settings = EditorSettings::get_global(cx);
+                        scrollbar_width = (settings.scrollbar.show != ShowScrollbar::Never)
+                            .then_some(style.scrollbar_width);
+                        let minimap_settings_width = px(settings.minimap.width);
+                        minimap_width = match settings.minimap.show {
+                            ShowMinimap::Never => None,
+                            ShowMinimap::Always => Some(minimap_settings_width),
+                            ShowMinimap::Auto => {
+                                scrollbar_width.is_some().then_some(minimap_settings_width)
+                            }
+                        }
+                        .unwrap_or_default();
+                    }
+
+                    let editor_width = text_width
+                        - gutter_dimensions.margin
+                        - em_width
+                        - minimap_width
+                        - scrollbar_width.unwrap_or_default();
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
@@ -7583,8 +7603,6 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
-
-                    let minimap_width = px(EditorSettings::get_global(cx).minimap.width);
 
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
