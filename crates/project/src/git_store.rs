@@ -44,6 +44,7 @@ use rpc::{
     proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
 };
 use serde::Deserialize;
+use settings::WorktreeId;
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, VecDeque},
@@ -69,7 +70,9 @@ pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
-    repositories: HashMap<RepositoryId, Entity<Repository>>,
+    repositories: HashMap<RepositoryId, WeakEntity<Repository>>,
+    repositories_for_worktree: HashMap<WorktreeId, Vec<Entity<Repository>>>,
+    shared_repositories: HashMap<RepositoryId, Entity<Repository>>,
     active_repo_id: Option<RepositoryId>,
     #[allow(clippy::type_complexity)]
     loading_diffs:
@@ -388,12 +391,14 @@ impl GitStore {
             state,
             buffer_store,
             worktree_store,
+            shared_repositories: HashMap::default(),
             repositories: HashMap::default(),
             active_repo_id: None,
             _subscriptions,
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
             diffs: HashMap::default(),
+            repositories_for_worktree: HashMap::default(),
         }
     }
 
@@ -437,7 +442,7 @@ impl GitStore {
                 downstream: downstream_client,
                 ..
             } => {
-                for repo in self.repositories.values() {
+                for repo in self.repositories.values().filter_map(|repo| repo.upgrade()) {
                     let update = repo.read(cx).snapshot.initial_update(project_id);
                     for update in split_repository_update(update) {
                         client.send(update).log_err();
@@ -452,6 +457,9 @@ impl GitStore {
                 let mut snapshots = HashMap::default();
                 let (updates_tx, mut updates_rx) = mpsc::unbounded();
                 for repo in self.repositories.values() {
+                    let Some(repo) = repo.upgrade() else {
+                        continue;
+                    };
                     updates_tx
                         .unbounded_send(DownstreamUpdate::UpdateRepository(
                             repo.read(cx).snapshot.clone(),
@@ -543,7 +551,7 @@ impl GitStore {
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
         self.active_repo_id
             .as_ref()
-            .map(|id| self.repositories[&id].clone())
+            .and_then(|id| self.repositories[&id].upgrade())
     }
 
     pub fn open_unstaged_diff(
@@ -749,7 +757,7 @@ impl GitStore {
     pub fn checkpoint(&self, cx: &mut App) -> Task<Result<GitStoreCheckpoint>> {
         let mut work_directory_abs_paths = Vec::new();
         let mut checkpoints = Vec::new();
-        for repository in self.repositories.values() {
+        for (_, repository) in self.repositories() {
             repository.update(cx, |repository, _| {
                 work_directory_abs_paths.push(repository.snapshot.work_directory_abs_path.clone());
                 checkpoints.push(repository.checkpoint().map(|checkpoint| checkpoint?));
@@ -772,15 +780,14 @@ impl GitStore {
         checkpoint: GitStoreCheckpoint,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let repositories_by_work_dir_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
+        let repositories_by_work_directory_abs_path =
+            self.repositories_by_work_directory_abs_path(cx);
 
         let mut tasks = Vec::new();
         for (work_dir_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
-            if let Some(repository) = repositories_by_work_dir_abs_path.get(&work_dir_abs_path) {
+            if let Some(repository) =
+                repositories_by_work_directory_abs_path.get(&work_dir_abs_path)
+            {
                 let restore = repository.update(cx, |repository, _| {
                     repository.restore_checkpoint(checkpoint)
                 });
@@ -800,11 +807,7 @@ impl GitStore {
         mut right: GitStoreCheckpoint,
         cx: &mut App,
     ) -> Task<Result<bool>> {
-        let repositories_by_work_dir_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
+        let repositories_by_work_dir_abs_path = self.repositories_by_work_directory_abs_path(cx);
 
         let mut tasks = Vec::new();
         for (work_dir_abs_path, left_checkpoint) in left.checkpoints_by_work_dir_abs_path {
@@ -837,11 +840,8 @@ impl GitStore {
         checkpoint: GitStoreCheckpoint,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let repositories_by_work_directory_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
+        let repositories_by_work_directory_abs_path =
+            self.repositories_by_work_directory_abs_path(cx);
 
         let mut tasks = Vec::new();
         for (work_dir_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
@@ -856,6 +856,19 @@ impl GitStore {
             future::try_join_all(tasks).await?;
             Ok(())
         })
+    }
+
+    fn repositories_by_work_directory_abs_path(
+        &self,
+        cx: &mut App,
+    ) -> HashMap<Arc<Path>, Entity<Repository>> {
+        self.repositories
+            .values()
+            .filter_map(|repo| {
+                let repo = repo.upgrade()?;
+                Some((repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
+            })
+            .collect::<HashMap<_, _>>()
     }
 
     /// Blames a buffer.
@@ -1083,6 +1096,7 @@ impl GitStore {
                     return;
                 }
                 self.update_repositories_from_worktree(
+                    *worktree_id,
                     project_environment.clone(),
                     next_repository_id.clone(),
                     downstream
@@ -1093,6 +1107,25 @@ impl GitStore {
                     cx,
                 );
                 self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
+            }
+            WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
+                for repo in self
+                    .repositories_for_worktree
+                    .remove(worktree_id)
+                    .unwrap_or_default()
+                {
+                    let id = repo.read(cx).id;
+                    if self.active_repo_id == Some(id) {
+                        if !self
+                            .repositories_for_worktree
+                            .values()
+                            .any(|repos| repos.iter().any(|repo| repo.read(cx).id == id))
+                        {
+                            self.repositories.remove(&id);
+                            self.reset_active_repository(cx);
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -1119,6 +1152,7 @@ impl GitStore {
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
     fn update_repositories_from_worktree(
         &mut self,
+        worktree_id: WorktreeId,
         project_environment: Entity<ProjectEnvironment>,
         next_repository_id: Arc<AtomicU64>,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
@@ -1127,8 +1161,9 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let mut removed_ids = Vec::new();
+        self.repositories.retain(|_, weak| weak.is_upgradable());
         for update in updated_git_repositories.iter() {
-            if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
+            if let Some((id, existing)) = self.repositories().find(|(_, repo)| {
                 let existing_work_directory_abs_path =
                     repo.read(cx).work_directory_abs_path.clone();
                 Some(&existing_work_directory_abs_path)
@@ -1144,7 +1179,7 @@ impl GitStore {
                         existing.schedule_scan(updates_tx.clone(), cx);
                     });
                 } else {
-                    removed_ids.push(*id);
+                    removed_ids.push(id);
                 }
             } else if let UpdatedGitRepository {
                 new_work_directory_abs_path: Some(work_directory_abs_path),
@@ -1175,21 +1210,32 @@ impl GitStore {
                     .push(cx.subscribe(&repo, Self::on_repository_event));
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
-                self.repositories.insert(id, repo);
+                self.repositories.insert(id, repo.downgrade());
+                self.repositories_for_worktree
+                    .entry(worktree_id)
+                    .or_default()
+                    .push(repo);
+
                 cx.emit(GitStoreEvent::RepositoryAdded(id));
-                self.active_repo_id.get_or_insert_with(|| {
-                    cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-                    id
-                });
+                if self.active_repo_id.is_none() {
+                    self.reset_active_repository(cx);
+                }
             }
         }
 
         for id in removed_ids {
-            if self.active_repo_id == Some(id) {
-                self.active_repo_id = None;
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
-            }
+            // Remove all references to the repository, even if it's referenced by other worktrees,
+            // since they all point to the same FS state.
             self.repositories.remove(&id);
+            self.repositories_for_worktree
+                .values_mut()
+                .for_each(|repos| {
+                    repos.retain(|repo| repo.read(cx).id != id);
+                });
+            if self.active_repo_id == Some(id) {
+                self.reset_active_repository(cx);
+            }
+
             if let Some(updates_tx) = updates_tx.as_ref() {
                 updates_tx
                     .unbounded_send(DownstreamUpdate::RemoveRepository(id))
@@ -1303,7 +1349,7 @@ impl GitStore {
         log::debug!("local worktree repos changed");
         debug_assert!(worktree.read(cx).is_local());
 
-        for repository in self.repositories.values() {
+        for (_, repository) in self.repositories() {
             repository.update(cx, |repository, cx| {
                 let repo_abs_path = &repository.work_directory_abs_path;
                 if changed_repos.iter().any(|update| {
@@ -1316,8 +1362,10 @@ impl GitStore {
         }
     }
 
-    pub fn repositories(&self) -> &HashMap<RepositoryId, Entity<Repository>> {
-        &self.repositories
+    pub fn repositories(&self) -> impl Iterator<Item = (RepositoryId, Entity<Repository>)> {
+        self.repositories
+            .iter()
+            .filter_map(|(id, weak_repository)| Some((*id, weak_repository.upgrade()?)))
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
@@ -1345,6 +1393,7 @@ impl GitStore {
         self.repositories
             .values()
             .filter_map(|repo| {
+                let repo = repo.upgrade()?;
                 let repo_path = repo.read(cx).abs_path_to_repo_path(&abs_path)?;
                 Some((repo.clone(), repo_path))
             })
@@ -1404,7 +1453,7 @@ impl GitStore {
                 .clone();
 
             let mut is_new = false;
-            let repo = this.repositories.entry(id).or_insert_with(|| {
+            let repo = this.shared_repositories.entry(id).or_insert_with(|| {
                 is_new = true;
                 let git_store = cx.weak_entity();
                 cx.new(|cx| {
@@ -1418,6 +1467,10 @@ impl GitStore {
                     )
                 })
             });
+            this.repositories
+                .entry(id)
+                .or_insert_with(|| repo.downgrade());
+
             if is_new {
                 this._subscriptions
                     .push(cx.subscribe(&repo, Self::on_repository_event))
@@ -1428,10 +1481,9 @@ impl GitStore {
                 |repo, cx| repo.apply_remote_update(update, cx)
             })?;
 
-            this.active_repo_id.get_or_insert_with(|| {
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-                id
-            });
+            if this.active_repo_id.is_none() {
+                this.reset_active_repository(cx);
+            }
 
             if let Some((client, project_id)) = this.downstream_client() {
                 update.project_id = project_id.to_proto();
@@ -1450,13 +1502,13 @@ impl GitStore {
             let mut update = envelope.payload;
             let id = RepositoryId::from_proto(update.id);
             this.repositories.remove(&id);
+            this.shared_repositories.remove(&id);
             if let Some((client, project_id)) = this.downstream_client() {
                 update.project_id = project_id.to_proto();
                 client.send(update).log_err();
             }
             if this.active_repo_id == Some(id) {
-                this.active_repo_id = None;
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+                this.reset_active_repository(cx);
             }
             cx.emit(GitStoreEvent::RepositoryRemoved(id));
         })
@@ -2109,14 +2161,22 @@ impl GitStore {
                 .get(&id)
                 .context("missing repository handle")
                 .cloned()
-        })?
+        })??
+        .upgrade()
+        .ok_or_else(|| anyhow!("Repository was released"))
     }
 
     pub fn repo_snapshots(&self, cx: &App) -> HashMap<RepositoryId, RepositorySnapshot> {
         self.repositories
             .iter()
-            .map(|(id, repo)| (*id, repo.read(cx).snapshot.clone()))
+            .filter_map(|(id, repo)| Some((*id, repo.upgrade()?.read(cx).snapshot.clone())))
             .collect()
+    }
+
+    fn reset_active_repository(&mut self, cx: &mut Context<Self>) {
+        let id = self.repositories().map(|(id, _)| id).next();
+        self.active_repo_id = id;
+        cx.emit(GitStoreEvent::ActiveRepositoryChanged(id))
     }
 }
 

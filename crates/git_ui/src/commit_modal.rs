@@ -297,7 +297,7 @@ impl CommitModal {
             let is_amend_pending = git_panel.amend_pending();
             let has_previous_commit = active_repo
                 .as_ref()
-                .and_then(|repo| repo.read(cx).branch.as_ref())
+                .and_then(|repo| repo.upgrade()?.read(cx).branch.as_ref())
                 .and_then(|branch| branch.most_recent_commit.as_ref())
                 .is_some();
             (
@@ -314,7 +314,7 @@ impl CommitModal {
 
         let branch = active_repo
             .as_ref()
-            .and_then(|repo| repo.read(cx).branch.as_ref())
+            .and_then(|repo| repo.upgrade()?.read(cx).branch.as_ref())
             .map(|b| b.name.clone())
             .unwrap_or_else(|| "<no branch>".into());
 

@@ -1756,13 +1756,12 @@ impl Thread {
                 .update(cx, |git_store, cx| {
                     git_store
                         .repositories()
-                        .values()
+                        .map(|(_, repository)| repository)
                         .find(|repo| {
                             repo.read(cx)
                                 .abs_path_to_repo_path(&worktree.read(cx).abs_path())
                                 .is_some()
                         })
-                        .cloned()
                 })
                 .ok()
                 .flatten()

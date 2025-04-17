@@ -100,7 +100,7 @@ impl BlameRenderer for GitBlameRenderer {
                         CommitTooltip::blame_entry(
                             &blame_entry,
                             details.clone(),
-                            repository.clone(),
+                            repository.downgrade(),
                             workspace.clone(),
                             cx,
                         )
@@ -149,7 +149,7 @@ impl BlameRenderer for GitBlameRenderer {
                         CommitTooltip::blame_entry(
                             &blame_entry,
                             details.clone(),
-                            repository.clone(),
+                            repository.downgrade(),
                             workspace.clone(),
                             cx,
                         )

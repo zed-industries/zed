@@ -40,8 +40,7 @@ impl RepositorySelector {
         let repository_entries = git_store.update(cx, |git_store, _cx| {
             git_store
                 .repositories()
-                .values()
-                .cloned()
+                .map(|(_, repository)| repository)
                 .collect::<Vec<_>>()
         });
         let filtered_repositories = repository_entries.clone();

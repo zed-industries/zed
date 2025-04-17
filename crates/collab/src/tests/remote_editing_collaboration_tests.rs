@@ -313,7 +313,7 @@ async fn test_ssh_collaboration_git_branches(
             headless_project.git_store.update(cx, |git_store, cx| {
                 git_store
                     .repositories()
-                    .values()
+                    .map(|(_, repository)| repository)
                     .next()
                     .unwrap()
                     .read(cx)
@@ -353,7 +353,7 @@ async fn test_ssh_collaboration_git_branches(
             headless_project.git_store.update(cx, |git_store, cx| {
                 git_store
                     .repositories()
-                    .values()
+                    .map(|(_, repository)| repository)
                     .next()
                     .unwrap()
                     .read(cx)
