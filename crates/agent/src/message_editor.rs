@@ -2,22 +2,23 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
+use crate::context::format_context_as_string;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{
-    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode, EditorStyle,
-    MultiBuffer,
+    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent, EditorMode,
+    EditorStyle, MultiBuffer,
 };
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    Animation, AnimationExt, App, Entity, Focusable, Subscription, TextStyle, WeakEntity,
-    linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
+    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRegistry};
+use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
@@ -55,6 +56,8 @@ pub struct MessageEditor {
     edits_expanded: bool,
     editor_is_expanded: bool,
     waiting_for_summaries_to_send: bool,
+    last_estimated_token_count: Option<usize>,
+    update_token_count_task: Option<Task<anyhow::Result<()>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -129,8 +132,18 @@ impl MessageEditor {
         let incompatible_tools =
             cx.new(|cx| IncompatibleToolsState::new(thread.read(cx).tools().clone(), cx));
 
-        let subscriptions =
-            vec![cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event)];
+        let subscriptions = vec![
+            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
+            cx.subscribe(&editor, |this, _, event, cx| match event {
+                EditorEvent::BufferEdited => {
+                    this.message_or_context_changed(true, cx);
+                }
+                _ => {}
+            }),
+            cx.observe(&context_store, |this, _, cx| {
+                this.message_or_context_changed(false, cx);
+            }),
+        ];
 
         Self {
             editor: editor.clone(),
@@ -156,6 +169,8 @@ impl MessageEditor {
             waiting_for_summaries_to_send: false,
             profile_selector: cx
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
+            last_estimated_token_count: None,
+            update_token_count_task: None,
             _subscriptions: subscriptions,
         }
     }
@@ -255,6 +270,9 @@ impl MessageEditor {
             editor.clear(window, cx);
             text
         });
+
+        self.last_estimated_token_count.take();
+        cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
         let refresh_task =
             refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
@@ -937,6 +955,80 @@ impl MessageEditor {
                     .label_size(LabelSize::Small),
             )
     }
+
+    pub fn last_estimated_token_count(&self) -> Option<usize> {
+        self.last_estimated_token_count
+    }
+
+    pub fn is_waiting_to_update_token_count(&self) -> bool {
+        self.update_token_count_task.is_some()
+    }
+
+    fn message_or_context_changed(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        cx.emit(MessageEditorEvent::Changed);
+        self.update_token_count_task.take();
+
+        let Some(default_model) = LanguageModelRegistry::read_global(cx).default_model() else {
+            self.last_estimated_token_count.take();
+            return;
+        };
+
+        let context_store = self.context_store.clone();
+        let editor = self.editor.clone();
+        let thread = self.thread.clone();
+
+        self.update_token_count_task = Some(cx.spawn(async move |this, cx| {
+            if debounce {
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+            }
+
+            let token_count = if let Some(task) = cx.update(|cx| {
+                let context = context_store.read(cx).context().iter();
+                let new_context = thread.read(cx).filter_new_context(context);
+                let context_text =
+                    format_context_as_string(new_context, cx).unwrap_or(String::new());
+                let message_text = editor.read(cx).text(cx);
+
+                let content = context_text + &message_text;
+
+                if content.is_empty() {
+                    return None;
+                }
+
+                let request = language_model::LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: language_model::Role::User,
+                        content: vec![content.into()],
+                        cache: false,
+                    }],
+                    tools: vec![],
+                    stop: vec![],
+                    temperature: None,
+                };
+
+                Some(default_model.model.count_tokens(request, cx))
+            })? {
+                task.await?
+            } else {
+                0
+            };
+
+            this.update(cx, |this, cx| {
+                this.last_estimated_token_count = Some(token_count);
+                cx.emit(MessageEditorEvent::EstimatedTokenCount);
+                this.update_token_count_task.take();
+            })
+        }));
+    }
+}
+
+impl EventEmitter<MessageEditorEvent> for MessageEditor {}
+
+pub enum MessageEditorEvent {
+    EstimatedTokenCount,
+    Changed,
 }
 
 impl Focusable for MessageEditor {
@@ -949,6 +1041,7 @@ impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = self.thread.read(cx);
         let total_token_usage = thread.total_token_usage(cx);
+        let token_usage_ratio = total_token_usage.ratio();
 
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
@@ -997,15 +1090,8 @@ impl Render for MessageEditor {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
             .child(self.render_editor(font_size, line_height, window, cx))
-            .when(
-                total_token_usage.ratio != TokenUsageRatio::Normal,
-                |parent| {
-                    parent.child(self.render_token_limit_callout(
-                        line_height,
-                        total_token_usage.ratio,
-                        cx,
-                    ))
-                },
-            )
+            .when(token_usage_ratio != TokenUsageRatio::Normal, |parent| {
+                parent.child(self.render_token_limit_callout(line_height, token_usage_ratio, cx))
+            })
     }
 }

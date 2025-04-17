@@ -652,7 +652,8 @@
           "path_search": true,
           "read_file": true,
           "regex_search": true,
-          "thinking": true
+          "thinking": true,
+          "web_search": true
         }
       },
       "write": {
@@ -678,7 +679,8 @@
           "regex_search": true,
           "rename": true,
           "symbol_info": true,
-          "thinking": true
+          "thinking": true,
+          "web_search": true
         }
       }
     },

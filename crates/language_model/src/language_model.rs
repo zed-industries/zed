@@ -8,11 +8,12 @@ mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
+use http_client::http::{HeaderMap, HeaderValue};
 use icons::IconName;
 use parking_lot::Mutex;
 use proto::Plan;
@@ -20,9 +21,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
 use std::ops::{Add, Sub};
+use std::str::FromStr as _;
 use std::sync::Arc;
 use thiserror::Error;
 use util::serde::is_default;
+use zed_llm_client::{
+    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
+};
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
@@ -83,6 +88,28 @@ pub enum StopReason {
     ToolUse,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RequestUsage {
+    pub limit: UsageLimit,
+    pub amount: i32,
+}
+
+impl RequestUsage {
+    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        let limit = headers
+            .get(MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME)
+            .ok_or_else(|| anyhow!("missing {MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME:?} header"))?;
+        let limit = UsageLimit::from_str(limit.to_str()?)?;
+
+        let amount = headers
+            .get(MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME)
+            .ok_or_else(|| anyhow!("missing {MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME:?} header"))?;
+        let amount = amount.to_str()?.parse::<i32>()?;
+
+        Ok(Self { limit, amount })
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     #[serde(default, skip_serializing_if = "is_default")]
@@ -97,7 +124,10 @@ pub struct TokenUsage {
 
 impl TokenUsage {
     pub fn total_tokens(&self) -> u32 {
-        self.input_tokens + self.output_tokens
+        self.input_tokens
+            + self.output_tokens
+            + self.cache_read_input_tokens
+            + self.cache_creation_input_tokens
     }
 }
 
@@ -210,6 +240,22 @@ pub trait LanguageModel: Send + Sync {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
+
+    fn stream_completion_with_usage(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<(
+            BoxStream<'static, Result<LanguageModelCompletionEvent>>,
+            Option<RequestUsage>,
+        )>,
+    > {
+        self.stream_completion(request, cx)
+            .map(|result| result.map(|stream| (stream, None)))
+            .boxed()
+    }
 
     fn stream_completion_text(
         &self,

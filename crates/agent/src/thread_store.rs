@@ -509,6 +509,8 @@ pub struct SerializedThread {
     #[serde(default)]
     pub cumulative_token_usage: TokenUsage,
     #[serde(default)]
+    pub request_token_usage: Vec<TokenUsage>,
+    #[serde(default)]
     pub detailed_summary_state: DetailedSummaryState,
     #[serde(default)]
     pub exceeded_window_error: Option<ExceededWindowError>,
@@ -597,6 +599,7 @@ impl LegacySerializedThread {
             messages: self.messages.into_iter().map(|msg| msg.upgrade()).collect(),
             initial_project_snapshot: self.initial_project_snapshot,
             cumulative_token_usage: TokenUsage::default(),
+            request_token_usage: Vec::new(),
             detailed_summary_state: DetailedSummaryState::default(),
             exceeded_window_error: None,
         }

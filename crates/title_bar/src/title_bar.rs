@@ -36,7 +36,7 @@ use ui::{
     IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
 };
 use util::ResultExt;
-use workspace::{BottomDockLayout, Workspace, notifications::NotifyResultExt};
+use workspace::{Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
@@ -210,7 +210,6 @@ impl Render for TitleBar {
                             .pr_1()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .children(self.render_call_controls(window, cx))
-                            .child(self.render_bottom_dock_layout_menu(cx))
                             .map(|el| {
                                 let status = self.client.status();
                                 let status = &*status.borrow();
@@ -302,7 +301,7 @@ impl TitleBar {
                 cx.notify()
             }),
         );
-        subscriptions.push(cx.subscribe(&project, |_, _, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe(&project, |_, _, _: &project::Event, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
@@ -623,101 +622,6 @@ impl TitleBar {
         }
     }
 
-    pub fn render_bottom_dock_layout_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let workspace = self.workspace.upgrade().unwrap();
-        let current_layout = workspace.update(cx, |workspace, _cx| workspace.bottom_dock_layout());
-
-        PopoverMenu::new("layout-menu")
-            .trigger(
-                IconButton::new("toggle_layout", IconName::Layout)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Toggle Layout Menu")),
-            )
-            .anchor(gpui::Corner::TopRight)
-            .menu(move |window, cx| {
-                ContextMenu::build(window, cx, {
-                    let workspace = workspace.clone();
-                    move |menu, _, _| {
-                        menu.label("Bottom Dock")
-                            .separator()
-                            .toggleable_entry(
-                                "Contained",
-                                current_layout == BottomDockLayout::Contained,
-                                ui::IconPosition::End,
-                                None,
-                                {
-                                    let workspace = workspace.clone();
-                                    move |window, cx| {
-                                        workspace.update(cx, |workspace, cx| {
-                                            workspace.set_bottom_dock_layout(
-                                                BottomDockLayout::Contained,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                },
-                            )
-                            .toggleable_entry(
-                                "Full",
-                                current_layout == BottomDockLayout::Full,
-                                ui::IconPosition::End,
-                                None,
-                                {
-                                    let workspace = workspace.clone();
-                                    move |window, cx| {
-                                        workspace.update(cx, |workspace, cx| {
-                                            workspace.set_bottom_dock_layout(
-                                                BottomDockLayout::Full,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                },
-                            )
-                            .toggleable_entry(
-                                "Left Aligned",
-                                current_layout == BottomDockLayout::LeftAligned,
-                                ui::IconPosition::End,
-                                None,
-                                {
-                                    let workspace = workspace.clone();
-                                    move |window, cx| {
-                                        workspace.update(cx, |workspace, cx| {
-                                            workspace.set_bottom_dock_layout(
-                                                BottomDockLayout::LeftAligned,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                },
-                            )
-                            .toggleable_entry(
-                                "Right Aligned",
-                                current_layout == BottomDockLayout::RightAligned,
-                                ui::IconPosition::End,
-                                None,
-                                {
-                                    let workspace = workspace.clone();
-                                    move |window, cx| {
-                                        workspace.update(cx, |workspace, cx| {
-                                            workspace.set_bottom_dock_layout(
-                                                BottomDockLayout::RightAligned,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                },
-                            )
-                    }
-                })
-                .into()
-            })
-    }
-
     pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
         let client = self.client.clone();
         Button::new("sign_in", "Sign in")
@@ -751,6 +655,7 @@ impl TitleBar {
                                         None => "",
                                         Some(proto::Plan::Free) => "Free",
                                         Some(proto::Plan::ZedPro) => "Pro",
+                                        Some(proto::Plan::ZedProTrial) => "Pro (Trial)",
                                     }
                                 ),
                                 zed_actions::OpenAccountSettings.boxed_clone(),

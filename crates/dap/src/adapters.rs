@@ -1,5 +1,5 @@
 use ::fs::Fs;
-use anyhow::{Context as _, Ok, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -256,7 +256,21 @@ pub trait DebugAdapter: 'static + Send + Sync {
                 self.name()
             );
             delegate.update_status(self.name(), DapStatus::Downloading);
-            self.install_binary(version, delegate).await?;
+            match self.install_binary(version, delegate).await {
+                Ok(_) => {
+                    delegate.update_status(self.name(), DapStatus::None);
+                }
+                Err(error) => {
+                    delegate.update_status(
+                        self.name(),
+                        DapStatus::Failed {
+                            error: error.to_string(),
+                        },
+                    );
+
+                    return Err(error);
+                }
+            }
 
             delegate
                 .updated_adapters()
