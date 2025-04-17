@@ -901,9 +901,9 @@ fn response_events_to_markdown(
                 response.push_str(&format!("**Error**: {}\n\n", error));
             }
         }
-
-        flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
     }
+
+    flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
 
     response
 }
