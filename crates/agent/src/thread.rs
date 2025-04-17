@@ -1056,16 +1056,6 @@ impl Thread {
             content.push(stale_message.into());
         }
 
-        if action_log.has_edited_files_since_project_diagnostics_check() {
-            // todo!(Do we need this? I worry it's causing the model to over-rotate on fixing)
-            // content.push(
-            //     "\n\nWhen you're done making changes, make sure to check project diagnostics \
-            //     and fix all errors AND warnings you introduced! \
-            //     DO NOT mention you're going to do this until you're done."
-            //         .into(),
-            // );
-        }
-
         if !content.is_empty() {
             let context_message = LanguageModelRequestMessage {
                 role: Role::User,
