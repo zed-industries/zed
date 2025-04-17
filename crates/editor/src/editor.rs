@@ -5150,11 +5150,11 @@ impl Editor {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
                 match resolved_task.task_type() {
                     task::TaskType::Script => workspace.update(cx, |workspace, cx| {
-                        workspace::tasks::schedule_resolved_task(
-                            workspace,
+                        workspace.schedule_resolved_task(
                             task_source_kind,
                             resolved_task,
                             false,
+                            window,
                             cx,
                         );
 
@@ -5163,11 +5163,11 @@ impl Editor {
                     task::TaskType::Debug(debug_args) => {
                         if debug_args.locator.is_some() {
                             workspace.update(cx, |workspace, cx| {
-                                workspace::tasks::schedule_resolved_task(
-                                    workspace,
+                                workspace.schedule_resolved_task(
                                     task_source_kind,
                                     resolved_task,
                                     false,
+                                    window,
                                     cx,
                                 );
                             });
@@ -6829,12 +6829,12 @@ impl Editor {
             resolved.reveal = reveal_strategy;
 
             workspace
-                .update(cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
-                        workspace,
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.schedule_resolved_task(
                         task_source_kind,
                         resolved_task,
                         false,
+                        window,
                         cx,
                     );
                 })

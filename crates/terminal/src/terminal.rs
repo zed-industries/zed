@@ -46,13 +46,14 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::{paths::home_dir, truncate_and_trailoff};
+use util::{ResultExt, paths::home_dir, truncate_and_trailoff};
 
 use std::{
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
     path::PathBuf,
+    process::ExitStatus,
     sync::{Arc, LazyLock},
     time::Duration,
 };
@@ -351,7 +352,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         is_ssh_terminal: bool,
         window: AnyWindowHandle,
-        completion_tx: Sender<()>,
+        completion_tx: Sender<Option<ExitStatus>>,
         debug_terminal: bool,
         cx: &App,
     ) -> Result<TerminalBuilder> {
@@ -639,7 +640,7 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
-    completion_tx: Sender<()>,
+    completion_tx: Sender<Option<ExitStatus>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
     events: VecDeque<InternalEvent>,
@@ -670,7 +671,7 @@ pub struct TaskState {
     pub label: String,
     pub command_label: String,
     pub status: TaskStatus,
-    pub completion_rx: Receiver<()>,
+    pub completion_rx: Receiver<Option<ExitStatus>>,
     pub hide: HideStrategy,
     pub show_summary: bool,
     pub show_command: bool,
@@ -1847,20 +1848,30 @@ impl Terminal {
         self.debug_terminal
     }
 
-    pub fn wait_for_completed_task(&self, cx: &App) -> Task<()> {
+    pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
-                return cx.spawn(async move |_| {
-                    let _ = completion_receiver.recv().await;
-                });
+                return cx
+                    .spawn(async move |_| completion_receiver.recv().await.log_err().flatten());
             }
         }
-        Task::ready(())
+        Task::ready(None)
     }
 
     fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<Terminal>) {
-        self.completion_tx.try_send(()).ok();
+        let e: Option<ExitStatus> = error_code.map(|e| {
+            #[cfg(unix)]
+            {
+                return std::os::unix::process::ExitStatusExt::from_raw(e);
+            }
+            #[cfg(windows)]
+            {
+                return std::os::windows::process::ExitStatusExt::from_raw(code as u32);
+            }
+        });
+
+        self.completion_tx.try_send(e).ok();
         let task = match &mut self.task {
             Some(task) => task,
             None => {

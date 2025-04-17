@@ -21,7 +21,7 @@ use ui::{
 };
 
 use util::{ResultExt, truncate_and_trailoff};
-use workspace::{ModalView, Workspace, tasks::schedule_resolved_task};
+use workspace::{ModalView, Workspace};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
@@ -334,7 +334,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm(
         &mut self,
         omit_history_entry: bool,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) {
         let current_match_index = self.selected_index();
@@ -389,11 +389,11 @@ impl PickerDelegate for TasksModalDelegate {
             _ => {
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        schedule_resolved_task(
-                            workspace,
+                        workspace.schedule_resolved_task(
                             task_source_kind,
                             task,
                             omit_history_entry,
+                            window,
                             cx,
                         );
                     })
@@ -563,7 +563,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm_input(
         &mut self,
         omit_history_entry: bool,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
         let Some((task_source_kind, mut task)) = self.spawn_oneshot() else {
@@ -581,11 +581,11 @@ impl PickerDelegate for TasksModalDelegate {
         self.workspace
             .update(cx, |workspace, cx| {
                 match task.task_type() {
-                    TaskType::Script => schedule_resolved_task(
-                        workspace,
+                    TaskType::Script => workspace.schedule_resolved_task(
                         task_source_kind,
                         task,
                         omit_history_entry,
+                        window,
                         cx,
                     ),
                     // todo(debugger): Should create a schedule_resolved_debug_task function
@@ -597,11 +597,11 @@ impl PickerDelegate for TasksModalDelegate {
                         };
 
                         if debug_args.locator.is_some() {
-                            schedule_resolved_task(
-                                workspace,
+                            workspace.schedule_resolved_task(
                                 task_source_kind,
                                 task,
                                 omit_history_entry,
+                                window,
                                 cx,
                             );
                         } else {

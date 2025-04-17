@@ -92,6 +92,7 @@ use std::{
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    process::ExitStatus,
     rc::Rc,
     sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
     time::Duration,
@@ -129,6 +130,15 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
         .as_deref()
         .and_then(parse_pixel_position_env_var)
 });
+
+pub trait TerminalProvider {
+    fn spawn(
+        &self,
+        task: SpawnInTerminal,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<ExitStatus>>;
+}
 
 actions!(
     workspace,
@@ -772,9 +782,6 @@ pub enum Event {
     },
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakEntity<Workspace>),
-    SpawnTask {
-        action: Box<SpawnInTerminal>,
-    },
     OpenBundledFile {
         text: Cow<'static, str>,
         title: &'static str,
@@ -855,6 +862,7 @@ pub struct Workspace {
     bounds_save_task_queued: Option<Task<()>>,
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
+    terminal_provider: Option<Box<dyn TerminalProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
@@ -1174,6 +1182,7 @@ impl Workspace {
             bounds_save_task_queued: None,
             on_prompt_for_new_path: None,
             on_prompt_for_open_path: None,
+            terminal_provider: None,
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
@@ -1689,6 +1698,10 @@ impl Workspace {
 
     pub fn set_prompt_for_open_path(&mut self, prompt: PromptForOpenPath) {
         self.on_prompt_for_open_path = Some(prompt)
+    }
+
+    pub fn set_terminal_provider(&mut self, provider: impl TerminalProvider + 'static) {
+        self.terminal_provider = Some(Box::new(provider));
     }
 
     pub fn serialized_ssh_project(&self) -> Option<SerializedSshProject> {
