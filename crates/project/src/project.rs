@@ -1462,6 +1462,15 @@ impl Project {
         config: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
+        dbg!(&config);
+        // if let Some(ssh) = self.ssh_client() {
+        //     ssh.read(cx).proto_client().request(proto::)
+        //     ssh.update(cx, |ssh, cx| {
+        //         ssh.
+
+        //     })
+        // }
+
         let Some(worktree) = self.worktrees(cx).next() else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
         };
@@ -1482,18 +1491,18 @@ impl Project {
                     .update(cx, |dap_store, cx| dap_store.delegate(&worktree, cx))
             })?;
 
-            let task = this.update(cx, |project, cx| {
-                project.dap_store.read(cx).as_local().and_then(|local| {
-                    config.locator.is_some().then(|| {
-                        local.locate_binary(config.clone(), cx.background_executor().clone())
-                    })
-                })
-            })?;
-            let config = if let Some(task) = task {
-                task.await
-            } else {
-                config
-            };
+            // let task = this.update(cx, |project, cx| {
+            //     project.dap_store.read(cx).as_local().and_then(|local| {
+            //         config.locator.is_some().then(|| {
+            //             local.run_locator(config.clone(), cx.background_executor().clone())
+            //         })
+            //     })
+            // })?;
+            // let config = if let Some(task) = task {
+            //     task.await
+            // } else {
+            //     config
+            // };
             let binary = adapter
                 .get_binary(&delegate, &config, user_installed_path, cx)
                 .await?;

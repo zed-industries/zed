@@ -1,5 +1,5 @@
 use crate::*;
-use dap::{DebugRequestType, StartDebuggingRequestArguments};
+use dap::{DebugRequest, StartDebuggingRequestArguments};
 use gpui::AsyncApp;
 use std::{ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
@@ -16,18 +16,18 @@ impl PythonDebugAdapter {
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         let mut args = json!({
             "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
             },
             "subProcess": true,
             "redirectOutput": true,
         });
         let map = args.as_object_mut().unwrap();
         match &config.request {
-            DebugRequestType::Attach(attach) => {
+            DebugRequest::Attach(attach) => {
                 map.insert("processId".into(), attach.process_id.into());
             }
-            DebugRequestType::Launch(launch) => {
+            DebugRequest::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
                 map.insert("args".into(), launch.args.clone().into());
 

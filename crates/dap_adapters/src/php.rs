@@ -19,10 +19,10 @@ impl PhpDebugAdapter {
         config: &DebugTaskDefinition,
     ) -> Result<dap::StartDebuggingRequestArguments> {
         match &config.request {
-            dap::DebugRequestType::Attach(_) => {
+            dap::DebugRequest::Attach(_) => {
                 anyhow::bail!("php adapter does not support attaching")
             }
-            dap::DebugRequestType::Launch(launch_config) => {
+            dap::DebugRequest::Launch(launch_config) => {
                 Ok(dap::StartDebuggingRequestArguments {
                     configuration: json!({
                         "program": launch_config.program,

@@ -1,4 +1,4 @@
-use dap::DebugRequestType;
+use dap::DebugRequest;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
@@ -216,10 +216,10 @@ impl PickerDelegate for AttachModalDelegate {
         };
 
         match &mut self.debug_config.request {
-            DebugRequestType::Attach(config) => {
+            DebugRequest::Attach(config) => {
                 config.process_id = Some(candidate.pid);
             }
-            DebugRequestType::Launch(_) => {
+            DebugRequest::Launch(_) => {
                 debug_panic!("Debugger attach modal used on launch debug config");
                 return;
             }

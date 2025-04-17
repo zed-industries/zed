@@ -508,7 +508,6 @@ enum DapStackPresentationHint {
     Subtle = 2;
     StackUnknown = 3;
 }
-
 message DapModule {
     DapModuleId id = 1;
     string name = 2;
@@ -522,9 +521,42 @@ message DapModule {
     optional string address_range = 10;
 }
 
+message DebugTaskDefinition {
+    string adapter = 1;
+    oneof request {
+        DebugLaunchRequest debug_launch_request = 2;
+        DebugAttachRequest debug_attach_request = 3;
+    }
+    optional string locator = 4;
+    optional TCPHost tcp_connection = 5;
+}
+
+message TCPHost {
+    optional uint32 port = 1;
+    optional string host = 2;
+    optional uint64 timeout = 3;
+}
+
+message DebugLaunchRequest {
+    string program = 1;
+    optional string cwd = 2;
+    repeated string args = 3;
+}
+
+message DebugAttachRequest {
+    uint32 process_id = 1;
+}
+
 message DapModuleId {
     oneof id {
         uint32 number = 1;
         string string = 2;
     }
+}
+
+message DebuggerGetBinary {
+    DebugTaskDefinition task = 1;
+}
+message DebuggerGetBinaryResponse {
+    string path = 1;
 }

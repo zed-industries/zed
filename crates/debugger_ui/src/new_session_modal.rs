@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use dap::DebugRequestType;
+use dap::DebugRequest;
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
@@ -13,7 +13,7 @@ use gpui::{
 };
 use project::Project;
 use settings::Settings;
-use task::{DebugTaskDefinition, LaunchConfig};
+use task::{DebugTaskDefinition, LaunchRequest};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -37,9 +37,9 @@ pub(super) struct NewSessionModal {
     last_selected_profile_name: Option<SharedString>,
 }
 
-fn suggested_label(request: &DebugRequestType, debugger: &str) -> String {
+fn suggested_label(request: &DebugRequest, debugger: &str) -> String {
     match request {
-        DebugRequestType::Launch(config) => {
+        DebugRequest::Launch(config) => {
             let last_path_component = Path::new(&config.program)
                 .file_name()
                 .map(|name| name.to_string_lossy())
@@ -47,7 +47,7 @@ fn suggested_label(request: &DebugRequestType, debugger: &str) -> String {
 
             format!("{} ({debugger})", last_path_component)
         }
-        DebugRequestType::Attach(config) => format!(
+        DebugRequest::Attach(config) => format!(
             "pid: {} ({debugger})",
             config.process_id.unwrap_or(u32::MAX)
         ),
@@ -71,7 +71,7 @@ impl NewSessionModal {
             .and_then(|def| def.stop_on_entry);
 
         let launch_config = match past_debug_definition.map(|def| def.request) {
-            Some(DebugRequestType::Launch(launch_config)) => Some(launch_config),
+            Some(DebugRequest::Launch(launch_config)) => Some(launch_config),
             _ => None,
         };
 
@@ -96,7 +96,6 @@ impl NewSessionModal {
             request,
             initialize_args: self.initialize_args.clone(),
             tcp_connection: None,
-            locator: None,
             stop_on_entry: match self.stop_on_entry {
                 ToggleState::Selected => Some(true),
                 _ => None,
@@ -251,14 +250,14 @@ impl NewSessionModal {
                             this.debugger = Some(task.adapter.clone().into());
                             this.initialize_args = task.initialize_args.clone();
                             match &task.request {
-                                DebugRequestType::Launch(launch_config) => {
+                                DebugRequest::Launch(launch_config) => {
                                     this.mode = NewSessionMode::launch(
                                         Some(launch_config.clone()),
                                         window,
                                         cx,
                                     );
                                 }
-                                DebugRequestType::Attach(_) => {
+                                DebugRequest::Attach(_) => {
                                     let Ok(project) = this
                                         .workspace
                                         .read_with(cx, |this, _| this.project().clone())
@@ -322,7 +321,7 @@ struct LaunchMode {
 
 impl LaunchMode {
     fn new(
-        past_launch_config: Option<LaunchConfig>,
+        past_launch_config: Option<LaunchRequest>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -348,9 +347,9 @@ impl LaunchMode {
         cx.new(|_| Self { program, cwd })
     }
 
-    fn debug_task(&self, cx: &App) -> task::LaunchConfig {
+    fn debug_task(&self, cx: &App) -> task::LaunchRequest {
         let path = self.cwd.read(cx).text(cx);
-        task::LaunchConfig {
+        task::LaunchRequest {
             program: self.program.read(cx).text(cx),
             cwd: path.is_empty().not().then(|| PathBuf::from(path)),
             args: Default::default(),
@@ -373,10 +372,9 @@ impl AttachMode {
     ) -> Entity<Self> {
         let debug_definition = DebugTaskDefinition {
             label: "Attach New Session Setup".into(),
-            request: dap::DebugRequestType::Attach(task::AttachConfig { process_id: None }),
+            request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
             tcp_connection: None,
             adapter: debugger.clone().unwrap_or_default().into(),
-            locator: None,
             initialize_args: None,
             stop_on_entry: Some(false),
         };
@@ -391,8 +389,8 @@ impl AttachMode {
             attach_picker,
         })
     }
-    fn debug_task(&self) -> task::AttachConfig {
-        task::AttachConfig { process_id: None }
+    fn debug_task(&self) -> task::AttachRequest {
+        task::AttachRequest { process_id: None }
     }
 }
 
@@ -406,7 +404,7 @@ enum NewSessionMode {
 }
 
 impl NewSessionMode {
-    fn debug_task(&self, cx: &App) -> DebugRequestType {
+    fn debug_task(&self, cx: &App) -> DebugRequest {
         match self {
             NewSessionMode::Launch(entity) => entity.read(cx).debug_task(cx).into(),
             NewSessionMode::Attach(entity) => entity.read(cx).debug_task().into(),
@@ -488,7 +486,7 @@ impl NewSessionMode {
         Self::Attach(AttachMode::new(debugger, project, window, cx))
     }
     fn launch(
-        past_launch_config: Option<LaunchConfig>,
+        past_launch_config: Option<LaunchRequest>,
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Self {

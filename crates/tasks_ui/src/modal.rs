@@ -11,7 +11,7 @@ use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
 use task::{
-    DebugRequestType, DebugTaskDefinition, ResolvedTask, RevealTarget, TaskContext, TaskModal,
+    DebugRequest, DebugTaskDefinition, ResolvedTask, RevealTarget, TaskContext, TaskModal,
     TaskTemplate, TaskType,
 };
 use ui::{
@@ -368,9 +368,7 @@ impl PickerDelegate for TasksModalDelegate {
                 };
 
                 match &config.request {
-                    DebugRequestType::Attach(attach_config)
-                        if attach_config.process_id.is_none() =>
-                    {
+                    DebugRequest::Attach(attach_config) if attach_config.process_id.is_none() => {
                         cx.emit(ShowAttachModal {
                             debug_config: config.clone(),
                         });

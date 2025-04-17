@@ -11,7 +11,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use codelldb::CodeLldbDebugAdapter;
 use dap::{
-    DapRegistry, DebugRequestType,
+    DapRegistry, DebugRequest,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
@@ -53,7 +53,7 @@ trait ToDap {
     fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest;
 }
 
-impl ToDap for DebugRequestType {
+impl ToDap for DebugRequest {
     fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest {
         match self {
             Self::Launch(_) => dap::StartDebuggingRequestArgumentsRequest::Launch,

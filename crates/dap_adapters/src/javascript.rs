@@ -2,7 +2,7 @@ use adapters::latest_github_release;
 use dap::StartDebuggingRequestArguments;
 use gpui::AsyncApp;
 use std::path::PathBuf;
-use task::{DebugRequestType, DebugTaskDefinition};
+use task::{DebugRequest, DebugTaskDefinition};
 
 use crate::*;
 
@@ -18,16 +18,16 @@ impl JsDebugAdapter {
         let mut args = json!({
             "type": "pwa-node",
             "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
             },
         });
         let map = args.as_object_mut().unwrap();
         match &config.request {
-            DebugRequestType::Attach(attach) => {
+            DebugRequest::Attach(attach) => {
                 map.insert("processId".into(), attach.process_id.into());
             }
-            DebugRequestType::Launch(launch) => {
+            DebugRequest::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
 
                 if !launch.args.is_empty() {

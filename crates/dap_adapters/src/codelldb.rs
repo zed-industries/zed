@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::adapters::latest_github_release;
 use gpui::AsyncApp;
-use task::{DebugRequestType, DebugTaskDefinition};
+use task::{DebugRequest, DebugTaskDefinition};
 
 use crate::*;
 
@@ -19,8 +19,8 @@ impl CodeLldbDebugAdapter {
     fn request_args(&self, config: &DebugTaskDefinition) -> dap::StartDebuggingRequestArguments {
         let mut configuration = json!({
             "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
             },
         });
         let map = configuration.as_object_mut().unwrap();
@@ -28,10 +28,10 @@ impl CodeLldbDebugAdapter {
         map.insert("name".into(), Value::String(config.label.clone()));
         let request = config.request.to_dap();
         match &config.request {
-            DebugRequestType::Attach(attach) => {
+            DebugRequest::Attach(attach) => {
                 map.insert("pid".into(), attach.process_id.into());
             }
-            DebugRequestType::Launch(launch) => {
+            DebugRequest::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
 
                 if !launch.args.is_empty() {

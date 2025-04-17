@@ -318,22 +318,22 @@ impl FakeAdapter {
 
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         use serde_json::json;
-        use task::DebugRequestType;
+        use task::DebugRequest;
 
         let value = json!({
             "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
             },
-            "process_id": if let DebugRequestType::Attach(attach_config) = &config.request {
+            "process_id": if let DebugRequest::Attach(attach_config) = &config.request {
                 attach_config.process_id
             } else {
                 None
             },
         });
         let request = match config.request {
-            DebugRequestType::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
-            DebugRequestType::Attach(_) => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
+            DebugRequest::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
+            DebugRequest::Attach(_) => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
         };
         StartDebuggingRequestArguments {
             configuration: value,

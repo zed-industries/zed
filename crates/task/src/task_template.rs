@@ -8,8 +8,8 @@ use util::serde::default_true;
 use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
-    AttachConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext, TaskId,
-    VariableName, ZED_VARIABLE_NAME_PREFIX,
+    AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext,
+    TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
     serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema},
 };
 
@@ -83,7 +83,7 @@ pub enum DebugArgsRequest {
     /// launch (program, cwd) are stored in TaskTemplate as (command, cwd)
     Launch,
     /// Attach
-    Attach(AttachConfig),
+    Attach(AttachRequest),
 }
 
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug)]

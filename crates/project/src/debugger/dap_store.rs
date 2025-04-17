@@ -45,7 +45,7 @@ use std::{
     sync::{Arc, atomic::Ordering::SeqCst},
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
-use task::DebugTaskDefinition;
+use task::{DebugTaskDefinition, DebugTaskTemplate};
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -93,16 +93,13 @@ impl LocalDapStore {
     fn next_session_id(&self) -> SessionId {
         SessionId(self.next_session_id.fetch_add(1, SeqCst))
     }
-    pub(crate) fn locate_binary(
+    pub fn run_locator(
         &self,
-        mut definition: DebugTaskDefinition,
-        executor: BackgroundExecutor,
-    ) -> Task<DebugTaskDefinition> {
+        definition: DebugTaskTemplate,
+        executor: &App,
+    ) -> Task<Result<DebugTaskDefinition>> {
         let locator_store = self.locator_store.clone();
-        executor.spawn(async move {
-            let _ = locator_store.resolve_debug_config(&mut definition).await;
-            definition
-        })
+        cx.background_spawn(async move { locator_store.resolve_debug_config(definition).await })
     }
 }
 

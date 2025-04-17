@@ -12,12 +12,12 @@ impl GoDebugAdapter {
     const ADAPTER_NAME: &'static str = "Delve";
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         let mut args = match &config.request {
-            dap::DebugRequestType::Attach(attach_config) => {
+            dap::DebugRequest::Attach(attach_config) => {
                 json!({
                     "processId": attach_config.process_id,
                 })
             }
-            dap::DebugRequestType::Launch(launch_config) => json!({
+            dap::DebugRequest::Launch(launch_config) => json!({
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
                 "args": launch_config.args
