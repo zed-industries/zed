@@ -15,7 +15,7 @@ use text::{AnchorRangeExt, Point};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, Context, IntoElement, ParentElement, SharedString, Styled,
-    Window, div, px,
+    Window, div,
 };
 use util::maybe;
 
