@@ -1364,7 +1364,7 @@ impl GitStore {
     pub fn repositories(&self) -> impl Iterator<Item = (RepositoryId, Entity<Repository>)> {
         self.repositories
             .iter()
-            .filter_map(|(id, weak_repository)| Some((id.clone(), weak_repository.upgrade()?)))
+            .filter_map(|(id, weak_repository)| Some((*id, weak_repository.upgrade()?)))
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
@@ -2175,7 +2175,7 @@ impl GitStore {
     fn reset_active_repository(&mut self, cx: &mut Context<Self>) {
         let id = self.repositories().map(|(id, _)| id).next();
         self.active_repo_id = id;
-        cx.emit(dbg!(GitStoreEvent::ActiveRepositoryChanged(id)))
+        cx.emit(GitStoreEvent::ActiveRepositoryChanged(id))
     }
 }
 

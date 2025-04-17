@@ -4837,9 +4837,9 @@ impl Project {
         self.git_store.read(cx).active_repository()
     }
 
-    pub fn repositories<'a>(
+    pub fn repositories(
         &self,
-        cx: &'a App,
+        cx: &App,
     ) -> impl Iterator<Item = (RepositoryId, Entity<Repository>)> {
         self.git_store.read(cx).repositories()
     }
