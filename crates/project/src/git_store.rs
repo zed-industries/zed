@@ -1115,9 +1115,13 @@ impl GitStore {
                 {
                     let id = repo.read(cx).id;
                     if self.active_repo_id == Some(id) {
-                        if !self.repositories_for_worktree.values().any(|repos| repos.iter().any(|repo| repo.read(cx).id == id) {
-                            self.active_repo_id = None;
-                            cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+                        if !self
+                            .repositories_for_worktree
+                            .values()
+                            .any(|repos| repos.iter().any(|repo| repo.read(cx).id == id))
+                        {
+                            self.repositories.remove(&id);
+                            self.reset_active_repository(cx);
                         }
                     }
                 }
@@ -1212,25 +1216,24 @@ impl GitStore {
                     .push(repo);
 
                 cx.emit(GitStoreEvent::RepositoryAdded(id));
-                self.active_repo_id.get_or_insert_with(|| {
-                    cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-                    id
-                });
+                if self.active_repo_id.is_none() {
+                    self.reset_active_repository(cx);
+                }
             }
         }
 
         for id in removed_ids {
-            if self.active_repo_id == Some(id) {
-                self.active_repo_id = None;
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
-            }
+            // Remove all references to the repository, even if it's referenced by other worktrees,
+            // since they all point to the same FS state.
             self.repositories.remove(&id);
-
             self.repositories_for_worktree
                 .values_mut()
                 .for_each(|repos| {
                     repos.retain(|repo| repo.read(cx).id != id);
                 });
+            if self.active_repo_id == Some(id) {
+                self.reset_active_repository(cx);
+            }
 
             if let Some(updates_tx) = updates_tx.as_ref() {
                 updates_tx
@@ -1477,10 +1480,9 @@ impl GitStore {
                 |repo, cx| repo.apply_remote_update(update, cx)
             })?;
 
-            this.active_repo_id.get_or_insert_with(|| {
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-                id
-            });
+            if this.active_repo_id.is_none() {
+                this.reset_active_repository(cx);
+            }
 
             if let Some((client, project_id)) = this.downstream_client() {
                 update.project_id = project_id.to_proto();
@@ -1505,8 +1507,7 @@ impl GitStore {
                 client.send(update).log_err();
             }
             if this.active_repo_id == Some(id) {
-                this.active_repo_id = None;
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+                this.reset_active_repository(cx);
             }
             cx.emit(GitStoreEvent::RepositoryRemoved(id));
         })
@@ -2169,6 +2170,12 @@ impl GitStore {
             .iter()
             .filter_map(|(id, repo)| Some((*id, repo.upgrade()?.read(cx).snapshot.clone())))
             .collect()
+    }
+
+    fn reset_active_repository(&mut self, cx: &mut Context<Self>) {
+        let id = self.repositories().map(|(id, _)| id).next();
+        self.active_repo_id = id;
+        cx.emit(dbg!(GitStoreEvent::ActiveRepositoryChanged(id)))
     }
 }
 

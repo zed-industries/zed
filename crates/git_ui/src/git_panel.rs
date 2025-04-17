@@ -427,7 +427,8 @@ impl GitPanel {
             &git_store,
             window,
             move |this, git_store, event, window, cx| match event {
-                GitStoreEvent::ActiveRepositoryChanged(_) => {
+                GitStoreEvent::ActiveRepositoryChanged(id) => {
+                    dbg!(id);
                     this.active_repository = git_store
                         .read(cx)
                         .active_repository()
