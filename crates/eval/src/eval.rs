@@ -9,7 +9,7 @@ use ::fs::RealFs;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use extension::ExtensionHostProxy;
-use futures::future;
+use futures::{StreamExt, future};
 use gpui::http_client::{Uri, read_proxy_from_env};
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task, UpdateGlobal};
 use gpui_tokio::Tokio;
@@ -191,7 +191,7 @@ fn main() {
 
                     if !repo_path.join(".git").is_dir() {
                         println!(
-                            "{:<width$}  < {}",
+                            "{:<width$} < {}",
                             "↓ Cloning",
                             repo_url,
                             width = max_name_width
@@ -234,29 +234,21 @@ fn main() {
             let judge_repetitions = args.judge_repetitions;
             let concurrency = args.concurrency;
 
-            let mut results = Vec::new();
+            let tasks = examples.iter().map(|example| {
+                let app_state = app_state.clone();
+                let model = model.clone();
+                let example = example.clone();
+                cx.spawn(async move |cx| {
+                    let result =
+                        run_example(&example, model, app_state, judge_repetitions, cx).await;
+                    (result, example)
+                })
+            });
 
-            for chunk in examples.chunks(concurrency) {
-                // Note: We used to use buffers_unordered here but we ran into issues
-                // with the admitedlly hacky lang server setup
-                let tasks = chunk
-                    .iter()
-                    .map(|example| {
-                        let app_state = app_state.clone();
-                        let model = model.clone();
-                        let example = example.clone();
-                        cx.spawn(async move |cx| {
-                            let result =
-                                run_example(&example, model, app_state, judge_repetitions, cx)
-                                    .await;
-                            (result, example)
-                        })
-                    })
-                    .collect::<Vec<_>>();
-
-                let chunk_results = future::join_all(tasks).await;
-                results.extend(chunk_results);
-            }
+            let results = futures::stream::iter(tasks)
+                .buffer_unordered(concurrency)
+                .collect::<Vec<_>>()
+                .await;
 
             println!("\n\n");
             println!("========================================");
