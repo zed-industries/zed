@@ -328,14 +328,14 @@ fn main() {
 
             // We might have gotten no thread scores if we weren't asked to judge the thread.
             if thread_score_count > 0 {
-                let average_process_score = thread_scores
+                let average_thread_score = thread_scores
                     .into_iter()
                     .map(|score| score as f32)
                     .sum::<f32>()
                     / (thread_score_count as f32);
 
                 if diff_score_count > 0 {
-                    println!("\nAverage process score: {average_process_score}");
+                    println!("\nAverage thread score: {average_thread_score}");
                 }
             }
 
