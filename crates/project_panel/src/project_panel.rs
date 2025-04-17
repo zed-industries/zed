@@ -2983,16 +2983,18 @@ impl ProjectPanel {
 
         let open_file_after_drop = paths.len() == 1 && paths[0].is_file();
 
-        let Some((target_directory, worktree)) = maybe!({
-            let worktree = self.project.read(cx).worktree_for_entry(entry_id, cx)?;
+        let Some((target_directory, worktree, fs)) = maybe!({
+            let project = self.project.read(cx);
+            let fs = project.fs().clone();
+            let worktree = project.worktree_for_entry(entry_id, cx)?;
             let entry = worktree.read(cx).entry_for_id(entry_id)?;
-            let path = worktree.read(cx).absolutize(&entry.path).ok()?;
-            let target_directory = if path.is_dir() {
-                path
+            let path = entry.path.clone();
+            let target_directory = if entry.is_dir() {
+                path.to_path_buf()
             } else {
                 path.parent()?.to_path_buf()
             };
-            Some((target_directory, worktree))
+            Some((target_directory, worktree, fs))
         }) else {
             return;
         };
@@ -3034,10 +3036,10 @@ impl ProjectPanel {
                 }
 
                 let task = worktree.update( cx, |worktree, cx| {
-                    worktree.copy_external_entries(target_directory, paths, true, cx)
+                    worktree.copy_external_entries(target_directory.into(), paths, fs, cx)
                 })?;
 
-                let opened_entries = task.await?;
+                let opened_entries = task.await.with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
                         this.open_entry(opened_entries[0], true, false, cx);

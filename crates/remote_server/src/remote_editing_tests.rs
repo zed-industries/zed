@@ -1204,6 +1204,76 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 }
 
+#[gpui::test]
+async fn test_copy_file_into_remote_project(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            "/code",
+            json!({
+                "project1": {
+                    ".git": {},
+                    "README.md": "# project 1",
+                    "src": {
+                        "main.rs": ""
+                    }
+                },
+            }),
+        )
+        .await;
+
+    let (project, _) = init_test(&remote_fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let local_fs = project
+        .read_with(cx, |project, _| project.fs().clone())
+        .as_fake();
+    local_fs
+        .insert_tree(
+            "/local-code",
+            json!({
+                "dir1": {
+                    "file1": "file 1 content",
+                    "dir2": {
+                        "file2": ""
+                    }
+                },
+                "file3": ""
+            }),
+        )
+        .await;
+
+    worktree
+        .update(cx, |worktree, cx| {
+            worktree.copy_external_entries(
+                Path::new("src").into(),
+                vec![Path::new("/local-code/dir1/file1").into()],
+                local_fs.clone(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        remote_fs
+            .load("/code/project1/src/file1".as_ref())
+            .await
+            .unwrap(),
+        "file 1 content"
+    );
+}
+
 // TODO: this test fails on Windows.
 #[cfg(not(windows))]
 #[gpui::test]
