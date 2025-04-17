@@ -125,6 +125,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -7654,6 +7655,7 @@ dependencies = [
  "thiserror 2.0.12",
  "util",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
