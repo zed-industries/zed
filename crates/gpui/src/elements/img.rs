@@ -1,6 +1,6 @@
 use crate::{
-    AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds, DefiniteLength, Element,
-    ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InteractiveElement,
+    AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength,
+    Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
     SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
     Window, px, swap_rgba_pa_to_bgra,
@@ -190,7 +190,7 @@ pub struct Img {
     interactivity: Interactivity,
     source: ImageSource,
     style: ImageStyle,
-    image_cache: Option<Entity<ImageCache>>,
+    image_cache: Option<AnyImageCache>,
 }
 
 /// Create a new image element.
@@ -223,9 +223,9 @@ impl Img {
     /// This mechanism provides a flexible way to manage image caching, allowing precise control when needed,
     /// while ensuring a default behavior when no cache is explicitly specified.
     #[inline]
-    pub fn image_cache(self, image_cache: &Entity<ImageCache>) -> Self {
+    pub fn image_cache<I: ImageCache>(self, image_cache: &Entity<I>) -> Self {
         Self {
-            image_cache: Some(image_cache.clone()),
+            image_cache: Some(image_cache.clone().into()),
             ..self
         }
     }
@@ -505,14 +505,14 @@ impl StatefulInteractiveElement for Img {}
 impl ImageSource {
     pub(crate) fn use_data(
         &self,
-        cache: Option<Entity<ImageCache>>,
+        cache: Option<AnyImageCache>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
             ImageSource::Resource(resource) => {
                 if let Some(cache) = cache {
-                    cache.update(cx, |image_cache, cx| image_cache.load(resource, window, cx))
+                    cache.load(resource, window, cx)
                 } else {
                     window.use_asset::<ImgResourceLoader>(resource, cx)
                 }
