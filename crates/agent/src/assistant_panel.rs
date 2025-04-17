@@ -13,7 +13,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
 use client::zed_urls;
-use editor::{Editor, EditorEvent, MultiBuffer, MultiBufferSnapshot};
+use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, Corner, Entity,
@@ -27,7 +27,6 @@ use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
 use proto::Plan;
-use rope::Point;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
@@ -785,6 +784,10 @@ impl AssistantPanel {
     ) -> Task<Result<()>> {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx))
+    }
+
+    pub(crate) fn has_active_thread(&self) -> bool {
+        matches!(self.active_view, ActiveView::Thread { .. })
     }
 
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
@@ -1899,14 +1902,16 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
-        selection_ranges: Vec<Range<Point>>,
-        snapshot: MultiBufferSnapshot,
+        selection_ranges: Vec<Range<Anchor>>,
+        buffer: Entity<MultiBuffer>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
+
+        dbg!("Got panel");
 
         if !panel.focus_handle(cx).contains_focused(window, cx) {
             workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
@@ -1916,11 +1921,48 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             // Wait to create a new context until the workspace is no longer
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
-                if let Some(context) = panel.active_context_editor() {
-                    context.update(cx, |context, cx| {
-                        context.quote_ranges(selection_ranges, snapshot, window, cx)
+                if panel.has_active_thread() {
+                    dbg!("Has active thread");
+
+                    panel.thread.update(cx, |thread, cx| {
+                        thread.context_store().update(cx, |store, cx| {
+                            dbg!("Getting ranges for {} ranges", selection_ranges.len());
+
+                            let buffer = buffer.read(cx);
+                            let selection_ranges = selection_ranges
+                                .into_iter()
+                                .flat_map(|range| {
+                                    let (start_buffer, start) =
+                                        buffer.text_anchor_for_position(range.start, cx)?;
+                                    let (end_buffer, end) =
+                                        buffer.text_anchor_for_position(range.end, cx)?;
+                                    if start_buffer != end_buffer {
+                                        return None;
+                                    }
+                                    Some((start_buffer, start..end))
+                                })
+                                .collect::<Vec<_>>();
+
+                            dbg!("Got {} ranges", selection_ranges.len());
+
+                            for (buffer, range) in selection_ranges {
+                                store
+                                    .add_selection(range, buffer, cx)
+                                    .detach_and_log_err(cx);
+                            }
+                        })
+                    })
+                } else if let Some(context_editor) = panel.active_context_editor() {
+                    let snapshot = buffer.read(cx).snapshot(cx);
+                    let selection_ranges = selection_ranges
+                        .into_iter()
+                        .map(|range| range.to_point(&snapshot))
+                        .collect::<Vec<_>>();
+
+                    context_editor.update(cx, |context_editor, cx| {
+                        context_editor.quote_ranges(selection_ranges, snapshot, window, cx)
                     });
-                };
+                }
             });
         });
     }

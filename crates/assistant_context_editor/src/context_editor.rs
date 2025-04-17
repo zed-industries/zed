@@ -8,7 +8,7 @@ use assistant_slash_commands::{
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
-    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, MultiBufferSnapshot,
+    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, MultiBuffer, MultiBufferSnapshot,
     ProposedChangeLocation, ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
     actions::{MoveToEndOfLine, Newline, ShowCompletions},
     display_map::{
@@ -155,8 +155,8 @@ pub trait AssistantPanelDelegate {
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
-        selection_ranges: Vec<Range<Point>>,
-        snapshot: MultiBufferSnapshot,
+        selection_ranges: Vec<Range<Anchor>>,
+        buffer: Entity<MultiBuffer>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
@@ -1801,21 +1801,22 @@ impl ContextEditor {
             return;
         };
 
-        let Some((snapshot, selections)) = maybe!({
+        let Some((selections, buffer)) = maybe!({
             let editor = workspace
                 .active_item(cx)
                 .and_then(|item| item.act_as::<Editor>(cx))?;
 
-            let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+            let buffer = editor.read(cx).buffer().clone();
+            let snapshot = buffer.read(cx).snapshot(cx);
             let selections = editor.update(cx, |editor, cx| {
                 editor
                     .selections
                     .all_adjusted(cx)
                     .into_iter()
-                    .map(|s| s.range())
+                    .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
                     .collect::<Vec<_>>()
             });
-            Some((snapshot, selections))
+            Some((selections, buffer))
         }) else {
             return;
         };
@@ -1824,7 +1825,7 @@ impl ContextEditor {
             return;
         }
 
-        assistant_panel_delegate.quote_selection(workspace, selections, snapshot, window, cx);
+        assistant_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
     }
 
     pub fn quote_ranges(

@@ -299,6 +299,36 @@ impl AddedContext {
                 summarizing: false,
             },
 
+            AssistantContext::Selection(selection_context) => {
+                let full_path = selection_context.context_buffer.file.full_path(cx);
+                let full_path_string = full_path.to_string_lossy().into_owned();
+                let mut name = full_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| full_path_string.clone());
+
+                name.push_str(&format!(
+                    " ({}-{})",
+                    selection_context.line_range.start.row + 1,
+                    selection_context.line_range.end.row + 1
+                ));
+
+                let parent = full_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned().into());
+
+                AddedContext {
+                    id: selection_context.id,
+                    kind: ContextKind::File,
+                    name: name.into(),
+                    parent,
+                    tooltip: Some(full_path_string.into()),
+                    icon_path: FileIcons::get_icon(&full_path, cx),
+                    summarizing: false,
+                }
+            }
+
             AssistantContext::FetchedUrl(fetched_url_context) => AddedContext {
                 id: fetched_url_context.id,
                 kind: ContextKind::FetchedUrl,

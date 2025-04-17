@@ -13,7 +13,7 @@ use assistant_context_editor::{
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use client::{Client, Status, proto};
-use editor::{Editor, EditorEvent, MultiBufferSnapshot};
+use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, App, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
@@ -28,7 +28,7 @@ use language_model::{
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
-use rope::Point;
+
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
@@ -1416,8 +1416,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
-        selection_ranges: Vec<Range<Point>>,
-        snapshot: MultiBufferSnapshot,
+        selection_ranges: Vec<Range<Anchor>>,
+        buffer: Entity<MultiBuffer>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -1428,6 +1428,12 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         if !panel.focus_handle(cx).contains_focused(window, cx) {
             workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
         }
+
+        let snapshot = buffer.read(cx).snapshot(cx);
+        let selection_ranges = selection_ranges
+            .into_iter()
+            .map(|range| range.to_point(&snapshot))
+            .collect::<Vec<_>>();
 
         panel.update(cx, |_, cx| {
             // Wait to create a new context until the workspace is no longer
