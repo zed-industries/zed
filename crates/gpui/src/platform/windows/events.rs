@@ -1347,10 +1347,14 @@ fn parse_keystroke<F>(wparam: WPARAM, lparam: LPARAM, f: F) -> Option<PlatformIn
 where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
-    let virtual_key = VIRTUAL_KEY(wparam.loword());
+    let virtual_key = dbg!(VIRTUAL_KEY(wparam.loword()));
     let modifiers = current_modifiers();
 
     match virtual_key {
+        VK_PROCESSKEY => {
+            // this is a special case for IME, we don't handle it here
+            return None;
+        }
         VK_SHIFT | VK_MENU | VK_CONTROL | VK_LWIN | VK_RWIN => {
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
