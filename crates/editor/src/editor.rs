@@ -1674,7 +1674,6 @@ impl Editor {
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
 
             if this.git_blame_inline_enabled {
-                this.git_blame_inline_enabled = true;
                 this.start_git_blame_inline(false, window, cx);
             }
 
