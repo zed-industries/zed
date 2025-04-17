@@ -1,13 +1,25 @@
 use crate::prelude::*;
-use gpui::{AnyElement, IntoElement, ParentElement, Styled};
+use gpui::{AnyElement, Hsla, IntoElement, ParentElement, Styled};
 
 /// Severity levels that determine the style of the banner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
+    #[default]
     Info,
     Success,
     Warning,
     Error,
+}
+
+impl Severity {
+    pub fn color(&self, cx: &App) -> Hsla {
+        match self {
+            Severity::Info => Color::Info.color(cx),
+            Severity::Success => Color::Success.color(cx),
+            Severity::Warning => Color::Warning.color(cx),
+            Severity::Error => Color::Error.color(cx),
+        }
+    }
 }
 
 /// Banners provide informative and brief messages without interrupting the user.
