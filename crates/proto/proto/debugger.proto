@@ -523,17 +523,19 @@ message DapModule {
 
 message DebugTaskDefinition {
     string adapter = 1;
+    string label = 2;
     oneof request {
-        DebugLaunchRequest debug_launch_request = 2;
-        DebugAttachRequest debug_attach_request = 3;
+        DebugLaunchRequest debug_launch_request = 3;
+        DebugAttachRequest debug_attach_request = 4;
     }
-    optional string locator = 4;
-    optional TCPHost tcp_connection = 5;
+    optional string initialize_args = 5;
+    optional TcpHost tcp_connection = 6;
+    optional bool stop_on_entry = 7;
 }
 
-message TCPHost {
-    optional uint32 port = 1;
-    optional string host = 2;
+message TcpHost {
+    uint32 port = 1;
+    string host = 2;
     optional uint64 timeout = 3;
 }
 
@@ -554,14 +556,20 @@ message DapModuleId {
     }
 }
 
-message DebuggerGetBinary {
+message GetDebugAdapterBinary {
     DebugTaskDefinition task = 1;
 }
 
-message DebuggerGetBinaryResponse {
-    string adapter_name = 1;
-    string command = 2;
-    repeated string arguments = 3;
-    TCPHost tcp_connection = 6;
+message DebugAdapterBinary {
+    string command = 1;
+    repeated string arguments = 2;
+    map<string, string> envs = 3;
+    optional string cwd = 4;
+    optional TcpHost connection = 5;
     string configuration = 7;
+    LaunchType launch_type = 8;
+    enum LaunchType {
+        Attach = 0;
+        Launch = 1;
+    }
 }

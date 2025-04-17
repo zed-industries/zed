@@ -1,6 +1,6 @@
 use dap::StartDebuggingRequestArguments;
 use gpui::AsyncApp;
-use std::{ffi::OsStr, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
 
 use crate::*;
@@ -92,7 +92,6 @@ impl DebugAdapter for GoDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: delve_path,
             arguments: vec![
                 "dap".into(),
@@ -100,7 +99,7 @@ impl DebugAdapter for GoDebugAdapter {
                 format!("{}:{}", host, port).into(),
             ],
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
                 port,

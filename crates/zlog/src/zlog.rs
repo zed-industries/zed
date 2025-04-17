@@ -40,6 +40,18 @@ impl log::Log for Zlog {
     }
 
     fn log(&self, record: &log::Record) {
+        if record.level() == log::Level::Error {
+            dbg!(&record);
+            // dbg!(
+            //     filter::LEVEL_ENABLED_MAX_CONFIG.load(std::sync::atomic::Ordering::Relaxed)
+            //         as log::Level
+            // );
+            dbg!(filter::LEVEL_ENABLED_MAX_CONFIG.load(std::sync::atomic::Ordering::Relaxed) as u8);
+            dbg!(record.level() as u8);
+            dbg!(record.metadata().level() as u8);
+            dbg!(filter::is_possibly_enabled_level(record.metadata().level()));
+            dbg!(self.enabled(record.metadata()));
+        }
         if !self.enabled(record.metadata()) {
             return;
         }
@@ -53,6 +65,10 @@ impl log::Log for Zlog {
             None => private::scope_new(&["*unknown*"]),
         };
         let level = record.metadata().level();
+
+        if record.level() == log::Level::Error {
+            dbg!(filter::is_scope_enabled(&scope, level));
+        }
         if !filter::is_scope_enabled(&scope, level) {
             return;
         }

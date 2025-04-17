@@ -22,6 +22,7 @@ futures.workspace = true
 gpui.workspace = true
 hex.workspace = true
 parking_lot.workspace = true
+proto.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

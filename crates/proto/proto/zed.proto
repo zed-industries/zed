@@ -382,8 +382,8 @@ message Envelope {
         LspExtRunnables lsp_ext_runnables = 337;
         LspExtRunnablesResponse lsp_ext_runnables_response = 338;
 
-        DebuggerGetBinary debugger_get_binary = 339;
-        DebuggerGetBinaryResponse debugger_get_binary_response = 340; // current max
+        GetDebugAdapterBinary get_debug_adapter_binary = 339;
+        DebugAdapterBinary debug_adapter_binary = 340; // current max
     }
 
     reserved 87 to 88;

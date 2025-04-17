@@ -39,7 +39,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{DapRegistry, client::DebugAdapterClient};
+use dap::{DapRegistry, adapters::DebugAdapterBinary, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -103,7 +103,7 @@ use std::{
 };
 
 use task_store::TaskStore;
-use terminals::{Terminals, wrap_for_ssh};
+use terminals::{SshCommand, Terminals, wrap_for_ssh};
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
@@ -1462,6 +1462,7 @@ impl Project {
         config: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
+        dbg!(&config);
         let Some(worktree) = self.worktrees(cx).next() else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
         };
@@ -1476,23 +1477,43 @@ impl Project {
             .and_then(|s| s.binary.as_ref().map(PathBuf::from));
 
         let ssh_client = self.ssh_client().clone();
+        self.ssh_details(cx);
 
         let result = cx.spawn(async move |this, cx| {
             let binary = if let Some(ssh_client) = ssh_client {
-                let response = ssh_client
-                    .update(cx, |ssh, cx| {
-                        ssh.proto_client()
-                            .request(proto::DebuggerGetBinary { task: config })
-                    })?
-                    .await?;
+                let response = DebugAdapterBinary::from_proto(
+                    ssh_client
+                        .update(cx, |ssh, _| {
+                            ssh.proto_client().request(proto::GetDebugAdapterBinary {
+                                task: Some(config.to_proto()),
+                            })
+                        })?
+                        .await?,
+                )?;
+                let ssh_command = ssh_client.update(cx, |ssh, _| {
+                    anyhow::Ok(SshCommand {
+                        arguments: ssh
+                            .ssh_args()
+                            .ok_or_else(|| anyhow!("SSH arguments not found"))?,
+                    })
+                })??;
 
                 let (program, args) = wrap_for_ssh(
-                    &command,
-                    Some((&binary.command, &binary.arguments)),
-                    binary.cwd.as_ref(),
-                    env,
+                    &ssh_command,
+                    Some((&response.command, &response.arguments)),
+                    response.cwd.as_deref(),
+                    response.envs,
                     None,
                 );
+
+                DebugAdapterBinary {
+                    command: program,
+                    arguments: args,
+                    envs: HashMap::default(),
+                    cwd: None,
+                    connection: response.connection,
+                    request_args: response.request_args.into(),
+                }
             } else {
                 let delegate = this.update(cx, |project, cx| {
                     project
@@ -1503,6 +1524,7 @@ impl Project {
                     .get_binary(&delegate, &config, user_installed_path, cx)
                     .await?
             };
+            dbg!(&binary);
 
             let ret = this
                 .update(cx, |project, cx| {

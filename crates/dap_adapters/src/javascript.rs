@@ -1,7 +1,7 @@
 use adapters::latest_github_release;
 use dap::StartDebuggingRequestArguments;
 use gpui::AsyncApp;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 use task::{DebugRequest, DebugTaskDefinition};
 
 use crate::*;
@@ -106,7 +106,6 @@ impl DebugAdapter for JsDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: delegate
                 .node_runtime()
                 .binary_path()
@@ -122,7 +121,7 @@ impl DebugAdapter for JsDebugAdapter {
                 host.to_string(),
             ],
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
                 port,

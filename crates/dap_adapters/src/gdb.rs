@@ -1,4 +1,4 @@
-use std::ffi::OsStr;
+use std::{collections::HashMap, ffi::OsStr};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -82,10 +82,9 @@ impl DebugAdapter for GdbDebugAdapter {
         let gdb_path = user_setting_path.unwrap_or(gdb_path?);
 
         Ok(DebugAdapterBinary {
-            adapter_name: Self::ADAPTER_NAME.into(),
             command: gdb_path,
             arguments: vec!["-i=dap".into()],
-            envs: None,
+            envs: HashMap::default(),
             cwd: None,
             connection: None,
             request_args: self.request_args(config),

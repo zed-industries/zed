@@ -1,7 +1,7 @@
 use adapters::latest_github_release;
 use dap::adapters::TcpArguments;
 use gpui::AsyncApp;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 use task::DebugTaskDefinition;
 
 use crate::*;
@@ -92,7 +92,6 @@ impl DebugAdapter for PhpDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: delegate
                 .node_runtime()
                 .binary_path()
@@ -112,7 +111,7 @@ impl DebugAdapter for PhpDebugAdapter {
                 timeout,
             }),
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             request_args: self.request_args(config)?,
         })
     }

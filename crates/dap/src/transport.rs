@@ -547,10 +547,7 @@ impl TcpTransport {
         }
 
         command.args(&binary.arguments);
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::null())
@@ -634,10 +631,7 @@ impl StdioTransport {
         }
 
         command.args(&binary.arguments);
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::piped())

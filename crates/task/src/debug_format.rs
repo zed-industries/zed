@@ -190,6 +190,41 @@ pub struct DebugTaskDefinition {
     pub stop_on_entry: Option<bool>,
 }
 
+impl DebugTaskDefinition {
+    ///
+    pub fn to_proto(&self) -> proto::DebugTaskDefinition {
+        proto::DebugTaskDefinition {
+            adapter: self.adapter.clone(),
+            request: Some(match &self.request {
+                DebugRequest::Launch(config) => {
+                    proto::debug_task_definition::Request::DebugLaunchRequest(
+                        proto::DebugLaunchRequest {
+                            program: config.program.clone(),
+                            cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
+                            args: config.args.clone(),
+                        },
+                    )
+                }
+                DebugRequest::Attach(attach_request) => {
+                    proto::debug_task_definition::Request::DebugAttachRequest(
+                        proto::DebugAttachRequest {
+                            process_id: attach_request.process_id.unwrap_or_default(),
+                        },
+                    )
+                }
+            }),
+            label: self.label.clone(),
+            initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
+            tcp_connection: self.tcp_connection.as_ref().map(|t| proto::TcpHost {
+                port: t.port.unwrap_or(0) as u32,
+                host: t.host.as_ref().map(|h| h.to_string()).unwrap_or_default(),
+                timeout: t.timeout,
+            }),
+            stop_on_entry: self.stop_on_entry,
+        }
+    }
+}
+
 /// A group of Debug Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]

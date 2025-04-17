@@ -302,8 +302,8 @@ messages!(
     (GitDiff, Background),
     (GitDiffResponse, Background),
     (GitInit, Background),
-    (DebuggerGetBinary, Background),
-    (DebuggerGetBinaryResponse, Background),
+    (GetDebugAdapterBinary, Background),
+    (DebugAdapterBinary, Background),
 );
 
 request_messages!(
@@ -462,7 +462,7 @@ request_messages!(
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
-    (DebuggerGetBinary, DebuggerGetBinaryResponse),
+    (GetDebugAdapterBinary, DebugAdapterBinary),
 );
 
 entity_messages!(

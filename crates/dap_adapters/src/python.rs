@@ -1,7 +1,7 @@
 use crate::*;
 use dap::{DebugRequest, StartDebuggingRequestArguments};
 use gpui::AsyncApp;
-use std::{ffi::OsStr, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
 
 #[derive(Default)]
@@ -141,7 +141,6 @@ impl DebugAdapter for PythonDebugAdapter {
         };
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: python_path.ok_or(anyhow!("failed to find binary path for python"))?,
             arguments: vec![
                 debugpy_dir
@@ -157,7 +156,7 @@ impl DebugAdapter for PythonDebugAdapter {
                 timeout,
             }),
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             request_args: self.request_args(config),
         })
     }

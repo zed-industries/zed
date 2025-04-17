@@ -19,7 +19,7 @@ struct GlobalScopeMap {
     hash: u64,
 }
 
-const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
+pub const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
 /// The maximum log level of verbosity that is enabled by default.
 /// All messages more verbose than this level will be discarded
 /// by default unless specially configured.
@@ -39,7 +39,7 @@ static mut LEVEL_ENABLED_MAX_STATIC: log::LevelFilter = LEVEL_ENABLED_MAX_DEFAUL
 /// `trace` logs will be discarded.
 /// Therefore, it should always be `>= LEVEL_ENABLED_MAX_STATIC`
 // PERF: this doesn't need to be an atomic, we don't actually care about race conditions here
-static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFAULT as u8);
+pub static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFAULT as u8);
 
 pub fn init_env_filter(filter: env_config::EnvFilter) {
     if let Some(level_max) = filter.level_global {
@@ -51,7 +51,7 @@ pub fn init_env_filter(filter: env_config::EnvFilter) {
 }
 
 pub fn is_possibly_enabled_level(level: log::Level) -> bool {
-    return LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed) <= level as u8;
+    return level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed);
 }
 
 pub fn is_scope_enabled(scope: &Scope, level: log::Level) -> bool {

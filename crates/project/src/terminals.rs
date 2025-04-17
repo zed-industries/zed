@@ -48,7 +48,15 @@ pub enum TerminalKind {
 /// SshCommand describes how to connect to a remote server
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshCommand {
-    arguments: Vec<String>,
+    pub arguments: Vec<String>,
+}
+
+impl SshCommand {
+    pub fn add_port_forwarding(&mut self, local_port: u16, remote_port: u16) {
+        self.arguments.push("-L".to_string());
+        self.arguments
+            .push(format!("{}:localhost:{}", local_port, remote_port));
+    }
 }
 
 impl Project {

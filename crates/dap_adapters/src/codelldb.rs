@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::OnceLock};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -150,8 +150,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     .into(),
             ],
             request_args: self.request_args(config),
-            adapter_name: "test".into(),
-            envs: None,
+            envs: HashMap::default(),
             connection: None,
         })
     }
