@@ -16,8 +16,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub use debug_format::{
-    AttachConfig, DebugAdapterConfig, DebugConnectionType, DebugRequestDisposition,
-    DebugRequestType, DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
+    AttachConfig, DebugConnectionType, DebugRequestDisposition, DebugRequestType,
+    DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
 };
 pub use task_template::{
     DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,

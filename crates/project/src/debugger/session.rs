@@ -397,6 +397,7 @@ impl LocalMode {
             self.definition.initialize_args.clone().unwrap_or(json!({})),
             &mut raw.configuration,
         );
+
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
         let launch = match raw.request {
             dap::StartDebuggingRequestArgumentsRequest::Launch => self.request(
@@ -684,8 +685,9 @@ pub enum SessionEvent {
     Threads,
 }
 
-pub(crate) enum SessionStateEvent {
+pub(super) enum SessionStateEvent {
     Shutdown,
+    Restart,
 }
 
 impl EventEmitter<SessionEvent> for Session {}
@@ -1362,6 +1364,18 @@ impl Session {
         &self.loaded_sources
     }
 
+    fn fallback_to_manual_restart(
+        &mut self,
+        res: Result<()>,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        if res.log_err().is_none() {
+            cx.emit(SessionStateEvent::Restart);
+            return None;
+        }
+        Some(())
+    }
+
     fn empty_response(&mut self, res: Result<()>, _cx: &mut Context<Self>) -> Option<()> {
         res.log_err()?;
         Some(())
@@ -1421,26 +1435,17 @@ impl Session {
     }
 
     pub fn restart(&mut self, args: Option<Value>, cx: &mut Context<Self>) {
-        if self.capabilities.supports_restart_request.unwrap_or(false) {
+        if self.capabilities.supports_restart_request.unwrap_or(false) && !self.is_terminated() {
             self.request(
                 RestartCommand {
                     raw: args.unwrap_or(Value::Null),
                 },
-                Self::empty_response,
+                Self::fallback_to_manual_restart,
                 cx,
             )
             .detach();
         } else {
-            self.request(
-                DisconnectCommand {
-                    restart: Some(false),
-                    terminate_debuggee: Some(true),
-                    suspend_debuggee: Some(false),
-                },
-                Self::empty_response,
-                cx,
-            )
-            .detach();
+            cx.emit(SessionStateEvent::Restart);
         }
     }
 
@@ -1475,8 +1480,14 @@ impl Session {
 
         cx.emit(SessionStateEvent::Shutdown);
 
+        let debug_client = self.adapter_client();
+
         cx.background_spawn(async move {
             let _ = task.await;
+
+            if let Some(client) = debug_client {
+                client.shutdown().await.log_err();
+            }
         })
     }
 

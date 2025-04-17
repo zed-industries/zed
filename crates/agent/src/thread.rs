@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
 use feature_flags::{self, FeatureFlagAppExt};
@@ -18,12 +18,13 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, TokenUsage,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, StopReason, TokenUsage,
 };
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use prompt_store::PromptBuilder;
+use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -226,7 +227,33 @@ pub enum DetailedSummaryState {
 pub struct TotalTokenUsage {
     pub total: usize,
     pub max: usize,
-    pub ratio: TokenUsageRatio,
+}
+
+impl TotalTokenUsage {
+    pub fn ratio(&self) -> TokenUsageRatio {
+        #[cfg(debug_assertions)]
+        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
+            .unwrap_or("0.8".to_string())
+            .parse()
+            .unwrap();
+        #[cfg(not(debug_assertions))]
+        let warning_threshold: f32 = 0.8;
+
+        if self.total >= self.max {
+            TokenUsageRatio::Exceeded
+        } else if self.total as f32 / self.max as f32 >= warning_threshold {
+            TokenUsageRatio::Warning
+        } else {
+            TokenUsageRatio::Normal
+        }
+    }
+
+    pub fn add(&self, tokens: usize) -> TotalTokenUsage {
+        TotalTokenUsage {
+            total: self.total + tokens,
+            max: self.max,
+        }
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -260,6 +287,7 @@ pub struct Thread {
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
+    request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
     feedback: Option<ThreadFeedback>,
@@ -313,6 +341,7 @@ impl Thread {
                     .spawn(async move { Some(project_snapshot.await) })
                     .shared()
             },
+            request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
             feedback: None,
@@ -381,6 +410,7 @@ impl Thread {
             tool_use,
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
+            request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
             feedback: None,
@@ -643,8 +673,28 @@ impl Thread {
         self.tool_use.tool_result(id)
     }
 
+    pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
+        Some(&self.tool_use.tool_result(id)?.content)
+    }
+
+    pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<AnyToolCard> {
+        self.tool_use.tool_result_card(id).cloned()
+    }
+
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
         self.tool_use.message_has_tool_results(message_id)
+    }
+
+    /// Filter out contexts that have already been included in previous messages
+    pub fn filter_new_context<'a>(
+        &self,
+        context: impl Iterator<Item = &'a AssistantContext>,
+    ) -> impl Iterator<Item = &'a AssistantContext> {
+        context.filter(|ctx| self.is_context_new(ctx))
+    }
+
+    fn is_context_new(&self, context: &AssistantContext) -> bool {
+        !self.context.contains_key(&context.id())
     }
 
     pub fn insert_user_message(
@@ -658,10 +708,9 @@ impl Thread {
 
         let message_id = self.insert_message(Role::User, vec![MessageSegment::Text(text)], cx);
 
-        // Filter out contexts that have already been included in previous messages
         let new_context: Vec<_> = context
             .into_iter()
-            .filter(|ctx| !self.context.contains_key(&ctx.id()))
+            .filter(|ctx| self.is_context_new(ctx))
             .collect();
 
         if !new_context.is_empty() {
@@ -841,6 +890,7 @@ impl Thread {
                     .collect(),
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage,
+                request_token_usage: this.request_token_usage.clone(),
                 detailed_summary_state: this.detailed_summary_state.clone(),
                 exceeded_window_error: this.exceeded_window_error.clone(),
             })
@@ -1064,6 +1114,7 @@ impl Thread {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
+                                thread.update_token_usage_at_last_message(token_usage);
                                 thread.cumulative_token_usage = thread.cumulative_token_usage
                                     + token_usage
                                     - current_token_usage;
@@ -1184,6 +1235,12 @@ impl Thread {
                             } else if error.is::<MaxMonthlySpendReachedError>() {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::MaxMonthlySpendReached,
+                                ));
+                            } else if let Some(error) =
+                                error.downcast_ref::<ModelRequestLimitReachedError>()
+                            {
+                                cx.emit(ThreadEvent::ShowError(
+                                    ThreadError::ModelRequestLimitReached { plan: error.plan },
                                 ));
                             } else if let Some(known_error) =
                                 error.downcast_ref::<LanguageModelKnownError>()
@@ -1455,6 +1512,12 @@ impl Thread {
                 cx,
             )
         };
+
+        // Store the card separately if it exists
+        if let Some(card) = tool_result.card.clone() {
+            self.tool_use
+                .insert_tool_result_card(tool_use_id.clone(), card);
+        }
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
@@ -1831,14 +1894,14 @@ impl Thread {
             .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
-    pub fn reject_edits_in_range(
+    pub fn reject_edits_in_ranges(
         &mut self,
         buffer: Entity<language::Buffer>,
-        buffer_range: Range<language::Anchor>,
+        buffer_ranges: Vec<Range<language::Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.action_log.update(cx, |action_log, cx| {
-            action_log.reject_edits_in_range(buffer, buffer_range, cx)
+            action_log.reject_edits_in_ranges(buffer, buffer_ranges, cx)
         })
     }
 
@@ -1898,6 +1961,35 @@ impl Thread {
         self.cumulative_token_usage
     }
 
+    pub fn token_usage_up_to_message(&self, message_id: MessageId, cx: &App) -> TotalTokenUsage {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
+            return TotalTokenUsage::default();
+        };
+
+        let max = model.model.max_token_count();
+
+        let index = self
+            .messages
+            .iter()
+            .position(|msg| msg.id == message_id)
+            .unwrap_or(0);
+
+        if index == 0 {
+            return TotalTokenUsage { total: 0, max };
+        }
+
+        let token_usage = &self
+            .request_token_usage
+            .get(index - 1)
+            .cloned()
+            .unwrap_or_default();
+
+        TotalTokenUsage {
+            total: token_usage.total_tokens() as usize,
+            max,
+        }
+    }
+
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(model) = model_registry.default_model() else {
@@ -1911,30 +2003,33 @@ impl Thread {
                 return TotalTokenUsage {
                     total: exceeded_error.token_count,
                     max,
-                    ratio: TokenUsageRatio::Exceeded,
                 };
             }
         }
 
-        #[cfg(debug_assertions)]
-        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
-            .unwrap_or("0.8".to_string())
-            .parse()
-            .unwrap();
-        #[cfg(not(debug_assertions))]
-        let warning_threshold: f32 = 0.8;
+        let total = self
+            .token_usage_at_last_message()
+            .unwrap_or_default()
+            .total_tokens() as usize;
 
-        let total = self.cumulative_token_usage.total_tokens() as usize;
+        TotalTokenUsage { total, max }
+    }
 
-        let ratio = if total >= max {
-            TokenUsageRatio::Exceeded
-        } else if total as f32 / max as f32 >= warning_threshold {
-            TokenUsageRatio::Warning
-        } else {
-            TokenUsageRatio::Normal
-        };
+    fn token_usage_at_last_message(&self) -> Option<TokenUsage> {
+        self.request_token_usage
+            .get(self.messages.len().saturating_sub(1))
+            .or_else(|| self.request_token_usage.last())
+            .cloned()
+    }
 
-        TotalTokenUsage { total, max, ratio }
+    fn update_token_usage_at_last_message(&mut self, token_usage: TokenUsage) {
+        let placeholder = self.token_usage_at_last_message().unwrap_or_default();
+        self.request_token_usage
+            .resize(self.messages.len(), placeholder);
+
+        if let Some(last) = self.request_token_usage.last_mut() {
+            *last = token_usage;
+        }
     }
 
     pub fn deny_tool_use(
@@ -1959,6 +2054,8 @@ pub enum ThreadError {
     PaymentRequired,
     #[error("Max monthly spend reached")]
     MaxMonthlySpendReached,
+    #[error("Model request limit reached")]
+    ModelRequestLimitReached { plan: Plan },
     #[error("Message {header}: {message}")]
     Message {
         header: SharedString,

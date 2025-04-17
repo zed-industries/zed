@@ -1,9 +1,6 @@
 use anthropic::{AnthropicError, AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
-use client::{
-    Client, EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
-    PerformCompletionParams, UserStore, zed_urls,
-};
+use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
 use futures::{
@@ -16,18 +13,20 @@ use language_model::{
     AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
     LanguageModelKnownError, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
-    LanguageModelToolSchemaFormat, RateLimiter, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
     MaxMonthlySpendReachedError, PaymentRequiredError, RefreshLlmTokenListener,
 };
+use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::value::RawValue;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
 use smol::io::{AsyncReadExt, BufReader};
+use std::str::FromStr as _;
 use std::{
     sync::{Arc, LazyLock},
     time::Duration,
@@ -35,6 +34,11 @@ use std::{
 use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
+use zed_llm_client::{
+    CURRENT_PLAN_HEADER_NAME, CompletionBody, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
+    SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+};
 
 use crate::AllLanguageModelSettings;
 use crate::provider::anthropic::{count_anthropic_tokens, into_anthropic};
@@ -513,7 +517,7 @@ impl CloudLanguageModel {
     async fn perform_llm_completion(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
-        body: PerformCompletionParams,
+        body: CompletionBody,
     ) -> Result<Response<AsyncBody>> {
         let http_client = &client.http_client();
 
@@ -551,6 +555,33 @@ impl CloudLanguageModel {
                     .is_some()
             {
                 return Err(anyhow!(MaxMonthlySpendReachedError));
+            } else if status == StatusCode::FORBIDDEN
+                && response
+                    .headers()
+                    .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
+                    .is_some()
+            {
+                if let Some(MODEL_REQUESTS_RESOURCE_HEADER_VALUE) = response
+                    .headers()
+                    .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
+                    .and_then(|resource| resource.to_str().ok())
+                {
+                    if let Some(plan) = response
+                        .headers()
+                        .get(CURRENT_PLAN_HEADER_NAME)
+                        .and_then(|plan| plan.to_str().ok())
+                        .and_then(|plan| zed_llm_client::Plan::from_str(plan).ok())
+                    {
+                        let plan = match plan {
+                            zed_llm_client::Plan::Free => Plan::Free,
+                            zed_llm_client::Plan::ZedPro => Plan::ZedPro,
+                            zed_llm_client::Plan::ZedProTrial => Plan::ZedProTrial,
+                        };
+                        return Err(anyhow!(ModelRequestLimitReachedError { plan }));
+                    }
+                }
+
+                return Err(anyhow!("Forbidden"));
             } else if status.as_u16() >= 500 && status.as_u16() < 600 {
                 // If we encounter an error in the 500 range, retry after a delay.
                 // We've seen at least these in the wild from API providers:
@@ -694,12 +725,10 @@ impl LanguageModel for CloudLanguageModel {
                     let response = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
-                        PerformCompletionParams {
-                            provider: client::LanguageModelProvider::Anthropic,
+                        CompletionBody {
+                            provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
-                            provider_request: RawValue::from_string(serde_json::to_string(
-                                &request,
-                            )?)?,
+                            provider_request: serde_json::to_value(&request)?,
                         },
                     )
                     .await
@@ -735,12 +764,10 @@ impl LanguageModel for CloudLanguageModel {
                     let response = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
-                        PerformCompletionParams {
-                            provider: client::LanguageModelProvider::OpenAi,
+                        CompletionBody {
+                            provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
-                            provider_request: RawValue::from_string(serde_json::to_string(
-                                &request,
-                            )?)?,
+                            provider_request: serde_json::to_value(&request)?,
                         },
                     )
                     .await?;
@@ -760,12 +787,10 @@ impl LanguageModel for CloudLanguageModel {
                     let response = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
-                        PerformCompletionParams {
-                            provider: client::LanguageModelProvider::Google,
+                        CompletionBody {
+                            provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.clone(),
-                            provider_request: RawValue::from_string(serde_json::to_string(
-                                &request,
-                            )?)?,
+                            provider_request: serde_json::to_value(&request)?,
                         },
                     )
                     .await?;

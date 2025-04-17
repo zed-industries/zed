@@ -599,33 +599,11 @@ impl GitPanel {
     }
 
     pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
-        fn binary_search<F>(mut low: usize, mut high: usize, is_target: F) -> Option<usize>
-        where
-            F: Fn(usize) -> std::cmp::Ordering,
-        {
-            while low < high {
-                let mid = low + (high - low) / 2;
-                match is_target(mid) {
-                    std::cmp::Ordering::Equal => return Some(mid),
-                    std::cmp::Ordering::Less => low = mid + 1,
-                    std::cmp::Ordering::Greater => high = mid,
-                }
-            }
-            None
-        }
         if self.conflicted_count > 0 {
             let conflicted_start = 1;
-            if let Some(ix) = binary_search(
-                conflicted_start,
-                conflicted_start + self.conflicted_count,
-                |ix| {
-                    self.entries[ix]
-                        .status_entry()
-                        .unwrap()
-                        .repo_path
-                        .cmp(&path)
-                },
-            ) {
+            if let Ok(ix) = self.entries[conflicted_start..conflicted_start + self.conflicted_count]
+                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
+            {
                 return Some(ix);
             }
         }
@@ -635,14 +613,8 @@ impl GitPanel {
             } else {
                 0
             } + 1;
-            if let Some(ix) =
-                binary_search(tracked_start, tracked_start + self.tracked_count, |ix| {
-                    self.entries[ix]
-                        .status_entry()
-                        .unwrap()
-                        .repo_path
-                        .cmp(&path)
-                })
+            if let Ok(ix) = self.entries[tracked_start..tracked_start + self.tracked_count]
+                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
                 return Some(ix);
             }
@@ -657,14 +629,8 @@ impl GitPanel {
             } else {
                 0
             } + 1;
-            if let Some(ix) =
-                binary_search(untracked_start, untracked_start + self.new_count, |ix| {
-                    self.entries[ix]
-                        .status_entry()
-                        .unwrap()
-                        .repo_path
-                        .cmp(&path)
-                })
+            if let Ok(ix) = self.entries[untracked_start..untracked_start + self.new_count]
+                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
                 return Some(ix);
             }
@@ -3611,6 +3577,15 @@ impl GitPanel {
                                 items
                             }
                         })
+                        .when(
+                            !self.horizontal_scrollbar.show_track
+                                && self.horizontal_scrollbar.show_scrollbar,
+                            |this| {
+                                // when not showing the horizontal scrollbar track, make sure we don't
+                                // obscure the last entry
+                                this.pb(scroll_track_size)
+                            },
+                        )
                         .size_full()
                         .flex_grow()
                         .with_sizing_behavior(ListSizingBehavior::Auto)

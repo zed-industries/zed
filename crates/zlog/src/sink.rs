@@ -152,7 +152,18 @@ pub fn submit(record: Record) {
 }
 
 pub fn flush() {
-    _ = std::io::stdout().lock().flush();
+    if unsafe { ENABLED_SINKS_STDOUT } {
+        _ = std::io::stdout().lock().flush();
+    }
+    let mut file = ENABLED_SINKS_FILE.lock().unwrap_or_else(|handle| {
+        ENABLED_SINKS_FILE.clear_poison();
+        handle.into_inner()
+    });
+    if let Some(file) = file.as_mut() {
+        if let Err(err) = file.flush() {
+            eprintln!("Failed to flush log file: {}", err);
+        }
+    }
 }
 
 struct ScopeFmt(Scope);

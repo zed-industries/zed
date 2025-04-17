@@ -16,6 +16,7 @@ anyhow.workspace = true
 assistant_tool.workspace = true
 chrono.workspace = true
 collections.workspace = true
+feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true
@@ -32,7 +33,9 @@ ui.workspace = true
 util.workspace = true
 worktree.workspace = true
 open = { workspace = true }
+web_search.workspace = true
 workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

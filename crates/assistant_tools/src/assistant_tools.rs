@@ -22,14 +22,17 @@ mod schema;
 mod symbol_info_tool;
 mod terminal_tool;
 mod thinking_tool;
+mod web_search_tool;
 
 use std::sync::Arc;
 
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
+use feature_flags::FeatureFlagAppExt;
 use gpui::App;
 use http_client::HttpClientWithUrl;
 use move_path_tool::MovePathTool;
+use web_search_tool::WebSearchTool;
 
 use crate::batch_tool::BatchTool;
 use crate::code_action_tool::CodeActionTool;
@@ -78,6 +81,17 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(RenameTool);
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
+
+    cx.observe_flag::<feature_flags::ZedProWebSearchTool, _>({
+        move |is_enabled, cx| {
+            if is_enabled {
+                ToolRegistry::global(cx).register_tool(WebSearchTool);
+            } else {
+                ToolRegistry::global(cx).unregister_tool(WebSearchTool);
+            }
+        }
+    })
+    .detach();
 }
 
 #[cfg(test)]

@@ -3120,32 +3120,12 @@ impl BackgroundScannerState {
             .as_path()
             .into();
 
-        let mut common_dir_abs_path = dot_git_abs_path.clone();
-        let mut repository_dir_abs_path = dot_git_abs_path.clone();
-        // Parse .git if it's a "gitfile" pointing to a repository directory elsewhere.
-        if let Some(dot_git_contents) = smol::block_on(fs.load(&dot_git_abs_path)).ok() {
-            if let Some(path) = dot_git_contents.strip_prefix("gitdir:") {
-                let path = path.trim();
-                let path = dot_git_abs_path
-                    .parent()
-                    .unwrap_or(Path::new(""))
-                    .join(path);
-                if let Some(path) = smol::block_on(fs.canonicalize(&path)).log_err() {
-                    repository_dir_abs_path = Path::new(&path).into();
-                    common_dir_abs_path = repository_dir_abs_path.clone();
-                    if let Some(ancestor_dot_git) = path
-                        .ancestors()
-                        .skip(1)
-                        .find(|ancestor| smol::block_on(is_git_dir(ancestor, fs)))
-                    {
-                        common_dir_abs_path = ancestor_dot_git.into();
-                    }
-                }
-            } else {
-                log::error!("failed to parse contents of .git file: {dot_git_contents:?}");
-            }
-        };
+        let (repository_dir_abs_path, common_dir_abs_path) =
+            discover_git_paths(&dot_git_abs_path, fs);
         watcher.add(&common_dir_abs_path).log_err();
+        if !repository_dir_abs_path.starts_with(&common_dir_abs_path) {
+            watcher.add(&repository_dir_abs_path).log_err();
+        }
 
         let work_directory_id = work_dir_entry.id;
 
@@ -5507,4 +5487,41 @@ impl CreatedEntry {
             CreatedEntry::Excluded { .. } => None,
         }
     }
+}
+
+fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
+    let path = content
+        .strip_prefix("gitdir:")
+        .ok_or_else(|| anyhow!("failed to parse gitfile content {content:?}"))?;
+    Ok(Path::new(path.trim()))
+}
+
+fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {
+    let mut repository_dir_abs_path = dot_git_abs_path.clone();
+    let mut common_dir_abs_path = dot_git_abs_path.clone();
+
+    if let Some(path) = smol::block_on(fs.load(&dot_git_abs_path))
+        .ok()
+        .as_ref()
+        .and_then(|contents| parse_gitfile(contents).log_err())
+    {
+        let path = dot_git_abs_path
+            .parent()
+            .unwrap_or(Path::new(""))
+            .join(path);
+        if let Some(path) = smol::block_on(fs.canonicalize(&path)).log_err() {
+            repository_dir_abs_path = Path::new(&path).into();
+            common_dir_abs_path = repository_dir_abs_path.clone();
+            if let Some(commondir_contents) = smol::block_on(fs.load(&path.join("commondir"))).ok()
+            {
+                if let Some(commondir_path) =
+                    smol::block_on(fs.canonicalize(&path.join(commondir_contents.trim()))).log_err()
+                {
+                    common_dir_abs_path = commondir_path.as_path().into();
+                }
+            }
+        }
+    };
+
+    (repository_dir_abs_path, common_dir_abs_path)
 }

@@ -112,6 +112,16 @@ impl Example {
         })
     }
 
+    pub fn set_repetition_number(&mut self, repetition_number: u32) {
+        if repetition_number > 0 {
+            self.name = format!("{}-{}", self.name, repetition_number);
+        }
+    }
+
+    pub fn example_output_directory(&self) -> PathBuf {
+        self.run_directory_path.join(&self.name)
+    }
+
     pub fn set_log_prefix_style(&mut self, color: &str, name_width: usize) {
         self.log_prefix = format!(
             "{}{:<width$}\x1b[0m | ",
@@ -138,13 +148,21 @@ impl Example {
     pub async fn setup(&mut self) -> Result<()> {
         let repo_path = repo_path_for_url(&self.base.url);
 
-        println!("{}Fetching", self.log_prefix);
+        let revision_exists = run_git(&repo_path, &["rev-parse", "--verify", &self.base.revision])
+            .await
+            .is_ok();
 
-        run_git(
-            &repo_path,
-            &["fetch", "--depth", "1", "origin", &self.base.revision],
-        )
-        .await?;
+        if !revision_exists {
+            println!(
+                "{}Fetching revision {}",
+                self.log_prefix, &self.base.revision
+            );
+            run_git(
+                &repo_path,
+                &["fetch", "--depth", "1", "origin", &self.base.revision],
+            )
+            .await?;
+        }
 
         let worktree_path = self.worktree_path();
 
@@ -173,6 +191,8 @@ impl Example {
             )
             .await?;
         }
+
+        std::fs::create_dir_all(self.example_output_directory())?;
 
         Ok(())
     }
@@ -291,14 +311,17 @@ impl Example {
 
             thread.update(cx, |thread, _cx| {
                 let mut request_count = 0;
-                let run_dir_path = this.run_directory_path.clone();
+                let example_dir_path = this.example_output_directory();
                 thread.set_request_callback(move |request, response_events| {
                     request_count += 1;
-                    let tools_file_path = run_dir_path.join(format!("{request_count}.tools.md"));
-                    let messages_file_path = run_dir_path.join(format!("{request_count}.messages.md"));
+                    let messages_file_path = example_dir_path.join(format!("{request_count}.messages.md"));
                     let markdown = RequestMarkdown::new(request, response_events);
-                    fs::write(tools_file_path, markdown.tools).expect("failed to write tools file");
                     fs::write(messages_file_path, markdown.messages).expect("failed to write messages file");
+
+                    if request_count == 1 {
+                        let tools_file_path = example_dir_path.join(format!("tools.md"));
+                        fs::write(tools_file_path, markdown.tools).expect("failed to write tools file");
+                    }
                 });
             })?;
 
@@ -312,7 +335,6 @@ impl Example {
             });
 
             let event_handler_task = cx.spawn({
-                // Need to clone the Arc here because the reference from output_file() won't live long enough
                 let log_prefix = this.log_prefix.clone();
                 let tool_use_counts = tool_use_counts.clone();
                 let thread = thread.downgrade();
@@ -355,16 +377,23 @@ impl Example {
                                 pending_tool_use,
                                 ..
                             } => {
-                                if let Some(tool_use) = pending_tool_use {
-                                    let message = format!("TOOL FINISHED: {}", tool_use.name);
-                                    println!("{}{message}", log_prefix);
-                                }
                                 thread.update(cx, |thread, _cx| {
-                                    if let Some(tool_result) = thread.tool_result(&tool_use_id) {
-                                        let mut tool_use_counts = tool_use_counts.lock().unwrap();
-                                        *tool_use_counts
-                                            .entry(tool_result.tool_name.clone())
-                                            .or_insert(0) += 1;
+                                    if let Some(tool_use) = pending_tool_use {
+                                        if let Some(tool_result) = thread.tool_result(&tool_use_id) {
+                                            let message = if tool_result.is_error {
+                                                format!("TOOL FAILED: {}", tool_use.name)
+                                            } else {
+                                                format!("TOOL FINISHED: {}", tool_use.name)
+                                            };
+                                            println!("{log_prefix}{message}");
+                                            let mut tool_use_counts = tool_use_counts.lock().unwrap();
+                                            *tool_use_counts
+                                                .entry(tool_result.tool_name.clone())
+                                                .or_insert(0) += 1;
+                                        } else {
+                                            let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
+                                            println!("{log_prefix}{message}");
+                                        }
                                     }
                                 })?;
                             }
@@ -404,6 +433,10 @@ impl Example {
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
 
+            let repository_diff_path = this.example_output_directory().join("patch.diff");
+            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
+            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
+
             println!("{}Getting diagnostics", this.log_prefix);
             let diagnostics = cx
                 .update(move |cx| {
@@ -435,14 +468,14 @@ impl Example {
         &self,
         model: Arc<dyn LanguageModel>,
         repository_diff: String,
+        judge_repetitions: u32,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
-        let mut output_file = File::create(self.run_directory_path.join("judge.md"))
-            .expect("failed to create judge.md");
-        {
-            writeln!(&mut output_file, "# Agent Changes").log_err();
-            writeln!(&mut output_file, "```diff\n{}\n```\n", &repository_diff).log_err();
-        }
+        let mut output_file = File::create(
+            self.example_output_directory()
+                .join(format!("judge_{}.md", judge_repetitions)),
+        )
+        .expect("failed to create judge.md");
 
         let judge_prompt = include_str!("judge_prompt.hbs");
         let judge_prompt_name = "judge_prompt";
@@ -469,8 +502,12 @@ impl Example {
 
         let response = send_language_model_request(model, request, cx).await?;
 
-        writeln!(&mut output_file, "\n\n").log_err();
-        writeln!(&mut output_file, "# Judgment\n\n{}", &response).log_err();
+        writeln!(
+            &mut output_file,
+            "# Judgment ({})\n{}",
+            judge_repetitions, &response
+        )
+        .log_err();
 
         parse_judge_output(&response)
     }

@@ -191,15 +191,12 @@ impl RenderOnce for ContextPill {
             ContextPill::Suggested {
                 name,
                 icon_path: _,
-                kind,
+                kind: _,
                 focused,
                 on_click,
             } => base_pill
                 .cursor_pointer()
                 .pr_1()
-                .when(*focused, |this| {
-                    this.bg(color.element_background.opacity(0.5))
-                })
                 .border_dashed()
                 .border_color(if *focused {
                     color.border_focused
@@ -207,29 +204,16 @@ impl RenderOnce for ContextPill {
                     color.border
                 })
                 .hover(|style| style.bg(color.element_hover.opacity(0.5)))
+                .when(*focused, |this| {
+                    this.bg(color.element_background.opacity(0.5))
+                })
                 .child(
-                    div().px_0p5().max_w_64().child(
+                    div().max_w_64().child(
                         Label::new(name.clone())
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .truncate(),
                     ),
-                )
-                .child(
-                    Label::new(match kind {
-                        ContextKind::File => "Active Tab",
-                        ContextKind::Thread
-                        | ContextKind::Directory
-                        | ContextKind::FetchedUrl
-                        | ContextKind::Symbol => "Active",
-                    })
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-                )
-                .child(
-                    Icon::new(IconName::Plus)
-                        .size(IconSize::XSmall)
-                        .into_any_element(),
                 )
                 .tooltip(|window, cx| {
                     Tooltip::with_meta("Suggested Context", None, "Click to add it", window, cx)

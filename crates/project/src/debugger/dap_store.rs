@@ -21,7 +21,10 @@ use futures::{
     channel::{mpsc, oneshot},
     future::{Shared, join_all},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
+    Task,
+};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
@@ -89,6 +92,17 @@ pub struct LocalDapStore {
 impl LocalDapStore {
     fn next_session_id(&self) -> SessionId {
         SessionId(self.next_session_id.fetch_add(1, SeqCst))
+    }
+    pub(crate) fn locate_binary(
+        &self,
+        mut definition: DebugTaskDefinition,
+        executor: BackgroundExecutor,
+    ) -> Task<DebugTaskDefinition> {
+        let locator_store = self.locator_store.clone();
+        executor.spawn(async move {
+            let _ = locator_store.resolve_debug_config(&mut definition).await;
+            definition
+        })
     }
 }
 
@@ -335,7 +349,7 @@ impl DapStore {
     pub fn new_session(
         &mut self,
         binary: DebugAdapterBinary,
-        mut config: DebugTaskDefinition,
+        config: DebugTaskDefinition,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> (SessionId, Task<Result<Entity<Session>>>) {
@@ -352,22 +366,10 @@ impl DapStore {
         }
 
         let (initialized_tx, initialized_rx) = oneshot::channel();
-        let locator_store = local_store.locator_store.clone();
 
         let start_debugging_tx = local_store.start_debugging_tx.clone();
 
         let task = cx.spawn(async move |this, cx| {
-            if config.locator.is_some() {
-                config = cx
-                    .background_spawn(async move {
-                        locator_store
-                            .resolve_debug_config(&mut config)
-                            .await
-                            .map(|_| config)
-                    })
-                    .await?;
-            }
-
             let start_client_task = this.update(cx, |this, cx| {
                 Session::local(
                     this.breakpoint_store.clone(),
@@ -790,9 +792,47 @@ fn create_new_session(
         this.update(cx, |_, cx| {
             cx.subscribe(
                 &session,
-                move |this: &mut DapStore, _, event: &SessionStateEvent, cx| match event {
+                move |this: &mut DapStore, session, event: &SessionStateEvent, cx| match event {
                     SessionStateEvent::Shutdown => {
                         this.shutdown_session(session_id, cx).detach_and_log_err(cx);
+                    }
+                    SessionStateEvent::Restart => {
+                        let Some((config, binary)) = session.read_with(cx, |session, _| {
+                            session
+                                .configuration()
+                                .map(|config| (config, session.binary().clone()))
+                        }) else {
+                            log::error!("Failed to get debug config from session");
+                            return;
+                        };
+
+                        let mut curr_session = session;
+                        while let Some(parent_id) = curr_session.read(cx).parent_id() {
+                            if let Some(parent_session) = this.sessions.get(&parent_id).cloned() {
+                                curr_session = parent_session;
+                            } else {
+                                log::error!("Failed to get parent session from parent session id");
+                                break;
+                            }
+                        }
+
+                        let session_id = curr_session.read(cx).session_id();
+
+                        let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
+
+                        cx.spawn(async move |this, cx| {
+                            task.await;
+
+                            this.update(cx, |this, cx| {
+                                this.sessions.remove(&session_id);
+                                this.new_session(binary, config, None, cx)
+                            })?
+                            .1
+                            .await?;
+
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
                     }
                 },
             )

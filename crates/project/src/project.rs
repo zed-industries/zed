@@ -1482,6 +1482,18 @@ impl Project {
                     .update(cx, |dap_store, cx| dap_store.delegate(&worktree, cx))
             })?;
 
+            let task = this.update(cx, |project, cx| {
+                project.dap_store.read(cx).as_local().and_then(|local| {
+                    config.locator.is_some().then(|| {
+                        local.locate_binary(config.clone(), cx.background_executor().clone())
+                    })
+                })
+            })?;
+            let config = if let Some(task) = task {
+                task.await
+            } else {
+                config
+            };
             let binary = adapter
                 .get_binary(&delegate, &config, user_installed_path, cx)
                 .await?;
@@ -3082,6 +3094,9 @@ impl Project {
             .map(|lister| lister.term())
     }
 
+    pub fn toolchain_store(&self) -> Option<Entity<ToolchainStore>> {
+        self.toolchain_store.clone()
+    }
     pub fn activate_toolchain(
         &self,
         path: ProjectPath,

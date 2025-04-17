@@ -15,10 +15,12 @@ use stripe::{
     BillingPortalSession, CancellationDetailsReason, CreateBillingPortalSession,
     CreateBillingPortalSessionFlowData, CreateBillingPortalSessionFlowDataAfterCompletion,
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
+    CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirm,
+    CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirmItems,
     CreateBillingPortalSessionFlowDataType, CreateCustomer, Customer, CustomerId, EventObject,
     EventType, Expandable, ListEvents, Subscription, SubscriptionId, SubscriptionStatus,
 };
-use util::ResultExt;
+use util::{ResultExt, maybe};
 
 use crate::api::events::SnowflakeRow;
 use crate::db::billing_subscription::{
@@ -52,6 +54,7 @@ pub fn router() -> Router {
             post(manage_billing_subscription),
         )
         .route("/billing/monthly_spend", get(get_monthly_spend))
+        .route("/billing/usage", get(get_current_usage))
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,6 +162,7 @@ struct BillingSubscriptionJson {
     id: BillingSubscriptionId,
     name: String,
     status: StripeSubscriptionStatus,
+    trial_end_at: Option<String>,
     cancel_at: Option<String>,
     /// Whether this subscription can be canceled.
     is_cancelable: bool,
@@ -188,9 +192,21 @@ async fn list_billing_subscriptions(
                 id: subscription.id,
                 name: match subscription.kind {
                     Some(SubscriptionKind::ZedPro) => "Zed Pro".to_string(),
+                    Some(SubscriptionKind::ZedProTrial) => "Zed Pro (Trial)".to_string(),
+                    Some(SubscriptionKind::ZedFree) => "Zed Free".to_string(),
                     None => "Zed LLM Usage".to_string(),
                 },
                 status: subscription.stripe_subscription_status,
+                trial_end_at: if subscription.kind == Some(SubscriptionKind::ZedProTrial) {
+                    maybe!({
+                        let end_at = subscription.stripe_current_period_end?;
+                        let end_at = DateTime::from_timestamp(end_at, 0)?;
+
+                        Some(end_at.to_rfc3339_opts(SecondsFormat::Millis, true))
+                    })
+                } else {
+                    None
+                },
                 cancel_at: subscription.stripe_cancel_at.map(|cancel_at| {
                     cancel_at
                         .and_utc()
@@ -207,6 +223,7 @@ async fn list_billing_subscriptions(
 #[serde(rename_all = "snake_case")]
 enum ProductCode {
     ZedPro,
+    ZedProTrial,
 }
 
 #[derive(Debug, Deserialize)]
@@ -286,24 +303,38 @@ async fn create_billing_subscription(
         customer.id
     };
 
+    let success_url = format!(
+        "{}/account?checkout_complete=1",
+        app.config.zed_dot_dev_url()
+    );
+
     let checkout_session_url = match body.product {
         Some(ProductCode::ZedPro) => {
-            let success_url = format!(
-                "{}/account?checkout_complete=1",
-                app.config.zed_dot_dev_url()
-            );
             stripe_billing
-                .checkout_with_zed_pro(customer_id, &user.github_login, &success_url)
+                .checkout_with_price(
+                    app.config.zed_pro_price_id()?,
+                    customer_id,
+                    &user.github_login,
+                    &success_url,
+                )
+                .await?
+        }
+        Some(ProductCode::ZedProTrial) => {
+            stripe_billing
+                .checkout_with_price(
+                    app.config.zed_pro_trial_price_id()?,
+                    customer_id,
+                    &user.github_login,
+                    &success_url,
+                )
                 .await?
         }
         None => {
-            let default_model =
-                llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-7-sonnet")?;
+            let default_model = llm_db.model(
+                zed_llm_client::LanguageModelProvider::Anthropic,
+                "claude-3-7-sonnet",
+            )?;
             let stripe_model = stripe_billing.register_model(default_model).await?;
-            let success_url = format!(
-                "{}/account?checkout_complete=1",
-                app.config.zed_dot_dev_url()
-            );
             stripe_billing
                 .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
                 .await?
@@ -322,6 +353,8 @@ enum ManageSubscriptionIntent {
     ///
     /// This will open the Stripe billing portal without putting the user in a specific flow.
     ManageSubscription,
+    /// The user intends to upgrade to Zed Pro.
+    UpgradeToPro,
     /// The user intends to cancel their subscription.
     Cancel,
     /// The user intends to stop the cancellation of their subscription.
@@ -373,11 +406,10 @@ async fn manage_billing_subscription(
         .get_billing_subscription_by_id(body.subscription_id)
         .await?
         .ok_or_else(|| anyhow!("subscription not found"))?;
+    let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
+        .context("failed to parse subscription ID")?;
 
     if body.intent == ManageSubscriptionIntent::StopCancellation {
-        let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
-            .context("failed to parse subscription ID")?;
-
         let updated_stripe_subscription = Subscription::update(
             &stripe_client,
             &subscription_id,
@@ -410,6 +442,47 @@ async fn manage_billing_subscription(
 
     let flow = match body.intent {
         ManageSubscriptionIntent::ManageSubscription => None,
+        ManageSubscriptionIntent::UpgradeToPro => {
+            let zed_pro_price_id = app.config.zed_pro_price_id()?;
+            let zed_pro_trial_price_id = app.config.zed_pro_trial_price_id()?;
+            let zed_free_price_id = app.config.zed_free_price_id()?;
+
+            let stripe_subscription =
+                Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
+
+            let subscription_item_to_update = stripe_subscription
+                .items
+                .data
+                .iter()
+                .find_map(|item| {
+                    let price = item.price.as_ref()?;
+
+                    if price.id == zed_free_price_id || price.id == zed_pro_trial_price_id {
+                        Some(item.id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| anyhow!("No subscription item to update"))?;
+
+            Some(CreateBillingPortalSessionFlowData {
+                type_: CreateBillingPortalSessionFlowDataType::SubscriptionUpdateConfirm,
+                subscription_update_confirm: Some(
+                    CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirm {
+                        subscription: subscription.stripe_subscription_id,
+                        items: vec![
+                            CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirmItems {
+                                id: subscription_item_to_update.to_string(),
+                                price: Some(zed_pro_price_id.to_string()),
+                                quantity: Some(1),
+                            },
+                        ],
+                        discounts: None,
+                    },
+                ),
+                ..Default::default()
+            })
+        }
         ManageSubscriptionIntent::Cancel => Some(CreateBillingPortalSessionFlowData {
             type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
             after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
@@ -696,22 +769,25 @@ async fn handle_customer_subscription_event(
 
     log::info!("handling Stripe {} event: {}", event.type_, event.id);
 
-    let subscription_kind =
-        if let Some(zed_pro_price_id) = app.config.stripe_zed_pro_price_id.as_deref() {
-            let has_zed_pro_price = subscription.items.data.iter().any(|item| {
-                item.price
-                    .as_ref()
-                    .map_or(false, |price| price.id.as_str() == zed_pro_price_id)
-            });
+    let subscription_kind = maybe!({
+        let zed_pro_price_id = app.config.zed_pro_price_id().ok()?;
+        let zed_pro_trial_price_id = app.config.zed_pro_trial_price_id().ok()?;
+        let zed_free_price_id = app.config.zed_free_price_id().ok()?;
 
-            if has_zed_pro_price {
+        subscription.items.data.iter().find_map(|item| {
+            let price = item.price.as_ref()?;
+
+            if price.id == zed_pro_price_id {
                 Some(SubscriptionKind::ZedPro)
+            } else if price.id == zed_pro_trial_price_id {
+                Some(SubscriptionKind::ZedProTrial)
+            } else if price.id == zed_free_price_id {
+                Some(SubscriptionKind::ZedFree)
             } else {
                 None
             }
-        } else {
-            None
-        };
+        })
+    });
 
     let billing_customer =
         find_or_create_billing_customer(app, stripe_client, subscription.customer)
@@ -871,6 +947,105 @@ async fn get_monthly_spend(
         monthly_free_tier_spend_in_cents: free_tier_spend.0,
         monthly_free_tier_allowance_in_cents: free_tier.0,
         monthly_spend_in_cents: monthly_spend.0,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct GetCurrentUsageParams {
+    github_user_id: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct UsageCounts {
+    pub used: i32,
+    pub limit: Option<i32>,
+    pub remaining: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+struct GetCurrentUsageResponse {
+    pub model_requests: UsageCounts,
+    pub edit_predictions: UsageCounts,
+}
+
+async fn get_current_usage(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<GetCurrentUsageParams>,
+) -> Result<Json<GetCurrentUsageResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_user_id(params.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let Some(llm_db) = app.llm_db.clone() else {
+        return Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "LLM database not available".into(),
+        ));
+    };
+
+    let empty_usage = GetCurrentUsageResponse {
+        model_requests: UsageCounts {
+            used: 0,
+            limit: Some(0),
+            remaining: Some(0),
+        },
+        edit_predictions: UsageCounts {
+            used: 0,
+            limit: Some(0),
+            remaining: Some(0),
+        },
+    };
+
+    let Some(subscription) = app.db.get_active_billing_subscription(user.id).await? else {
+        return Ok(Json(empty_usage));
+    };
+
+    let subscription_period = maybe!({
+        let period_start_at = subscription.current_period_start_at()?;
+        let period_end_at = subscription.current_period_end_at()?;
+
+        Some((period_start_at, period_end_at))
+    });
+
+    let Some((period_start_at, period_end_at)) = subscription_period else {
+        return Ok(Json(empty_usage));
+    };
+
+    let usage = llm_db
+        .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
+        .await?;
+    let Some(usage) = usage else {
+        return Ok(Json(empty_usage));
+    };
+
+    let plan = match usage.plan {
+        SubscriptionKind::ZedPro => zed_llm_client::Plan::ZedPro,
+        SubscriptionKind::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+        SubscriptionKind::ZedFree => zed_llm_client::Plan::Free,
+    };
+
+    let model_requests_limit = match plan.model_requests_limit() {
+        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
+        zed_llm_client::UsageLimit::Unlimited => None,
+    };
+    let edit_prediction_limit = match plan.edit_predictions_limit() {
+        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
+        zed_llm_client::UsageLimit::Unlimited => None,
+    };
+
+    Ok(Json(GetCurrentUsageResponse {
+        model_requests: UsageCounts {
+            used: usage.model_requests,
+            limit: model_requests_limit,
+            remaining: model_requests_limit.map(|limit| (limit - usage.model_requests).max(0)),
+        },
+        edit_predictions: UsageCounts {
+            used: usage.edit_predictions,
+            limit: edit_prediction_limit,
+            remaining: edit_prediction_limit.map(|limit| (limit - usage.edit_predictions).max(0)),
+        },
     }))
 }
 
