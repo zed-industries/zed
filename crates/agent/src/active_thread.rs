@@ -1491,12 +1491,12 @@ impl ActiveThread {
         let editor_bg_color = colors.editor_background;
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
-        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileCode)
+        let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::FileCode)
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
-            .on_click(|_event, window, cx| {
+            .on_click(|_, window, cx| {
                 window.dispatch_action(Box::new(OpenActiveThreadAsMarkdown), cx)
             });
 
