@@ -7,7 +7,7 @@ use crate::prelude::*;
 /// A progress bar is a horizontal bar that communicates the status of a process.
 ///
 /// A progress bar should not be used to represent indeterminate progress.
-#[derive(RegisterComponent, Documented)]
+#[derive(IntoElement, RegisterComponent, Documented)]
 pub struct ProgressBar {
     id: ElementId,
     value: f32,
@@ -17,13 +17,7 @@ pub struct ProgressBar {
 }
 
 impl ProgressBar {
-    /// Create a new progress bar with the given value and maximum value.
-    pub fn new(
-        id: impl Into<ElementId>,
-        value: f32,
-        max_value: f32,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(id: impl Into<ElementId>, value: f32, max_value: f32, cx: &App) -> Self {
         Self {
             id: id.into(),
             value,
@@ -33,33 +27,33 @@ impl ProgressBar {
         }
     }
 
-    /// Set the current value of the progress bar.
-    pub fn value(&mut self, value: f32) -> &mut Self {
+    /// Sets the current value of the progress bar.
+    pub fn value(mut self, value: f32) -> Self {
         self.value = value;
         self
     }
 
-    /// Set the maximum value of the progress bar.
-    pub fn max_value(&mut self, max_value: f32) -> &mut Self {
+    /// Sets the maximum value of the progress bar.
+    pub fn max_value(mut self, max_value: f32) -> Self {
         self.max_value = max_value;
         self
     }
 
-    /// Set the background color of the progress bar.
-    pub fn bg_color(&mut self, color: Hsla) -> &mut Self {
+    /// Sets the background color of the progress bar.
+    pub fn bg_color(mut self, color: Hsla) -> Self {
         self.bg_color = color;
         self
     }
 
-    /// Set the foreground color of the progress bar.
-    pub fn fg_color(&mut self, color: Hsla) -> &mut Self {
+    /// Sets the foreground color of the progress bar.
+    pub fn fg_color(mut self, color: Hsla) -> Self {
         self.fg_color = color;
         self
     }
 }
 
-impl Render for ProgressBar {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+impl RenderOnce for ProgressBar {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let fill_width = (self.value / self.max_value).clamp(0.02, 1.0);
 
         div()
@@ -98,11 +92,6 @@ impl Component for ProgressBar {
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let max_value = 180.0;
 
-        let empty_progress_bar = cx.new(|cx| ProgressBar::new("empty", 0.0, max_value, cx));
-        let partial_progress_bar =
-            cx.new(|cx| ProgressBar::new("partial", max_value * 0.35, max_value, cx));
-        let filled_progress_bar = cx.new(|cx| ProgressBar::new("filled", max_value, max_value, cx));
-
         Some(
             div()
                 .flex()
@@ -123,7 +112,7 @@ impl Component for ProgressBar {
                                 .child(Label::new("0%"))
                                 .child(Label::new("Empty")),
                         )
-                        .child(empty_progress_bar.clone()),
+                        .child(ProgressBar::new("empty", 0.0, max_value, cx)),
                 )
                 .child(
                     div()
@@ -137,7 +126,7 @@ impl Component for ProgressBar {
                                 .child(Label::new("38%"))
                                 .child(Label::new("Partial")),
                         )
-                        .child(partial_progress_bar.clone()),
+                        .child(ProgressBar::new("partial", max_value * 0.35, max_value, cx)),
                 )
                 .child(
                     div()
@@ -151,7 +140,7 @@ impl Component for ProgressBar {
                                 .child(Label::new("100%"))
                                 .child(Label::new("Complete")),
                         )
-                        .child(filled_progress_bar.clone()),
+                        .child(ProgressBar::new("filled", max_value, max_value, cx)),
                 )
                 .into_any_element(),
         )
