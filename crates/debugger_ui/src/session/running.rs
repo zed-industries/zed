@@ -447,12 +447,35 @@ impl RunningState {
             workspace::PaneGroup::with_root(root)
         } else {
             pane_close_subscriptions.clear();
+            let module_list = if session
+                .read(cx)
+                .capabilities()
+                .supports_modules_request
+                .unwrap_or(false)
+            {
+                Some(&module_list)
+            } else {
+                None
+            };
+
+            let loaded_source_list = if session
+                .read(cx)
+                .capabilities()
+                .supports_loaded_sources_request
+                .unwrap_or(false)
+            {
+                Some(&loaded_source_list)
+            } else {
+                None
+            };
+
             let root = Self::default_pane_layout(
                 project,
                 &workspace,
                 &stack_frame_list,
                 &variable_list,
-                &module_list,
+                module_list,
+                loaded_source_list,
                 &console,
                 &breakpoint_list,
                 &mut pane_close_subscriptions,
@@ -923,7 +946,8 @@ impl RunningState {
         workspace: &WeakEntity<Workspace>,
         stack_frame_list: &Entity<StackFrameList>,
         variable_list: &Entity<VariableList>,
-        module_list: &Entity<ModuleList>,
+        module_list: Option<&Entity<ModuleList>>,
+        loaded_source_list: Option<&Entity<LoadedSourceList>>,
         console: &Entity<Console>,
         breakpoints: &Entity<BreakpointList>,
         subscriptions: &mut HashMap<EntityId, Subscription>,
@@ -963,6 +987,7 @@ impl RunningState {
             this.activate_item(0, false, false, window, cx);
         });
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+
         center_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
@@ -978,22 +1003,43 @@ impl RunningState {
                 window,
                 cx,
             );
-            this.add_item(
-                Box::new(SubView::new(
-                    this.focus_handle(cx),
-                    module_list.clone().into(),
-                    DebuggerPaneItem::Modules,
+            if let Some(module_list) = module_list {
+                this.add_item(
+                    Box::new(SubView::new(
+                        module_list.focus_handle(cx),
+                        module_list.clone().into(),
+                        DebuggerPaneItem::Modules,
+                        None,
+                        cx,
+                    )),
+                    false,
+                    false,
                     None,
+                    window,
                     cx,
-                )),
-                false,
-                false,
-                None,
-                window,
-                cx,
-            );
-            this.activate_item(0, false, false, window, cx);
+                );
+                this.activate_item(0, false, false, window, cx);
+            }
+
+            if let Some(loaded_source_list) = loaded_source_list {
+                this.add_item(
+                    Box::new(SubView::new(
+                        loaded_source_list.focus_handle(cx),
+                        loaded_source_list.clone().into(),
+                        DebuggerPaneItem::LoadedSources,
+                        None,
+                        cx,
+                    )),
+                    false,
+                    false,
+                    None,
+                    window,
+                    cx,
+                );
+                this.activate_item(1, false, false, window, cx);
+            }
         });
+
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         rightmost_pane.update(cx, |this, cx| {
             let weak_console = console.downgrade();
