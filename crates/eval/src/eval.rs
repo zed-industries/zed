@@ -235,23 +235,29 @@ fn main() {
             let judge_repetitions = args.judge_repetitions;
             let concurrency = args.concurrency;
 
-            let tasks = examples
-                .into_iter()
-                .map(|example| {
-                    let app_state = app_state.clone();
-                    let model = model.clone();
-                    cx.spawn(async move |cx| {
-                        let result =
-                            run_example(&example, model, app_state, judge_repetitions, cx).await;
-                        (result, example)
-                    })
-                })
-                .collect::<Vec<_>>();
+            let mut results = Vec::new();
 
-            let results = futures::stream::iter(tasks)
-                .buffer_unordered(concurrency)
-                .collect::<Vec<(Result<Vec<Result<JudgeOutput>>>, Example)>>()
-                .await;
+            for chunk in examples.chunks(concurrency) {
+                // Note: We used to use buffers_unordered here but we ran into issues
+                // with the admitedlly hacky lang server setup
+                let tasks = chunk
+                    .iter()
+                    .map(|example| {
+                        let app_state = app_state.clone();
+                        let model = model.clone();
+                        let example = example.clone();
+                        cx.spawn(async move |cx| {
+                            let result =
+                                run_example(&example, model, app_state, judge_repetitions, cx)
+                                    .await;
+                            (result, example)
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                let chunk_results = future::join_all(tasks).await;
+                results.extend(chunk_results);
+            }
 
             println!("\n\n");
             println!("========================================");
@@ -331,12 +337,11 @@ async fn run_example(
     let run_output = cx
         .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
         .await?;
-    let diff = example.repository_diff().await?;
 
     // Run judge for each repetition
     let mut results = Vec::new();
     for round in 0..judge_repetitions {
-        let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
+        let judge_result = example.judge(model.clone(), &run_output, round, cx).await;
 
         if let Ok(judge_output) = &judge_result {
             let cohort_id = example
@@ -362,7 +367,8 @@ async fn run_example(
                 model_provider = model.provider_id().to_string(),
                 repository_url = example.base.url.clone(),
                 repository_revision = example.base.revision.clone(),
-                diagnostics_summary = run_output.diagnostics,
+                diagnostics_before = run_output.diagnostics_before,
+                diagnostics_after = run_output.diagnostics_after,
                 commit_id = commit_id
             );
         }
