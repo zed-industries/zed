@@ -137,8 +137,6 @@ pub enum RestoreOnStartupBehavior {
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
-    // We now use the Layout struct instead of this field
-    // pub bottom_dock_layout: Option<BottomDockLayout>,
     /// Direction to split horizontally.
     ///
     /// Default: "up"
