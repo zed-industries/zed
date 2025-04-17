@@ -4816,19 +4816,18 @@ impl Editor {
         let suffix = &old_text[lookbehind.min(old_text.len())..];
 
         let selections = self.selections.all::<usize>(cx);
-        let mut edits = Vec::new();
+        let mut ranges = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
 
         for selection in &selections {
-            let edit = if selection.id == newest_anchor.id {
-                (replace_range_multibuffer.clone(), new_text.as_str())
+            let range = if selection.id == newest_anchor.id {
+                replace_range_multibuffer.clone()
             } else {
                 let mut range = selection.range();
-                let mut text = new_text.as_str();
 
                 // if prefix is present, don't duplicate it
                 if snapshot.contains_str_at(range.start.saturating_sub(lookbehind), prefix) {
-                    text = &new_text[lookbehind.min(new_text.len())..];
+                    range.start = range.start.saturating_sub(lookbehind);
 
                     // if suffix is also present, mimic the newest cursor and replace it
                     if selection.id != newest_anchor.id
@@ -4837,10 +4836,10 @@ impl Editor {
                         range.end += lookahead;
                     }
                 }
-                (range, text)
+                range
             };
 
-            edits.push(edit);
+            ranges.push(range);
 
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.head());
@@ -4866,19 +4865,14 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             if let Some(mut snippet) = snippet {
                 snippet.text = new_text.to_string();
-                let ranges = edits
-                    .iter()
-                    .map(|(range, _)| range.clone())
-                    .collect::<Vec<_>>();
                 this.insert_snippet(&ranges, snippet, window, cx).log_err();
             } else {
                 this.buffer.update(cx, |buffer, cx| {
-                    let auto_indent = if completion.insert_text_mode == Some(InsertTextMode::AS_IS)
-                    {
-                        None
-                    } else {
-                        this.autoindent_mode.clone()
+                    let auto_indent = match completion.insert_text_mode {
+                        Some(InsertTextMode::AS_IS) => None,
+                        _ => this.autoindent_mode.clone(),
                     };
+                    let edits = ranges.into_iter().map(|range| (range, new_text.as_str()));
                     buffer.edit(edits, auto_indent, cx);
                 });
             }
