@@ -3414,7 +3414,6 @@ impl GitPanel {
                         if active_repository.is_some() {
                             "No changes to commit"
                         } else {
-                            // FIXME
                             "No active repository"
                         },
                     ))
@@ -3426,7 +3425,7 @@ impl GitPanel {
                                 h_flex().w_full().justify_around().child(
                                     panel_filled_button("Choose Repository")
                                         .tooltip(Tooltip::for_action_title_in(
-                                            "FIXME",
+                                            "Choose Repository",
                                             &zed_actions::git::SelectRepo,
                                             &self.focus_handle,
                                         ))
