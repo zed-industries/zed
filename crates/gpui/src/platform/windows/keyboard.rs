@@ -119,12 +119,10 @@ impl WindowsKeyboardMapper {
             "?" => (VK_OEM_2, true),
             _ => return Err(anyhow::anyhow!("Unrecognized key to virtual key: {}", key)),
         };
-        let key = char::from_u32(unsafe { MapVirtualKeyW(virtual_key.0 as u32, MAPVK_VK_TO_CHAR) })
-            .context(format!(
-                "Failed to generate char given virtual key: {}, {:?}",
-                key, virtual_key
-            ))?
-            .to_ascii_lowercase();
+        let (key, _) = get_key_from_vkey(virtual_key.0 as u32).context(format!(
+            "Failed to generate char given virtual key: {}, {:?}",
+            key, virtual_key
+        ))?;
         if shift {
             if modifiers.shift {
                 log::error!(
@@ -134,7 +132,7 @@ impl WindowsKeyboardMapper {
             }
             modifiers.shift = true;
         }
-        Ok(key.to_string())
+        Ok(key)
     }
 
     fn map_for_char(&self, key: &str, modifiers: &mut Modifiers) -> Result<String> {
@@ -183,13 +181,11 @@ impl WindowsKeyboardMapper {
             modifiers.alt = true;
         }
         let virtual_key = low as u32;
-        let key = char::from_u32(unsafe { MapVirtualKeyW(virtual_key, MAPVK_VK_TO_CHAR) })
-            .context(format!(
-                "Failed to generate char given virtual key: {}, {:?}",
-                key, virtual_key
-            ))?
-            .to_ascii_lowercase();
-        Ok(key.to_string())
+        let (key, _) = get_key_from_vkey(virtual_key).context(format!(
+            "Failed to generate char given virtual key: {}, {:?}",
+            key, virtual_key
+        ))?;
+        Ok(key)
     }
 }
 
@@ -198,4 +194,27 @@ fn get_modifiers(high: i8) -> (bool, bool, bool) {
     let ctrl = (high >> 1) & 1;
     let alt = (high >> 2) & 1;
     (shift != 0, ctrl != 0, alt != 0)
+}
+
+/// Converts a Windows virtual key code to its corresponding character and dead key status.
+///
+/// # Parameters
+/// * `vkey` - The virtual key code to convert
+///
+/// # Returns
+/// * `Some((String, bool))` - The character as a string and a boolean indicating if it's a dead key.
+///   A dead key is a key that doesn't produce a character by itself but modifies the next key pressed
+///   (e.g., accent keys like ^ or `).
+/// * `None` - If the virtual key code doesn't map to a character
+pub(crate) fn get_key_from_vkey(vkey: u32) -> Option<(String, bool)> {
+    let key_data = unsafe { MapVirtualKeyW(vkey, MAPVK_VK_TO_CHAR) };
+    if key_data == 0 {
+        return None;
+    }
+
+    // The high word contains dead key flag, the low word contains the character
+    let is_dead_key = (key_data >> 16) > 0;
+    let key = char::from_u32(key_data & 0xFFFF)?;
+
+    Some((key.to_ascii_lowercase().to_string(), is_dead_key))
 }
