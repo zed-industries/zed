@@ -151,7 +151,7 @@ impl Example {
             );
             run_git(
                 &repo_path,
-                &["fetch", "--depth", "1", "origin", &self.base.revision],
+                &["fetch", "origin", &self.base.revision],
             )
             .await?;
         }

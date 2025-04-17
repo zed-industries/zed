@@ -54,6 +54,9 @@ struct Args {
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "10")]
     concurrency: usize,
+    /// Optional cohort ID to group runs together (useful for GitHub Actions)
+    #[arg(long)]
+    cohort_id: Option<String>,
 }
 
 fn main() {
@@ -207,14 +210,12 @@ fn main() {
                                 &repo_path,
                                 &[
                                     "fetch",
-                                    "--depth",
-                                    "1",
                                     "origin",
                                     "+refs/heads/*:refs/remotes/origin/*",
                                 ],
                             )
                             .await?;
-                            run_git(&repo_path, &["fetch", "--depth", "1", "origin", &revision])
+                            run_git(&repo_path, &["fetch", "origin", &revision])
                                 .await
                         });
 
@@ -248,15 +249,17 @@ fn main() {
 
             let judge_repetitions = args.judge_repetitions;
             let concurrency = args.concurrency;
+            let cohort_id = args.cohort_id.clone();
 
             let tasks = examples
                 .into_iter()
                 .map(|example| {
                     let app_state = app_state.clone();
                     let model = model.clone();
+                    let cohort_id = cohort_id.clone();
                     cx.spawn(async move |cx| {
                         let result =
-                            run_example(&example, model, app_state, judge_repetitions, cx).await;
+                            run_example(&example, model, app_state, judge_repetitions, cohort_id, cx).await;
                         (result, example)
                     })
                 })
@@ -331,6 +334,7 @@ async fn run_example(
     model: Arc<dyn LanguageModel>,
     app_state: Arc<AgentAppState>,
     judge_repetitions: u32,
+    optional_cohort_id: Option<String>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Result<JudgeOutput>>> {
     let run_output = cx
@@ -344,12 +348,15 @@ async fn run_example(
         let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
 
         if let Ok(judge_output) = &judge_result {
-            let cohort_id = example
-                .output_file_path
-                .parent()
-                .and_then(|p| p.file_name())
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+            // Use the provided cohort_id if available, otherwise generate one from the output path
+            let cohort_id = optional_cohort_id.clone().unwrap_or_else(|| {
+                example
+                    .output_file_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string())
+            });
 
             let path = std::path::Path::new(".");
             let commit_id = get_current_commit_id(path).await.unwrap_or_default();
