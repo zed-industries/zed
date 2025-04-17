@@ -775,7 +775,7 @@ pub struct AvailableCodeAction {
     pub provider: Rc<dyn CodeActionProvider>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     pub(crate) actions: Option<Rc<[AvailableCodeAction]>>,
@@ -814,7 +814,7 @@ impl CodeActionContents {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         match (&self.tasks, &self.actions) {
             (Some(tasks), Some(actions)) => actions.is_empty() && tasks.templates.is_empty(),
             (Some(tasks), None) => tasks.templates.is_empty(),
@@ -823,7 +823,7 @@ impl CodeActionContents {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
+    fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
         self.tasks
             .iter()
             .flat_map(|tasks| {
@@ -891,14 +891,14 @@ pub enum CodeActionsItem {
 }
 
 impl CodeActionsItem {
-    pub fn as_task(&self) -> Option<&ResolvedTask> {
+    fn as_task(&self) -> Option<&ResolvedTask> {
         let Self::Task(_, task) = self else {
             return None;
         };
         Some(task)
     }
 
-    pub fn as_code_action(&self) -> Option<&CodeAction> {
+    fn as_code_action(&self) -> Option<&CodeAction> {
         let Self::CodeAction { action, .. } = self else {
             return None;
         };
@@ -1027,7 +1027,6 @@ impl CodeActionsMenu {
                                         if let Some(task) = editor.confirm_code_action(
                                             &ConfirmCodeAction {
                                                 item_ix: Some(item_ix),
-                                                from_mouse_context_menu: false,
                                             },
                                             window,
                                             cx,
@@ -1053,7 +1052,6 @@ impl CodeActionsMenu {
                                         if let Some(task) = editor.confirm_code_action(
                                             &ConfirmCodeAction {
                                                 item_ix: Some(item_ix),
-                                                from_mouse_context_menu: false,
                                             },
                                             window,
                                             cx,

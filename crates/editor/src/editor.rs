@@ -1721,7 +1721,6 @@ impl Editor {
             self,
             crate::mouse_context_menu::MenuPosition::PinnedToScreen(position),
             context_menu,
-            None,
             window,
             cx,
         ));
@@ -4865,87 +4864,6 @@ impl Editor {
         }))
     }
 
-    fn prepare_code_actions_task(
-        &mut self,
-        action: &ToggleCodeActions,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Option<(Entity<Buffer>, CodeActionContents)>> {
-        let snapshot = self.snapshot(window, cx);
-        let multibuffer_point = action
-            .deployed_from_indicator
-            .map(|row| DisplayPoint::new(row, 0).to_point(&snapshot))
-            .unwrap_or_else(|| self.selections.newest::<Point>(cx).head());
-
-        let Some((buffer, buffer_row)) = snapshot
-            .buffer_snapshot
-            .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
-            .and_then(|(buffer_snapshot, range)| {
-                self.buffer
-                    .read(cx)
-                    .buffer(buffer_snapshot.remote_id())
-                    .map(|buffer| (buffer, range.start.row))
-            })
-        else {
-            return Task::ready(None);
-        };
-
-        let (_, code_actions) = self
-            .available_code_actions
-            .clone()
-            .and_then(|(location, code_actions)| {
-                let snapshot = location.buffer.read(cx).snapshot();
-                let point_range = location.range.to_point(&snapshot);
-                let point_range = point_range.start.row..=point_range.end.row;
-                if point_range.contains(&buffer_row) {
-                    Some((location, code_actions))
-                } else {
-                    None
-                }
-            })
-            .unzip();
-
-        let buffer_id = buffer.read(cx).remote_id();
-        let tasks = self
-            .tasks
-            .get(&(buffer_id, buffer_row))
-            .map(|t| Arc::new(t.to_owned()));
-
-        if tasks.is_none() && code_actions.is_none() {
-            return Task::ready(None);
-        }
-
-        self.completion_tasks.clear();
-        self.discard_inline_completion(false, cx);
-
-        let task_context = tasks
-            .as_ref()
-            .zip(self.project.clone())
-            .map(|(tasks, project)| {
-                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
-            });
-
-        cx.spawn_in(window, async move |_, cx| {
-            let task_context = match task_context {
-                Some(task_context) => task_context.await,
-                None => None,
-            };
-            let resolved_tasks =
-                tasks
-                    .zip(task_context)
-                    .map(|(tasks, task_context)| ResolvedTasks {
-                        templates: tasks.resolve(&task_context).collect(),
-                        position: snapshot
-                            .buffer_snapshot
-                            .anchor_before(Point::new(multibuffer_point.row, tasks.column)),
-                    });
-            let code_action_contents = cx
-                .update(|_, cx| CodeActionContents::new(resolved_tasks, code_actions, cx))
-                .ok()?;
-            Some((buffer, code_action_contents))
-        })
-    }
-
     pub fn toggle_code_actions(
         &mut self,
         action: &ToggleCodeActions,
@@ -4966,58 +4884,114 @@ impl Editor {
             }
         }
         drop(context_menu);
-
+        let snapshot = self.snapshot(window, cx);
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         let action = action.clone();
-
         cx.spawn_in(window, async move |editor, cx| {
             while let Some(prev_task) = task {
                 prev_task.await.log_err();
                 task = editor.update(cx, |this, _| this.code_actions_task.take())?;
             }
 
-            let context_menu_task = editor.update_in(cx, |editor, window, cx| {
-                if !editor.focus_handle.is_focused(window) {
-                    return Some(Task::ready(Ok(())));
-                }
-                let debugger_flag = cx.has_flag::<Debugger>();
-                let code_actions_task = editor.prepare_code_actions_task(&action, window, cx);
-                Some(cx.spawn_in(window, async move |editor, cx| {
-                    if let Some((buffer, code_action_contents)) = code_actions_task.await {
-                        let spawn_straight_away =
-                            code_action_contents.tasks().map_or(false, |tasks| {
-                                tasks
-                                    .templates
-                                    .iter()
-                                    .filter(|task| {
-                                        if matches!(task.1.task_type(), task::TaskType::Debug(_)) {
-                                            debugger_flag
-                                        } else {
-                                            true
-                                        }
-                                    })
-                                    .count()
-                                    == 1
-                            }) && code_action_contents
-                                .actions
-                                .as_ref()
-                                .map_or(true, |actions| actions.is_empty());
+            let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
+                if editor.focus_handle.is_focused(window) {
+                    let multibuffer_point = action
+                        .deployed_from_indicator
+                        .map(|row| DisplayPoint::new(row, 0).to_point(&snapshot))
+                        .unwrap_or_else(|| editor.selections.newest::<Point>(cx).head());
+                    let (buffer, buffer_row) = snapshot
+                        .buffer_snapshot
+                        .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
+                        .and_then(|(buffer_snapshot, range)| {
+                            editor
+                                .buffer
+                                .read(cx)
+                                .buffer(buffer_snapshot.remote_id())
+                                .map(|buffer| (buffer, range.start.row))
+                        })?;
+                    let (_, code_actions) = editor
+                        .available_code_actions
+                        .clone()
+                        .and_then(|(location, code_actions)| {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let point_range = location.range.to_point(&snapshot);
+                            let point_range = point_range.start.row..=point_range.end.row;
+                            if point_range.contains(&buffer_row) {
+                                Some((location, code_actions))
+                            } else {
+                                None
+                            }
+                        })
+                        .unzip();
+                    let buffer_id = buffer.read(cx).remote_id();
+                    let tasks = editor
+                        .tasks
+                        .get(&(buffer_id, buffer_row))
+                        .map(|t| Arc::new(t.to_owned()));
+                    if tasks.is_none() && code_actions.is_none() {
+                        return None;
+                    }
+
+                    editor.completion_tasks.clear();
+                    editor.discard_inline_completion(false, cx);
+                    let task_context =
+                        tasks
+                            .as_ref()
+                            .zip(editor.project.clone())
+                            .map(|(tasks, project)| {
+                                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
+                            });
+
+                    let debugger_flag = cx.has_flag::<Debugger>();
+
+                    Some(cx.spawn_in(window, async move |editor, cx| {
+                        let task_context = match task_context {
+                            Some(task_context) => task_context.await,
+                            None => None,
+                        };
+                        let resolved_tasks =
+                            tasks
+                                .zip(task_context)
+                                .map(|(tasks, task_context)| ResolvedTasks {
+                                    templates: tasks.resolve(&task_context).collect(),
+                                    position: snapshot.buffer_snapshot.anchor_before(Point::new(
+                                        multibuffer_point.row,
+                                        tasks.column,
+                                    )),
+                                });
+                        let spawn_straight_away = resolved_tasks.as_ref().map_or(false, |tasks| {
+                            tasks
+                                .templates
+                                .iter()
+                                .filter(|task| {
+                                    if matches!(task.1.task_type(), task::TaskType::Debug(_)) {
+                                        debugger_flag
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .count()
+                                == 1
+                        }) && code_actions
+                            .as_ref()
+                            .map_or(true, |actions| actions.is_empty());
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
-                                    actions: code_action_contents,
+                                    actions: CodeActionContents::new(
+                                        resolved_tasks,
+                                        code_actions,
+                                        cx,
+                                    ),
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
                                     deployed_from_indicator,
                                 }));
                             if spawn_straight_away {
                                 if let Some(task) = editor.confirm_code_action(
-                                    &ConfirmCodeAction {
-                                        item_ix: Some(0),
-                                        from_mouse_context_menu: false,
-                                    },
+                                    &ConfirmCodeAction { item_ix: Some(0) },
                                     window,
                                     cx,
                                 ) {
@@ -5032,12 +5006,12 @@ impl Editor {
                         } else {
                             Ok(())
                         }
-                    } else {
-                        Ok(())
-                    }
-                }))
+                    }))
+                } else {
+                    Some(Task::ready(Ok(())))
+                }
             })?;
-            if let Some(task) = context_menu_task {
+            if let Some(task) = spawned_test_task {
                 task.await?;
             }
 
@@ -5054,27 +5028,17 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
-        let (action, buffer) = if action.from_mouse_context_menu {
-            if let Some(menu) = self.mouse_context_menu.take() {
-                let code_action = menu.code_action?;
-                let index = action.item_ix?;
-                let action = code_action.actions.get(index)?;
-                (action, code_action.buffer)
-            } else {
-                return None;
-            }
-        } else {
+        let actions_menu =
             if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
-                let action_ix = action.item_ix.unwrap_or(menu.selected_item);
-                let action = menu.actions.get(action_ix)?;
-                let buffer = menu.buffer;
-                (action, buffer)
+                menu
             } else {
                 return None;
-            }
-        };
+            };
 
+        let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
+        let action = actions_menu.actions.get(action_ix)?;
         let title = action.label();
+        let buffer = actions_menu.buffer;
         let workspace = self.workspace()?;
 
         match action {
@@ -8929,7 +8893,6 @@ impl Editor {
             self,
             source,
             clicked_point,
-            None,
             context_menu,
             window,
             cx,
