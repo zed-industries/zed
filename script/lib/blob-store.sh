@@ -24,10 +24,10 @@ function upload_to_blob_store_with_acl
 
 function upload_to_blob_store_public
 {
-    upload_to_blob_store_with_acl $1 $2 $3 "x-amz-acl:public-read"
+    upload_to_blob_store_with_acl "$1" "$2" "$3" "x-amz-acl:public-read"
 }
 
 function upload_to_blob_store
 {
-    upload_to_blob_store_with_acl $1 $2 $3 "x-amz-acl:private"
+    upload_to_blob_store_with_acl "$1" "$2" "$3" "x-amz-acl:private"
 }

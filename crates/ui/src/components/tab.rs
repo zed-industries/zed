@@ -26,7 +26,7 @@ pub enum TabCloseSide {
     End,
 }
 
-#[derive(IntoElement, IntoComponent)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct Tab {
     div: Stateful<Div>,
     selected: bool,
@@ -73,11 +73,11 @@ impl Tab {
         self
     }
 
-    pub fn content_height(cx: &mut App) -> Pixels {
+    pub fn content_height(cx: &App) -> Pixels {
         DynamicSpacing::Base32.px(cx) - px(1.)
     }
 
-    pub fn container_height(cx: &mut App) -> Pixels {
+    pub fn container_height(cx: &App) -> Pixels {
         DynamicSpacing::Base32.px(cx)
     }
 }
@@ -171,48 +171,59 @@ impl RenderOnce for Tab {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
-impl ComponentPreview for Tab {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        v_flex()
-            .gap_6()
-            .children(vec![example_group_with_title(
-                "Variations",
-                vec![
-                    single_example(
-                        "Default",
-                        Tab::new("default").child("Default Tab").into_any_element(),
-                    ),
-                    single_example(
-                        "Selected",
-                        Tab::new("selected")
-                            .toggle_state(true)
-                            .child("Selected Tab")
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "First",
-                        Tab::new("first")
-                            .position(TabPosition::First)
-                            .child("First Tab")
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Middle",
-                        Tab::new("middle")
-                            .position(TabPosition::Middle(Ordering::Equal))
-                            .child("Middle Tab")
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Last",
-                        Tab::new("last")
-                            .position(TabPosition::Last)
-                            .child("Last Tab")
-                            .into_any_element(),
-                    ),
-                ],
-            )])
-            .into_any_element()
+impl Component for Tab {
+    fn scope() -> ComponentScope {
+        ComponentScope::None
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A tab component that can be used in a tabbed interface, supporting different positions and states.",
+        )
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group_with_title(
+                    "Variations",
+                    vec![
+                        single_example(
+                            "Default",
+                            Tab::new("default").child("Default Tab").into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            Tab::new("selected")
+                                .toggle_state(true)
+                                .child("Selected Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "First",
+                            Tab::new("first")
+                                .position(TabPosition::First)
+                                .child("First Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Middle",
+                            Tab::new("middle")
+                                .position(TabPosition::Middle(Ordering::Equal))
+                                .child("Middle Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Last",
+                            Tab::new("last")
+                                .position(TabPosition::Last)
+                                .child("Last Tab")
+                                .into_any_element(),
+                        ),
+                    ],
+                )])
+                .into_any_element(),
+        )
     }
 }

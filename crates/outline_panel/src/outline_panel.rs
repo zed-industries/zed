@@ -18,7 +18,7 @@ use anyhow::Context as _;
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, ExcerptId,
     ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
@@ -70,7 +70,7 @@ actions!(
         ExpandAllEntries,
         ExpandSelectedEntry,
         FoldDirectory,
-        Open,
+        OpenSelectedEntry,
         RevealInFileManager,
         SelectParent,
         ToggleActiveEditorPin,
@@ -922,7 +922,12 @@ impl OutlinePanel {
         self.update_cached_entries(None, window, cx);
     }
 
-    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_selected_entry(
+        &mut self,
+        _: &OpenSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
@@ -4725,7 +4730,7 @@ fn workspace_active_editor(
     let active_item = workspace.active_item(cx)?;
     let active_editor = active_item
         .act_as::<Editor>(cx)
-        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)?;
+        .filter(|editor| editor.read(cx).mode().is_full())?;
     Some((active_item, active_editor))
 }
 
@@ -4906,7 +4911,7 @@ impl Render for OutlinePanel {
                 }
             }))
             .key_context(self.dispatch_context(window, cx))
-            .on_action(cx.listener(Self::open))
+            .on_action(cx.listener(Self::open_selected_entry))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -5677,7 +5682,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         outline_panel.update(cx, |_outline_panel, cx| {
             assert_eq!(
@@ -5852,7 +5857,7 @@ mod tests {
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_previous(&SelectPrevious, window, cx);
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5876,7 +5881,7 @@ mod tests {
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5897,7 +5902,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));

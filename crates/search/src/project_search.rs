@@ -1053,6 +1053,8 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                self.search_options
+                    .contains(SearchOptions::ONE_MATCH_PER_LINE),
                 included_files,
                 excluded_files,
                 open_buffers,

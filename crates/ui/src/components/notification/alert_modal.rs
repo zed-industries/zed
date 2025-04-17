@@ -2,8 +2,7 @@ use crate::prelude::*;
 use gpui::IntoElement;
 use smallvec::{SmallVec, smallvec};
 
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Notification")]
+#[derive(IntoElement, RegisterComponent)]
 pub struct AlertModal {
     id: ElementId,
     children: SmallVec<[AnyElement; 2]>,
@@ -77,23 +76,33 @@ impl ParentElement for AlertModal {
     }
 }
 
-impl ComponentPreview for AlertModal {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        v_flex()
-            .gap_6()
-            .p_4()
-            .children(vec![example_group(
-                vec![
-                    single_example(
-                        "Basic Alert",
-                        AlertModal::new("simple-modal", "Do you want to leave the current call?")
-                            .child("The current window will be closed, and connections to any shared projects will be terminated."
-                            )
-                            .primary_action("Leave Call")
-                            .into_any_element(),
-                    )
-                ],
-            )])
-            .into_any_element()
+impl Component for AlertModal {
+    fn scope() -> ComponentScope {
+        ComponentScope::Notification
+    }
+
+    fn description() -> Option<&'static str> {
+        Some("A modal dialog that presents an alert message with primary and dismiss actions.")
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .p_4()
+                .children(vec![example_group(
+                    vec![
+                        single_example(
+                            "Basic Alert",
+                            AlertModal::new("simple-modal", "Do you want to leave the current call?")
+                                .child("The current window will be closed, and connections to any shared projects will be terminated."
+                                )
+                                .primary_action("Leave Call")
+                                .into_any_element(),
+                        )
+                    ],
+                )])
+                .into_any_element()
+        )
     }
 }

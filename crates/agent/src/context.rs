@@ -1,9 +1,10 @@
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 
 use gpui::{App, Entity, SharedString};
 use language::{Buffer, File};
 use language_model::LanguageModelRequestMessage;
-use project::ProjectPath;
+use project::{ProjectPath, Worktree};
+use rope::Point;
 use serde::{Deserialize, Serialize};
 use text::{Anchor, BufferId};
 use ui::IconName;
@@ -23,6 +24,7 @@ pub enum ContextKind {
     File,
     Directory,
     Symbol,
+    Excerpt,
     FetchedUrl,
     Thread,
 }
@@ -33,6 +35,7 @@ impl ContextKind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
+            ContextKind::Excerpt => IconName::Code,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
         }
@@ -46,6 +49,7 @@ pub enum AssistantContext {
     Symbol(SymbolContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
+    Excerpt(ExcerptContext),
 }
 
 impl AssistantContext {
@@ -56,6 +60,7 @@ impl AssistantContext {
             Self::Symbol(symbol) => symbol.id,
             Self::FetchedUrl(url) => url.id,
             Self::Thread(thread) => thread.id,
+            Self::Excerpt(excerpt) => excerpt.id,
         }
     }
 }
@@ -69,8 +74,19 @@ pub struct FileContext {
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
     pub id: ContextId,
-    pub project_path: ProjectPath,
+    pub worktree: Entity<Worktree>,
+    pub path: Arc<Path>,
+    /// Buffers of the files within the directory.
     pub context_buffers: Vec<ContextBuffer>,
+}
+
+impl DirectoryContext {
+    pub fn project_path(&self, cx: &App) -> ProjectPath {
+        ProjectPath {
+            worktree_id: self.worktree.read(cx).id(),
+            path: self.path.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -86,12 +102,11 @@ pub struct FetchedUrlContext {
     pub text: SharedString,
 }
 
-// TODO: Model<Thread> holds onto the thread even if the thread is deleted. Can either handle this
-// explicitly or have a WeakModel<Thread> and remove during snapshot.
-
 #[derive(Debug, Clone)]
 pub struct ThreadContext {
     pub id: ContextId,
+    // TODO: Entity<Thread> holds onto the thread even if the thread is deleted. Should probably be
+    // a WeakEntity and handle removal from the UI when it has dropped.
     pub thread: Entity<Thread>,
     pub text: SharedString,
 }
@@ -105,12 +120,11 @@ impl ThreadContext {
     }
 }
 
-// TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
-// the context from the message editor in this case.
-
 #[derive(Clone)]
 pub struct ContextBuffer {
     pub id: BufferId,
+    // TODO: Entity<Buffer> holds onto the thread even if the thread is deleted. Should probably be
+    // a WeakEntity and handle removal from the UI when it has dropped.
     pub buffer: Entity<Buffer>,
     pub file: Arc<dyn File>,
     pub version: clock::Global,
@@ -146,6 +160,14 @@ pub struct ContextSymbolId {
     pub range: Range<Anchor>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExcerptContext {
+    pub id: ContextId,
+    pub range: Range<Anchor>,
+    pub line_range: Range<Point>,
+    pub context_buffer: ContextBuffer,
+}
+
 /// Formats a collection of contexts into a string representation
 pub fn format_context_as_string<'a>(
     contexts: impl Iterator<Item = &'a AssistantContext>,
@@ -154,6 +176,7 @@ pub fn format_context_as_string<'a>(
     let mut file_context = Vec::new();
     let mut directory_context = Vec::new();
     let mut symbol_context = Vec::new();
+    let mut excerpt_context = Vec::new();
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
 
@@ -162,6 +185,7 @@ pub fn format_context_as_string<'a>(
             AssistantContext::File(context) => file_context.push(context),
             AssistantContext::Directory(context) => directory_context.push(context),
             AssistantContext::Symbol(context) => symbol_context.push(context),
+            AssistantContext::Excerpt(context) => excerpt_context.push(context),
             AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context),
         }
@@ -170,6 +194,7 @@ pub fn format_context_as_string<'a>(
     if file_context.is_empty()
         && directory_context.is_empty()
         && symbol_context.is_empty()
+        && excerpt_context.is_empty()
         && fetch_context.is_empty()
         && thread_context.is_empty()
     {
@@ -205,6 +230,15 @@ pub fn format_context_as_string<'a>(
             result.push('\n');
         }
         result.push_str("</symbols>\n");
+    }
+
+    if !excerpt_context.is_empty() {
+        result.push_str("<excerpts>\n");
+        for context in excerpt_context {
+            result.push_str(&context.context_buffer.text);
+            result.push('\n');
+        }
+        result.push_str("</excerpts>\n");
     }
 
     if !fetch_context.is_empty() {

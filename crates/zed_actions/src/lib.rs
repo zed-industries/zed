@@ -150,7 +150,7 @@ pub mod command_palette {
 pub mod feedback {
     use gpui::actions;
 
-    actions!(feedback, [GiveFeedback]);
+    actions!(feedback, [FileBugReport, GiveFeedback]);
 }
 
 pub mod theme_selector {

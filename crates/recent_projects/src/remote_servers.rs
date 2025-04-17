@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1288,11 +1289,8 @@ impl RemoteServerProjects {
                 cx.notify();
             }));
 
-        let Some(scroll_handle) = scroll_state
-            .scroll_handle()
-            .as_any()
-            .downcast_ref::<ScrollHandle>()
-        else {
+        let handle = &**scroll_state.scroll_handle() as &dyn Any;
+        let Some(scroll_handle) = handle.downcast_ref::<ScrollHandle>() else {
             unreachable!()
         };
 
@@ -1338,7 +1336,7 @@ impl RemoteServerProjects {
         Modal::new("remote-projects", None)
             .header(
                 ModalHeader::new()
-                    .child(Headline::new("Remote Projects (beta)").size(HeadlineSize::XSmall)),
+                    .child(Headline::new("Remote Projects").size(HeadlineSize::XSmall)),
             )
             .section(
                 Section::new().padded(false).child(

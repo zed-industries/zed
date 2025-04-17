@@ -8,6 +8,10 @@ use std::path::PathBuf;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long, hide = true)]
+    askpass: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -45,6 +49,11 @@ fn main() {
     use remote_server::unix::{execute_proxy, execute_run};
 
     let cli = Cli::parse();
+
+    if let Some(socket_path) = &cli.askpass {
+        askpass::main(socket_path);
+        return;
+    }
 
     let result = match cli.command {
         Some(Commands::Run {

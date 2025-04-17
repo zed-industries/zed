@@ -1,6 +1,6 @@
 use crate::{replace::replace_with_flexible_indent, schema::json_schema_for};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -62,6 +62,16 @@ pub struct FindReplaceFileToolInput {
     /// it appears in the file, because this tool will do a literal find/replace, and if
     /// even one character in this string is different in any way from how it appears
     /// in the file, then the tool call will fail.
+    ///
+    /// If you get an error that the `find` string was not found, this means that either
+    /// you made a mistake, or that the file has changed since you last looked at it.
+    /// Either way, when this happens, you should retry doing this tool call until it
+    /// succeeds, up to 3 times. Each time you retry, you should take another look at
+    /// the exact text of the file in question, to make sure that you are searching for
+    /// exactly the right string. Regardless of whether it was because you made a mistake
+    /// or because the file changed since you last looked at it, you should be extra
+    /// careful when retrying in this way. It's a bad experience for the user if
+    /// this `find` string isn't found, so be super careful to get it exactly right!
     ///
     /// <example>
     /// If a file contains this code:
@@ -129,7 +139,7 @@ impl Tool for FindReplaceFileTool {
         "find_replace_file".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 
@@ -141,7 +151,7 @@ impl Tool for FindReplaceFileTool {
         IconName::Pencil
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<FindReplaceFileToolInput>(format)
     }
 
@@ -159,10 +169,10 @@ impl Tool for FindReplaceFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<FindReplaceFileToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         cx.spawn(async move |cx: &mut AsyncApp| {
@@ -253,6 +263,6 @@ impl Tool for FindReplaceFileTool {
 
             Ok(format!("Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str))
 
-        })
+        }).into()
     }
 }

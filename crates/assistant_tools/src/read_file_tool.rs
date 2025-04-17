@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use crate::code_symbols_tool::file_outline;
-use crate::schema::json_schema_for;
+use crate::{code_symbols_tool::file_outline, schema::json_schema_for};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use itertools::Itertools;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -16,7 +15,7 @@ use util::markdown::MarkdownString;
 /// If the model requests to read a file whose size exceeds this, then
 /// the tool will return an error along with the model's symbol outline,
 /// and suggest trying again using line ranges from the outline.
-const MAX_FILE_SIZE_TO_READ: usize = 4096;
+const MAX_FILE_SIZE_TO_READ: usize = 16384;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
@@ -52,7 +51,7 @@ impl Tool for ReadFileTool {
         "read_file".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 
@@ -64,7 +63,7 @@ impl Tool for ReadFileTool {
         IconName::FileSearch
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<ReadFileToolInput>(format)
     }
 
@@ -89,14 +88,14 @@ impl Tool for ReadFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path {} not found in project", &input.path,)));
+            return Task::ready(Err(anyhow!("Path {} not found in project", &input.path,))).into();
         };
 
         let file_path = input.path.clone();
@@ -147,6 +146,6 @@ impl Tool for ReadFileTool {
                     Ok(format!("This file was too big to read all at once. Here is an outline of its symbols:\n\n{outline}\n\nUsing the line numbers in this outline, you can call this tool again while specifying the start_line and end_line fields to see the implementations of symbols in the outline."))
                 }
             }
-        })
+        }).into()
     }
 }

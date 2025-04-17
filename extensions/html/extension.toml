@@ -1,7 +1,7 @@
 id = "html"
 name = "HTML"
 description = "HTML support."
-version = "0.2.0"
+version = "0.2.1"
 schema_version = 1
 authors = ["Isaac Clayton <slightknack@gmail.com>"]
 repository = "https://github.com/zed-industries/zed"

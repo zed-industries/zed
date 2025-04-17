@@ -142,6 +142,10 @@ impl VimTestContext {
         self.update_editor(|editor, _, cx| editor.addon::<VimAddon>().unwrap().entity.read(cx).mode)
     }
 
+    pub fn forced_motion(&mut self) -> bool {
+        self.update_editor(|_, _, cx| cx.global::<VimGlobals>().forced_motion)
+    }
+
     pub fn active_operator(&mut self) -> Option<Operator> {
         self.update_editor(|editor, _, cx| {
             editor

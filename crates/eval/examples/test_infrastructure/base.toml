@@ -1,0 +1,3 @@
+url = "https://github.com/dagster-io/dagster.git"
+revision = "c9ed914a76baa6fb761a97f3236f96cd7d5361e6"
+language_extension = "py"

@@ -1,15 +1,15 @@
 use ::fs::Fs;
-use anyhow::{Context as _, Ok, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use dap_types::StartDebuggingRequestArguments;
 use futures::io::BufReader;
 use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
 use language::LanguageToolchainStore;
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use settings::WorktreeId;
 use smol::{self, fs::File, lock::Mutex};
 use std::{
@@ -20,9 +20,9 @@ use std::{
     net::Ipv4Addr,
     ops::Deref,
     path::PathBuf,
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
-use task::{DebugAdapterConfig, DebugTaskDefinition};
+use task::DebugTaskDefinition;
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,13 +95,16 @@ pub struct TcpArguments {
 }
 #[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
+    pub adapter_name: DebugAdapterName,
     pub command: String,
     pub arguments: Option<Vec<OsString>>,
     pub envs: Option<HashMap<String, String>>,
     pub cwd: Option<PathBuf>,
     pub connection: Option<TcpArguments>,
+    pub request_args: StartDebuggingRequestArguments,
 }
 
+#[derive(Debug)]
 pub struct AdapterVersion {
     pub tag_name: String,
     pub url: String,
@@ -219,7 +222,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -253,7 +256,21 @@ pub trait DebugAdapter: 'static + Send + Sync {
                 self.name()
             );
             delegate.update_status(self.name(), DapStatus::Downloading);
-            self.install_binary(version, delegate).await?;
+            match self.install_binary(version, delegate).await {
+                Ok(_) => {
+                    delegate.update_status(self.name(), DapStatus::None);
+                }
+                Err(error) => {
+                    delegate.update_status(
+                        self.name(),
+                        DapStatus::Failed {
+                            error: error.to_string(),
+                        },
+                    );
+
+                    return Err(error);
+                }
+            }
 
             delegate
                 .updated_adapters()
@@ -283,21 +300,11 @@ pub trait DebugAdapter: 'static + Send + Sync {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
-
-    /// Should return base configuration to make the debug adapter work
-    fn request_args(&self, config: &DebugTaskDefinition) -> Value;
-
-    fn attach_processes_filter(&self) -> regex::Regex {
-        EMPTY_REGEX.clone()
-    }
 }
-
-static EMPTY_REGEX: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new("").expect("Regex compilation to succeed"));
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeAdapter {}
 
@@ -307,6 +314,31 @@ impl FakeAdapter {
 
     pub fn new() -> Self {
         Self {}
+    }
+
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+        use serde_json::json;
+        use task::DebugRequestType;
+
+        let value = json!({
+            "request": match config.request {
+                DebugRequestType::Launch(_) => "launch",
+                DebugRequestType::Attach(_) => "attach",
+            },
+            "process_id": if let DebugRequestType::Attach(attach_config) = &config.request {
+                attach_config.process_id
+            } else {
+                None
+            },
+        });
+        let request = match config.request {
+            DebugRequestType::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
+            DebugRequestType::Attach(_) => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
+        };
+        StartDebuggingRequestArguments {
+            configuration: value,
+            request,
+        }
     }
 }
 
@@ -320,16 +352,18 @@ impl DebugAdapter for FakeAdapter {
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         Ok(DebugAdapterBinary {
+            adapter_name: Self::ADAPTER_NAME.into(),
             command: "command".into(),
             arguments: None,
             connection: None,
             envs: None,
             cwd: None,
+            request_args: self.request_args(config),
         })
     }
 
@@ -351,33 +385,10 @@ impl DebugAdapter for FakeAdapter {
     async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        _: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         unimplemented!("get installed binary");
-    }
-
-    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
-        use serde_json::json;
-        use task::DebugRequestType;
-
-        json!({
-            "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
-            },
-            "process_id": if let DebugRequestType::Attach(attach_config) = &config.request {
-                attach_config.process_id
-            } else {
-                None
-            },
-        })
-    }
-
-    fn attach_processes_filter(&self) -> regex::Regex {
-        static REGEX: LazyLock<regex::Regex> =
-            LazyLock::new(|| regex::Regex::new("^fake-binary").unwrap());
-        REGEX.clone()
     }
 }

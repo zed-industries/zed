@@ -168,14 +168,39 @@ If you are defining shortcuts in your personal keymap, you can opt into the key 
 If you'd like a given binding to do nothing in a given context you can use
 `null` as the action. This is useful if you hit the keybinding by accident and
 want to disable it, or if you want to type the character that would be typed by
-the sequence (for example to disable the builtin `alt-t` binding), or if you
-want to disable multikey bindings starting with that key.
+the sequence, or if you want to disable multikey bindings starting with that key.
 
-```
-"bindings": { "cmd-k": null }
+```json
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-r": null // cmd-r will do nothing when the Workspace context is active
+    }
+  }
+]
 ```
 
-A `null` has the same precedence rules as normal actions. So disables all bindings that would match further up in the tree too. If you'd like a binding that matches further up in the tree to take precedence over a lower binding, you need to rebind it to the action you want in the context you want.
+A `null` binding follows the same precedence rules as normal actions. So disables all bindings that would match further up in the tree too. If you'd like a binding that matches further up in the tree to take precedence over a lower binding, you need to rebind it to the action you want in the context you want.
+
+This is useful for preventing Zed from falling back to a default keybinding when the action you specified is conditional and propagates. For example, `buffer_search::DeployReplace` only triggers when the search bar is not in view. If the search bar is in view, it would propagate and trigger the default action set for that binding, such as opening the right dock. To prevent this from happening:
+
+```json
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-r": null // cmd-r will do nothing when the search bar is in view
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-r": "buffer_search::DeployReplace" // cmd-r will deploy replace when the search bar is not in view
+    }
+  }
+]
+```
 
 ### Remapping keys
 

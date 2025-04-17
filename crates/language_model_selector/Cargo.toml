@@ -12,6 +12,7 @@ workspace = true
 path = "src/language_model_selector.rs"
 
 [dependencies]
+collections.workspace = true
 feature_flags.workspace = true
 gpui.workspace = true
 language_model.workspace = true

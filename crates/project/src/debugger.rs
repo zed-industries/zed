@@ -16,3 +16,6 @@ pub mod dap_command;
 pub mod dap_store;
 mod locator_store;
 pub mod session;
+
+#[cfg(any(feature = "test-support", test))]
+pub mod test;

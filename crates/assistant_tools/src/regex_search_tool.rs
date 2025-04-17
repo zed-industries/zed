@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
@@ -26,6 +26,10 @@ pub struct RegexSearchToolInput {
     /// When not provided, starts from the beginning.
     #[serde(default)]
     pub offset: u32,
+
+    /// Whether the regex is case-sensitive. Defaults to false (case-insensitive).
+    #[serde(default)]
+    pub case_sensitive: bool,
 }
 
 impl RegexSearchToolInput {
@@ -44,7 +48,7 @@ impl Tool for RegexSearchTool {
         "regex_search".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 
@@ -56,7 +60,7 @@ impl Tool for RegexSearchTool {
         IconName::Regex
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<RegexSearchToolInput>(format)
     }
 
@@ -64,12 +68,17 @@ impl Tool for RegexSearchTool {
         match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
             Ok(input) => {
                 let page = input.page();
-                let regex = MarkdownString::inline_code(&input.regex);
+                let regex_str = MarkdownString::inline_code(&input.regex);
+                let case_info = if input.case_sensitive {
+                    " (case-sensitive)"
+                } else {
+                    ""
+                };
 
                 if page > 1 {
-                    format!("Get page {page} of search results for regex “{regex}”")
+                    format!("Get page {page} of search results for regex {regex_str}{case_info}")
                 } else {
-                    format!("Search files for regex “{regex}”")
+                    format!("Search files for regex {regex_str}{case_info}")
                 }
             }
             Err(_) => "Search with regex".to_string(),
@@ -83,17 +92,19 @@ impl Tool for RegexSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         const CONTEXT_LINES: u32 = 2;
 
-        let (offset, regex) = match serde_json::from_value::<RegexSearchToolInput>(input) {
-            Ok(input) => (input.offset, input.regex),
-            Err(err) => return Task::ready(Err(anyhow!(err))),
-        };
+        let (offset, regex, case_sensitive) =
+            match serde_json::from_value::<RegexSearchToolInput>(input) {
+                Ok(input) => (input.offset, input.regex, input.case_sensitive),
+                Err(err) => return Task::ready(Err(anyhow!(err))).into(),
+            };
 
         let query = match SearchQuery::regex(
             &regex,
             false,
+            case_sensitive,
             false,
             false,
             PathMatcher::default(),
@@ -101,7 +112,7 @@ impl Tool for RegexSearchTool {
             None,
         ) {
             Ok(query) => query,
-            Err(error) => return Task::ready(Err(error)),
+            Err(error) => return Task::ready(Err(error)).into(),
         };
 
         let results = project.update(cx, |project, cx| project.search(query, cx));
@@ -190,6 +201,6 @@ impl Tool for RegexSearchTool {
             } else {
                 Ok(format!("Found {matches_found} matches:\n{output}"))
             }
-        })
+        }).into()
     }
 }

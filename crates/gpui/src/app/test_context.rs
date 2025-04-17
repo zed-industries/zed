@@ -589,11 +589,6 @@ impl<V> Entity<V> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (tx, mut rx) = postage::mpsc::channel(1024);
-        let timeout_duration = if cfg!(target_os = "macos") {
-            Duration::from_millis(100)
-        } else {
-            Duration::from_secs(1)
-        };
 
         let mut cx = cx.app.borrow_mut();
         let subscriptions = (
@@ -615,7 +610,7 @@ impl<V> Entity<V> {
         let handle = self.downgrade();
 
         async move {
-            crate::util::timeout(timeout_duration, async move {
+            crate::util::timeout(Duration::from_secs(1), async move {
                 loop {
                     {
                         let cx = cx.borrow();

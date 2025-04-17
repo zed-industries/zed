@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
-use gpui::{AppContext as _, BorrowAppContext, Context, Task, TestAppContext};
+use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -1270,7 +1270,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/e".as_ref(), true, cx)
+                .create_entry("a/e".as_ref(), true, None, cx)
         })
         .await
         .unwrap()
@@ -1319,7 +1319,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/b/c/d.txt".as_ref(), false, cx)
+                .create_entry("a/b/c/d.txt".as_ref(), false, None, cx)
         })
         .await
         .unwrap()
@@ -1353,7 +1353,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/b/c/d.txt".as_ref(), false, cx)
+                .create_entry("a/b/c/d.txt".as_ref(), false, None, cx)
         })
         .await
         .unwrap()
@@ -1373,7 +1373,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/b/c/e.txt".as_ref(), false, cx)
+                .create_entry("a/b/c/e.txt".as_ref(), false, None, cx)
         })
         .await
         .unwrap()
@@ -1391,7 +1391,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("d/e/f/g.txt".as_ref(), false, cx)
+                .create_entry("d/e/f/g.txt".as_ref(), false, None, cx)
         })
         .await
         .unwrap()
@@ -1739,7 +1739,7 @@ fn randomly_mutate_worktree(
                     if is_dir { "dir" } else { "file" },
                     child_path,
                 );
-                let task = worktree.create_entry(child_path, is_dir, cx);
+                let task = worktree.create_entry(child_path, is_dir, None, cx);
                 cx.background_spawn(async move {
                     task.await?;
                     Ok(())
@@ -1982,6 +1982,68 @@ fn test_unrelativize() {
         work_directory.unrelativize(&"README.md".into()),
         Path::new("../../README.md").into()
     );
+}
+
+#[gpui::test]
+async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "subproject": {
+                "a.txt": "A"
+            }
+        }),
+    )
+    .await;
+    let worktree = Worktree::local(
+        path!("/root/subproject").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree
+            .as_local()
+            .unwrap()
+            .git_repositories
+            .values()
+            .map(|entry| entry.work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+
+    eprintln!(">>>>>>>>>> touch");
+    fs.touch_path(path!("/root/subproject")).await;
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree
+            .as_local()
+            .unwrap()
+            .git_repositories
+            .values()
+            .map(|entry| entry.work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 }
 
 #[track_caller]

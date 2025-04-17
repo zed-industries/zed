@@ -88,7 +88,7 @@ impl BranchList {
     ) -> Self {
         let all_branches_request = repository
             .clone()
-            .map(|repository| repository.read(cx).branches());
+            .map(|repository| repository.update(cx, |repository, _| repository.branches()));
 
         cx.spawn_in(window, async move |this, cx| {
             let mut all_branches = all_branches_request
@@ -202,10 +202,15 @@ impl BranchListDelegate {
             return;
         };
         cx.spawn(async move |_, cx| {
-            cx.update(|cx| repo.read(cx).create_branch(new_branch_name.to_string()))?
-                .await??;
-            cx.update(|cx| repo.read(cx).change_branch(new_branch_name.to_string()))?
-                .await??;
+            repo.update(cx, |repo, _| {
+                repo.create_branch(new_branch_name.to_string())
+            })?
+            .await??;
+            repo.update(cx, |repo, _| {
+                repo.change_branch(new_branch_name.to_string())
+            })?
+            .await??;
+
             Ok(())
         })
         .detach_and_prompt_err("Failed to create branch", window, cx, |e, _, _| {
@@ -359,11 +364,13 @@ impl PickerDelegate for BranchListDelegate {
                         .ok_or_else(|| anyhow!("No active repository"))?
                         .clone();
 
-                    let cx = cx.to_async();
+                    let mut cx = cx.to_async();
 
                     anyhow::Ok(async move {
-                        cx.update(|cx| repo.read(cx).change_branch(branch.name.to_string()))?
-                            .await?
+                        repo.update(&mut cx, |repo, _| {
+                            repo.change_branch(branch.name.to_string())
+                        })?
+                        .await?
                     })
                 })??;
 

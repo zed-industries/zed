@@ -5,7 +5,7 @@ use theme::ThemeSettings;
 use crate::prelude::*;
 use crate::{Color, KeyBinding, Label, LabelSize, StyledExt, h_flex, v_flex};
 
-#[derive(IntoComponent)]
+#[derive(RegisterComponent)]
 pub struct Tooltip {
     title: SharedString,
     meta: Option<SharedString>,
@@ -160,7 +160,11 @@ impl Render for Tooltip {
                     }),
             )
             .when_some(self.meta.clone(), |this, meta| {
-                this.child(Label::new(meta).size(LabelSize::Small).color(Color::Muted))
+                this.child(
+                    div()
+                        .max_w_72()
+                        .child(Label::new(meta).size(LabelSize::Small).color(Color::Muted)),
+                )
             })
         })
     }
@@ -222,15 +226,26 @@ impl Render for LinkPreview {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
-impl ComponentPreview for Tooltip {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        example_group(vec![single_example(
-            "Text only",
-            Button::new("delete-example", "Delete")
-                .tooltip(Tooltip::text("This is a tooltip!"))
-                .into_any_element(),
-        )])
-        .into_any_element()
+impl Component for Tooltip {
+    fn scope() -> ComponentScope {
+        ComponentScope::None
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A tooltip that appears when hovering over an element, optionally showing a keybinding or additional metadata.",
+        )
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            example_group(vec![single_example(
+                "Text only",
+                Button::new("delete-example", "Delete")
+                    .tooltip(Tooltip::text("This is a tooltip!"))
+                    .into_any_element(),
+            )])
+            .into_any_element(),
+        )
     }
 }

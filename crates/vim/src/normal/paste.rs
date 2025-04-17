@@ -28,6 +28,7 @@ impl Vim {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
 
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -203,7 +204,8 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx);
+
+        self.switch_mode(self.default_mode(cx), true, window, cx);
     }
 
     pub fn replace_with_register_object(
@@ -246,6 +248,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -257,7 +260,13 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        motion.expand_selection(map, selection, times, &text_layout_details);
+                        motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        );
                     });
                 });
 

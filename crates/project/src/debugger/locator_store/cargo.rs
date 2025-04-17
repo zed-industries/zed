@@ -1,23 +1,45 @@
 use super::DapLocator;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use dap::DebugAdapterConfig;
-use serde_json::{Value, json};
+use serde_json::Value;
 use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
-use util::maybe;
+use task::DebugTaskDefinition;
 
 pub(super) struct CargoLocator;
 
+async fn find_best_executable(executables: &[String], test_name: &str) -> Option<String> {
+    if executables.len() == 1 {
+        return executables.first().cloned();
+    }
+    for executable in executables {
+        let Some(mut child) = Command::new(&executable)
+            .arg("--list")
+            .stdout(Stdio::piped())
+            .spawn()
+            .ok()
+        else {
+            continue;
+        };
+        let mut test_lines = String::default();
+        if let Some(mut stdout) = child.stdout.take() {
+            stdout.read_to_string(&mut test_lines).await.ok();
+            for line in test_lines.lines() {
+                if line.contains(&test_name) {
+                    return Some(executable.clone());
+                }
+            }
+        }
+    }
+    None
+}
 #[async_trait]
 impl DapLocator for CargoLocator {
-    async fn run_locator(&self, debug_config: &mut DebugAdapterConfig) -> Result<()> {
+    async fn run_locator(&self, debug_config: &mut DebugTaskDefinition) -> Result<()> {
         let Some(launch_config) = (match &mut debug_config.request {
-            task::DebugRequestDisposition::UserConfigured(task::DebugRequestType::Launch(
-                launch_config,
-            )) => Some(launch_config),
+            task::DebugRequestType::Launch(launch_config) => Some(launch_config),
             _ => None,
         }) else {
             return Err(anyhow!("Couldn't get launch config in locator"));
@@ -46,27 +68,27 @@ impl DapLocator for CargoLocator {
             return Err(anyhow::anyhow!("Cargo command failed"));
         }
 
-        let Some(executable) = output
+        let executables = output
             .lines()
             .filter(|line| !line.trim().is_empty())
             .filter_map(|line| serde_json::from_str(line).ok())
-            .find_map(|json: Value| {
+            .filter_map(|json: Value| {
                 json.get("executable")
                     .and_then(Value::as_str)
                     .map(String::from)
             })
-        else {
+            .collect::<Vec<_>>();
+        if executables.is_empty() {
             return Err(anyhow!("Couldn't get executable in cargo locator"));
         };
 
-        launch_config.program = executable;
-        let mut test_name = None;
-
-        if launch_config
+        let is_test = launch_config
             .args
             .first()
-            .map_or(false, |arg| arg == "test")
-        {
+            .map_or(false, |arg| arg == "test");
+
+        let mut test_name = None;
+        if is_test {
             if let Some(package_index) = launch_config
                 .args
                 .iter()
@@ -79,37 +101,19 @@ impl DapLocator for CargoLocator {
                     .cloned();
             }
         }
+        let executable = {
+            if let Some(ref name) = test_name {
+                find_best_executable(&executables, &name).await
+            } else {
+                None
+            }
+        };
 
-        if debug_config.adapter == "LLDB" && debug_config.initialize_args.is_none() {
-            // Find Rust pretty-printers in current toolchain's sysroot
-            let cwd = launch_config.cwd.clone();
-            debug_config.initialize_args = maybe!(async move {
-                let cwd = cwd?;
+        let Some(executable) = executable.or_else(|| executables.first().cloned()) else {
+            return Err(anyhow!("Couldn't get executable in cargo locator"));
+        };
 
-                let output = Command::new("rustc")
-                    .arg("--print")
-                    .arg("sysroot")
-                    .current_dir(cwd)
-                    .output()
-                    .await
-                    .ok()?;
-
-                if !output.status.success() {
-                    return None;
-                }
-
-                let sysroot_path = String::from_utf8(output.stdout).ok()?;
-                let sysroot_path = sysroot_path.trim_end();
-                let first_command = format!(
-                    r#"command script import "{sysroot_path}/lib/rustlib/etc/lldb_lookup.py"#
-                );
-                let second_command =
-                    format!(r#"command source -s 0 '{sysroot_path}/lib/rustlib/etc/lldb_commands"#);
-
-                Some(json!({"initCommands": [first_command, second_command]}))
-            })
-            .await;
-        }
+        launch_config.program = executable;
 
         launch_config.args.clear();
         if let Some(test_name) = test_name {

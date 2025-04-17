@@ -1,0 +1,3 @@
+url = "https://github.com/tikv/tikv.git"
+revision = "be74cadcdd6608e5788d0c2a6784c456b4ce84e6"
+language_extension = "rs"

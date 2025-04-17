@@ -550,13 +550,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     /// Returns a list of code actions supported by a given LspAdapter
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        Some(vec![
-            CodeActionKind::EMPTY,
-            CodeActionKind::QUICKFIX,
-            CodeActionKind::REFACTOR,
-            CodeActionKind::REFACTOR_EXTRACT,
-            CodeActionKind::SOURCE,
-        ])
+        None
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
@@ -572,7 +566,11 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 
     /// Support custom initialize params.
-    fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
+    fn prepare_initialize_params(
+        &self,
+        original: InitializeParams,
+        _: &App,
+    ) -> Result<InitializeParams> {
         Ok(original)
     }
 

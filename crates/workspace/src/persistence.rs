@@ -745,7 +745,7 @@ impl WorkspaceDb {
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
-                .context("Clearing old panes")?;
+                    .context("Clearing old panes")?;
 
                 conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1))?(workspace.id).context("Clearing old breakpoints")?;
 
@@ -1334,17 +1334,18 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
+        relative_path: String,
         language_name: LanguageName,
     ) -> Result<Option<Toolchain>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ?
+                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ? AND relative_path = ?
                 ))
                 .context("Preparing insertion")?;
 
             let toolchain: Vec<(String, String, String)> =
-                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize()))?;
+                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize(), relative_path))?;
 
             Ok(toolchain.into_iter().next().and_then(|(name, path, raw_json)| Some(Toolchain {
                 name: name.into(),

@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    ForegroundExecutor, Keymap, Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame,
-    ScreenCaptureSource, ScreenCaptureStream, Size, Task, TestDisplay, TestWindow,
-    WindowAppearance, WindowParams, size,
+    ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformTextSystem,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task, TestDisplay,
+    TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -91,17 +91,7 @@ impl TestPlatform {
             )
         };
 
-        #[cfg(target_os = "macos")]
-        let text_system = Arc::new(crate::platform::mac::MacTextSystem::new());
-
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let text_system = Arc::new(crate::platform::linux::CosmicTextSystem::new());
-
-        #[cfg(target_os = "windows")]
-        let text_system = Arc::new(
-            crate::platform::windows::DirectWriteTextSystem::new(&bitmap_factory)
-                .expect("Unable to initialize direct write."),
-        );
+        let text_system = Arc::new(NoopTextSystem);
 
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,

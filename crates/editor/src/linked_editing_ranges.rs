@@ -34,6 +34,10 @@ impl LinkedEditingRanges {
     pub(super) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    pub(super) fn clear(&mut self) {
+        self.0.clear();
+    }
 }
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);

@@ -1,0 +1,5 @@
+1. A new changeset file is created to document a patch that improves diff editing animations and enhances prompts for large file edits. An indicator showing the number of diff edits is also added next to each file path.
+2. In `diff.ts`, the error message thrown when a `SEARCH` block doesn’t match content has been updated to clarify that the mismatch could be due to out-of-order blocks.
+3. In `responses.ts`, the assistant response for diff mismatches now recommends limiting to 1–3 `SEARCH/REPLACE` blocks at a time for large files. It also simplifies fallback instructions for using the `write_to_file` tool.
+4. The `DiffViewProvider.ts` file has been updated to replace line-by-line animations with chunk-based updates for better performance. For large diffs, a smooth scrolling animation is introduced to maintain visual context. Small diffs still scroll directly.
+5. In `CodeAccordian.tsx`, a new visual indicator displays the number of `REPLACE` blocks in the code diff using a diff icon and count, providing quick insight into the volume of changes.

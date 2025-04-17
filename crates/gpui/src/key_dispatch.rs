@@ -6,7 +6,7 @@
 /// with a keymap context:
 ///
 /// ```rust
-/// actions!(editor,[Undo, Redo]);;
+/// actions!(editor,[Undo, Redo]);
 ///
 /// impl Editor {
 ///   fn undo(&mut self, _: &Undo, _window: &mut Window, _cx: &mut Context<Self>) { ... }
@@ -17,7 +17,7 @@
 ///   fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 ///     div()
 ///       .track_focus(&self.focus_handle(cx))
-///       .keymap_context("Editor")
+///       .key_context("Editor")
 ///       .on_action(cx.listener(Editor::undo))
 ///       .on_action(cx.listener(Editor::redo))
 ///     ...
@@ -595,10 +595,6 @@ mod tests {
 
         fn boxed_clone(&self) -> std::boxed::Box<dyn Action> {
             Box::new(TestAction)
-        }
-
-        fn as_any(&self) -> &dyn ::std::any::Any {
-            self
         }
 
         fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn Action>>

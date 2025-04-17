@@ -23,3 +23,8 @@ snippet.workspace = true
 util.workspace = true
 schemars.workspace = true
 workspace-hack.workspace = true
+
+[dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true

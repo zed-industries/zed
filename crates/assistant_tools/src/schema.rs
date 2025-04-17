@@ -5,23 +5,20 @@ use schemars::{
     schema::{RootSchema, Schema, SchemaObject},
 };
 
-pub fn json_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+pub fn json_schema_for<T: JsonSchema>(
+    format: LanguageModelToolSchemaFormat,
+) -> Result<serde_json::Value> {
     let schema = root_schema_for::<T>(format);
-    schema_to_json(&schema, format).expect("Failed to convert tool calling schema to JSON")
+    schema_to_json(&schema, format)
 }
 
-pub fn schema_to_json(
+fn schema_to_json(
     schema: &RootSchema,
     format: LanguageModelToolSchemaFormat,
 ) -> Result<serde_json::Value> {
     let mut value = serde_json::to_value(schema)?;
-    match format {
-        LanguageModelToolSchemaFormat::JsonSchema => Ok(value),
-        LanguageModelToolSchemaFormat::JsonSchemaSubset => {
-            transform_fields_to_json_schema_subset(&mut value);
-            Ok(value)
-        }
-    }
+    assistant_tool::adapt_schema_to_format(&mut value, format)?;
+    Ok(value)
 }
 
 fn root_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> RootSchema {
@@ -77,44 +74,5 @@ impl schemars::visit::Visitor for TransformToJsonSchemaSubsetVisitor {
         }
 
         schemars::visit::visit_schema_object(self, schema)
-    }
-}
-
-fn transform_fields_to_json_schema_subset(json: &mut serde_json::Value) {
-    if let serde_json::Value::Object(obj) = json {
-        if let Some(default) = obj.get("default") {
-            let is_null = default.is_null();
-            //Default is not supported, so we need to remove it.
-            obj.remove("default");
-            if is_null {
-                obj.insert("nullable".to_string(), serde_json::Value::Bool(true));
-            }
-        }
-
-        // If a type is not specified for an input parameter we need to add it.
-        if obj.contains_key("description")
-            && !obj.contains_key("type")
-            && !(obj.contains_key("anyOf")
-                || obj.contains_key("oneOf")
-                || obj.contains_key("allOf"))
-        {
-            obj.insert(
-                "type".to_string(),
-                serde_json::Value::String("string".to_string()),
-            );
-        }
-
-        //Format field is only partially supported (e.g. not uint compatibility)
-        obj.remove("format");
-
-        for (_, value) in obj.iter_mut() {
-            if let serde_json::Value::Object(_) | serde_json::Value::Array(_) = value {
-                transform_fields_to_json_schema_subset(value);
-            }
-        }
-    } else if let serde_json::Value::Array(arr) = json {
-        for item in arr.iter_mut() {
-            transform_fields_to_json_schema_subset(item);
-        }
     }
 }

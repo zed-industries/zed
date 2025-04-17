@@ -255,23 +255,6 @@ impl RemoteTrackPublication {
     }
 }
 
-impl RemoteTrack {
-    pub fn set_enabled(&self, enabled: bool, cx: &App) {
-        let this = self.clone();
-        Tokio::spawn(cx, async move {
-            match this {
-                RemoteTrack::Audio(remote_audio_track) => {
-                    remote_audio_track.0.rtc_track().set_enabled(enabled)
-                }
-                RemoteTrack::Video(remote_video_track) => {
-                    remote_video_track.0.rtc_track().set_enabled(enabled)
-                }
-            }
-        })
-        .detach();
-    }
-}
-
 impl Participant {
     pub fn identity(&self) -> ParticipantIdentity {
         match self {
