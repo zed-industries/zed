@@ -514,6 +514,10 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub fn wrap_width(&self, cx: &App) -> Option<Pixels> {
+        self.wrap_map.read(cx).wrap_width()
+    }
+
     pub fn update_fold_widths(
         &mut self,
         widths: impl IntoIterator<Item = (FoldId, Pixels)>,

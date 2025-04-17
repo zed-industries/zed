@@ -59,11 +59,11 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
-use editor_settings::GoToDefinitionFallback;
 pub use editor_settings::{
     CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, SearchSettings,
     ShowScrollbar,
 };
+use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 pub use editor_settings_controls::*;
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 pub use element::{
@@ -421,6 +421,10 @@ impl EditorMode {
 
     pub fn is_full(&self) -> bool {
         matches!(self, Self::Full { .. })
+    }
+
+    fn is_minimap(&self) -> bool {
+        *self == Self::Minimap
     }
 }
 
@@ -840,6 +844,8 @@ pub struct Editor {
     serialize_selections: Task<()>,
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
+    minimap_settings: MinimapSettings,
+    minimap_entity: Option<Entity<Self>>,
     hide_mouse_mode: HideMouseMode,
 }
 
@@ -1268,13 +1274,16 @@ impl Editor {
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut clone = Self::new(
-            self.mode,
-            self.buffer.clone(),
-            self.project.clone(),
-            window,
-            cx,
-        );
+        self.clone_with_mode(self.mode, window, cx)
+    }
+
+    fn clone_with_mode(
+        &self,
+        mode: EditorMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut clone = Self::new(mode, self.buffer.clone(), self.project.clone(), window, cx);
         self.display_map.update(cx, |display_map, cx| {
             let snapshot = display_map.snapshot(cx);
             clone.display_map.update(cx, |display_map, cx| {
@@ -1622,6 +1631,8 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
             mouse_cursor_hidden: false,
+            minimap_settings: EditorSettings::get_global(cx).minimap,
+            minimap_entity: None,
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
                 .unwrap_or_default(),
@@ -1663,7 +1674,6 @@ impl Editor {
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
 
             if this.git_blame_inline_enabled {
-                this.git_blame_inline_enabled = true;
                 this.start_git_blame_inline(false, window, cx);
             }
 
@@ -1678,6 +1688,8 @@ impl Editor {
                         .insert(buffer.read(cx).remote_id(), handle);
                 }
             }
+
+            this.minimap_entity = this.initialize_minimap(window, cx);
         }
 
         this.report_editor_event("Editor Opened", None, cx);
@@ -6871,7 +6883,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        if self.mode() == EditorMode::Minimap {
+        if self.mode().is_minimap() {
             return None;
         }
         let active_inline_completion = self.active_inline_completion.as_ref()?;
@@ -15863,6 +15875,34 @@ impl Editor {
             .text()
     }
 
+    fn initialize_minimap(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>> {
+        self.minimap_settings
+            .requires_entity()
+            .then(|| self.create_minimap(window, cx))
+    }
+
+    fn create_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Self> {
+        let mut minimap = self.clone_with_mode(EditorMode::Minimap, window, cx);
+        minimap.update_minimap_configuration(&self.minimap_settings);
+        cx.new(|_| minimap)
+    }
+
+    fn update_minimap_configuration(&mut self, minimap_settings: &MinimapSettings) {
+        self.set_text_style_refinement(TextStyleRefinement {
+            font_size: Some(px(minimap_settings.font_size).into()),
+            font_weight: Some(gpui::FontWeight(900.)),
+            ..Default::default()
+        });
+    }
+
+    pub fn minimap(&self) -> Option<Entity<Self>> {
+        self.minimap_entity.clone()
+    }
+
     pub fn wrap_guides(&self, cx: &App) -> SmallVec<[(usize, bool); 2]> {
         let mut wrap_guides = smallvec::smallvec![];
 
@@ -15950,6 +15990,10 @@ impl Editor {
     pub(crate) fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut App) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
+    }
+
+    fn wrap_width(&self, cx: &App) -> Option<Pixels> {
+        self.display_map.read_with(cx, |map, cx| map.wrap_width(cx))
     }
 
     pub fn set_soft_wrap(&mut self) {
@@ -16420,13 +16464,12 @@ impl Editor {
     }
 
     pub fn render_git_blame_gutter(&self, cx: &App) -> bool {
-        self.show_git_blame_gutter
-            && self.has_blame_entries(cx)
-            && self.mode() != EditorMode::Minimap
+        !self.mode().is_minimap() && self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
 
     pub fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
-        self.show_git_blame_inline
+        !self.mode.is_minimap()
+            && self.show_git_blame_inline
             && (self.focus_handle.is_focused(window)
                 || self
                     .git_blame_inline_tooltip
@@ -16435,7 +16478,6 @@ impl Editor {
                     .is_some())
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
-            && self.mode() != EditorMode::Minimap
     }
 
     fn has_blame_entries(&self, cx: &App) -> bool {
@@ -17417,6 +17459,27 @@ impl Editor {
 
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, window, cx);
+            }
+
+            let old_minimap_settings = self.minimap_settings;
+
+            {
+                self.minimap_settings = EditorSettings::get_global(cx).minimap;
+            }
+
+            if self.minimap_settings != old_minimap_settings {
+                if self.minimap_entity.is_some() != self.minimap_settings.requires_entity() {
+                    self.minimap_entity = self.initialize_minimap(window, cx);
+                } else if self
+                    .minimap_settings
+                    .minimap_configuration_changed(&old_minimap_settings)
+                {
+                    self.minimap_entity.as_ref().map(|editor_entity| {
+                        editor_entity.update(cx, |minimap_editor, _cx| {
+                            minimap_editor.update_minimap_configuration(&self.minimap_settings)
+                        })
+                    });
+                }
             }
         }
 

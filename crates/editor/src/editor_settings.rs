@@ -124,7 +124,15 @@ pub struct Minimap {
     pub font_size: f32,
 }
 
-impl Eq for Minimap {}
+impl Minimap {
+    pub fn requires_entity(&self) -> bool {
+        self.show != ShowMinimap::Never
+    }
+
+    pub fn minimap_configuration_changed(&self, other: &Self) -> bool {
+        self.font_size != other.font_size
+    }
+}
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Gutter {
