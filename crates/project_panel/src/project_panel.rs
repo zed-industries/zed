@@ -3699,7 +3699,6 @@ impl ProjectPanel {
         let depth = details.depth;
         let worktree_id = details.worktree_id;
         let selections = Arc::new(self.marked_entries.clone());
-        let is_local = self.project.read(cx).is_local();
 
         let dragged_selection = DraggedSelection {
             active_selection: selection,
@@ -3764,60 +3763,57 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
-            .when(is_local, |div| {
-                div.on_drag_move::<ExternalPaths>(cx.listener(
-                    move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
-                        if event.bounds.contains(&event.event.position) {
-                            if this.last_external_paths_drag_over_entry == Some(entry_id) {
-                                return;
-                            }
-                            this.last_external_paths_drag_over_entry = Some(entry_id);
-                            this.marked_entries.clear();
+            .on_drag_move::<ExternalPaths>(cx.listener(
+                move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                    if event.bounds.contains(&event.event.position) {
+                        if this.last_external_paths_drag_over_entry == Some(entry_id) {
+                            return;
+                        }
+                        this.last_external_paths_drag_over_entry = Some(entry_id);
+                        this.marked_entries.clear();
 
-                            let Some((worktree, path, entry)) = maybe!({
-                                let worktree = this
-                                    .project
-                                    .read(cx)
-                                    .worktree_for_id(selection.worktree_id, cx)?;
-                                let worktree = worktree.read(cx);
-                                let abs_path = worktree.absolutize(&path).log_err()?;
-                                let path = if abs_path.is_dir() {
-                                    path.as_ref()
-                                } else {
-                                    path.parent()?
-                                };
-                                let entry = worktree.entry_for_path(path)?;
-                                Some((worktree, path, entry))
-                            }) else {
-                                return;
+                        let Some((worktree, path, entry)) = maybe!({
+                            let worktree = this
+                                .project
+                                .read(cx)
+                                .worktree_for_id(selection.worktree_id, cx)?;
+                            let worktree = worktree.read(cx);
+                            let entry = worktree.entry_for_path(&path)?;
+                            let path = if entry.is_dir() {
+                                path.as_ref()
+                            } else {
+                                path.parent()?
                             };
+                            Some((worktree, path, entry))
+                        }) else {
+                            return;
+                        };
 
+                        this.marked_entries.insert(SelectedEntry {
+                            entry_id: entry.id,
+                            worktree_id: worktree.id(),
+                        });
+
+                        for entry in worktree.child_entries(path) {
                             this.marked_entries.insert(SelectedEntry {
                                 entry_id: entry.id,
                                 worktree_id: worktree.id(),
                             });
-
-                            for entry in worktree.child_entries(path) {
-                                this.marked_entries.insert(SelectedEntry {
-                                    entry_id: entry.id,
-                                    worktree_id: worktree.id(),
-                                });
-                            }
-
-                            cx.notify();
                         }
-                    },
-                ))
-                .on_drop(cx.listener(
-                    move |this, external_paths: &ExternalPaths, window, cx| {
-                        this.hover_scroll_task.take();
-                        this.last_external_paths_drag_over_entry = None;
-                        this.marked_entries.clear();
-                        this.drop_external_files(external_paths.paths(), entry_id, window, cx);
-                        cx.stop_propagation();
-                    },
-                ))
-            })
+
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_drop(cx.listener(
+                move |this, external_paths: &ExternalPaths, window, cx| {
+                    this.hover_scroll_task.take();
+                    this.last_external_paths_drag_over_entry = None;
+                    this.marked_entries.clear();
+                    this.drop_external_files(external_paths.paths(), entry_id, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
             .on_drag_move::<DraggedSelection>(cx.listener(
                 move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
                     if event.bounds.contains(&event.event.position) {

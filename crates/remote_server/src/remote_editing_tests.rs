@@ -1245,10 +1245,15 @@ async fn test_copy_file_into_remote_project(
                 "dir1": {
                     "file1": "file 1 content",
                     "dir2": {
-                        "file2": ""
-                    }
+                        "file2": "file 2 content",
+                        "dir3": {
+                            "file3": ""
+                        },
+                        "dir4": {}
+                    },
+                    "dir5": {}
                 },
-                "file3": ""
+                "file4": "file 4 content"
             }),
         )
         .await;
@@ -1257,7 +1262,10 @@ async fn test_copy_file_into_remote_project(
         .update(cx, |worktree, cx| {
             worktree.copy_external_entries(
                 Path::new("src").into(),
-                vec![Path::new("/local-code/dir1/file1").into()],
+                vec![
+                    Path::new("/local-code/dir1/file1").into(),
+                    Path::new("/local-code/dir1/dir2").into(),
+                ],
                 local_fs.clone(),
                 cx,
             )
@@ -1266,11 +1274,43 @@ async fn test_copy_file_into_remote_project(
         .unwrap();
 
     assert_eq!(
+        remote_fs.paths(true),
+        vec![
+            PathBuf::from("/"),
+            PathBuf::from("/code"),
+            PathBuf::from("/code/project1"),
+            PathBuf::from("/code/project1/.git"),
+            PathBuf::from("/code/project1/README.md"),
+            PathBuf::from("/code/project1/src"),
+            PathBuf::from("/code/project1/src/dir2"),
+            PathBuf::from("/code/project1/src/file1"),
+            PathBuf::from("/code/project1/src/main.rs"),
+            PathBuf::from("/code/project1/src/dir2/dir3"),
+            PathBuf::from("/code/project1/src/dir2/dir4"),
+            PathBuf::from("/code/project1/src/dir2/file2"),
+            PathBuf::from("/code/project1/src/dir2/dir3/file3"),
+        ]
+    );
+    assert_eq!(
         remote_fs
             .load("/code/project1/src/file1".as_ref())
             .await
             .unwrap(),
         "file 1 content"
+    );
+    assert_eq!(
+        remote_fs
+            .load("/code/project1/src/dir2/file2".as_ref())
+            .await
+            .unwrap(),
+        "file 2 content"
+    );
+    assert_eq!(
+        remote_fs
+            .load("/code/project1/src/dir2/dir3/file3".as_ref())
+            .await
+            .unwrap(),
+        ""
     );
 }
 

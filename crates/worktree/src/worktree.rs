@@ -2297,7 +2297,7 @@ impl RemoteWorktree {
         let worktree_id = self.id().to_proto();
         let project_id = self.project_id;
 
-        cx.spawn(async move |this, cx| {
+        cx.background_spawn(async move {
             let mut requests = Vec::new();
             for root_path_to_copy in paths_to_copy {
                 let Some(filename) = root_path_to_copy.file_name() else {
@@ -2332,11 +2332,13 @@ impl RemoteWorktree {
             requests.sort_unstable_by(|a, b| a.path.cmp(&b.path));
             requests.dedup();
 
+            let mut copied_entry_ids = Vec::new();
             for request in requests {
-                client.request(request).await?;
+                let response = client.request(request).await?;
+                copied_entry_ids.extend(response.entry.map(|e| ProjectEntryId::from_proto(e.id)));
             }
 
-            Ok(vec![])
+            Ok(copied_entry_ids)
         })
     }
 }
