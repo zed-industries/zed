@@ -283,7 +283,7 @@ fn main() {
                                     let score_index = (diff_score.min(5)) as usize;
 
                                     println!(
-                                        "Diff: {} {}{}",
+                                        "{} {}{} (Diff)",
                                         SCORES[score_index],
                                         example.log_prefix,
                                         judge_output.diff.score,
@@ -294,7 +294,7 @@ fn main() {
                                         let process_score: u32 = thread.score;
                                         let score_index = (process_score.min(5)) as usize;
                                         println!(
-                                            "Thread: {} {}{}",
+                                            "{} {}{} (Thread)",
                                             SCORES[score_index], example.log_prefix, thread.score,
                                         );
                                         thread_scores.push(thread.score);

@@ -610,11 +610,7 @@ impl Example {
 
         writeln!(
             &mut output_file,
-            "# Judgment\n
-            ## Thread\n
-            {thread_response}\n
-            ## Diff\n
-            {diff_response}",
+            "# Judgment\n\n## Thread\n\n{thread_response}\n\n## Diff\n\n{diff_response}",
         )
         .log_err();
 
