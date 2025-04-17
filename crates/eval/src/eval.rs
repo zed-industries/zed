@@ -223,13 +223,17 @@ fn main() {
             println!("");
 
             let mut judge_scores = Vec::new();
+            let mut errors = 0;
+            let mut successes =  0;
 
             for (result, example) in results {
                 match result {
                     Err(err) => {
+                        errors += 1;
                         println!("💥 {}{:?}", example.log_prefix, err);
                     }
                     Ok(judge_output) => {
+                        successes += 1;
                         const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
 
                         println!(
@@ -254,7 +258,12 @@ fn main() {
                 .map(|score| score as f32)
                 .sum::<f32>()
                 / (score_count as f32);
-            println!("\nAverage score: {average_score}");
+
+            if errors > 0 {
+                println!("\n{errors} example(s) errored out. Average score among the {successes} example(s) that didn't error: {average_score}");
+            } else {
+                println!("\nAll {successes} examples ran successfully. Average score: {average_score}");
+            }
 
             cx.update(|cx| cx.quit())
         })
