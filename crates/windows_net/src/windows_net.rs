@@ -33,7 +33,7 @@ impl UnixListener {
 pub struct UnixStream(Async<stream::WindowsStream>);
 
 impl UnixStream {
-    pub fn connect(path: &Path) -> Result<Self> {
+    pub fn connect<P: AsRef<Path>>(path: P) -> Result<Self> {
         Ok(UnixStream(Async::new(WindowsStream::connect(path)?)?))
     }
 }
