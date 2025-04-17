@@ -440,11 +440,8 @@ impl Example {
         let mut output_file = File::create(self.run_directory_path.join("judge.md"))
             .expect("failed to create judge.md");
         {
-            writeln!(&mut output_file, "\n\n").log_err();
-            writeln!(&mut output_file, "========================================").log_err();
-            writeln!(&mut output_file, "           REPOSITORY DIFF             ").log_err();
-            writeln!(&mut output_file, "========================================").log_err();
-            writeln!(&mut output_file, "\n{}", &repository_diff).log_err();
+            writeln!(&mut output_file, "# Agent Changes").log_err();
+            writeln!(&mut output_file, "```diff\n{}\n```\n", &repository_diff).log_err();
         }
 
         let judge_prompt = include_str!("judge_prompt.hbs");
@@ -473,10 +470,7 @@ impl Example {
         let response = send_language_model_request(model, request, cx).await?;
 
         writeln!(&mut output_file, "\n\n").log_err();
-        writeln!(&mut output_file, "========================================").log_err();
-        writeln!(&mut output_file, "              JUDGE OUTPUT              ").log_err();
-        writeln!(&mut output_file, "========================================").log_err();
-        writeln!(&mut output_file, "\n{}", &response).log_err();
+        writeln!(&mut output_file, "# Judgment\n\n{}", &response).log_err();
 
         parse_judge_output(&response)
     }

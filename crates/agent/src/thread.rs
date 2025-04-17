@@ -1000,12 +1000,13 @@ impl Thread {
         }
 
         if action_log.has_edited_files_since_project_diagnostics_check() {
-            content.push(
-                "\n\nWhen you're done making changes, make sure to check project diagnostics \
-                and fix all errors AND warnings you introduced! \
-                DO NOT mention you're going to do this until you're done."
-                    .into(),
-            );
+            // todo!(Do we need this? I worry it's causing the model to over-rotate on fixing)
+            // content.push(
+            //     "\n\nWhen you're done making changes, make sure to check project diagnostics \
+            //     and fix all errors AND warnings you introduced! \
+            //     DO NOT mention you're going to do this until you're done."
+            //         .into(),
+            // );
         }
 
         if !content.is_empty() {
@@ -1497,17 +1498,10 @@ impl Thread {
         });
     }
 
+    /// Insert an empty message to be populated with tool results upon send.
     pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
-        // Insert a user message to contain the tool results.
-        self.insert_user_message(
-            // TODO: Sending up a user message without any content results in the model sending back
-            // responses that also don't have any content. We currently don't handle this case well,
-            // so for now we provide some text to keep the model on track.
-            "Here are the tool results.",
-            Vec::new(),
-            None,
-            cx,
-        );
+        self.insert_message(Role::User, vec![], cx);
+        self.auto_capture_telemetry(cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.
