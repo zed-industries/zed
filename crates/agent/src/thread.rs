@@ -31,6 +31,7 @@ use settings::Settings;
 use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
+use zed_llm_client::UsageLimit;
 
 use crate::context::{AssistantContext, ContextId, format_context_as_string};
 use crate::thread_store::{
@@ -1070,13 +1071,21 @@ impl Thread {
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
         let task = cx.spawn(async move |thread, cx| {
-            let stream = model.stream_completion(request, &cx);
+            let stream_completion_future = model.stream_completion_with_usage(request, &cx);
             let initial_token_usage =
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
-                let mut events = stream.await?;
+                let (mut events, usage) = stream_completion_future.await?;
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
+
+                if let Some(usage) = usage {
+                    let limit = match usage.limit {
+                        UsageLimit::Limited(limit) => limit.to_string(),
+                        UsageLimit::Unlimited => "unlimited".to_string(),
+                    };
+                    log::info!("model request usage: {} / {}", usage.amount, limit);
+                }
 
                 while let Some(event) = events.next().await {
                     let event = event?;
