@@ -47,6 +47,8 @@ pub struct ExampleBase {
     pub insert_id: Option<String>,
     #[serde(default = "default_true")]
     pub require_lsp: bool,
+    #[serde(default)]
+    pub allow_preexisting_diagnostics: bool,
 }
 
 impl ExampleBase {
@@ -80,7 +82,9 @@ pub struct Example {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RunOutput {
     pub repository_diff: String,
-    pub diagnostics: String,
+    pub ran_diagnostics_check: bool,
+    pub diagnostics_before: Option<String>,
+    pub diagnostics_after: Option<String>,
     pub response_count: usize,
     pub token_usage: TokenUsage,
     pub tool_use_counts: HashMap<Arc<str>, u32>,
@@ -90,6 +94,11 @@ pub struct RunOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeDiffInput {
     pub repository_diff: String,
+    pub ran_diagnostics_check: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics_after: Option<String>,
     pub criteria: String,
 }
 
@@ -325,6 +334,11 @@ impl Example {
                 None
             };
 
+            let diagnostics_before = query_lsp_diagnostics(project.clone(), cx).await?;
+            if diagnostics_before.is_some() && !this.base.allow_preexisting_diagnostics {
+                return Err(anyhow!("Example has pre-existing diagnostics. If you want to run this example regardless, set `allow_preexisting_diagnostics` to `true` in `base.toml`"));
+            }
+
             if std::env::var("ZED_EVAL_SETUP_ONLY").is_ok() {
                 return Err(anyhow!("Setup only mode"));
             }
@@ -467,12 +481,13 @@ impl Example {
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
 
-            let repository_diff_path = this.example_output_directory().join("patch.diff");
+            let example_output_dir = this.example_output_directory();
+            let repository_diff_path = example_output_dir.join("patch.diff");
             let mut repository_diff_output_file = File::create(&repository_diff_path)?;
             writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
 
             println!("{}Getting diagnostics", this.log_prefix);
-            let diagnostics = cx
+            let diagnostics_after = cx
                 .update(move |cx| {
                     cx.spawn(async move |cx| query_lsp_diagnostics(project, cx).await)
                 })?
@@ -486,6 +501,15 @@ impl Example {
             drop(subscription);
             drop(lsp_open_handle_and_store);
 
+            if let Some(diagnostics_before) = &diagnostics_before {
+                fs::write(example_output_dir.join("diagnostics_before.txt"), diagnostics_before)?;
+            }
+
+            if let Some(diagnostics_after) = &diagnostics_after {
+                fs::write(example_output_dir.join("diagnostics_after.txt"), diagnostics_after)?;
+            }
+
+
             thread.update(cx, |thread, _cx| {
                 let response_count = thread
                     .messages()
@@ -493,7 +517,9 @@ impl Example {
                     .count();
                 RunOutput {
                     repository_diff,
-                    diagnostics,
+                    ran_diagnostics_check: this.base.require_lsp,
+                    diagnostics_before,
+                    diagnostics_after,
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
                     tool_use_counts: tool_use_counts.lock().unwrap().clone(),
@@ -506,8 +532,7 @@ impl Example {
     pub async fn judge(
         &self,
         model: Arc<dyn LanguageModel>,
-        last_request: LanguageModelRequest,
-        repository_diff: String,
+        run_output: &RunOutput,
         judge_repetitions: u32,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
@@ -521,16 +546,19 @@ impl Example {
         let judge_diff_prompt = include_str!("judge_diff_prompt.hbs");
         let judge_thread_prompt_name = "judge_thread_prompt";
         let judge_diff_prompt_name = "judge_diff_prompt";
+
         let mut handlebars = Handlebars::new();
         handlebars.register_template_string(judge_diff_prompt_name, judge_diff_prompt)?;
-
         handlebars.register_template_string(judge_thread_prompt_name, judge_thread_prompt)?;
 
         let diff_response = {
             let repository_diff_prompt = handlebars.render(
                 judge_diff_prompt_name,
                 &JudgeDiffInput {
-                    repository_diff,
+                    repository_diff: run_output.repository_diff.clone(),
+                    ran_diagnostics_check: run_output.ran_diagnostics_check,
+                    diagnostics_before: run_output.diagnostics_before.clone(),
+                    diagnostics_after: run_output.diagnostics_after.clone(),
                     criteria: self.diff_criteria.clone(),
                 },
             )?;
@@ -553,7 +581,7 @@ impl Example {
         let thread_output;
 
         if let Some(criteria) = self.thread_criteria.clone() {
-            let request_markdown = RequestMarkdown::new(&last_request);
+            let request_markdown = RequestMarkdown::new(&run_output.last_request);
             let thread_prompt = handlebars.render(
                 judge_thread_prompt_name,
                 &JudgeThreadInput {
@@ -582,12 +610,11 @@ impl Example {
 
         writeln!(
             &mut output_file,
-            "# Judgment ({})\n
+            "# Judgment\n
             ## Thread\n
             {thread_response}\n
             ## Diff\n
             {diff_response}",
-            judge_repetitions + 1,
         )
         .log_err();
 
@@ -597,7 +624,7 @@ impl Example {
         })
     }
 
-    pub async fn repository_diff(&self) -> Result<String> {
+    async fn repository_diff(&self) -> Result<String> {
         let worktree_path = self.worktree_path();
         run_git(&worktree_path, &["add", "."]).await?;
         run_git(&worktree_path, &["diff", "--staged"]).await
@@ -668,7 +695,10 @@ fn has_pending_lang_server_work(lsp_store: &Entity<LspStore>, cx: &App) -> bool 
         .any(|(_, status)| !status.pending_work.is_empty())
 }
 
-async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> Result<String> {
+async fn query_lsp_diagnostics(
+    project: Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<Option<String>> {
     let paths_with_diagnostics = project.update(cx, |project, cx| {
         project
             .diagnostic_summaries(true, cx)
@@ -676,6 +706,10 @@ async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> R
             .map(|(project_path, _, _)| project_path)
             .collect::<Vec<_>>()
     })?;
+
+    if paths_with_diagnostics.is_empty() {
+        return Ok(None);
+    }
 
     let mut output = String::new();
     for project_path in paths_with_diagnostics {
@@ -702,7 +736,7 @@ async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> R
             )?;
         }
     }
-    anyhow::Ok(output)
+    anyhow::Ok(Some(output))
 }
 
 impl JudgeResponse {
@@ -923,6 +957,7 @@ fn response_events_to_markdown(
 #[cfg(test)]
 mod test {
     use super::*;
+    use handlebars::Handlebars;
 
     #[test]
     fn test_parse_judge_output() {
@@ -955,5 +990,167 @@ mod test {
         let output = JudgeResponse::parse(&response).unwrap();
         assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
         assert_eq!(output.score, 1);
+    }
+
+    #[test]
+    fn test_judge_prompt_with_diagnostics() {
+        let judge_prompt = include_str!("judge_diff_prompt.hbs");
+        let judge_prompt_name = "judge_prompt";
+        let mut handlebars = Handlebars::new();
+        handlebars
+            .register_template_string(judge_prompt_name, judge_prompt)
+            .unwrap();
+
+        // Case 1: Both diagnostics before and after are present
+        let input = JudgeDiffInput {
+            repository_diff: "diff content goes here".to_string(),
+            ran_diagnostics_check: true,
+            diagnostics_before: Some("Error at line 10: variable not found".to_string()),
+            diagnostics_after: Some("Error at line 15: missing semicolon".to_string()),
+            criteria: "Fix all bugs".to_string(),
+        };
+
+        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+
+        let expected_diagnostics_section = r#"
+            Take into account the diagnostics before and after applying the change:
+
+            <diagnostics_before>
+            Error at line 10: variable not found
+            </diagnostics_before>
+
+            <diagnostics_after>
+            Error at line 15: missing semicolon
+            </diagnostics_after>
+            "#
+        .unindent();
+
+        assert!(rendered.contains(&expected_diagnostics_section));
+    }
+
+    #[test]
+    fn test_judge_prompt_with_empty_diagnostics() {
+        let judge_prompt = include_str!("judge_diff_prompt.hbs");
+        let judge_prompt_name = "judge_prompt";
+        let mut handlebars = Handlebars::new();
+        handlebars
+            .register_template_string(judge_prompt_name, judge_prompt)
+            .unwrap();
+
+        // Case 2: Diagnostics check run but no diagnostics found
+        let input = JudgeDiffInput {
+            repository_diff: "diff content goes here".to_string(),
+            ran_diagnostics_check: true,
+            diagnostics_before: None,
+            diagnostics_after: None,
+            criteria: "Fix all bugs".to_string(),
+        };
+
+        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+
+        let expected_diagnostics_section = r#"
+            Take into account the diagnostics before and after applying the change:
+
+            <diagnostics_before>
+            No diagnostics before applying the edits.
+            </diagnostics_before>
+
+            <diagnostics_after>
+            No diagnostics after applying the edits.
+            </diagnostics_after>
+            "#
+        .unindent();
+
+        assert!(rendered.contains(&expected_diagnostics_section));
+    }
+
+    #[test]
+    fn test_judge_prompt_with_mixed_diagnostics() {
+        let judge_prompt = include_str!("judge_diff_prompt.hbs");
+        let judge_prompt_name = "judge_prompt";
+        let mut handlebars = Handlebars::new();
+        handlebars
+            .register_template_string(judge_prompt_name, judge_prompt)
+            .unwrap();
+
+        // Case 3: Before diagnostics present, after diagnostics absent
+        let input = JudgeDiffInput {
+            repository_diff: "diff content goes here".to_string(),
+            ran_diagnostics_check: true,
+            diagnostics_before: Some("Error at line 10: variable not found".to_string()),
+            diagnostics_after: None,
+            criteria: "Fix all bugs".to_string(),
+        };
+
+        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+
+        let expected_diagnostics_section = r#"
+            Take into account the diagnostics before and after applying the change:
+
+            <diagnostics_before>
+            Error at line 10: variable not found
+            </diagnostics_before>
+
+            <diagnostics_after>
+            No diagnostics after applying the edits.
+            </diagnostics_after>
+            "#
+        .unindent();
+
+        assert!(rendered.contains(&expected_diagnostics_section));
+
+        // Case 4: Before diagnostics absent, after diagnostics present
+        let input = JudgeDiffInput {
+            repository_diff: "diff content goes here".to_string(),
+            ran_diagnostics_check: true,
+            diagnostics_before: None,
+            diagnostics_after: Some("Error at line 15: missing semicolon".to_string()),
+            criteria: "Fix all bugs".to_string(),
+        };
+
+        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+
+        let expected_diagnostics_section = r#"
+            Take into account the diagnostics before and after applying the change:
+
+            <diagnostics_before>
+            No diagnostics before applying the edits.
+            </diagnostics_before>
+
+            <diagnostics_after>
+            Error at line 15: missing semicolon
+            </diagnostics_after>
+            "#
+        .unindent();
+
+        assert!(rendered.contains(&expected_diagnostics_section));
+    }
+
+    #[test]
+    fn test_judge_prompt_without_diagnostics() {
+        let judge_prompt = include_str!("judge_diff_prompt.hbs");
+        let judge_prompt_name = "judge_prompt";
+        let mut handlebars = Handlebars::new();
+        handlebars
+            .register_template_string(judge_prompt_name, judge_prompt)
+            .unwrap();
+
+        // Case 5: No diagnostics check run
+        let input = JudgeDiffInput {
+            repository_diff: "diff content goes here".to_string(),
+            ran_diagnostics_check: false,
+            diagnostics_before: None,
+            diagnostics_after: None,
+            criteria: "Fix all bugs".to_string(),
+        };
+
+        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+
+        // Check for the message when no diagnostics were performed
+        let diagnostics_message = "No diagnostic checks were performed.";
+
+        assert!(rendered.contains(diagnostics_message));
+        assert!(!rendered.contains("<diagnostics_before>"));
+        assert!(!rendered.contains("<diagnostics_after>"));
     }
 }
