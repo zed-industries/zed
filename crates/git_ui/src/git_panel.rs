@@ -1711,8 +1711,13 @@ impl GitPanel {
             }
         });
 
+        let prompt_generate_commit = GitPanelSettings::get_global(&cx)
+            .prompt_generate_commit
+            .clone();
+
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
-             async move {
+                let prompt_generate_commit = prompt_generate_commit.clone();
+                async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
                     this.generate_commit_message_task.take();
                 });
@@ -1730,13 +1735,16 @@ impl GitPanel {
 
                 let text_empty = subject.trim().is_empty();
 
-                let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
-                } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                let prompt = match prompt_generate_commit.is_none() {
+                    true => include_str!("commit_message_prompt.txt").to_string(),
+                    false => prompt_generate_commit.unwrap(),
                 };
 
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
+                let content = if text_empty {
+                    format!("{prompt}\nHere are the changes in this commit:\n{diff_text}")
+                } else {
+                    format!("{prompt}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                };
 
                 let request = LanguageModelRequest {
                     messages: vec![LanguageModelRequestMessage {

@@ -64,6 +64,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: main
     pub fallback_branch_name: Option<String>,
+
+    /// Prompt to generate a commit message using AI
+    ///
+    /// Default: Is defined automatically by the git panel
+    pub prompt_generate_commit: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -74,6 +79,7 @@ pub struct GitPanelSettings {
     pub status_style: StatusStyle,
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
+    pub prompt_generate_commit: Option<String>,
 }
 
 impl Settings for GitPanelSettings {

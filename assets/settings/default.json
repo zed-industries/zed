@@ -588,6 +588,11 @@
     // Default: main
     "fallback_branch_name": "main",
 
+    /// Prompt base to generate a commit message using AI
+    ///
+    /// Default: Is defined automatically by the git panels
+    "prompt_generate_commit": "",
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
