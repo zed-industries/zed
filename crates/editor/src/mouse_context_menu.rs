@@ -170,10 +170,11 @@ pub fn deploy_context_menu(
             editor.force_code_action_task = false;
         }
 
-        let code_action_task = editor.code_actions_task.take();
+        let mut code_action_task = editor.code_actions_task.take();
         cx.spawn_in(window, async move |editor, cx| {
-            if let Some(code_action_task) = code_action_task {
-                code_action_task.await.log_err();
+            while let Some(prev_task) = code_action_task {
+                prev_task.await.log_err();
+                code_action_task = editor.update(cx, |this, _| this.code_actions_task.take())?;
             }
             let context_menu_task = editor.update_in(cx, |editor, window, cx| {
                 let focus = window.focused(cx);
