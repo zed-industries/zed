@@ -60,7 +60,7 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
 pub struct GitBlame {
     project: Entity<Project>,
     buffer: Entity<Buffer>,
-    entries: SumTree<GitBlameEntry>,
+    generated_entries: SumTree<GitBlameEntry>,
     commit_details: HashMap<Oid, ParsedCommitMessage>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
@@ -77,7 +77,7 @@ impl GitBlame {
     pub fn new(buffer: Entity<Buffer>, project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let entries = SumTree::from_item(
+        let generated_entries = SumTree::from_item(
             GitBlameEntry {
                 rows: buffer.read(cx).max_point().row + 1,
                 blame: None,
@@ -88,7 +88,7 @@ impl GitBlame {
             project,
             buffer,
             buffer_snapshot,
-            entries,
+            generated_entries,
             buffer_edits,
             user_triggered: false,
             focused: false,
@@ -184,7 +184,7 @@ impl GitBlame {
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
-        let mut cursor = self.entries.cursor::<u32>(&());
+        let mut cursor = self.generated_entries.cursor::<u32>(&());
         let my_buffer_id = self.buffer_snapshot.remote_id();
         rows.into_iter().map(move |(buffer_id, buffer_row)| {
             buffer_id.filter(|buffer_id| *buffer_id == my_buffer_id)?;
@@ -199,7 +199,7 @@ impl GitBlame {
 
         let mut max_author_length = 0;
 
-        for entry in self.entries.iter() {
+        for entry in self.generated_entries.iter() {
             let author_len = entry
                 .blame
                 .as_ref()
@@ -269,7 +269,7 @@ impl GitBlame {
             .peekable();
 
         let mut new_entries = SumTree::default();
-        let mut cursor = self.entries.cursor::<u32>(&());
+        let mut cursor = self.generated_entries.cursor::<u32>(&());
 
         while let Some(mut edit) = row_edits.next() {
             while let Some(next_edit) = row_edits.peek() {
@@ -329,14 +329,14 @@ impl GitBlame {
         drop(cursor);
 
         self.buffer_snapshot = new_snapshot;
-        self.entries = new_entries;
+        self.generated_entries = new_entries;
     }
 
     #[cfg(test)]
     fn check_invariants(&mut self, cx: &mut Context<Self>) {
         self.sync(cx);
         assert_eq!(
-            self.entries.summary().rows,
+            self.generated_entries.summary().rows,
             self.buffer.read(cx).max_point().row + 1
         );
     }
@@ -383,7 +383,7 @@ impl GitBlame {
                 Ok(Some((entries, commit_details))) => {
                     this.buffer_edits = buffer_edits;
                     this.buffer_snapshot = snapshot;
-                    this.entries = entries;
+                    this.generated_entries = entries;
                     this.commit_details = commit_details;
                     this.generated = true;
                     cx.notify();

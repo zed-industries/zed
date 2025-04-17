@@ -76,7 +76,7 @@ use text::BufferId;
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::{ButtonLike, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*};
 use unicode_segmentation::UnicodeSegmentation;
-use util::{RangeExt, ResultExt, debug_panic};
+use util::{RangeExt, ResultExt, debug_panic, maybe};
 use workspace::{Workspace, item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -1741,92 +1741,174 @@ impl EditorElement {
         elements
     }
 
-    fn layout_inline_blame(
+    fn layout_conflict_hints_and_inline_blame(
         &self,
-        display_row: DisplayRow,
-        row_info: &RowInfo,
-        line_layout: &LineWithInvisibles,
-        crease_trailer: Option<&CreaseTrailerLayout>,
-        em_width: Pixels,
+        line_layouts: &[LineWithInvisibles],
+        crease_trailers: &[Option<CreaseTrailerLayout>],
+        row_block_types: &HashMap<DisplayRow, bool>,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
+        inline_completion_popover_origin: Option<gpui::Point<Pixels>>,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
         line_height: Pixels,
+        em_width: Pixels,
+        style: &EditorStyle,
+        newest_selection_head: Option<DisplayPoint>,
+        row_infos: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<AnyElement> {
-        if !self
+    ) -> HashMap<DisplayRow, AnyElement> {
+        let editor = self.editor.clone();
+        let blame = self.editor.read(cx).blame().cloned();
+        let Some(workspace) = self.editor.read(cx).workspace() else {
+            return HashMap::default();
+        };
+
+        let editor_snapshot = self
             .editor
-            .update(cx, |editor, cx| editor.render_git_blame_inline(window, cx))
-        {
-            return None;
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
+        let mut blamed_rows = self
+            .editor
+            .read(cx)
+            .conflict_hints
+            .iter()
+            .flat_map(|pair| [&pair.ours, &pair.theirs])
+            .map(|hint| {
+                (
+                    hint.anchor
+                        .to_display_point(&editor_snapshot.display_snapshot)
+                        .row(),
+                    hint,
+                )
+            })
+            .skip_while(|(row, _)| *row < start_row)
+            .take_while(|(row, _)| *row < end_row)
+            .map(|(row, hint)| {
+                (
+                    row,
+                    (
+                        hint.repository.clone(),
+                        hint.blame_entry.clone(),
+                        Some(hint.description.clone()),
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let blamed_row = maybe!({
+            if !self.editor.read(cx).render_git_blame_inline(window, cx) {
+                return None;
+            }
+            let newest_selection_head = newest_selection_head?;
+            let display_row = newest_selection_head.row();
+
+            if !(start_row..end_row).contains(&display_row)
+                || row_block_types.contains_key(&display_row)
+            {
+                return None;
+            };
+            let line_ix = display_row.minus(start_row) as usize;
+            let row_info = &row_infos[line_ix];
+            let repository = blame.as_ref()?.read(cx).repository(cx)?.downgrade();
+            let blame_entry = blame
+                .as_ref()?
+                .update(cx, |blame, cx| {
+                    blame
+                        .blame_for_rows([(row_info.buffer_id, row_info.buffer_row)], cx)
+                        .next()
+                })
+                .flatten()?;
+            Some((display_row, repository, blame_entry))
+        });
+
+        // Conflict hints override the regular inline blame.
+        if let Some((display_row, repository, blame_entry)) = blamed_row {
+            blamed_rows
+                .entry(display_row)
+                .or_insert_with(|| (repository, blame_entry, None));
         }
 
-        let editor = self.editor.read(cx);
-        let blame = editor.blame.clone()?;
-        let padding = {
-            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
-            const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
+        let mut layout_blamed_row = |display_row: DisplayRow,
+                                     repository,
+                                     blame_entry,
+                                     description|
+         -> Option<AnyElement> {
+            let line_ix = display_row.minus(start_row) as usize;
+            let line_layout = &line_layouts[line_ix];
+            let crease_trailer = crease_trailers[line_ix].as_ref();
 
-            let mut padding = INLINE_BLAME_PADDING_EM_WIDTHS;
+            let padding = {
+                const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
+                const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
 
-            if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
-                match &inline_completion.completion {
-                    InlineCompletion::Edit {
-                        display_mode: EditDisplayMode::TabAccept,
-                        ..
-                    } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
-                    _ => {}
+                let mut padding = INLINE_BLAME_PADDING_EM_WIDTHS;
+
+                if let Some(inline_completion) = editor.read(cx).active_inline_completion.as_ref() {
+                    match &inline_completion.completion {
+                        InlineCompletion::Edit {
+                            display_mode: EditDisplayMode::TabAccept,
+                            ..
+                        } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
+                        _ => {}
+                    }
                 }
-            }
 
-            padding * em_width
-        };
-
-        let workspace = editor.workspace()?.downgrade();
-        let blame_entry = blame
-            .update(cx, |blame, cx| {
-                blame
-                    .blame_for_rows([(row_info.buffer_id, row_info.buffer_row)], cx)
-                    .next()
-            })
-            .flatten()?;
-
-        let mut element = render_inline_blame_entry(
-            self.editor.clone(),
-            workspace,
-            &blame,
-            blame_entry,
-            &self.style,
-            cx,
-        )?;
-
-        let start_y = content_origin.y
-            + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
-
-        let start_x = {
-            let line_end = if let Some(crease_trailer) = crease_trailer {
-                crease_trailer.bounds.right()
-            } else {
-                content_origin.x - scroll_pixel_position.x + line_layout.width
+                padding * em_width
             };
 
-            let padded_line_end = line_end + padding;
+            let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+            // FIXME get commit details without a blame (grab off repository snapshot set)
+            let details = blame
+                .as_ref()
+                .and_then(|blame| blame.read(cx).details_for_entry(&blame_entry));
+            let mut element = renderer.render_inline_blame_entry(
+                &style.text,
+                blame_entry,
+                details,
+                repository,
+                workspace.downgrade(),
+                editor.clone(),
+                cx,
+            )?;
 
-            let min_column_in_pixels = ProjectSettings::get_global(cx)
-                .git
-                .inline_blame
-                .and_then(|settings| settings.min_column)
-                .map(|col| self.column_pixels(col as usize, window, cx))
-                .unwrap_or(px(0.));
-            let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
+            let start_y = content_origin.y
+                + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
 
-            cmp::max(padded_line_end, min_start)
+            let start_x = {
+                let line_end = if let Some(crease_trailer) = crease_trailer {
+                    crease_trailer.bounds.right()
+                } else {
+                    content_origin.x - scroll_pixel_position.x + line_layout.width
+                };
+
+                let padded_line_end = line_end + padding;
+
+                let min_column_in_pixels = ProjectSettings::get_global(cx)
+                    .git
+                    .inline_blame
+                    .and_then(|settings| settings.min_column)
+                    .map(|col| self.column_pixels(col as usize, window, cx))
+                    .unwrap_or(px(0.));
+                let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
+
+                cmp::max(padded_line_end, min_start)
+            };
+
+            let absolute_offset = point(start_x, start_y);
+            element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
+            Some(element)
         };
 
-        let absolute_offset = point(start_x, start_y);
-        element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
-
-        Some(element)
+        blamed_rows
+            .into_iter()
+            .filter_map(|(row, (repository, blame_entry, description))| {
+                Some((
+                    row,
+                    layout_blamed_row(row, repository, blame_entry, description)?,
+                ))
+            })
+            .collect()
     }
 
     fn layout_blame_entries(
@@ -5421,11 +5503,11 @@ impl EditorElement {
     }
 
     fn paint_inline_blame(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        if let Some(mut inline_blame) = layout.inline_blame.take() {
-            window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
-                inline_blame.paint(window, cx);
-            })
-        }
+        window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+            for mut blame in layout.inline_blame.drain() {
+                blame.1.paint(window, cx);
+            }
+        })
     }
 
     fn paint_diff_hunk_controls(
@@ -5851,6 +5933,7 @@ fn prepaint_gutter_button(
     button
 }
 
+// FIXME eliminate this
 fn render_inline_blame_entry(
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
@@ -5860,9 +5943,6 @@ fn render_inline_blame_entry(
     cx: &mut App,
 ) -> Option<AnyElement> {
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-    let blame = blame.read(cx);
-    let details = blame.details_for_entry(&blame_entry);
-    let repository = blame.repository(cx)?.clone();
     renderer.render_inline_blame_entry(
         &style.text,
         blame_entry,
@@ -7019,6 +7099,7 @@ impl Element for EditorElement {
                         return self.prepaint(None, bounds, &mut (), window, cx);
                     }
 
+                    // FIXME make this work with the new blame stuff
                     let longest_line_blame_width = self
                         .editor
                         .update(cx, |editor, cx| {
@@ -7038,12 +7119,17 @@ impl Element for EditorElement {
                                         .next()
                                 })
                                 .flatten()?;
-                            let mut element = render_inline_blame_entry(
-                                self.editor.clone(),
-                                editor.workspace()?.downgrade(),
-                                blame,
+                            let details = blame.read(cx).details_for_entry(&blame_entry);
+                            let repository = blame.read(cx).repository(cx)?.downgrade();
+                            let workspace = editor.workspace()?.downgrade();
+                            let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+                            let mut element = renderer.render_inline_blame_entry(
+                                &style.text,
                                 blame_entry,
-                                &style,
+                                details,
+                                repository,
+                                workspace,
+                                cx.entity(),
                                 cx,
                             )?;
                             let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
@@ -7235,33 +7321,26 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let mut inline_blame = None;
-                    if let Some(newest_selection_head) = newest_selection_head {
-                        let display_row = newest_selection_head.row();
-                        if (start_row..end_row).contains(&display_row)
-                            && !row_block_types.contains_key(&display_row)
-                        {
-                            let line_ix = display_row.minus(start_row) as usize;
-                            let row_info = &row_infos[line_ix];
-                            let line_layout = &line_layouts[line_ix];
-                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
-                            inline_blame = self.layout_inline_blame(
-                                display_row,
-                                row_info,
-                                line_layout,
-                                crease_trailer_layout,
-                                em_width,
-                                content_origin,
-                                scroll_pixel_position,
-                                line_height,
-                                window,
-                                cx,
-                            );
-                            if inline_blame.is_some() {
-                                // Blame overrides inline diagnostics
-                                inline_diagnostics.remove(&display_row);
-                            }
-                        }
+                    let inline_blame = self.layout_conflict_hints_and_inline_blame(
+                        &line_layouts,
+                        &crease_trailers,
+                        &row_block_types,
+                        content_origin,
+                        scroll_pixel_position,
+                        inline_completion_popover_origin,
+                        start_row,
+                        end_row,
+                        line_height,
+                        em_width,
+                        &style,
+                        newest_selection_head,
+                        &row_infos,
+                        window,
+                        cx,
+                    );
+                    // Blame overrides inline diagnostics
+                    for blamed_row in inline_blame.keys() {
+                        inline_diagnostics.remove(blamed_row);
                     }
 
                     let blamed_display_rows = self.layout_blame_entries(
@@ -7791,7 +7870,7 @@ pub struct EditorLayout {
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
-    inline_blame: Option<AnyElement>,
+    inline_blame: HashMap<DisplayRow, AnyElement>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     highlighted_gutter_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

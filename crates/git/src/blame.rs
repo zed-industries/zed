@@ -132,8 +132,6 @@ pub struct BlameEntry {
 
     pub previous: Option<String>,
     pub filename: String,
-
-    pub parenthetical: Option<String>,
 }
 
 impl BlameEntry {

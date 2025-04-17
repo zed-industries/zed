@@ -1,7 +1,8 @@
 use collections::{HashMap, HashSet};
 use editor::{
-    ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
-    Editor, EditorEvent, ExcerptId, InlayId, MultiBuffer, RowHighlightOptions,
+    ConflictHint, ConflictHintPair, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
+    ConflictsTheirs, ConflictsTheirsMarker, Editor, EditorEvent, ExcerptId, InlayId, MultiBuffer,
+    RowHighlightOptions,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
@@ -34,8 +35,6 @@ impl ConflictAddon {
 
 struct BufferConflicts {
     block_ids: Vec<(Range<Anchor>, CustomBlockId)>,
-    ours_inlay_ids: Vec<InlayId>,
-    theirs_inlay_ids: Vec<InlayId>,
     conflict_set: Entity<ConflictSet>,
     _subscription: Subscription,
 }
@@ -119,8 +118,6 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
             let subscription = cx.subscribe(&conflict_set, conflicts_updated);
             BufferConflicts {
                 block_ids: Vec::new(),
-                ours_inlay_ids: Vec::new(),
-                theirs_inlay_ids: Vec::new(),
                 conflict_set: conflict_set.clone(),
                 _subscription: subscription,
             }
@@ -143,7 +140,6 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
 
 fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mut Context<Editor>) {
     let mut removed_block_ids = HashSet::default();
-    let mut removed_inlay_ids = Vec::new();
     editor
         .addon_mut::<ConflictAddon>()
         .unwrap()
@@ -151,15 +147,12 @@ fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mu
         .retain(|buffer_id, buffer| {
             if removed_buffer_ids.contains(&buffer_id) {
                 removed_block_ids.extend(buffer.block_ids.iter().map(|(_, block_id)| *block_id));
-                removed_inlay_ids.extend(buffer.ours_inlay_ids.iter().copied());
-                removed_inlay_ids.extend(buffer.theirs_inlay_ids.iter().copied());
                 false
             } else {
                 true
             }
         });
     editor.remove_blocks(removed_block_ids, None, cx);
-    // editor.splice_inlays(&removed_inlay_ids, Vec::new(), cx);
 }
 
 fn conflicts_updated(
@@ -240,8 +233,7 @@ fn conflicts_updated(
     let editor_handle = cx.weak_entity();
     let new_conflicts = &conflict_set.conflicts[event.new_range.clone()];
     let mut blocks = Vec::new();
-    // let mut ours_inlays = Vec::new();
-    // let mut theirs_inlays = Vec::new();
+    let mut conflict_hints = Vec::new();
     for conflict in new_conflicts {
         let Some((excerpt_id, _)) = excerpts.iter().find(|(_, range)| {
             let precedes_start = range
@@ -265,16 +257,14 @@ fn conflicts_updated(
         let Some(anchor) = snapshot.anchor_in_excerpt(excerpt_id, conflict.range.start) else {
             continue;
         };
-        // let Some(ours_inlay_anchor) =
-        //     snapshot.anchor_in_excerpt(excerpt_id, conflict.ours_start_eol)
-        // else {
-        //     continue;
-        // };
-        // let Some(theirs_inlay_anchor) =
-        //     snapshot.anchor_in_excerpt(excerpt_id, conflict.theirs_end_eol)
-        // else {
-        //     continue;
-        // };
+        let Some(ours_hint_anchor) = snapshot.anchor_in_excerpt(excerpt_id, conflict.range.start)
+        else {
+            continue;
+        };
+        let Some(theirs_hint_anchor) = snapshot.anchor_in_excerpt(excerpt_id, conflict.theirs.end)
+        else {
+            continue;
+        };
 
         let editor_handle = editor_handle.clone();
         blocks.push(BlockProperties {
@@ -298,22 +288,23 @@ fn conflicts_updated(
             }),
             priority: 0,
         });
-        // let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
-        // ours_inlays.push(Inlay::conflict_marker(
-        //     util::post_inc(&mut conflict_addon.next_inlay_id),
-        //     ours_inlay_anchor,
-        //     repository_snapshot.ours_name().to_owned(),
-        // ));
-        // theirs_inlays.push(Inlay::conflict_marker(
-        //     util::post_inc(&mut conflict_addon.next_inlay_id),
-        //     theirs_inlay_anchor,
-        //     repository_snapshot.theirs_name().to_owned(),
-        // ));
+        conflict_hints.push(ConflictHintPair {
+            ours: ConflictHint {
+                anchor: ours_hint_anchor,
+                blame_entry: git::blame::BlameEntry::default(),
+                description: "hello!".into(),
+            },
+            theirs: ConflictHint {
+                anchor: theirs_hint_anchor,
+                blame_entry: git::blame::BlameEntry::default(),
+                description: "goodbye!".into(),
+            },
+        })
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
+    editor.splice_conflict_hints(event.old_range.clone(), conflict_hints, cx);
 
     let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
-    // let (old_ours_inlays, old_theirs_inlays) =
     if let Some(buffer_conflicts) = conflict_addon.buffers.get_mut(&buffer_id) {
         buffer_conflicts.block_ids.splice(
             event.old_range.clone(),
@@ -322,27 +313,7 @@ fn conflicts_updated(
                 .map(|conflict| conflict.range.clone())
                 .zip(new_block_ids),
         );
-        // (
-        //     buffer_conflicts
-        //         .ours_inlay_ids
-        //         .splice(
-        //             event.old_range.clone(),
-        //             ours_inlays.iter().map(|inlay| inlay.id),
-        //         )
-        //         .collect::<Vec<_>>(),
-        //     buffer_conflicts
-        //         .theirs_inlay_ids
-        //         .splice(
-        //             event.old_range.clone(),
-        //             theirs_inlays.iter().map(|inlay| inlay.id),
-        //         )
-        //         .collect::<Vec<_>>(),
-        // )
-    } /* else {
-        (Vec::new(), Vec::new())
-    } */;
-    // editor.splice_inlays(&old_ours_inlays, ours_inlays, cx);
-    // editor.splice_inlays(&old_theirs_inlays, theirs_inlays, cx);
+    };
 }
 
 fn update_conflict_highlighting(

@@ -244,7 +244,7 @@ pub trait BlameRenderer {
         _: &TextStyle,
         _: git::blame::BlameEntry,
         _: Option<ParsedCommitMessage>,
-        _: Entity<Repository>,
+        _: WeakEntity<Repository>,
         _: WeakEntity<Workspace>,
         _: Entity<Editor>,
         _: &mut App,
@@ -285,7 +285,7 @@ impl BlameRenderer for () {
         _: &TextStyle,
         _: git::blame::BlameEntry,
         _: Option<ParsedCommitMessage>,
-        _: Entity<Repository>,
+        _: WeakEntity<Repository>,
         _: WeakEntity<Workspace>,
         _: Entity<Editor>,
         _: &mut App,
@@ -634,6 +634,21 @@ struct InlineDiagnostic {
     severity: DiagnosticSeverity,
 }
 
+// TODO: unify handling of conflict hints and inline blame
+#[derive(Clone, Debug)]
+pub struct ConflictHintPair {
+    pub ours: ConflictHint,
+    pub theirs: ConflictHint,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConflictHint {
+    pub anchor: Anchor,
+    pub blame_entry: git::blame::BlameEntry,
+    pub description: SharedString,
+    pub repository: WeakEntity<Repository>,
+}
+
 pub enum MenuInlineCompletionsPolicy {
     Never,
     ByProvider,
@@ -895,6 +910,7 @@ pub struct Editor {
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
+    conflict_hints: Vec<ConflictHintPair>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -1689,6 +1705,7 @@ impl Editor {
                 .restore_unsaved_buffers,
             blame: None,
             blame_subscription: None,
+            conflict_hints: Vec::new(),
             tasks: Default::default(),
 
             breakpoint_store,
@@ -4359,6 +4376,15 @@ impl Editor {
             display_map.splice_inlays(to_remove, to_insert, cx)
         });
         cx.notify();
+    }
+
+    pub fn splice_conflict_hints(
+        &mut self,
+        range: Range<usize>,
+        to_insert: Vec<ConflictHintPair>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.conflict_hints.splice(range, to_insert);
     }
 
     fn trigger_on_type_formatting(
