@@ -15892,7 +15892,6 @@ impl Editor {
     }
 
     fn update_minimap_configuration(&mut self, minimap_settings: &MinimapSettings) {
-        self.set_mode(EditorMode::Minimap);
         self.set_text_style_refinement(TextStyleRefinement {
             font_size: Some(px(minimap_settings.font_size).into()),
             font_weight: Some(gpui::FontWeight(900.)),
