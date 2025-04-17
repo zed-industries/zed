@@ -278,22 +278,22 @@ fn main() {
                                     let score_index = (diff_score.min(5)) as usize;
 
                                     println!(
-                                        "{} {}{}",
+                                        "Diff: {} {}{}",
                                         SCORES[score_index],
                                         example.log_prefix,
                                         judge_output.diff.score,
                                     );
                                     diff_scores.push(judge_output.diff.score);
 
-                                    let process_score: u32 = judge_output.process.score;
+                                    let process_score: u32 = judge_output.thread.score;
                                     let score_index = (process_score.min(5)) as usize;
                                     println!(
-                                        "{} {}{}",
+                                        "Thread: {} {}{}",
                                         SCORES[score_index],
                                         example.log_prefix,
-                                        judge_output.process.score,
+                                        judge_output.thread.score,
                                     );
-                                    process_scores.push(judge_output.process.score);
+                                    process_scores.push(judge_output.thread.score);
                                 }
                                 Err(err) => {
                                     println!("💥 {}{:?}", example.log_prefix, err);
@@ -387,8 +387,8 @@ async fn run_example(
                 round = round,
                 diff_score = judge_output.diff.score,
                 diff_analysis = judge_output.diff.analysis,
-                process_score = judge_output.process.score,
-                process_analysis = judge_output.process.analysis,
+                process_score = judge_output.thread.score,
+                process_analysis = judge_output.thread.analysis,
                 tool_use_counts = run_output.tool_use_counts,
                 response_count = run_output.response_count,
                 token_usage = run_output.token_usage,

@@ -107,7 +107,7 @@ pub struct JudgeResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeOutput {
-    pub process: JudgeResponse,
+    pub thread: JudgeResponse,
     pub diff: JudgeResponse,
 }
 
@@ -339,11 +339,13 @@ impl Example {
 
                     request_count += 1;
                     let messages_file_path = example_dir_path.join(format!("{request_count}.messages.md"));
+                    let last_messages_file_path = example_dir_path.join(format!("last.messages.md"));
                     let request_markdown = RequestMarkdown::new(request);
                     let response_events_markdown = response_events_to_markdown(response_events);
 
                     let messages = format!("{}\n\n{}", request_markdown.messages, response_events_markdown);
-                    fs::write(messages_file_path, messages).expect("failed to write messages file");
+                    fs::write(messages_file_path, messages.clone()).expect("failed to write messages file");
+                    fs::write(last_messages_file_path, messages).expect("failed to write last messages file");
 
                     if request_count == 1 {
                         let tools_file_path = example_dir_path.join(format!("tools.md"));
@@ -568,20 +570,25 @@ impl Example {
 
         writeln!(
             &mut output_file,
-            "# Judgment ({judge_repetitions})\n{judge_thread_response}\n{diff_response}",
+            "# Judgment ({})\n
+            ## Thread\n
+            {judge_thread_response}\n
+            ## Diff\n
+            {diff_response}",
+            judge_repetitions + 1
         )
         .log_err();
 
         Ok(JudgeOutput {
-            process: JudgeResponse::parse(&judge_thread_response)?,
+            thread: JudgeResponse::parse(&judge_thread_response)?,
             diff: JudgeResponse::parse(&diff_response)?,
         })
     }
 
     pub async fn repository_diff(&self) -> Result<String> {
         let worktree_path = self.worktree_path();
-        run_git(&worktree_path, &["add", "-N"]).await?;
-        run_git(&worktree_path, &["diff"]).await
+        run_git(&worktree_path, &["add", "."]).await?;
+        run_git(&worktree_path, &["diff", "--staged"]).await
     }
 }
 
