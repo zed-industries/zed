@@ -1471,8 +1471,7 @@ impl EditorElement {
         &self,
         snapshot: &EditorSnapshot,
         minimap_width: Pixels,
-        editor_em_advance: Pixels,
-        font_id: FontId,
+        editor_font_size: Pixels,
         scroll_position: gpui::Point<f32>,
         scrollbar_layout_information: &ScrollbarLayoutInformation,
         scrollbar_layout: Option<&EditorScrollbars>,
@@ -1514,16 +1513,11 @@ impl EditorElement {
             }),
         };
 
-        let minimap_em_advance = window
-            .text_system()
-            .em_advance(font_id, minimap_font_size)
-            .unwrap();
-
         let minimap_wrap_width = self
             .editor
             .read_with(cx, |editor, cx| editor.wrap_width(cx))
             .map(|editor_wrap_width| {
-                (editor_wrap_width * (minimap_em_advance / editor_em_advance)).floor()
+                (editor_wrap_width * (minimap_font_size / editor_font_size)).floor()
             });
 
         let minimap_bounds =
@@ -7776,8 +7770,7 @@ impl Element for EditorElement {
                         self.layout_minimap(
                             &snapshot,
                             minimap_width,
-                            em_advance,
-                            font_id,
+                            font_size,
                             scroll_position,
                             &scrollbar_layout_information,
                             scrollbars_layout.as_ref(),
