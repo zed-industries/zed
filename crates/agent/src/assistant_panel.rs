@@ -1542,8 +1542,10 @@ impl AssistantPanel {
             })
     }
 
-    fn render_usage_banner(&self, _cx: &mut Context<Self>) -> Option<AnyElement> {
-        Some(UsageBanner::new(zed_llm_client::Plan::ZedProTrial, 50).into_any_element())
+    fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let usage = self.thread.read(cx).last_usage()?;
+
+        Some(UsageBanner::new(zed_llm_client::Plan::ZedProTrial, usage.amount).into_any_element())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

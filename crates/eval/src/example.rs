@@ -421,7 +421,8 @@ impl Example {
                             ThreadEvent::MessageDeleted(_) |
                             ThreadEvent::SummaryChanged |
                             ThreadEvent::SummaryGenerated |
-                            ThreadEvent::CheckpointChanged => {
+                            ThreadEvent::CheckpointChanged |
+                            ThreadEvent::UsageUpdated(_) => {
                                 if std::env::var("ZED_EVAL_DEBUG").is_ok() {
                                     println!("{}Event: {:#?}", log_prefix, event);
                                 }

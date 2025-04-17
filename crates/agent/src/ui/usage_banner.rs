@@ -67,44 +67,40 @@ impl RenderOnce for UsageBanner {
             }),
         };
 
-        Banner::new()
-            .severity(severity)
-            .children(
-                h_flex().flex_1().gap_1().child(Label::new(message)).child(
-                    h_flex()
-                        .flex_1()
-                        .justify_end()
-                        .gap_1p5()
-                        .children(used_percentage.map(|percent| {
-                            h_flex()
-                                .items_center()
-                                .w_full()
-                                .max_w(px(180.))
-                                .child(ProgressBar::new("usage", percent, 100., cx))
-                        }))
-                        .child(
-                            Label::new(match request_limit {
-                                UsageLimit::Limited(limit) => {
-                                    format!("{} / {limit}", self.requests)
-                                }
-                                UsageLimit::Unlimited => format!("{} / ∞", self.requests),
-                            })
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                        ),
-                ),
-            )
-            .action_slot(action)
+        Banner::new().severity(severity).children(
+            h_flex().flex_1().gap_1().child(Label::new(message)).child(
+                h_flex()
+                    .flex_1()
+                    .justify_end()
+                    .gap_1p5()
+                    .children(used_percentage.map(|percent| {
+                        h_flex()
+                            .items_center()
+                            .w_full()
+                            .max_w(px(180.))
+                            .child(ProgressBar::new("usage", percent, 100., cx))
+                    }))
+                    .child(
+                        Label::new(match request_limit {
+                            UsageLimit::Limited(limit) => {
+                                format!("{} / {limit}", self.requests)
+                            }
+                            UsageLimit::Unlimited => format!("{} / ∞", self.requests),
+                        })
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    )
+                    // Note: This should go in the banner's `action_slot`, but doing that messes with the size of the
+                    // progress bar.
+                    .child(action),
+            ),
+        )
     }
 }
 
 impl Component for UsageBanner {
     fn sort_name() -> &'static str {
         "AgentUsageBanner"
-    }
-
-    fn description() -> Option<&'static str> {
-        None
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
