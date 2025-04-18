@@ -540,7 +540,7 @@ impl Example {
         judge_number: u32,
         cx: &AsyncApp,
     ) -> Result<(String, JudgeResponse)> {
-        let judge_diff_prompt = include_str!("judge_diff_prompt.hbs");
+        let judge_diff_prompt = include_str!("judge_diff_prompt_2.hbs");
         let judge_diff_prompt_name = "judge_diff_prompt";
         let mut hbs = Handlebars::new();
         hbs.register_template_string(judge_diff_prompt_name, judge_diff_prompt)?;
@@ -1170,7 +1170,7 @@ mod test {
     const JUDGE_PROMPT_NAME: &str = "judge_prompt";
 
     fn templates() -> Handlebars<'static> {
-        let mut judge_prompt = include_str!("judge_diff_prompt.hbs").to_string();
+        let mut judge_prompt = include_str!("judge_diff_prompt_2.hbs").to_string();
         language::LineEnding::normalize(&mut judge_prompt);
         let mut handlebars = Handlebars::new();
         handlebars
