@@ -1634,3 +1634,27 @@ impl From<String> for ClipboardString {
         }
     }
 }
+
+/// Information about the keyboard layout
+#[derive(Clone, Debug)]
+pub struct KeyboardLayout {
+    id: String,
+    name: String,
+}
+
+impl KeyboardLayout {
+    /// Create a new keyboard layout with the given ID and name
+    pub fn new(id: String, name: String) -> Self {
+        Self { id, name }
+    }
+
+    /// Get the ID of the keyboard layout, the ID should be unique to the layout
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Get the name of the keyboard layout
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
