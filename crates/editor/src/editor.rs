@@ -4914,26 +4914,24 @@ impl Editor {
                 Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
             });
 
-        cx.spawn_in(window, async move |_, _| {
+        cx.spawn_in(window, async move |_, cx| {
             let task_context = match task_context {
                 Some(task_context) => task_context.await,
                 None => None,
             };
-            let resolved_tasks = tasks.zip(task_context).map(|(tasks, task_context)| {
-                Rc::new(ResolvedTasks {
-                    templates: tasks.resolve(&task_context).collect(),
-                    position: snapshot
-                        .buffer_snapshot
-                        .anchor_before(Point::new(multibuffer_point.row, tasks.column)),
-                })
-            });
-            Some((
-                buffer,
-                CodeActionContents {
-                    actions: code_actions,
-                    tasks: resolved_tasks,
-                },
-            ))
+            let resolved_tasks =
+                tasks
+                    .zip(task_context)
+                    .map(|(tasks, task_context)| ResolvedTasks {
+                        templates: tasks.resolve(&task_context).collect(),
+                        position: snapshot
+                            .buffer_snapshot
+                            .anchor_before(Point::new(multibuffer_point.row, tasks.column)),
+                    });
+            let code_action_contents = cx
+                .update(|_, cx| CodeActionContents::new(resolved_tasks, code_actions, cx))
+                .ok()?;
+            Some((buffer, code_action_contents))
         })
     }
 
@@ -4977,7 +4975,7 @@ impl Editor {
                 Some(cx.spawn_in(window, async move |editor, cx| {
                     if let Some((buffer, code_action_contents)) = code_actions_task.await {
                         let spawn_straight_away =
-                            code_action_contents.tasks.as_ref().map_or(false, |tasks| {
+                            code_action_contents.tasks().map_or(false, |tasks| {
                                 tasks
                                     .templates
                                     .iter()
