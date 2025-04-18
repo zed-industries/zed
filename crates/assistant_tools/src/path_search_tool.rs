@@ -81,16 +81,22 @@ impl Tool for PathSearchTool {
         cx.background_spawn(async move {
             let matches = task.await?;
             let paginated_matches = &matches[cmp::min(offset, matches.len())..cmp::min(offset + RESULTS_PER_PAGE, matches.len())];
-            let mut message = format!(
-                "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n",
-                matches.len(),
-                offset + 1,
-                offset + paginated_matches.len(),
-            );
-            for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
-                write!(&mut message, "\n{}", mat.display()).unwrap();
+
+            if matches.is_empty() {
+                Ok("No matches found".to_string())
+            } else {
+                let mut message = format!(
+                    "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n",
+                    matches.len(),
+                    offset + 1,
+                    offset + paginated_matches.len(),
+                );
+                for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
+                    write!(&mut message, "\n{}", mat.display()).unwrap();
+                }
+                Ok(message)
             }
-            Ok(message)
+
         }).into()
     }
 }
