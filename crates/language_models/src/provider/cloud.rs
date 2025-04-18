@@ -719,7 +719,7 @@ impl LanguageModel for CloudLanguageModel {
 
     fn stream_completion_with_usage(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         _cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -728,6 +728,8 @@ impl LanguageModel for CloudLanguageModel {
             Option<RequestUsage>,
         )>,
     > {
+        let thread_id = request.prompt_id.take();
+        let prompt_id = request.prompt_id.take();
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
@@ -744,6 +746,8 @@ impl LanguageModel for CloudLanguageModel {
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
+                            thread_id,
+                            prompt_id,
                             provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -788,6 +792,8 @@ impl LanguageModel for CloudLanguageModel {
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
+                            thread_id,
+                            prompt_id,
                             provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -816,6 +822,8 @@ impl LanguageModel for CloudLanguageModel {
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
+                            thread_id,
+                            prompt_id,
                             provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,

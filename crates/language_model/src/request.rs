@@ -238,6 +238,8 @@ pub struct LanguageModelRequestTool {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
+    pub thread_id: Option<String>,
+    pub prompt_id: Option<String>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,
     pub stop: Vec<String>,

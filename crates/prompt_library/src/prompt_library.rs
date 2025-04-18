@@ -924,6 +924,8 @@ impl PromptLibrary {
                         .update(|_, cx| {
                             model.count_tokens(
                                 LanguageModelRequest {
+                                    thread_id: None,
+                                    prompt_id: None,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],

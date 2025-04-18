@@ -70,6 +70,24 @@ impl From<&str> for ThreadId {
     }
 }
 
+/// The ID of the user prompt that initiated a request.
+///
+/// This equates to the user physically submitting a message to the model (e.g., by pressing the Enter key).
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct PromptId(Arc<str>);
+
+impl PromptId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl std::fmt::Display for PromptId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct MessageId(pub(crate) usize);
 
@@ -274,6 +292,7 @@ pub struct Thread {
     detailed_summary_state: DetailedSummaryState,
     messages: Vec<Message>,
     next_message_id: MessageId,
+    last_prompt_id: PromptId,
     context: BTreeMap<ContextId, AssistantContext>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     project_context: SharedProjectContext,
@@ -320,6 +339,7 @@ impl Thread {
             detailed_summary_state: DetailedSummaryState::NotGenerated,
             messages: Vec::new(),
             next_message_id: MessageId(0),
+            last_prompt_id: PromptId::new(),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
             project_context: system_prompt,
@@ -393,6 +413,7 @@ impl Thread {
                 })
                 .collect(),
             next_message_id,
+            last_prompt_id: PromptId::new(),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
             project_context,
@@ -430,6 +451,10 @@ impl Thread {
 
     pub fn touch_updated_at(&mut self) {
         self.updated_at = Utc::now();
+    }
+
+    pub fn advance_prompt_id(&mut self) {
+        self.last_prompt_id = PromptId::new();
     }
 
     pub fn summary(&self) -> Option<SharedString> {
@@ -942,6 +967,8 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(self.last_prompt_id.to_string()),
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
@@ -1083,6 +1110,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
+        let prompt_id = self.last_prompt_id.clone();
         let task = cx.spawn(async move |thread, cx| {
             let stream_completion_future = model.stream_completion_with_usage(request, &cx);
             let initial_token_usage =
@@ -1273,6 +1301,7 @@ impl Thread {
                         telemetry::event!(
                             "Assistant Thread Completion",
                             thread_id = thread.id().to_string(),
+                            prompt_id = prompt_id,
                             model = model.telemetry_id(),
                             model_provider = model.provider_id().to_string(),
                             input_tokens = usage.input_tokens,
