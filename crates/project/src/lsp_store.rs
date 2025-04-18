@@ -2169,19 +2169,11 @@ impl LocalLspStore {
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<LspStore>,
     ) -> Result<()> {
-        fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
-            Ordering::Equal
-                .then_with(|| b.is_primary.cmp(&a.is_primary))
-                .then_with(|| a.is_disk_based.cmp(&b.is_disk_based))
-                .then_with(|| a.severity.cmp(&b.severity))
-                .then_with(|| a.message.cmp(&b.message))
-        }
-
         diagnostics.sort_unstable_by(|a, b| {
             Ordering::Equal
                 .then_with(|| a.range.start.cmp(&b.range.start))
                 .then_with(|| b.range.end.cmp(&a.range.end))
-                .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
+                .then_with(|| a.diagnostic.cmp(&b.diagnostic))
         });
 
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;

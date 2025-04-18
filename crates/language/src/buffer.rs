@@ -230,6 +230,23 @@ pub struct Diagnostic {
     pub data: Option<Value>,
 }
 
+impl Ord for Diagnostic {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .is_primary
+            .cmp(&self.is_primary)
+            .then_with(|| self.is_disk_based.cmp(&other.is_disk_based))
+            .then_with(|| self.severity.cmp(&other.severity))
+            .then_with(|| self.message.cmp(&other.message))
+    }
+}
+
+impl PartialOrd for Diagnostic {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// An operation used to synchronize this buffer with its other replicas.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {

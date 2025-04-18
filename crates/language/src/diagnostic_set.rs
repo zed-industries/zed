@@ -9,7 +9,7 @@ use std::{
     ops::Range,
 };
 use sum_tree::{self, Bias, SumTree};
-use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
+use text::{Anchor, AnchorRangeExt, FromAnchor, PointUtf16, ToOffset};
 
 /// A set of diagnostics associated with a given buffer, provided
 /// by a single language server.
@@ -246,6 +246,12 @@ impl sum_tree::Item for DiagnosticEntry<Anchor> {
 }
 
 impl DiagnosticEntry<Anchor> {
+    pub fn cmp(&self, other: &Self, buffer: &text::BufferSnapshot) -> Ordering {
+        self.range
+            .cmp(&other.range, buffer)
+            .then_with(|| self.diagnostic.cmp(&other.diagnostic))
+    }
+
     /// Converts the [DiagnosticEntry] to a different buffer coordinate type.
     pub fn resolve<O: FromAnchor>(&self, buffer: &text::BufferSnapshot) -> DiagnosticEntry<O> {
         DiagnosticEntry {
