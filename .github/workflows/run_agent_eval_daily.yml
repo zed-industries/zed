@@ -34,6 +34,9 @@ jobs:
       - name: Build eval binary
         run: cargo build --release -p eval
 
+      - name: Build rust-analyzer
+        run: cargo build --package rust-analyzer
+
       - name: Upload eval binary
         uses: actions/upload-artifact@v4
         with:
