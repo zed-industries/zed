@@ -407,8 +407,7 @@ impl Render for ConfigurationView {
             div().child(Label::new("Loading models...")).into_any()
         } else {
             v_flex()
-                .size_full()
-                .gap_3()
+                .gap_2()
                 .child(
                     v_flex().gap_1().child(Label::new(ollama_intro)).child(
                         List::new()
@@ -464,30 +463,32 @@ impl Render for ConfigurationView {
                                         .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                                 ),
                         )
-                        .child(if is_authenticated {
-                            // This is only a button to ensure the spacing is correct
-                            // it should stay disabled
-                            ButtonLike::new("connected")
-                                .disabled(true)
-                                // Since this won't ever be clickable, we can use the arrow cursor
-                                .cursor_style(gpui::CursorStyle::Arrow)
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Indicator::dot().color(Color::Success))
-                                        .child(Label::new("Connected"))
-                                        .into_any_element(),
+                        .map(|this| {
+                            if is_authenticated {
+                                this.child(
+                                    ButtonLike::new("connected")
+                                        .disabled(true)
+                                        .cursor_style(gpui::CursorStyle::Arrow)
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(Indicator::dot().color(Color::Success))
+                                                .child(Label::new("Connected"))
+                                                .into_any_element(),
+                                        ),
                                 )
-                                .into_any_element()
-                        } else {
-                            Button::new("retry_ollama_models", "Connect")
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::ArrowCircle)
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.retry_connection(cx)),
+                            } else {
+                                this.child(
+                                    Button::new("retry_ollama_models", "Connect")
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon(IconName::Play)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.retry_connection(cx)
+                                        })),
                                 )
-                                .into_any_element()
-                        }),
+                            }
+                        })
                 )
                 .into_any()
         }
