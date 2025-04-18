@@ -35,10 +35,10 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
     LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem,
-    Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator, current_platform, hash,
-    init_app_menus,
+    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator, current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -248,7 +248,7 @@ pub struct App {
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
-    pub(crate) keyboard_layout: SharedString,
+    pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -289,7 +289,7 @@ impl App {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
-        let keyboard_layout = SharedString::from(platform.keyboard_layout());
+        let keyboard_layout = platform.keyboard_layout();
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
@@ -345,7 +345,7 @@ impl App {
             move || {
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
-                    cx.keyboard_layout = SharedString::from(cx.platform.keyboard_layout());
+                    cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_layout_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
@@ -387,8 +387,8 @@ impl App {
     }
 
     /// Get the id of the current keyboard layout
-    pub fn keyboard_layout(&self) -> &SharedString {
-        &self.keyboard_layout
+    pub fn keyboard_layout(&self) -> &dyn PlatformKeyboardLayout {
+        self.keyboard_layout.as_ref()
     }
 
     /// Invokes a handler when the current keyboard layout changes
