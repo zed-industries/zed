@@ -1264,7 +1264,7 @@ impl Terminal {
             "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
             "e" => Some(ViMotion::WordRightEnd),
             "%" => Some(ViMotion::Bracket),
-            "$" => Some(ViMotion::Last),
+            "$" => Some(ViMotion::Last), // Russian layout alt-4 will not work
             "0" => Some(ViMotion::First),
             "^" => Some(ViMotion::FirstOccupied),
             "H" => Some(ViMotion::High),
