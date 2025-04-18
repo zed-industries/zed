@@ -742,7 +742,7 @@ pub fn get_bedrock_tokens(
 
                 for content in message.content {
                     match content {
-                        MessageContent::Text(text) => {
+                        MessageContent::Text(text) | MessageContent::Thinking(text) => {
                             string_contents.push_str(&text);
                         }
                         MessageContent::Image(image) => {

@@ -368,7 +368,8 @@ pub fn into_google(
         content
             .into_iter()
             .filter_map(|content| match content {
-                language_model::MessageContent::Text(text) => {
+                language_model::MessageContent::Text(text)
+                | language_model::MessageContent::Thinking(text) => {
                     if !text.is_empty() {
                         Some(Part::TextPart(google_ai::TextPart { text }))
                     } else {

@@ -985,10 +985,23 @@ impl Thread {
                 }
             }
 
-            if !message.segments.is_empty() {
-                request_message
-                    .content
-                    .push(MessageContent::Text(message.to_string()));
+            for segment in &message.segments {
+                match segment {
+                    MessageSegment::Text(text) => {
+                        if !text.is_empty() {
+                            request_message
+                                .content
+                                .push(MessageContent::Text(text.into()));
+                        }
+                    }
+                    MessageSegment::Thinking(thinking) => {
+                        if !thinking.is_empty() {
+                            request_message
+                                .content
+                                .push(MessageContent::Thinking(thinking.into()));
+                        }
+                    }
+                };
             }
 
             match request_kind {

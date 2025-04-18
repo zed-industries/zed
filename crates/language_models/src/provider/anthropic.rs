@@ -333,7 +333,7 @@ pub fn count_anthropic_tokens(
 
             for content in message.content {
                 match content {
-                    MessageContent::Text(text) => {
+                    MessageContent::Text(text) | MessageContent::Thinking(text) => {
                         string_contents.push_str(&text);
                     }
                     MessageContent::Image(image) => {
@@ -509,6 +509,16 @@ pub fn into_anthropic(
                             if !text.is_empty() {
                                 Some(anthropic::RequestContent::Text {
                                     text,
+                                    cache_control,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::Thinking(thinking) => {
+                            if !thinking.is_empty() {
+                                Some(anthropic::RequestContent::Thinking {
+                                    thinking,
                                     cache_control,
                                 })
                             } else {

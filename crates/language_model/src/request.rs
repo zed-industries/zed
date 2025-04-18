@@ -175,6 +175,7 @@ pub struct LanguageModelToolResult {
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum MessageContent {
     Text(String),
+    Thinking(String),
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
@@ -204,6 +205,7 @@ impl LanguageModelRequestMessage {
         let mut buffer = String::new();
         for string in self.content.iter().filter_map(|content| match content {
             MessageContent::Text(text) => Some(text.as_str()),
+            MessageContent::Thinking(text) => Some(text.as_str()),
             MessageContent::ToolResult(tool_result) => Some(tool_result.content.as_ref()),
             MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
         }) {
@@ -220,6 +222,7 @@ impl LanguageModelRequestMessage {
                 .first()
                 .map(|content| match content {
                     MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
+                    MessageContent::Thinking(text) => text.chars().all(|c| c.is_whitespace()),
                     MessageContent::ToolResult(tool_result) => {
                         tool_result.content.chars().all(|c| c.is_whitespace())
                     }
