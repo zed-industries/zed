@@ -414,7 +414,7 @@ impl Render for ConfigurationView {
                         List::new()
                             .child(InstructionListItem::text_only("Ollama must be running with at least one model installed to use it in the assistant."))
                             .child(InstructionListItem::text_only(
-                                "Once installed, try ollama run llama3.2",
+                                "Once installed, try `ollama run llama3.2`",
                             )),
                     ),
                 )
