@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
 use gpui::{App, AppContext, Entity, Task};
@@ -44,7 +44,7 @@ impl Tool for TerminalTool {
         IconName::Terminal
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<TerminalToolInput>(format)
     }
 
@@ -79,10 +79,10 @@ impl Tool for TerminalTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input: TerminalToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         let project = project.read(cx);
@@ -93,13 +93,15 @@ impl Tool for TerminalTool {
 
             let only_worktree = match worktrees.next() {
                 Some(worktree) => worktree,
-                None => return Task::ready(Err(anyhow!("No worktrees found in the project"))),
+                None => {
+                    return Task::ready(Err(anyhow!("No worktrees found in the project"))).into();
+                }
             };
 
             if worktrees.next().is_some() {
                 return Task::ready(Err(anyhow!(
                     "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly."
-                )));
+                ))).into();
             }
 
             only_worktree.read(cx).abs_path()
@@ -111,7 +113,8 @@ impl Tool for TerminalTool {
             {
                 return Task::ready(Err(anyhow!(
                     "The absolute path must be within one of the project's worktrees"
-                )));
+                )))
+                .into();
             }
 
             input_path.into()
@@ -120,13 +123,15 @@ impl Tool for TerminalTool {
                 return Task::ready(Err(anyhow!(
                     "`cd` directory {} not found in the project",
                     &input.cd
-                )));
+                )))
+                .into();
             };
 
             worktree.read(cx).abs_path()
         };
 
         cx.background_spawn(run_command_limited(working_dir, input.command))
+            .into()
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -56,7 +56,7 @@ impl Tool for ListDirectoryTool {
         IconName::Folder
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<ListDirectoryToolInput>(format)
     }
 
@@ -77,10 +77,10 @@ impl Tool for ListDirectoryTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<ListDirectoryToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         // Sometimes models will return these even though we tell it to give a path and not a glob.
@@ -101,26 +101,26 @@ impl Tool for ListDirectoryTool {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            return Task::ready(Ok(output));
+            return Task::ready(Ok(output)).into();
         }
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path {} not found in project", input.path)));
+            return Task::ready(Err(anyhow!("Path {} not found in project", input.path))).into();
         };
         let Some(worktree) = project
             .read(cx)
             .worktree_for_id(project_path.worktree_id, cx)
         else {
-            return Task::ready(Err(anyhow!("Worktree not found")));
+            return Task::ready(Err(anyhow!("Worktree not found"))).into();
         };
         let worktree = worktree.read(cx);
 
         let Some(entry) = worktree.entry_for_path(&project_path.path) else {
-            return Task::ready(Err(anyhow!("Path not found: {}", input.path)));
+            return Task::ready(Err(anyhow!("Path not found: {}", input.path))).into();
         };
 
         if !entry.is_dir() {
-            return Task::ready(Err(anyhow!("{} is not a directory.", input.path)));
+            return Task::ready(Err(anyhow!("{} is not a directory.", input.path))).into();
         }
 
         let mut output = String::new();
@@ -133,8 +133,8 @@ impl Tool for ListDirectoryTool {
             .unwrap();
         }
         if output.is_empty() {
-            return Task::ready(Ok(format!("{} is empty.", input.path)));
+            return Task::ready(Ok(format!("{} is empty.", input.path))).into();
         }
-        Task::ready(Ok(output))
+        Task::ready(Ok(output)).into()
     }
 }

@@ -1,0 +1,3 @@
+url = "https://github.com/bevyengine/bevy.git"
+revision = "ac52cca033b351cc966cd3d40eb99ffbefbdb104"
+language_extension = "rs"

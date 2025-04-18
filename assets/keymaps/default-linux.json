@@ -134,7 +134,9 @@
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-shift-e": "editor::ToggleEditPrediction",
       "f9": "editor::ToggleBreakpoint",
-      "shift-f9": "editor::EditLogBreakpoint"
+      "shift-f9": "editor::EditLogBreakpoint",
+      "ctrl-shift-backspace": "editor::GoToPreviousChange",
+      "ctrl-shift-alt-backspace": "editor::GoToNextChange"
     }
   },
   {
@@ -630,6 +632,7 @@
       "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenConfiguration",
+      "ctrl-alt-p": "assistant::OpenPromptLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
@@ -718,7 +721,7 @@
       "alt-shift-copy": "workspace::CopyRelativePath",
       "alt-ctrl-shift-c": "workspace::CopyRelativePath",
       "alt-ctrl-r": "outline_panel::RevealInFileManager",
-      "space": "outline_panel::Open",
+      "space": "outline_panel::OpenSelectedEntry",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "alt-enter": "editor::OpenExcerpts",
@@ -782,6 +785,7 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend",
       "alt-enter": "menu::SecondaryConfirm",
       "delete": ["git::RestoreFile", { "skip_prompt": false }],
       "backspace": ["git::RestoreFile", { "skip_prompt": false }],
@@ -791,11 +795,19 @@
     }
   },
   {
+    "context": "GitPanel && CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git::Cancel"
+    }
+  },
+  {
     "context": "GitCommit > Editor",
     "bindings": {
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend",
       "alt-l": "git::GenerateCommitMessage"
     }
   },
@@ -817,6 +829,7 @@
     "context": "GitDiff > Editor",
     "bindings": {
       "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend",
       "ctrl-space": "git::StageAll",
       "ctrl-shift-space": "git::UnstageAll"
     }
@@ -835,6 +848,7 @@
       "shift-tab": "git_panel::FocusChanges",
       "enter": "editor::Newline",
       "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend",
       "alt-up": "git_panel::FocusChanges",
       "alt-l": "git::GenerateCommitMessage"
     }

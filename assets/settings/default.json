@@ -644,6 +644,7 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
+          "contents": true,
           "diagnostics": true,
           "fetch": true,
           "list_directory": false,
@@ -651,7 +652,8 @@
           "path_search": true,
           "read_file": true,
           "regex_search": true,
-          "thinking": true
+          "thinking": true,
+          "web_search": true
         }
       },
       "write": {
@@ -662,6 +664,7 @@
           "batch_tool": true,
           "code_actions": true,
           "code_symbols": true,
+          "contents": true,
           "copy_path": false,
           "create_file": true,
           "delete_path": false,
@@ -676,7 +679,8 @@
           "regex_search": true,
           "rename": true,
           "symbol_info": true,
-          "thinking": true
+          "thinking": true,
+          "web_search": true
         }
       }
     },

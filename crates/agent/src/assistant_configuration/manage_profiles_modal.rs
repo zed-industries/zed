@@ -84,7 +84,7 @@ pub struct NewProfileMode {
 
 pub struct ManageProfilesModal {
     fs: Arc<dyn Fs>,
-    tools: Arc<ToolWorkingSet>,
+    tools: Entity<ToolWorkingSet>,
     thread_store: WeakEntity<ThreadStore>,
     focus_handle: FocusHandle,
     mode: Mode,
@@ -117,7 +117,7 @@ impl ManageProfilesModal {
 
     pub fn new(
         fs: Arc<dyn Fs>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         thread_store: WeakEntity<ThreadStore>,
         window: &mut Window,
         cx: &mut Context<Self>,

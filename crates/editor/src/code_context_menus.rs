@@ -632,6 +632,7 @@ impl CompletionsMenu {
                     MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
                         .code_block_renderer(markdown::CodeBlockRenderer::Default {
                             copy_button: false,
+                            border: false,
                         })
                         .on_url_click(open_markdown_url),
                 )
@@ -776,11 +777,34 @@ pub struct AvailableCodeAction {
 
 #[derive(Clone)]
 pub struct CodeActionContents {
-    pub tasks: Option<Rc<ResolvedTasks>>,
-    pub actions: Option<Rc<[AvailableCodeAction]>>,
+    tasks: Option<Rc<ResolvedTasks>>,
+    actions: Option<Rc<[AvailableCodeAction]>>,
 }
 
 impl CodeActionContents {
+    pub fn new(
+        mut tasks: Option<ResolvedTasks>,
+        actions: Option<Rc<[AvailableCodeAction]>>,
+        cx: &App,
+    ) -> Self {
+        if !cx.has_flag::<Debugger>() {
+            if let Some(tasks) = &mut tasks {
+                tasks
+                    .templates
+                    .retain(|(_, task)| !matches!(task.task_type(), task::TaskType::Debug(_)));
+            }
+        }
+
+        Self {
+            tasks: tasks.map(Rc::new),
+            actions,
+        }
+    }
+
+    pub fn tasks(&self) -> Option<&ResolvedTasks> {
+        self.tasks.as_deref()
+    }
+
     fn len(&self) -> usize {
         match (&self.tasks, &self.actions) {
             (Some(tasks), Some(actions)) => actions.len() + tasks.templates.len(),
@@ -988,17 +1012,6 @@ impl CodeActionsMenu {
                     .iter()
                     .skip(range.start)
                     .take(range.end - range.start)
-                    .filter(|action| {
-                        if action
-                            .as_task()
-                            .map(|task| matches!(task.task_type(), task::TaskType::Debug(_)))
-                            .unwrap_or(false)
-                        {
-                            cx.has_flag::<Debugger>()
-                        } else {
-                            true
-                        }
-                    })
                     .enumerate()
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;

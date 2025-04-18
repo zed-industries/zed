@@ -1578,7 +1578,27 @@ impl MultiBuffer {
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
-        self.set_excerpt_ranges_for_path(
+        self.set_merged_excerpt_ranges_for_path(
+            path,
+            buffer,
+            excerpt_ranges,
+            &buffer_snapshot,
+            new,
+            counts,
+            cx,
+        )
+    }
+
+    pub fn set_excerpt_ranges_for_path(
+        &mut self,
+        path: PathKey,
+        buffer: Entity<Buffer>,
+        buffer_snapshot: &BufferSnapshot,
+        excerpt_ranges: Vec<ExcerptRange<Point>>,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Range<Anchor>>, bool) {
+        let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
+        self.set_merged_excerpt_ranges_for_path(
             path,
             buffer,
             excerpt_ranges,
@@ -1612,11 +1632,11 @@ impl MultiBuffer {
 
             multi_buffer
                 .update(cx, move |multi_buffer, cx| {
-                    let (ranges, _) = multi_buffer.set_excerpt_ranges_for_path(
+                    let (ranges, _) = multi_buffer.set_merged_excerpt_ranges_for_path(
                         path_key,
                         buffer,
                         excerpt_ranges,
-                        buffer_snapshot,
+                        &buffer_snapshot,
                         new,
                         counts,
                         cx,
@@ -1629,12 +1649,12 @@ impl MultiBuffer {
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
-    fn set_excerpt_ranges_for_path(
+    fn set_merged_excerpt_ranges_for_path(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
         ranges: Vec<ExcerptRange<Point>>,
-        buffer_snapshot: BufferSnapshot,
+        buffer_snapshot: &BufferSnapshot,
         new: Vec<ExcerptRange<Point>>,
         counts: Vec<usize>,
         cx: &mut Context<Self>,
@@ -1665,6 +1685,7 @@ impl MultiBuffer {
         let mut counts: Vec<usize> = Vec::new();
         for range in expanded_ranges {
             if let Some(last_range) = merged_ranges.last_mut() {
+                debug_assert!(last_range.context.start <= range.context.start);
                 if last_range.context.end >= range.context.start {
                     last_range.context.end = range.context.end;
                     *counts.last_mut().unwrap() += 1;
@@ -5149,6 +5170,7 @@ impl MultiBufferSnapshot {
         excerpt_id: ExcerptId,
         text_anchor: text::Anchor,
     ) -> Option<Anchor> {
+        let excerpt_id = self.latest_excerpt_id(excerpt_id);
         let locator = self.excerpt_locator_for_id(excerpt_id);
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>(&());
         cursor.seek(locator, Bias::Left, &());
@@ -5878,13 +5900,14 @@ impl MultiBufferSnapshot {
         buffer_id: BufferId,
         group_id: usize,
     ) -> impl Iterator<Item = DiagnosticEntry<Point>> + '_ {
-        self.lift_buffer_metadata(Point::zero()..self.max_point(), move |buffer, _| {
+        self.lift_buffer_metadata(Point::zero()..self.max_point(), move |buffer, range| {
             if buffer.remote_id() != buffer_id {
                 return None;
             };
             Some(
                 buffer
-                    .diagnostic_group(group_id)
+                    .diagnostics_in_range(range, false)
+                    .filter(move |diagnostic| diagnostic.diagnostic.group_id == group_id)
                     .map(move |DiagnosticEntry { diagnostic, range }| (range, diagnostic)),
             )
         })
@@ -6019,7 +6042,7 @@ impl MultiBufferSnapshot {
                     return &entry.locator;
                 }
             }
-            panic!("invalid excerpt id {:?}", id)
+            panic!("invalid excerpt id {id:?}")
         }
     }
 
@@ -7694,7 +7717,12 @@ impl ToOffset for Point {
 impl ToOffset for usize {
     #[track_caller]
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
-        assert!(*self <= snapshot.len(), "offset is out of range");
+        assert!(
+            *self <= snapshot.len(),
+            "offset {} is greater than the snapshot.len() {}",
+            *self,
+            snapshot.len(),
+        );
         *self
     }
 }

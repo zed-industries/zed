@@ -117,6 +117,7 @@ CREATE TABLE "project_repositories" (
     "is_deleted" BOOL NOT NULL,
     "current_merge_conflicts" VARCHAR,
     "branch_summary" VARCHAR,
+    "head_commit_details" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 
@@ -505,7 +506,10 @@ CREATE TABLE IF NOT EXISTS billing_subscriptions (
     stripe_subscription_id TEXT NOT NULL,
     stripe_subscription_status TEXT NOT NULL,
     stripe_cancel_at TIMESTAMP,
-    stripe_cancellation_reason TEXT
+    stripe_cancellation_reason TEXT,
+    kind TEXT,
+    stripe_current_period_start BIGINT,
+    stripe_current_period_end BIGINT
 );
 
 CREATE INDEX "ix_billing_subscriptions_on_billing_customer_id" ON billing_subscriptions (billing_customer_id);

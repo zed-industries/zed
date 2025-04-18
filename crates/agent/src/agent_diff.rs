@@ -1,7 +1,7 @@
 use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{
     Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
@@ -355,15 +355,23 @@ impl AgentDiff {
             self.update_selection(&diff_hunks_in_ranges, window, cx);
         }
 
+        let mut ranges_by_buffer = HashMap::default();
         for hunk in &diff_hunks_in_ranges {
             let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
             if let Some(buffer) = buffer {
-                self.thread
-                    .update(cx, |thread, cx| {
-                        thread.reject_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
-                    })
-                    .detach_and_log_err(cx);
+                ranges_by_buffer
+                    .entry(buffer.clone())
+                    .or_insert_with(Vec::new)
+                    .push(hunk.buffer_range.clone());
             }
+        }
+
+        for (buffer, ranges) in ranges_by_buffer {
+            self.thread
+                .update(cx, |thread, cx| {
+                    thread.reject_edits_in_ranges(buffer, ranges, cx)
+                })
+                .detach_and_log_err(cx);
         }
     }
 
@@ -894,6 +902,7 @@ mod tests {
     use super::*;
     use crate::{ThreadStore, thread_store};
     use assistant_settings::AssistantSettings;
+    use assistant_tool::ToolWorkingSet;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::TestAppContext;
@@ -913,6 +922,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             AssistantSettings::register(cx);
+            prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
@@ -937,12 +947,13 @@ mod tests {
             .update(|cx| {
                 ThreadStore::load(
                     project.clone(),
-                    Arc::default(),
+                    cx.new(|_| ToolWorkingSet::default()),
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )
             })
-            .await;
+            .await
+            .unwrap();
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 

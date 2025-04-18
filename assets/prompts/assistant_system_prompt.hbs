@@ -144,6 +144,19 @@ In Markdown, hash marks signify headings. For example:
 This example is unacceptable because the path is in the wrong place. The path must be directly after the opening backticks.
 </style>
 
+{{#if has_default_user_rules}}
+The user has specified the following rules that should be applied:
+{{#each default_user_rules}}
+
+{{#if title}}
+Rules title: {{title}}
+{{/if}}
+``````
+{{contents}}
+``````
+{{/each}}
+
+{{/if}}
 The user has opened a project that contains the following root directories/files. Whenever you specify a path in the project, it must be a relative path which begins with one of these root directories/files:
 
 {{#each worktrees}}
@@ -151,7 +164,7 @@ The user has opened a project that contains the following root directories/files
 {{/each}}
 {{#if has_rules}}
 
-There are rules that apply to these root directories:
+There are project rules that apply to these root directories:
 {{#each worktrees}}
 {{#if rules_file}}
 
