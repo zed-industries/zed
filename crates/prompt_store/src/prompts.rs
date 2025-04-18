@@ -43,7 +43,6 @@ impl ProjectContext {
 #[derive(Debug, Clone, Serialize)]
 pub struct WorktreeContext {
     pub root_name: String,
-    pub abs_path: Arc<Path>,
     pub rules_file: Option<RulesFileContext>,
 }
 
