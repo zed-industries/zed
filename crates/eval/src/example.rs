@@ -300,35 +300,11 @@ impl Example {
 
                 let language_file_buffer = open_language_file_buffer_task.await?;
 
-                let (lsp_open_handle, lsp_store) = project.update(cx, |project, cx| {
-                    (
-                        project.register_buffer_with_language_servers(&language_file_buffer, cx),
-                        project.lsp_store().clone(),
-                    )
+                let lsp_open_handle = project.update(cx, |project, cx| {
+                    project.register_buffer_with_language_servers(&language_file_buffer, cx)
                 })?;
 
                 wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
-
-                lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_open_handle.update(cx, |buffer, cx| {
-                        buffer.update(cx, |buffer, cx| {
-                            let has_language_server = lsp_store
-                                .language_servers_for_local_buffer(buffer, cx)
-                                .next()
-                                .is_some();
-                            if has_language_server {
-                                Ok(())
-                            } else {
-                                Err(anyhow!(
-                                    "`{:?}` was opened to cause the language server to start, \
-                                    but no language servers are registered for its buffer. \
-                                    Set `require_lsp = false` in `base.toml` to skip this.",
-                                    language_file
-                                ))
-                            }
-                        })
-                    })
-                })??;
 
                 Some((lsp_open_handle, language_file_buffer))
             } else {
