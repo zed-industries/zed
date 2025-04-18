@@ -90,6 +90,7 @@ fn search(
                     .collect()
             })
         }
+        Some(ContextPickerMode::Selection) => Task::ready(Vec::new()),
         Some(ContextPickerMode::Thread) => {
             if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
                 let search_threads_task =
@@ -142,7 +143,7 @@ fn search(
                     .collect::<Vec<_>>();
 
                 matches.extend(
-                    supported_context_picker_modes(&thread_store)
+                    supported_context_picker_modes(&thread_store, &workspace, cx)
                         .into_iter()
                         .map(|mode| Match::Mode(ModeMatch { mode, mat: None })),
                 );
@@ -154,7 +155,7 @@ fn search(
                 let search_files_task =
                     search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
 
-                let modes = supported_context_picker_modes(&thread_store);
+                let modes = supported_context_picker_modes(&thread_store, &workspace, cx);
                 let mode_candidates = modes
                     .iter()
                     .enumerate()

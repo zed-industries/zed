@@ -40,6 +40,7 @@ enum ContextPickerMode {
     Symbol,
     Fetch,
     Thread,
+    Selection,
 }
 
 impl TryFrom<&str> for ContextPickerMode {
@@ -49,6 +50,7 @@ impl TryFrom<&str> for ContextPickerMode {
         match value {
             "file" => Ok(Self::File),
             "symbol" => Ok(Self::Symbol),
+            "selection" => Ok(Self::Selection),
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
             _ => Err(format!("Invalid context picker mode: {}", value)),
@@ -61,6 +63,7 @@ impl ContextPickerMode {
         match self {
             Self::File => "file",
             Self::Symbol => "symbol",
+            Self::Selection => "selection",
             Self::Fetch => "fetch",
             Self::Thread => "thread",
         }
@@ -70,6 +73,7 @@ impl ContextPickerMode {
         match self {
             Self::File => "Files & Directories",
             Self::Symbol => "Symbols",
+            Self::Selection => "Selection",
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
         }
@@ -79,6 +83,7 @@ impl ContextPickerMode {
         match self {
             Self::File => IconName::File,
             Self::Symbol => IconName::Code,
+            Self::Selection => IconName::Context,
             Self::Fetch => IconName::Globe,
             Self::Thread => IconName::MessageBubbles,
         }
@@ -155,7 +160,11 @@ impl ContextPicker {
                 .enumerate()
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
-            let modes = supported_context_picker_modes(&self.thread_store);
+            let modes = self
+                .workspace
+                .upgrade()
+                .map(|workspace| supported_context_picker_modes(&self.thread_store, &workspace, cx))
+                .unwrap_or_default();
 
             menu.when(has_recent, |menu| {
                 menu.custom_row(|_, _| {
@@ -228,6 +237,15 @@ impl ContextPicker {
                         cx,
                     )
                 }));
+            }
+            ContextPickerMode::Selection => {
+                if let Some((context_store, workspace)) =
+                    self.context_store.upgrade().zip(self.workspace.upgrade())
+                {
+                    add_selections_as_context(&context_store, &workspace, cx);
+                }
+
+                cx.emit(DismissEvent);
             }
             ContextPickerMode::Fetch => {
                 self.mode = ContextPickerState::Fetch(cx.new(|cx| {
@@ -423,15 +441,28 @@ enum RecentEntry {
 
 fn supported_context_picker_modes(
     thread_store: &Option<WeakEntity<ThreadStore>>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
 ) -> Vec<ContextPickerMode> {
-    let mut modes = vec![
-        ContextPickerMode::File,
-        ContextPickerMode::Symbol,
-        ContextPickerMode::Fetch,
-    ];
+    let mut modes = vec![ContextPickerMode::File, ContextPickerMode::Symbol];
+
+    let has_selection = workspace
+        .read(cx)
+        .active_item(cx)
+        .and_then(|item| item.downcast::<Editor>())
+        .map_or(false, |editor| {
+            editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
+        });
+    if has_selection {
+        modes.push(ContextPickerMode::Selection);
+    }
+
     if thread_store.is_some() {
         modes.push(ContextPickerMode::Thread);
     }
+
+    modes.push(ContextPickerMode::Fetch);
+
     modes
 }
 
@@ -489,6 +520,48 @@ fn recent_context_picker_entries(
     }
 
     recent
+}
+
+fn add_selections_as_context(
+    context_store: &Entity<ContextStore>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let Some(editor) = workspace
+        .read(cx)
+        .active_item(cx)
+        .and_then(|item| item.act_as::<Editor>(cx))
+    else {
+        return;
+    };
+
+    let selection_ranges = editor.update(cx, |editor, cx| {
+        let selections = editor.selections.all_adjusted(cx);
+
+        let buffer = editor.buffer().clone().read(cx);
+        let snapshot = buffer.snapshot(cx);
+
+        selections
+            .into_iter()
+            .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+            .flat_map(|range| {
+                let (start_buffer, start) = buffer.text_anchor_for_position(range.start, cx)?;
+                let (end_buffer, end) = buffer.text_anchor_for_position(range.end, cx)?;
+                if start_buffer != end_buffer {
+                    return None;
+                }
+                Some((start_buffer, start..end))
+            })
+            .collect::<Vec<_>>()
+    });
+
+    context_store.update(cx, |context_store, cx| {
+        for (buffer, range) in selection_ranges {
+            context_store
+                .add_excerpt(range, buffer, cx)
+                .detach_and_log_err(cx);
+        }
+    })
 }
 
 pub(crate) fn insert_fold_for_mention(

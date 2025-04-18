@@ -323,7 +323,7 @@ impl AddedContext {
 
                 AddedContext {
                     id: excerpt_context.id,
-                    kind: ContextKind::File, // Use File icon for excerpts
+                    kind: ContextKind::Excerpt,
                     name: name.into(),
                     parent,
                     tooltip: Some(full_path_string.into()),

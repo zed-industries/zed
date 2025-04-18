@@ -35,7 +35,7 @@ impl ContextKind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
-            ContextKind::Excerpt => IconName::Code,
+            ContextKind::Excerpt => IconName::Context,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
         }
