@@ -387,6 +387,8 @@ fn handle_syskeyup_msg(
     result
 }
 
+/// Note that on Windows, some keys like `ScrollLock`, `NumLock`, `CapsLock`, `PrintScreen`, etc. Windows will not
+/// send `WM_KEYDOWN` messages for them, but only `WM_KEYUP` messages.
 fn handle_keydown_msg(
     wparam: WPARAM,
     lparam: LPARAM,
@@ -1218,6 +1220,7 @@ fn handle_system_settings_changed(
 }
 
 fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    println!("\nWM_SYSCOMMAND: {:?}, {:x}", wparam, wparam.0);
     if wparam.0 == SC_KEYMENU as usize {
         let mut lock = state_ptr.state.borrow_mut();
         if lock.system_key_handled {
