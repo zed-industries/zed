@@ -2,7 +2,7 @@
 
 Zed uses GitHub's OAuth flow to authenticate users, requiring only the `read:user` GitHub scope, which grants read-only access to your GitHub profile information.
 
-1. Open Zed and click the `Sign In` button in the top-right corner of the window, or run the `client: sign in` command from the command palette.
+1. Open Zed and click the `Sign In` button in the top-right corner of the window, or run the `client: sign in` command from the command palette (`cmd-shift-p` on macOS or `ctrl-shift-p` on Windows/Linux).
 2. Your default web browser will open to the Zed sign-in page.
 3. Authenticate with your GitHub account when prompted.
 4. After successful authentication, your browser will display a confirmation, and you'll be automatically signed in to Zed.
@@ -20,4 +20,4 @@ Sign in is also required for [LLM-powered features](./assistant/assistant.md) if
 To sign out of Zed, you can use either of these methods:
 
 - Click on the profile icon in the upper right corner and select `Sign Out` from the dropdown menu.
-- Open the command palette with `cmd-shift-p` (macOS) or `ctrl-shift-p` (Windows/Linux) and run the `client: sign out` command.
+- Open the command palette and run the `client: sign out` command.
