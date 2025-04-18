@@ -339,6 +339,9 @@ pub fn count_anthropic_tokens(
                     MessageContent::Thinking { .. } => {
                         // Thinking blocks are not included in the input token count.
                     }
+                    MessageContent::RedactedThinking(_) => {
+                        // Thinking blocks are not included in the input token count.
+                    }
                     MessageContent::Image(image) => {
                         tokens_from_images += image.estimate_tokens();
                     }
@@ -527,6 +530,15 @@ pub fn into_anthropic(
                                     thinking,
                                     signature: signature.unwrap_or_default(), //TODO
                                     cache_control,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::RedactedThinking(data) => {
+                            if !data.is_empty() {
+                                Some(anthropic::RequestContent::RedactedThinking {
+                                    data: String::from_utf8(data).ok()?,
                                 })
                             } else {
                                 None

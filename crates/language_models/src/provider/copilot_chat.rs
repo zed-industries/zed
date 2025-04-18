@@ -428,6 +428,7 @@ impl CopilotChatLanguageModel {
                         Some(text.as_str())
                     }
                     MessageContent::ToolUse(_)
+                    | MessageContent::RedactedThinking(_)
                     | MessageContent::ToolResult(_)
                     | MessageContent::Image(_) => None,
                 }) {

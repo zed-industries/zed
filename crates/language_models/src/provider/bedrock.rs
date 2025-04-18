@@ -745,6 +745,7 @@ pub fn get_bedrock_tokens(
                         MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                             string_contents.push_str(&text);
                         }
+                        MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(image) => {
                             tokens_from_images += image.estimate_tokens();
                         }
@@ -830,8 +831,8 @@ pub fn map_to_language_model_completion_events(
                                                         redacted,
                                                     ) => {
                                                         let thinking_event =
-                                                            LanguageModelCompletionEvent::Thinking { text:
-                                                                String::from_utf8(
+                                                            LanguageModelCompletionEvent::Thinking {
+                                                                text: String::from_utf8(
                                                                     redacted.into_inner(),
                                                                 )
                                                                 .unwrap_or("REDACTED".to_string()),
@@ -843,13 +844,22 @@ pub fn map_to_language_model_completion_events(
                                                             state,
                                                         ));
                                                     }
-                                                    ReasoningContentBlockDelta::Signature(_sig) => {
+                                                    ReasoningContentBlockDelta::Signature(
+                                                        signature,
+                                                    ) => {
+                                                        return Some((
+                                                            Some(Ok(LanguageModelCompletionEvent::Thinking {
+                                                                text: "".to_string(),
+                                                                signature: Some(signature)
+                                                            })),
+                                                            state,
+                                                        ));
                                                     }
                                                     ReasoningContentBlockDelta::Text(thoughts) => {
                                                         let thinking_event =
                                                             LanguageModelCompletionEvent::Thinking {
-                                                                text:
-                                                                thoughts.to_string(), signature: None
+                                                                text: thoughts.to_string(),
+                                                                signature: None
                                                             };
 
                                                         return Some((

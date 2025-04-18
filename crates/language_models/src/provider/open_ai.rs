@@ -351,6 +351,7 @@ pub fn into_open_ai(
                         },
                         Role::System => open_ai::RequestMessage::System { content: text },
                     }),
+                MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_ai::ToolCall {

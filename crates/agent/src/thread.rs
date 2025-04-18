@@ -101,7 +101,9 @@ impl Message {
             signature: current_signature,
         }) = self.segments.last_mut()
         {
-            *current_signature = signature;
+            if let Some(signature) = signature {
+                *current_signature = Some(signature);
+            }
             segment.push_str(text);
         } else {
             self.segments.push(MessageSegment::Thinking {
@@ -134,6 +136,7 @@ impl Message {
                     result.push_str(text);
                     result.push_str("\n</think>");
                 }
+                MessageSegment::RedactedThinking(_) => {}
             }
         }
 
@@ -148,16 +151,10 @@ pub enum MessageSegment {
         text: String,
         signature: Option<String>,
     },
+    RedactedThinking(Vec<u8>),
 }
 
 impl MessageSegment {
-    pub fn text_mut(&mut self) -> &mut String {
-        match self {
-            Self::Text(text) => text,
-            Self::Thinking { text, .. } => text,
-        }
-    }
-
     pub fn should_display(&self) -> bool {
         // We add USING_TOOL_MARKER when making a request that includes tool uses
         // without non-whitespace text around them, and this can cause the model
@@ -165,6 +162,7 @@ impl MessageSegment {
         match self {
             Self::Text(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
             Self::Thinking { text, .. } => text.is_empty() || text.trim() == USING_TOOL_MARKER,
+            Self::RedactedThinking(_) => false,
         }
     }
 }
@@ -396,6 +394,9 @@ impl Thread {
                             SerializedMessageSegment::Text { text } => MessageSegment::Text(text),
                             SerializedMessageSegment::Thinking { text, signature } => {
                                 MessageSegment::Thinking { text, signature }
+                            }
+                            SerializedMessageSegment::RedactedThinking { data } => {
+                                MessageSegment::RedactedThinking(data)
                             }
                         })
                         .collect(),
@@ -837,6 +838,7 @@ impl Thread {
                     MessageSegment::Thinking { text: content, .. } => {
                         text.push_str(&format!("<think>{}</think>", content))
                     }
+                    MessageSegment::RedactedThinking(_) => {}
                 }
             }
             text.push('\n');
@@ -870,6 +872,11 @@ impl Thread {
                                     SerializedMessageSegment::Thinking {
                                         text: text.clone(),
                                         signature: signature.clone(),
+                                    }
+                                }
+                                MessageSegment::RedactedThinking(data) => {
+                                    SerializedMessageSegment::RedactedThinking {
+                                        data: data.clone(),
                                     }
                                 }
                             })
@@ -1014,6 +1021,11 @@ impl Thread {
                                 signature: signature.clone(),
                             });
                         }
+                    }
+                    MessageSegment::RedactedThinking(data) => {
+                        request_message
+                            .content
+                            .push(MessageContent::RedactedThinking(data.clone()));
                     }
                 };
             }
@@ -1870,6 +1882,7 @@ impl Thread {
                     MessageSegment::Thinking { text, .. } => {
                         writeln!(markdown, "<think>\n{}\n</think>\n", text)?
                     }
+                    MessageSegment::RedactedThinking(_) => {}
                 }
             }
 

@@ -514,6 +514,9 @@ pub enum RequestContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    RedactedThinking {
+        data: String,
+    },
     #[serde(rename = "image")]
     Image {
         source: ImageSource,
