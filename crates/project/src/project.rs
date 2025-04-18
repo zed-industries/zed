@@ -1067,7 +1067,7 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone().into()));
+                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone()));
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_ssh(
@@ -1520,7 +1520,7 @@ impl Project {
                     envs: HashMap::default(),
                     cwd: None,
                     connection,
-                    request_args: binary.request_args.into(),
+                    request_args: binary.request_args,
                 }
             };
 

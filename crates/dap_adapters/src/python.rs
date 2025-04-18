@@ -147,8 +147,8 @@ impl DebugAdapter for PythonDebugAdapter {
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
-                format!("--port={}", port).into(),
-                format!("--host={}", host).into(),
+                format!("--port={}", port),
+                format!("--host={}", host),
             ],
             connection: Some(adapters::TcpArguments {
                 host,

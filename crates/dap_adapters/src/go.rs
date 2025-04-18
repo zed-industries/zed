@@ -96,7 +96,7 @@ impl DebugAdapter for GoDebugAdapter {
             arguments: vec![
                 "dap".into(),
                 "--listen".into(),
-                format!("{}:{}", host, port).into(),
+                format!("{}:{}", host, port),
             ],
             cwd: None,
             envs: HashMap::default(),
