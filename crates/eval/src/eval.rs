@@ -53,6 +53,9 @@ struct Args {
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "10")]
     concurrency: usize,
+    /// Optional cohort ID to group runs together (useful for GitHub Actions)
+    #[arg(long)]
+    cohort_id: Option<String>,
 }
 
 fn main() {
@@ -233,14 +236,17 @@ fn main() {
 
             let judge_repetitions = args.judge_repetitions;
             let concurrency = args.concurrency;
+            let cohort_id = args.cohort_id.clone();
 
             let tasks = examples.iter().map(|example| {
                 let app_state = app_state.clone();
                 let model = model.clone();
                 let example = example.clone();
+                let cohort_id = cohort_id.clone();
                 cx.spawn(async move |cx| {
                     let result =
-                        run_example(&example, model, app_state, judge_repetitions, cx).await;
+                        run_example(&example, model, app_state, judge_repetitions, cohort_id, cx)
+                            .await;
                     (result, example)
                 })
             });
@@ -351,14 +357,23 @@ async fn run_example(
     model: Arc<dyn LanguageModel>,
     app_state: Arc<AgentAppState>,
     judge_repetitions: u32,
+    optional_cohort_id: Option<String>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Result<JudgeOutput>>> {
     let run_output = cx
         .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
         .await?;
 
-    let judge_tasks = (0..judge_repetitions)
-        .map(|round| run_judge_repetition(example.clone(), model.clone(), &run_output, round, cx));
+    let judge_tasks = (0..judge_repetitions).map(|round| {
+        run_judge_repetition(
+            example.clone(),
+            model.clone(),
+            &run_output,
+            round,
+            optional_cohort_id.clone(),
+            cx,
+        )
+    });
 
     let results = future::join_all(judge_tasks).await;
 
@@ -543,6 +558,7 @@ async fn run_judge_repetition(
     model: Arc<dyn LanguageModel>,
     run_output: &RunOutput,
     round: u32,
+    optional_cohort_id: Option<String>,
     cx: &AsyncApp,
 ) -> Result<JudgeOutput> {
     let judge_result = example.judge(model.clone(), &run_output, round, cx).await;
@@ -558,6 +574,10 @@ async fn run_judge_repetition(
         let commit_id = get_current_commit_id(path).await.unwrap_or_default();
 
         if let Some(thread) = &judge_output.thread {
+            let cohort_id = optional_cohort_id.clone().unwrap_or_else(|| cohort_id);
+
+            let path = std::path::Path::new(".");
+            let commit_id = get_current_commit_id(path).await.unwrap_or_default();
             telemetry::event!(
                 "Agent Eval Completed",
                 cohort_id = cohort_id,
