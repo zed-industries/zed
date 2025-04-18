@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::TcpHost;
+use task::TcpArgumentsTemplate;
 use util::ResultExt as _;
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
@@ -520,7 +520,7 @@ pub struct TcpTransport {
 
 impl TcpTransport {
     /// Get an open port to use with the tcp client when not supplied by debug config
-    pub async fn port(host: &TcpHost) -> Result<u16> {
+    pub async fn port(host: &TcpArgumentsTemplate) -> Result<u16> {
         if let Some(port) = host.port {
             Ok(port)
         } else {

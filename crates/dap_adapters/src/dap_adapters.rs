@@ -24,7 +24,7 @@ use javascript::JsDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use serde_json::{Value, json};
-use task::TcpHost;
+use task::TcpArgumentsTemplate;
 
 pub fn init(cx: &mut App) {
     cx.update_default_global(|registry: &mut DapRegistry, _cx| {
@@ -38,7 +38,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub(crate) async fn configure_tcp_connection(
-    tcp_connection: TcpHost,
+    tcp_connection: TcpArgumentsTemplate,
 ) -> Result<(Ipv4Addr, u16, Option<u64>)> {
     let host = tcp_connection.host();
     let timeout = tcp_connection.timeout;

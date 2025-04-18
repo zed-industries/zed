@@ -5,7 +5,7 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::{AttachRequest, DebugTaskDefinition, TcpHost};
+use task::{AttachRequest, DebugTaskDefinition, TcpArgumentsTemplate};
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -107,7 +107,7 @@ async fn test_show_attach_modal_and_select_process(
                         request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),
                         initialize_args: None,
-                        tcp_connection: Some(TcpHost::default()),
+                        tcp_connection: Some(TcpArgumentsTemplate::default()),
                         stop_on_entry: None,
                     },
                     vec![

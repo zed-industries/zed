@@ -8,7 +8,7 @@ use crate::{TaskTemplate, TaskType, task_template::DebugArgs};
 
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-pub struct TcpHost {
+pub struct TcpArgumentsTemplate {
     /// The port that the debug adapter is listening on
     ///
     /// Default: We will try to find an open port
@@ -23,7 +23,7 @@ pub struct TcpHost {
     pub timeout: Option<u64>,
 }
 
-impl TcpHost {
+impl TcpArgumentsTemplate {
     /// Get the host or fallback to the default host
     pub fn host(&self) -> Ipv4Addr {
         self.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1))
@@ -187,7 +187,7 @@ pub struct DebugTaskDefinition {
     /// If provided, this will be used to connect to the debug adapter instead of
     /// spawning a new process. This is useful for connecting to a debug adapter
     /// that is already running or is started by another process.
-    pub tcp_connection: Option<TcpHost>,
+    pub tcp_connection: Option<TcpArgumentsTemplate>,
     /// Whether to tell the debug adapter to stop on entry
     pub stop_on_entry: Option<bool>,
 }
@@ -238,7 +238,7 @@ impl DebugTaskDefinition {
             initialize_args: proto.initialize_args.map(|v| v.into()),
             tcp_connection: proto
                 .tcp_connection
-                .map(|t| TcpHost::from_proto(t))
+                .map(|t| TcpArgumentsTemplate::from_proto(t))
                 .transpose()?,
             stop_on_entry: proto.stop_on_entry,
             adapter: proto.adapter.clone(),

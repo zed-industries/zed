@@ -17,7 +17,7 @@ use std::{
     borrow::Borrow, collections::HashSet, ffi::OsStr, fmt::Debug, net::Ipv4Addr, ops::Deref,
     path::PathBuf, sync::Arc,
 };
-use task::{DebugTaskDefinition, TcpHost};
+use task::{DebugTaskDefinition, TcpArgumentsTemplate};
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,7 +91,7 @@ pub struct TcpArguments {
 
 impl TcpArguments {
     pub fn from_proto(proto: proto::TcpHost) -> anyhow::Result<Self> {
-        let host = TcpHost::from_proto(proto)?;
+        let host = TcpArgumentsTemplate::from_proto(proto)?;
         Ok(TcpArguments {
             host: host.host.ok_or_else(|| anyhow!("missing host"))?,
             port: host.port.ok_or_else(|| anyhow!("missing port"))?,
@@ -100,7 +100,7 @@ impl TcpArguments {
     }
 
     pub fn to_proto(&self) -> proto::TcpHost {
-        TcpHost {
+        TcpArgumentsTemplate {
             host: Some(self.host.clone()),
             port: Some(self.port.clone()),
             timeout: self.timeout.clone(),

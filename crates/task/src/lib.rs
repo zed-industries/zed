@@ -16,7 +16,7 @@ use std::str::FromStr;
 
 pub use debug_format::{
     AttachRequest, DebugRequest, DebugTaskDefinition, DebugTaskFile, DebugTaskTemplate,
-    LaunchRequest, TcpHost,
+    LaunchRequest, TcpArgumentsTemplate,
 };
 pub use task_template::{
     DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,
