@@ -27,7 +27,7 @@ pub struct ToolUse {
     pub needs_confirmation: bool,
 }
 
-pub const USING_TOOL_MARKER: &str = "<using_tool>";
+pub const USING_TOOL_MARKER: &str = "Using tool:";
 
 pub struct ToolUseState {
     tools: Entity<ToolWorkingSet>,
