@@ -17,6 +17,7 @@ editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
+log.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
