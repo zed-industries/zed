@@ -263,7 +263,7 @@ impl DapStore {
                 });
 
                 cx.background_spawn(async move {
-                    let response = dbg!(request.await?);
+                    let response = request.await?;
                     DebugAdapterBinary::from_proto(response)
                 })
             }

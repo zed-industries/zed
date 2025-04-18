@@ -1482,7 +1482,6 @@ impl Project {
                     })
                 })?
                 .await?;
-            dbg!(&binary);
 
             if let Some(ssh_client) = ssh_client {
                 let mut ssh_command = ssh_client.update(cx, |ssh, _| {
@@ -1515,14 +1514,14 @@ impl Project {
                     None,
                 );
 
-                binary = dbg!(DebugAdapterBinary {
+                binary = DebugAdapterBinary {
                     command: program,
                     arguments: args,
                     envs: HashMap::default(),
                     cwd: None,
                     connection,
                     request_args: binary.request_args.into(),
-                })
+                }
             };
 
             let ret = this
