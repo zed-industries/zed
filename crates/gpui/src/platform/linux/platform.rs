@@ -138,7 +138,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.text_system.clone())
     }
 
-    fn keyboard_layout(&self) -> String {
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         self.keyboard_layout()
     }
 
@@ -855,6 +855,26 @@ impl crate::Modifiers {
             platform,
             function: false,
         }
+    }
+}
+
+struct LinuxKeyboardLayout {
+    id: String,
+}
+
+impl PlatformKeyboardLayout for LinuxKeyboardLayout {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.id
+    }
+}
+
+impl LinuxKeyboardLayout {
+    fn new(id: String) -> Self {
+        Self { id }
     }
 }
 

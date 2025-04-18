@@ -41,8 +41,8 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
-    ButtonOrScroll, ScrollDirection, button_or_scroll_from_event_detail, get_valuator_axis_index,
-    modifiers_from_state, pressed_button_from_mask,
+    ButtonOrScroll, LinuxKeyboardLayout, ScrollDirection, button_or_scroll_from_event_detail,
+    get_valuator_axis_index, modifiers_from_state, pressed_button_from_mask,
 };
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
@@ -60,8 +60,9 @@ use crate::platform::{
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform, PlatformDisplay,
-    PlatformInput, Point, RequestFrameOptions, ScaledPixels, ScreenCaptureSource, ScrollDelta,
-    Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
+    PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions, ScaledPixels,
+    ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -1282,14 +1283,16 @@ impl LinuxClient for X11Client {
         f(&mut self.0.borrow_mut().common)
     }
 
-    fn keyboard_layout(&self) -> String {
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
         let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
-        state
-            .xkb
-            .get_keymap()
-            .layout_get_name(layout_idx)
-            .to_string()
+        Box::new(LinuxKeyboardLayout::new(
+            state
+                .xkb
+                .get_keymap()
+                .layout_get_name(layout_idx)
+                .to_string(),
+        ))
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
