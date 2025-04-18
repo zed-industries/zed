@@ -828,20 +828,8 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
-    fn keyboard_layout(&self) -> String {
-        unsafe {
-            let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
-
-            let input_source_id: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyInputSourceID as *const c_void,
-            );
-            let input_source_id: *const std::os::raw::c_char =
-                msg_send![input_source_id, UTF8String];
-            let input_source_id = CStr::from_ptr(input_source_id).to_str().unwrap();
-
-            input_source_id.to_string()
-        }
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+        Box::new(MacKeyboardLayout::new())
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -1590,6 +1578,45 @@ impl UTType {
 
     fn inner_mut(&self) -> *mut Object {
         self.0 as *mut _
+    }
+}
+
+struct MacKeyboardLayout {
+    id: String,
+    name: String,
+}
+
+impl PlatformKeyboardLayout for MacKeyboardLayout {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl MacKeyboardLayout {
+    fn new() -> Self {
+        unsafe {
+            let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
+
+            let id: *mut Object = TISGetInputSourceProperty(
+                current_keyboard,
+                kTISPropertyInputSourceID as *const c_void,
+            );
+            let id: *const std::os::raw::c_char = msg_send![id, UTF8String];
+            let id = CStr::from_ptr(id).to_str().unwrap().to_string();
+
+            let name: *mut Object = TISGetInputSourceProperty(
+                current_keyboard,
+                kTISPropertyLocalizedName as *const c_void,
+            );
+            let name: *const std::os::raw::c_char = msg_send![name, UTF8String];
+            let name = CStr::from_ptr(name).to_str().unwrap().to_string();
+
+            Self { id, name }
+        }
     }
 }
 
