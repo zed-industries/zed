@@ -1074,7 +1074,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
-        let request_callback_parameters = if self.request_callback.is_some() {
+        let mut request_callback_parameters = if self.request_callback.is_some() {
             Some((request.clone(), Vec::new()))
         } else {
             None
@@ -1085,7 +1085,6 @@ impl Thread {
             let initial_token_usage =
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
-                let mut request_callback_parameters = request_callback_parameters;
                 let (mut events, usage) = stream_completion_future.await?;
 
                 let mut stop_reason = StopReason::EndTurn;
@@ -1208,7 +1207,7 @@ impl Thread {
                     }
                 })?;
 
-                anyhow::Ok((stop_reason, request_callback_parameters))
+                anyhow::Ok(stop_reason)
             };
 
             let result = stream_completion.await;
@@ -1217,24 +1216,14 @@ impl Thread {
                 .update(cx, |thread, cx| {
                     thread.finalize_pending_checkpoint(cx);
                     match result.as_ref() {
-                        Ok((stop_reason, request_callback_parameters)) => {
-                            match stop_reason {
-                                StopReason::ToolUse => {
-                                    let tool_uses = thread.use_pending_tools(cx);
-                                    cx.emit(ThreadEvent::UsePendingTools { tool_uses });
-                                }
-                                StopReason::EndTurn => {}
-                                StopReason::MaxTokens => {}
+                        Ok(stop_reason) => match stop_reason {
+                            StopReason::ToolUse => {
+                                let tool_uses = thread.use_pending_tools(cx);
+                                cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
-
-                            if let Some((request_callback, (request, response_events))) = thread
-                                .request_callback
-                                .as_mut()
-                                .zip(request_callback_parameters.as_ref())
-                            {
-                                request_callback(request, response_events);
-                            }
-                        }
+                            StopReason::EndTurn => {}
+                            StopReason::MaxTokens => {}
+                        },
                         Err(error) => {
                             if error.is::<PaymentRequiredError>() {
                                 cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
@@ -1277,9 +1266,15 @@ impl Thread {
                             thread.cancel_last_completion(cx);
                         }
                     }
-                    cx.emit(ThreadEvent::Stopped(
-                        result.map(|result| result.0).map_err(Arc::new),
-                    ));
+                    cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
+
+                    if let Some((request_callback, (request, response_events))) = thread
+                        .request_callback
+                        .as_mut()
+                        .zip(request_callback_parameters.as_ref())
+                    {
+                        request_callback(request, response_events);
+                    }
 
                     thread.auto_capture_telemetry(cx);
 
