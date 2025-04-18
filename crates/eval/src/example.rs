@@ -533,60 +533,66 @@ impl Example {
         })
     }
 
-    pub async fn judge(
+    async fn judge_diff(
         &self,
         model: Arc<dyn LanguageModel>,
         run_output: &RunOutput,
-        judge_repetitions: u32,
+        judge_number: u32,
         cx: &AsyncApp,
-    ) -> Result<JudgeOutput> {
-        let mut output_file = File::create(
-            self.example_output_directory()
-                .join(format!("judge_{}.md", judge_repetitions)),
-        )
-        .expect("failed to create judge.md");
-
-        let judge_thread_prompt = include_str!("judge_thread_prompt.hbs");
+    ) -> Result<(String, JudgeResponse)> {
         let judge_diff_prompt = include_str!("judge_diff_prompt.hbs");
-        let judge_thread_prompt_name = "judge_thread_prompt";
         let judge_diff_prompt_name = "judge_diff_prompt";
+        let mut hbs = Handlebars::new();
+        hbs.register_template_string(judge_diff_prompt_name, judge_diff_prompt)?;
 
-        let mut handlebars = Handlebars::new();
-        handlebars.register_template_string(judge_diff_prompt_name, judge_diff_prompt)?;
-        handlebars.register_template_string(judge_thread_prompt_name, judge_thread_prompt)?;
+        let diff_prompt = hbs.render(
+            judge_diff_prompt_name,
+            &JudgeDiffInput {
+                repository_diff: run_output.repository_diff.clone(),
+                ran_diagnostics_check: run_output.ran_diagnostics_check,
+                diagnostics_before: run_output.diagnostics_before.clone(),
+                diagnostics_after: run_output.diagnostics_after.clone(),
+                criteria: self.diff_criteria.clone(),
+            },
+        )?;
 
-        let diff_response = {
-            let repository_diff_prompt = handlebars.render(
-                judge_diff_prompt_name,
-                &JudgeDiffInput {
-                    repository_diff: run_output.repository_diff.clone(),
-                    ran_diagnostics_check: run_output.ran_diagnostics_check,
-                    diagnostics_before: run_output.diagnostics_before.clone(),
-                    diagnostics_after: run_output.diagnostics_after.clone(),
-                    criteria: self.diff_criteria.clone(),
-                },
-            )?;
-
-            let request = LanguageModelRequest {
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: vec![MessageContent::Text(repository_diff_prompt)],
-                    cache: false,
-                }],
-                temperature: None,
-                tools: Vec::new(),
-                stop: Vec::new(),
-            };
-
-            send_language_model_request(model.clone(), request, cx).await?
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text(diff_prompt)],
+                cache: false,
+            }],
+            temperature: None,
+            tools: Vec::new(),
+            stop: Vec::new(),
         };
 
-        let thread_response;
-        let thread_output;
+        let diff_response = send_language_model_request(model, request, cx).await?;
+        let diff_output = JudgeResponse::parse(&diff_response)?;
 
+        println!(
+            "{}Judge #{judge_number} - Diff score: {}",
+            self.log_prefix, diff_output.score
+        );
+
+        Ok((diff_response, diff_output))
+    }
+
+    async fn judge_thread(
+        &self,
+        model: Arc<dyn LanguageModel>,
+        run_output: &RunOutput,
+        judge_number: u32,
+        cx: &AsyncApp,
+    ) -> Result<(String, Option<JudgeResponse>)> {
         if let Some(criteria) = self.thread_criteria.clone() {
+            let judge_thread_prompt = include_str!("judge_thread_prompt.hbs");
+            let judge_thread_prompt_name = "judge_thread_prompt";
+            let mut hbs = Handlebars::new();
+            hbs.register_template_string(judge_thread_prompt_name, judge_thread_prompt)?;
+
             let request_markdown = RequestMarkdown::new(&run_output.last_request);
-            let thread_prompt = handlebars.render(
+            let thread_prompt = hbs.render(
                 judge_thread_prompt_name,
                 &JudgeThreadInput {
                     messages: request_markdown.messages,
@@ -605,12 +611,43 @@ impl Example {
                 stop: Vec::new(),
             };
 
-            thread_response = send_language_model_request(model, request, cx).await?;
-            thread_output = Some(JudgeResponse::parse(&thread_response)?);
+            let thread_response = send_language_model_request(model, request, cx).await?;
+            let thread_output = JudgeResponse::parse(&thread_response)?;
+
+            println!(
+                "{}Judge #{judge_number} - Thread score: {}",
+                self.log_prefix, thread_output.score
+            );
+
+            Ok((thread_response, Some(thread_output)))
         } else {
-            thread_response = "There were no criteria specified for this thread, so this example was not judged on its thread.".to_string();
-            thread_output = None;
+            let msg = "There were no criteria specified for this thread, so this example was not judged on its thread.".to_string();
+            Ok((msg, None))
         }
+    }
+
+    pub async fn judge(
+        &self,
+        model: Arc<dyn LanguageModel>,
+        run_output: &RunOutput,
+        judge_number: u32,
+        cx: &AsyncApp,
+    ) -> Result<JudgeOutput> {
+        let mut output_file = File::create(
+            self.example_output_directory()
+                .join(format!("judge_{}.md", judge_number)),
+        )
+        .expect("failed to create judge.md");
+
+        println!("{}Running judge #{judge_number}", self.log_prefix);
+
+        let diff_task = self.judge_diff(model.clone(), &run_output, judge_number, cx);
+        let thread_task = self.judge_thread(model.clone(), &run_output, judge_number, cx);
+
+        let (diff_result, thread_result) = futures::join!(diff_task, thread_task);
+
+        let (diff_response, diff_output) = diff_result?;
+        let (thread_response, thread_output) = thread_result?;
 
         writeln!(
             &mut output_file,
@@ -620,7 +657,7 @@ impl Example {
 
         Ok(JudgeOutput {
             thread: thread_output,
-            diff: JudgeResponse::parse(&diff_response)?,
+            diff: diff_output,
         })
     }
 
