@@ -13,7 +13,7 @@ use assistant_context_editor::{
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use client::{Client, Status, proto};
-use editor::{Editor, EditorEvent};
+use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, App, AsyncWindowContext, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
@@ -28,9 +28,12 @@ use language_model::{
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::PromptBuilder;
+
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
+
+use std::ops::Range;
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
@@ -1413,7 +1416,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
-        creases: Vec<(String, String)>,
+        selection_ranges: Vec<Range<Anchor>>,
+        buffer: Entity<MultiBuffer>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -1425,6 +1429,12 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
         }
 
+        let snapshot = buffer.read(cx).snapshot(cx);
+        let selection_ranges = selection_ranges
+            .into_iter()
+            .map(|range| range.to_point(&snapshot))
+            .collect::<Vec<_>>();
+
         panel.update(cx, |_, cx| {
             // Wait to create a new context until the workspace is no longer
             // being updated.
@@ -1433,7 +1443,9 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
                     .active_context_editor(cx)
                     .or_else(|| panel.new_context(window, cx))
                 {
-                    context.update(cx, |context, cx| context.quote_creases(creases, window, cx));
+                    context.update(cx, |context, cx| {
+                        context.quote_ranges(selection_ranges, snapshot, window, cx)
+                    });
                 };
             });
         });

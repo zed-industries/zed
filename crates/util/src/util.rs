@@ -735,7 +735,6 @@ where
             Poll::Ready(output) => Poll::Ready(match output {
                 Ok(output) => Some(output),
                 Err(error) => {
-                    dbg!("WAT", &error, level, location);
                     log_error_with_caller(location, error, level);
                     None
                 }

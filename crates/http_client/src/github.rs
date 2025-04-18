@@ -32,7 +32,6 @@ pub async fn latest_github_release(
     pre_release: bool,
     http: Arc<dyn HttpClient>,
 ) -> Result<GithubRelease, anyhow::Error> {
-    dbg!("asda");
     let mut response = http
         .get(
             format!("https://api.github.com/repos/{repo_name_with_owner}/releases").as_str(),

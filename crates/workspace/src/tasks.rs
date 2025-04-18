@@ -93,11 +93,8 @@ impl Workspace {
                     workspace.spawn_in_terminal(task.resolved.unwrap(), window, cx)
                 })?;
 
-                dbg!("a");
                 let exit_code = task.await?;
-                dbg!("a");
                 if !exit_code.success() {
-                    dbg!("a");
                     return anyhow::Ok(());
                 }
 
@@ -105,16 +102,13 @@ impl Workspace {
                     .update(cx, |project, cx| {
                         project.dap_store().update(cx, |dap_store, cx| {
                             if let Some(as_local) = dap_store.as_local() {
-                                dbg!("a");
                                 as_local.run_locator(debug_config, cx)
                             } else {
-                                dbg!("a");
                                 Task::ready(Err(anyhow!("unreachable")))
                             }
                         })
                     })?
                     .await?;
-                dbg!("a");
                 ret
             } else {
                 debug_config.definition

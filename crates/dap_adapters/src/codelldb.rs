@@ -79,10 +79,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         &self,
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
-        dbg!("aadsas");
         let release =
             latest_github_release("vadimcn/codelldb", true, false, delegate.http_client()).await?;
-        dbg!("blah");
 
         let arch = match std::env::consts::ARCH {
             "aarch64" => "arm64",

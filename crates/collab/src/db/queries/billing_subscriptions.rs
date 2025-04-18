@@ -119,8 +119,15 @@ impl Database {
                 .filter(
                     Condition::all()
                         .add(
-                            billing_subscription::Column::StripeSubscriptionStatus
-                                .eq(StripeSubscriptionStatus::Active),
+                            Condition::any()
+                                .add(
+                                    billing_subscription::Column::StripeSubscriptionStatus
+                                        .eq(StripeSubscriptionStatus::Active),
+                                )
+                                .add(
+                                    billing_subscription::Column::StripeSubscriptionStatus
+                                        .eq(StripeSubscriptionStatus::Trialing),
+                                ),
                         )
                         .add(billing_subscription::Column::Kind.is_not_null()),
                 )

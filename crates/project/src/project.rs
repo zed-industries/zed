@@ -1462,8 +1462,7 @@ impl Project {
         config: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
-        dbg!(&config);
-        let Some(worktree) = self.worktrees(cx).next() else {
+        let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
         };
 
@@ -1524,12 +1523,11 @@ impl Project {
                     .get_binary(&delegate, &config, user_installed_path, cx)
                     .await?
             };
-            dbg!(&binary);
 
             let ret = this
                 .update(cx, |project, cx| {
                     project.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.new_session(binary, config, None, cx)
+                        dap_store.new_session(binary, config, worktree.downgrade(), None, cx)
                     })
                 })?
                 .1
@@ -1910,7 +1908,7 @@ impl Project {
             ))));
         };
         worktree.update(cx, |worktree, cx| {
-            worktree.create_entry(project_path.path, is_directory, cx)
+            worktree.create_entry(project_path.path, is_directory, None, cx)
         })
     }
 

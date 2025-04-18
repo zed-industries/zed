@@ -19,7 +19,8 @@ use language_model::{
     LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, Role, StopReason, TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
+    TokenUsage,
 };
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
@@ -725,6 +726,12 @@ impl Thread {
                                 cx,
                             );
                         }
+                        AssistantContext::Excerpt(excerpt_context) => {
+                            log.buffer_added_as_context(
+                                excerpt_context.context_buffer.buffer.clone(),
+                                cx,
+                            );
+                        }
                         AssistantContext::FetchedUrl(_) | AssistantContext::Thread(_) => {}
                     }
                 }
@@ -1064,13 +1071,21 @@ impl Thread {
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
         let task = cx.spawn(async move |thread, cx| {
-            let stream = model.stream_completion(request, &cx);
+            let stream_completion_future = model.stream_completion_with_usage(request, &cx);
             let initial_token_usage =
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
-                let mut events = stream.await?;
+                let (mut events, usage) = stream_completion_future.await?;
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
+
+                if let Some(usage) = usage {
+                    thread
+                        .update(cx, |_thread, cx| {
+                            cx.emit(ThreadEvent::UsageUpdated(usage));
+                        })
+                        .ok();
+                }
 
                 while let Some(event) = events.next().await {
                     let event = event?;
@@ -1287,8 +1302,15 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
-                let stream = model.model.stream_completion_text(request, &cx);
-                let mut messages = stream.await?;
+                let stream = model.model.stream_completion_text_with_usage(request, &cx);
+                let (mut messages, usage) = stream.await?;
+
+                if let Some(usage) = usage {
+                    this.update(cx, |_thread, cx| {
+                        cx.emit(ThreadEvent::UsageUpdated(usage));
+                    })
+                    .ok();
+                }
 
                 let mut new_summary = String::new();
                 while let Some(message) = messages.stream.next().await {
@@ -2035,6 +2057,7 @@ pub enum ThreadError {
 #[derive(Debug, Clone)]
 pub enum ThreadEvent {
     ShowError(ThreadError),
+    UsageUpdated(RequestUsage),
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
