@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use util::ResultExt;
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::KL_NAMELENGTH};
+use windows_core::HSTRING;
 
 use crate::{KeyboardMapper, Keystroke, Modifiers};
 
@@ -217,4 +218,11 @@ pub(crate) fn get_key_from_vkey(vkey: u32) -> Option<(String, bool)> {
     let key = char::from_u32(key_data & 0xFFFF)?;
 
     Some((key.to_ascii_lowercase().to_string(), is_dead_key))
+}
+
+pub(crate) fn get_keyboard_layout_name() -> Result<String> {
+    let mut buffer = [0u16; KL_NAMELENGTH as usize];
+    unsafe { GetKeyboardLayoutNameW(&mut buffer) }?;
+    let kbd_layout_name = HSTRING::from_wide(&buffer);
+    Ok(kbd_layout_name.to_string())
 }
