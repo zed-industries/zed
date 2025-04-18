@@ -11,14 +11,14 @@ pub struct VsCodeSettings {
 impl VsCodeSettings {
     pub fn from_str(content: &str) -> Result<Self> {
         Ok(Self {
-            content: serde_json::from_str(content)?,
+            content: serde_json_lenient::from_str(content)?,
         })
     }
 
     pub async fn load_user_settings(fs: Arc<dyn Fs>) -> Result<Self> {
         let content = fs.load(paths::vscode_settings_file()).await?;
         Ok(Self {
-            content: serde_json::from_str(&content)?,
+            content: serde_json_lenient::from_str(&content)?,
         })
     }
 
