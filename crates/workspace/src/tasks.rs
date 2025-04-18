@@ -97,8 +97,6 @@ impl Workspace {
                 if !exit_code.success() {
                     return anyhow::Ok(());
                 }
-                dbg!("a");
-
                 let ret = project
                     .update(cx, |project, cx| {
                         project.dap_store().update(cx, |dap_store, cx| {
@@ -106,7 +104,6 @@ impl Workspace {
                         })
                     })?
                     .await?;
-                dbg!("a");
                 ret
             } else {
                 debug_config.definition

@@ -431,7 +431,6 @@ impl DapStore {
         let (initialized_tx, initialized_rx) = oneshot::channel();
 
         let start_debugging_tx = self.start_debugging_tx.clone();
-        dbg!(&binary);
 
         let task = cx.spawn(async move |this, cx| {
             let start_client_task = this.update(cx, |this, cx| {

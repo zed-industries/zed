@@ -569,7 +569,6 @@ pub fn wrap_for_ssh(
         } else {
             shlex::try_quote(command).ok()
         };
-        dbg!(&command);
         let args = args.iter().filter_map(|arg| shlex::try_quote(arg).ok());
         command.into_iter().chain(args).join(" ")
     } else {
