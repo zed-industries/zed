@@ -114,6 +114,22 @@ impl ThreadStore {
             ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
         });
 
+        let mut subscriptions = vec![
+            cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
+                this.load_default_profile(cx);
+            }),
+            cx.subscribe(&project, Self::handle_project_event),
+        ];
+
+        if let Some(prompt_store) = prompt_store.as_ref() {
+            subscriptions.push(cx.subscribe(
+                prompt_store,
+                |this, _prompt_store, PromptsUpdatedEvent, _cx| {
+                    this.enqueue_system_prompt_reload();
+                },
+            ))
+        }
+
         // This channel and task prevent concurrent and redundant loading of the system prompt.
         let (reload_system_prompt_tx, mut reload_system_prompt_rx) = mpsc::channel(1);
         let (ready_tx, ready_rx) = oneshot::channel();
@@ -122,7 +138,9 @@ impl ThreadStore {
             async move |thread_store, cx| {
                 loop {
                     let Some(reload_task) = thread_store
-                        .update(cx, |thread_store, cx| thread_store.reload_system_prompt(cx))
+                        .update(cx, |thread_store, cx| {
+                            thread_store.reload_system_prompt(prompt_store.clone(), cx)
+                        })
                         .ok()
                     else {
                         return;
@@ -135,22 +153,6 @@ impl ThreadStore {
                 }
             }
         });
-
-        let mut subscriptions = vec![
-            cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
-                this.load_default_profile(cx);
-            }),
-            cx.subscribe(&project, Self::handle_project_event),
-        ];
-
-        if let Some(prompt_store) = prompt_store {
-            subscriptions.push(cx.subscribe(
-                &prompt_store,
-                |this, _prompt_store, PromptsUpdatedEvent, _cx| {
-                    this.enqueue_system_prompt_reload();
-                },
-            ))
-        }
 
         let this = Self {
             project,
@@ -197,12 +199,14 @@ impl ThreadStore {
         self.reload_system_prompt_tx.try_send(()).ok();
     }
 
-    // Note that this should only be called from `reload_system_prompt_task`. Instead use
-    // `enqueue_system_prompt_reload`.
-    fn reload_system_prompt(&self, cx: &mut Context<Self>) -> Task<()> {
-        let prompt_store = PromptStore::global(cx);
+    // Note that this should only be called from `reload_system_prompt_task`.
+    fn reload_system_prompt(
+        &self,
+        prompt_store: Option<Entity<PromptStore>>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let project = self.project.read(cx);
-        let tasks = project
+        let worktree_tasks = project
             .visible_worktrees(cx)
             .map(|worktree| {
                 Self::load_worktree_info_for_system_prompt(
@@ -212,56 +216,48 @@ impl ThreadStore {
                 )
             })
             .collect::<Vec<_>>();
+        let default_user_rules_task = match prompt_store {
+            None => Task::ready(vec![]),
+            Some(prompt_store) => prompt_store.read_with(cx, |prompt_store, cx| {
+                let prompts = prompt_store.default_prompt_metadata();
+                let load_tasks = prompts.into_iter().map(|prompt_metadata| {
+                    let contents = prompt_store.load(prompt_metadata.id, cx);
+                    async move { (contents.await, prompt_metadata) }
+                });
+                cx.background_spawn(future::join_all(load_tasks))
+            }),
+        };
 
         cx.spawn(async move |this, cx| {
-            let (results, prompt_store) = future::join(future::join_all(tasks), prompt_store).await;
-            let default_user_rules = match prompt_store {
-                Err(err) => {
-                    log::error!(
-                        "Error loading user rules, so not loading default user rules: {err:?}"
-                    );
-                    vec![]
-                }
-                Ok(prompt_store) => {
-                    let task = prompt_store
-                        .read_with(cx, |prompt_store, cx| {
-                            let prompts = prompt_store.default_prompt_metadata();
-                            let load_tasks = prompts.into_iter().map(|prompt_metadata| {
-                                let contents = prompt_store.load(prompt_metadata.id, cx);
-                                async move { (contents.await, prompt_metadata) }
-                            });
-                            cx.background_spawn(future::join_all(load_tasks))
-                        })
-                        .unwrap_or_else(|_| Task::ready(vec![]));
-                    let default_user_rules = task.await;
-                    default_user_rules
-                        .into_iter()
-                        .flat_map(|(contents, prompt_metadata)| match contents {
-                            Ok(contents) => Some(DefaultUserRulesContext {
-                                title: prompt_metadata.title.map(|title| title.to_string()),
-                                contents,
-                            }),
-                            Err(err) => {
-                                this.update(cx, |_, cx| {
-                                    cx.emit(RulesLoadingError {
-                                        message: format!("{err:?}").into(),
-                                    });
-                                })
-                                .ok();
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                }
-            };
+            let (worktrees, default_user_rules) =
+                future::join(future::join_all(worktree_tasks), default_user_rules_task).await;
 
-            let worktrees = results
+            let worktrees = worktrees
                 .into_iter()
                 .map(|(worktree, rules_error)| {
                     if let Some(rules_error) = rules_error {
                         this.update(cx, |_, cx| cx.emit(rules_error)).ok();
                     }
                     worktree
+                })
+                .collect::<Vec<_>>();
+
+            let default_user_rules = default_user_rules
+                .into_iter()
+                .flat_map(|(contents, prompt_metadata)| match contents {
+                    Ok(contents) => Some(DefaultUserRulesContext {
+                        title: prompt_metadata.title.map(|title| title.to_string()),
+                        contents,
+                    }),
+                    Err(err) => {
+                        this.update(cx, |_, cx| {
+                            cx.emit(RulesLoadingError {
+                                message: format!("{err:?}").into(),
+                            });
+                        })
+                        .ok();
+                        None
+                    }
                 })
                 .collect::<Vec<_>>();
 
