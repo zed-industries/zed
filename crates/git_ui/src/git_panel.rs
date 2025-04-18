@@ -3991,7 +3991,7 @@ impl GitPanelMessageTooltip {
 
                 this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
                     this.commit_tooltip = Some(cx.new(move |cx| {
-                        CommitTooltip::new(commit_details, repository, workspace, cx)
+                        CommitTooltip::new(commit_details, repository.downgrade(), workspace, cx)
                     }));
                     cx.notify();
                 })

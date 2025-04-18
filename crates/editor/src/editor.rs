@@ -4380,11 +4380,32 @@ impl Editor {
 
     pub fn splice_conflict_hints(
         &mut self,
-        range: Range<usize>,
+        range: Range<Anchor>,
         to_insert: Vec<ConflictHintPair>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        self.conflict_hints.splice(range, to_insert);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        //debug_assert!(is_sorted);
+        let start_ix = match self
+            .conflict_hints
+            .binary_search_by(|hint| hint.ours.anchor.cmp(&range.start, &snapshot))
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let mut end_ix = match self
+            .conflict_hints
+            .binary_search_by(|hint| hint.ours.anchor.cmp(&range.end, &snapshot))
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        if self
+            .conflict_hints
+            .get(end_ix)
+            .is_some_and(|hint| hint.ours.anchor.cmp(&range.end, &snapshot).is_eq())
+        {
+            end_ix += 1;
+        }
+        self.conflict_hints.splice(start_ix..end_ix, to_insert);
     }
 
     fn trigger_on_type_formatting(
@@ -20525,6 +20546,7 @@ impl RowExt for DisplayRow {
         Self(self.0.saturating_sub(1))
     }
 
+    #[track_caller]
     fn minus(&self, other: Self) -> u32 {
         self.0 - other.0
     }

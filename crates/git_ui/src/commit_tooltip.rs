@@ -123,7 +123,7 @@ pub struct CommitTooltip {
     commit: CommitDetails,
     scroll_handle: ScrollHandle,
     markdown: Entity<Markdown>,
-    repository: Entity<Repository>,
+    repository: WeakEntity<Repository>,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -131,7 +131,7 @@ impl CommitTooltip {
     pub fn blame_entry(
         blame: &BlameEntry,
         details: Option<ParsedCommitMessage>,
-        repository: Entity<Repository>,
+        repository: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -160,7 +160,7 @@ impl CommitTooltip {
 
     pub fn new(
         commit: CommitDetails,
-        repository: Entity<Repository>,
+        repository: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -329,7 +329,7 @@ impl Render for CommitTooltip {
                                                 move |_, window, cx| {
                                                     CommitView::open(
                                                         commit_summary.clone(),
-                                                        repo.downgrade(),
+                                                        repo.clone(),
                                                         workspace.clone(),
                                                         window,
                                                         cx,

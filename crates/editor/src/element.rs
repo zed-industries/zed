@@ -1784,6 +1784,8 @@ impl EditorElement {
             })
             .skip_while(|(row, _)| *row < start_row)
             .take_while(|(row, _)| *row < end_row)
+            // FIXME
+            .filter(|(row, _)| *row >= start_row)
             .map(|(row, hint)| {
                 (
                     row,
@@ -5931,27 +5933,6 @@ fn prepaint_gutter_button(
         cx,
     );
     button
-}
-
-// FIXME eliminate this
-fn render_inline_blame_entry(
-    editor: Entity<Editor>,
-    workspace: WeakEntity<Workspace>,
-    blame: &Entity<GitBlame>,
-    blame_entry: BlameEntry,
-    style: &EditorStyle,
-    cx: &mut App,
-) -> Option<AnyElement> {
-    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-    renderer.render_inline_blame_entry(
-        &style.text,
-        blame_entry,
-        details,
-        repository,
-        workspace,
-        editor,
-        cx,
-    )
 }
 
 fn render_blame_entry(

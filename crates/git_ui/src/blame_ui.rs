@@ -100,7 +100,7 @@ impl BlameRenderer for GitBlameRenderer {
                         CommitTooltip::blame_entry(
                             &blame_entry,
                             details.clone(),
-                            repository.clone(),
+                            repository.downgrade(),
                             workspace.clone(),
                             cx,
                         )
@@ -116,7 +116,7 @@ impl BlameRenderer for GitBlameRenderer {
         style: &TextStyle,
         blame_entry: BlameEntry,
         details: Option<ParsedCommitMessage>,
-        repository: Entity<Repository>,
+        repository: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
         editor: Entity<Editor>,
         cx: &mut App,

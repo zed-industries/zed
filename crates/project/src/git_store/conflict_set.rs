@@ -92,10 +92,11 @@ impl ConflictSetSnapshot {
 pub struct ConflictRegion {
     pub range: Range<Anchor>,
     pub ours: Range<Anchor>,
-    pub ours_start_eol: Anchor,
     pub theirs: Range<Anchor>,
-    pub theirs_end_eol: Anchor,
     pub base: Option<Range<Anchor>>,
+    // FIXME remove these
+    pub ours_start_eol: Anchor,
+    pub theirs_end_eol: Anchor,
 }
 
 impl ConflictRegion {
@@ -141,7 +142,7 @@ impl ConflictSet {
     pub fn set_has_conflict(&mut self, has_conflict: bool, cx: &mut Context<Self>) -> bool {
         if has_conflict != self.has_conflict {
             self.has_conflict = has_conflict;
-            if !self.has_conflict {
+            if !self.has_conflict && self.snapshot.conflicts.len() > 0 {
                 cx.emit(ConflictSetUpdate {
                     buffer_range: None,
                     old_range: 0..self.snapshot.conflicts.len(),
@@ -166,7 +167,9 @@ impl ConflictSet {
         cx: &mut Context<Self>,
     ) {
         self.snapshot = snapshot;
-        cx.emit(update);
+        if !update.old_range.is_empty() || !update.new_range.is_empty() {
+            cx.emit(update);
+        }
     }
 
     pub fn parse(buffer: &text::BufferSnapshot) -> ConflictSetSnapshot {

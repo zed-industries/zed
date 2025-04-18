@@ -50,6 +50,7 @@ impl editor::Addon for ConflictAddon {
 }
 
 pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mut Context<Editor>) {
+    // FIXME only for singletons and the project diff
     editor.register_addon(ConflictAddon {
         buffers: Default::default(),
     });
@@ -60,8 +61,12 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
     }
 
     cx.subscribe(&cx.entity(), |editor, _, event, cx| match event {
-        EditorEvent::ExcerptsAdded { buffer, .. } => buffer_added(editor, buffer.clone(), cx),
+        EditorEvent::ExcerptsAdded { buffer, .. } => {
+            dbg!("additional buffer");
+            buffer_added(editor, buffer.clone(), cx)
+        }
         EditorEvent::ExcerptsExpanded { ids } => {
+            dbg!("excerpts expanded");
             let multibuffer = editor.buffer().read(cx).snapshot(cx);
             for excerpt_id in ids {
                 let Some(buffer) = multibuffer.buffer_for_excerpt(*excerpt_id) else {
@@ -87,17 +92,23 @@ fn excerpt_for_buffer_updated(
     conflict_set: Entity<ConflictSet>,
     cx: &mut Context<Editor>,
 ) {
-    let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
-    conflicts_updated(
-        editor,
-        conflict_set,
-        &ConflictSetUpdate {
-            buffer_range: None,
-            old_range: 0..conflicts_len,
-            new_range: 0..conflicts_len,
-        },
-        cx,
+    dbg!(
+        "excerpt for buffer updated",
+        conflict_set.read(cx).snapshot.buffer_id
     );
+    let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
+    if conflicts_len > 0 {
+        conflicts_updated(
+            editor,
+            conflict_set,
+            &ConflictSetUpdate {
+                buffer_range: None,
+                old_range: 0..conflicts_len,
+                new_range: 0..conflicts_len,
+            },
+            cx,
+        );
+    }
 }
 
 fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
@@ -105,6 +116,11 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
         return;
     };
     let git_store = project.read(cx).git_store().clone();
+    dbg!(
+        "buffer added",
+        editor.buffer().read(cx).excerpt_ids().len(),
+        buffer.read(cx).file().map(|f| f.file_name(cx))
+    );
 
     let buffer_conflicts = editor
         .addon_mut::<ConflictAddon>()
@@ -126,16 +142,18 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
     let conflict_set = buffer_conflicts.conflict_set.clone();
     let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
     let addon_conflicts_len = buffer_conflicts.block_ids.len();
-    conflicts_updated(
-        editor,
-        conflict_set,
-        &ConflictSetUpdate {
-            buffer_range: None,
-            old_range: 0..addon_conflicts_len,
-            new_range: 0..conflicts_len,
-        },
-        cx,
-    );
+    if addon_conflicts_len > 0 || conflicts_len > 0 {
+        conflicts_updated(
+            editor,
+            conflict_set,
+            &ConflictSetUpdate {
+                buffer_range: None,
+                old_range: 0..addon_conflicts_len,
+                new_range: 0..conflicts_len,
+            },
+            cx,
+        );
+    }
 }
 
 fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mut Context<Editor>) {
@@ -161,6 +179,7 @@ fn conflicts_updated(
     event: &ConflictSetUpdate,
     cx: &mut Context<Editor>,
 ) {
+    dbg!(event);
     let buffer_id = conflict_set.read(cx).snapshot.buffer_id;
     let conflict_set = conflict_set.read(cx).snapshot();
     let Some(repository) = editor.project.as_ref().and_then(|project| {
@@ -176,58 +195,72 @@ fn conflicts_updated(
     let multibuffer = editor.buffer().read(cx);
     let snapshot = multibuffer.snapshot(cx);
     let excerpts = multibuffer.excerpts_for_buffer(buffer_id, cx);
-    let Some(buffer_snapshot) = excerpts
-        .first()
-        .and_then(|(excerpt_id, _)| snapshot.buffer_for_excerpt(*excerpt_id))
+    let Some(&(first_excerpt_for_buffer, _)) =
+        multibuffer.excerpts_for_buffer(buffer_id, cx).first()
     else {
+        return;
+    };
+    let Some(buffer_snapshot) = snapshot.buffer_for_excerpt(first_excerpt_for_buffer) else {
         return;
     };
 
     // Remove obsolete highlights and blocks
     let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
-    if let Some(buffer_conflicts) = conflict_addon.buffers.get_mut(&buffer_id) {
-        let old_conflicts = buffer_conflicts.block_ids[event.old_range.clone()].to_owned();
-        let mut removed_highlighted_ranges = Vec::new();
-        let mut removed_block_ids = HashSet::default();
-        for (conflict_range, block_id) in old_conflicts {
-            let Some((excerpt_id, _)) = excerpts.iter().find(|(_, range)| {
-                let precedes_start = range
-                    .context
-                    .start
-                    .cmp(&conflict_range.start, &buffer_snapshot)
-                    .is_le();
-                let follows_end = range
-                    .context
-                    .end
-                    .cmp(&conflict_range.start, &buffer_snapshot)
-                    .is_ge();
-                precedes_start && follows_end
-            }) else {
-                continue;
-            };
-            let excerpt_id = *excerpt_id;
-            let Some(range) = snapshot
-                .anchor_in_excerpt(excerpt_id, conflict_range.start)
-                .zip(snapshot.anchor_in_excerpt(excerpt_id, conflict_range.end))
-                .map(|(start, end)| start..end)
-            else {
-                continue;
-            };
-            removed_highlighted_ranges.push(range.clone());
-            removed_block_ids.insert(block_id);
-        }
+    let mut removed_highlighted_ranges = Vec::new();
+    let mut removed_block_ids = HashSet::default();
+    let old_conflicts_range =
+        conflict_addon
+            .buffers
+            .get_mut(&buffer_id)
+            .and_then(|buffer_conflicts| {
+                let old_conflicts = buffer_conflicts.block_ids[event.old_range.clone()].to_owned();
+                for (conflict_range, block_id) in old_conflicts {
+                    let Some((excerpt_id, _)) = excerpts.iter().find(|(_, range)| {
+                        let precedes_start = range
+                            .context
+                            .start
+                            .cmp(&conflict_range.start, &buffer_snapshot)
+                            .is_le();
+                        let follows_end = range
+                            .context
+                            .end
+                            .cmp(&conflict_range.start, &buffer_snapshot)
+                            .is_ge();
+                        precedes_start && follows_end
+                    }) else {
+                        continue;
+                    };
+                    let excerpt_id = *excerpt_id;
+                    let Some(range) = snapshot
+                        .anchor_in_excerpt(excerpt_id, conflict_range.start)
+                        .zip(snapshot.anchor_in_excerpt(excerpt_id, conflict_range.end))
+                        .map(|(start, end)| start..end)
+                    else {
+                        continue;
+                    };
+                    removed_highlighted_ranges.push(range.clone());
+                    removed_block_ids.insert(block_id);
+                }
 
-        editor.remove_highlighted_rows::<ConflictsOuter>(removed_highlighted_ranges.clone(), cx);
-        editor.remove_highlighted_rows::<ConflictsOurs>(removed_highlighted_ranges.clone(), cx);
-        editor
-            .remove_highlighted_rows::<ConflictsOursMarker>(removed_highlighted_ranges.clone(), cx);
-        editor.remove_highlighted_rows::<ConflictsTheirs>(removed_highlighted_ranges.clone(), cx);
-        editor.remove_highlighted_rows::<ConflictsTheirsMarker>(
-            removed_highlighted_ranges.clone(),
-            cx,
-        );
-        editor.remove_blocks(removed_block_ids, None, cx);
-    }
+                removed_highlighted_ranges
+                    .first()
+                    .map(|range| range.start)
+                    .zip(removed_highlighted_ranges.last().map(|range| range.start))
+                    .or_else(|| {
+                        Some((
+                            snapshot.anchor_in_excerpt(first_excerpt_for_buffer, Anchor::MIN)?,
+                            snapshot.anchor_in_excerpt(first_excerpt_for_buffer, Anchor::MAX)?,
+                        ))
+                    })
+                    .map(|(start, end)| start..end)
+            });
+
+    editor.remove_highlighted_rows::<ConflictsOuter>(removed_highlighted_ranges.clone(), cx);
+    editor.remove_highlighted_rows::<ConflictsOurs>(removed_highlighted_ranges.clone(), cx);
+    editor.remove_highlighted_rows::<ConflictsOursMarker>(removed_highlighted_ranges.clone(), cx);
+    editor.remove_highlighted_rows::<ConflictsTheirs>(removed_highlighted_ranges.clone(), cx);
+    editor.remove_highlighted_rows::<ConflictsTheirsMarker>(removed_highlighted_ranges.clone(), cx);
+    editor.remove_blocks(removed_block_ids, None, cx);
 
     // Add new highlights and blocks
     let editor_handle = cx.weak_entity();
@@ -293,16 +326,20 @@ fn conflicts_updated(
                 anchor: ours_hint_anchor,
                 blame_entry: git::blame::BlameEntry::default(),
                 description: "hello!".into(),
+                repository: repository.downgrade(),
             },
             theirs: ConflictHint {
                 anchor: theirs_hint_anchor,
                 blame_entry: git::blame::BlameEntry::default(),
                 description: "goodbye!".into(),
+                repository: repository.downgrade(),
             },
         })
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
-    editor.splice_conflict_hints(event.old_range.clone(), conflict_hints, cx);
+    if let Some(old_conflicts_range) = old_conflicts_range {
+        editor.splice_conflict_hints(old_conflicts_range, conflict_hints, cx);
+    }
 
     let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
     if let Some(buffer_conflicts) = conflict_addon.buffers.get_mut(&buffer_id) {
@@ -415,7 +452,7 @@ fn render_conflict_buttons(
                         cx.new(|cx| {
                             CommitTooltip::new(
                                 info.clone(),
-                                repository.clone(),
+                                repository.downgrade(),
                                 workspace.downgrade(),
                                 cx,
                             )
