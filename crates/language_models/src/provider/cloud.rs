@@ -719,7 +719,7 @@ impl LanguageModel for CloudLanguageModel {
 
     fn stream_completion_with_usage(
         &self,
-        mut request: LanguageModelRequest,
+        request: LanguageModelRequest,
         _cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -728,8 +728,8 @@ impl LanguageModel for CloudLanguageModel {
             Option<RequestUsage>,
         )>,
     > {
-        let thread_id = request.prompt_id.take();
-        let prompt_id = request.prompt_id.take();
+        let thread_id = request.thread_id.clone();
+        let prompt_id = request.prompt_id.clone();
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
