@@ -16,10 +16,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, prelude::*};
+use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::ui::InstructionListItem;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -399,11 +400,8 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
-        let ollama_intro = "Get up and running with Llama 3.3, Mistral, Gemma 2, and other large language models with Ollama.";
-        let ollama_reqs =
-            "Ollama must be running with at least one model installed to use it in the assistant.";
-
-        let inline_code_bg = cx.theme().colors().editor_foreground.opacity(0.05);
+        let ollama_intro =
+            "Get up & running with Llama 3.3, Mistral, Gemma 2, and other LLMs with Ollama.";
 
         if self.loading_models_task.is_some() {
             div().child(Label::new("Loading models...")).into_any()
@@ -412,22 +410,13 @@ impl Render for ConfigurationView {
                 .size_full()
                 .gap_3()
                 .child(
-                    v_flex()
-                        .gap_2()
-                        .child(Label::new(ollama_intro))
-                        .child(Label::new(ollama_reqs))
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(Label::new("Once installed, try"))
-                                .child(
-                                    div().bg(inline_code_bg).ml_1().rounded_sm().child(
-                                        Label::new("ollama run llama3.2")
-                                            .size(LabelSize::Small)
-                                            .buffer_font(cx),
-                                    ),
-                                ),
-                        ),
+                    v_flex().gap_1().child(Label::new(ollama_intro)).child(
+                        List::new()
+                            .child(InstructionListItem::text_only("Ollama must be running with at least one model installed to use it in the assistant."))
+                            .child(InstructionListItem::text_only(
+                                "Once installed, try ollama run llama3.2",
+                            )),
+                    ),
                 )
                 .child(
                     h_flex()

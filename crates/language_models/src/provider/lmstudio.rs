@@ -16,10 +16,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, prelude::*};
+use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::ui::InstructionListItem;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -418,22 +419,15 @@ impl Render for ConfigurationView {
             v_flex()
                 .gap_3()
                 .child(
-                    v_flex()
-                        .gap_2()
-                        .child(Label::new(lmstudio_intro))
-                        .child(Label::new(lmstudio_reqs))
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(Label::new("To get your first model, try running"))
-                                .child(
-                                    div().bg(inline_code_bg).ml_1().rounded_sm().child(
-                                        Label::new("lms get qwen2.5-coder-7b")
-                                            .size(LabelSize::Small)
-                                            .buffer_font(cx),
-                                    ),
-                                ),
-                        ),
+                    v_flex().gap_1().child(Label::new(lmstudio_intro)).child(
+                        List::new()
+                            .child(InstructionListItem::text_only(
+                                "LM Studio needs to be running with at least one model downloaded.",
+                            ))
+                            .child(InstructionListItem::text_only(
+                                "To get your first model, try running `lms get qwen2.5-coder-7b`",
+                            )),
+                    ),
                 )
                 .child(
                     h_flex()
