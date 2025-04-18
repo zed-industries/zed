@@ -62,7 +62,10 @@ impl Vim {
                                     &text_layout_details,
                                     forced_motion,
                                 );
-                                if let Motion::CurrentLine = motion {
+                                if matches!(
+                                    motion,
+                                    Motion::CurrentLine | Motion::Down { .. } | Motion::Up { .. }
+                                ) {
                                     let mut start_offset =
                                         selection.start.to_offset(map, Bias::Left);
                                     let classifier = map
@@ -422,6 +425,15 @@ mod test {
         )
         .await
         .assert_matches();
+        cx.simulate(
+            "c k",
+            indoc! {"
+            The quick
+              brown fox
+              ˇjumps over"},
+        )
+        .await
+        .assert_matches();
     }
 
     #[gpui::test]
@@ -460,6 +472,15 @@ mod test {
             The quick
             brown fox
             ˇ"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "c j",
+            indoc! {"
+            The quick
+              ˇbrown fox
+              jumps over"},
         )
         .await
         .assert_matches();

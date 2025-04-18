@@ -125,6 +125,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -703,6 +704,7 @@ dependencies = [
  "assistant_tool",
  "chrono",
  "collections",
+ "component",
  "feature_flags",
  "futures 0.3.31",
  "gpui",
@@ -711,6 +713,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "linkme",
  "open",
  "project",
  "rand 0.8.5",
@@ -4920,36 +4923,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "evals"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "client",
- "clock",
- "collections",
- "dap",
- "env_logger 0.11.8",
- "feature_flags",
- "fs",
- "gpui",
- "http_client",
- "language",
- "languages",
- "node_runtime",
- "open_ai",
- "project",
- "reqwest_client",
- "semantic_index",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "util",
- "workspace-hack",
-]
-
-[[package]]
 name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7682,6 +7655,7 @@ dependencies = [
  "thiserror 2.0.12",
  "util",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -13330,6 +13304,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "indoc",
  "parking_lot",
  "paths",
  "schemars",
@@ -18388,10 +18363,11 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.5.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ee4d410dbc030c3e6e3af78fc76296f6bebe20dcb6d7d3fa24bca306fc8c1ce"
+checksum = "b91b8b05f1028157205026e525869eb860fa89bec87ea60b445efc91d05df31f"
 dependencies = [
+ "anyhow",
  "serde",
  "serde_json",
  "strum 0.27.1",

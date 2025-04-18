@@ -140,9 +140,12 @@ impl Example {
     pub async fn setup(&mut self) -> Result<()> {
         let repo_path = repo_path_for_url(&self.base.url);
 
-        let revision_exists = run_git(&repo_path, &["rev-parse", "--verify", &self.base.revision])
-            .await
-            .is_ok();
+        let revision_exists = run_git(
+            &repo_path,
+            &["rev-parse", &format!("{}^{{commit}}", self.base.revision)],
+        )
+        .await
+        .is_ok();
 
         if !revision_exists {
             println!(
@@ -418,7 +421,8 @@ impl Example {
                             ThreadEvent::MessageDeleted(_) |
                             ThreadEvent::SummaryChanged |
                             ThreadEvent::SummaryGenerated |
-                            ThreadEvent::CheckpointChanged => {
+                            ThreadEvent::CheckpointChanged |
+                            ThreadEvent::UsageUpdated(_) => {
                                 if std::env::var("ZED_EVAL_DEBUG").is_ok() {
                                     println!("{}Event: {:#?}", log_prefix, event);
                                 }

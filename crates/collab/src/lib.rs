@@ -207,13 +207,6 @@ impl Config {
         Self::parse_stripe_price_id("Zed Pro", self.stripe_zed_pro_price_id.as_deref())
     }
 
-    pub fn zed_pro_trial_price_id(&self) -> anyhow::Result<stripe::PriceId> {
-        Self::parse_stripe_price_id(
-            "Zed Pro Trial",
-            self.stripe_zed_pro_trial_price_id.as_deref(),
-        )
-    }
-
     pub fn zed_free_price_id(&self) -> anyhow::Result<stripe::PriceId> {
         Self::parse_stripe_price_id("Zed Free", self.stripe_zed_pro_price_id.as_deref())
     }

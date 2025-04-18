@@ -2,19 +2,19 @@ use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 use copilot::copilot_chat::{
-    ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest, ModelVendor,
-    ResponseEvent, Tool, ToolCall,
+    ChatMessage, CopilotChat, Model as CopilotChatModel, ModelVendor,
+    Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
-    Transformation, percentage, svg,
+    percentage, svg, Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render,
+    Subscription, Task, Transformation,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
@@ -104,7 +104,8 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         if let Some(models) = CopilotChat::global(cx).and_then(|m| m.read(cx).models()) {
-            models.iter()
+            models
+                .iter()
                 .map(|model| {
                     Arc::new(CopilotChatLanguageModel {
                         model: model.clone(),
