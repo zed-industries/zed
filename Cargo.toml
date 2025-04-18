@@ -604,7 +604,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.6.0"
+zed_llm_client = "0.6.1"
 zstd = "0.11"
 metal = "0.29"
 

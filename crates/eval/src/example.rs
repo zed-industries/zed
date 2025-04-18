@@ -309,7 +309,7 @@ impl Example {
                 return Err(anyhow!("Setup only mode"));
             }
 
-            let thread_store = thread_store.await;
+            let thread_store = thread_store.await?;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
 
@@ -502,6 +502,8 @@ impl Example {
         )?;
 
         let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text(prompt)],

@@ -261,6 +261,8 @@ impl TerminalInlineAssistant {
         request_message.content.push(prompt.into());
 
         Ok(LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages: vec![request_message],
             tools: Vec::new(),
             stop: Vec::new(),

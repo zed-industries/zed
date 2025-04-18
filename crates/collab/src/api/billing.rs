@@ -449,6 +449,29 @@ async fn manage_billing_subscription(
             let stripe_subscription =
                 Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
 
+            let is_on_zed_pro_trial = stripe_subscription.status == SubscriptionStatus::Trialing
+                && stripe_subscription.items.data.iter().any(|item| {
+                    item.price
+                        .as_ref()
+                        .map_or(false, |price| price.id == zed_pro_price_id)
+                });
+            if is_on_zed_pro_trial {
+                // If the user is already on a Zed Pro trial and wants to upgrade to Pro, we just need to end their trial early.
+                Subscription::update(
+                    &stripe_client,
+                    &stripe_subscription.id,
+                    stripe::UpdateSubscription {
+                        trial_end: Some(stripe::Scheduled::now()),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+
+                return Ok(Json(ManageBillingSubscriptionResponse {
+                    billing_portal_session_url: None,
+                }));
+            }
+
             let subscription_item_to_update = stripe_subscription
                 .items
                 .data
@@ -456,10 +479,7 @@ async fn manage_billing_subscription(
                 .find_map(|item| {
                     let price = item.price.as_ref()?;
 
-                    if price.id == zed_free_price_id
-                        || (price.id == zed_pro_price_id
-                            && stripe_subscription.status == SubscriptionStatus::Trialing)
-                    {
+                    if price.id == zed_free_price_id {
                         Some(item.id.clone())
                     } else {
                         None

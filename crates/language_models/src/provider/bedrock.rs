@@ -1145,7 +1145,7 @@ impl ConfigurationView {
 
     fn make_input_styles(&self, cx: &Context<Self>) -> Div {
         let bg_color = cx.theme().colors().editor_background;
-        let border_color = cx.theme().colors().border_variant;
+        let border_color = cx.theme().colors().border;
 
         h_flex()
             .w_full()
@@ -1173,8 +1173,13 @@ impl Render for ConfigurationView {
 
         if let Some(auth) = self.should_render_editor(cx) {
             return h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -1186,16 +1191,16 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
-                        .disabled(env_var_set || creds_type)
+                        // .disabled(env_var_set || creds_type)
                         .when(env_var_set, |this| {
                             this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
                         })
                         .when(creds_type, |this| {
-                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how"))
+                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how."))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
                 )
@@ -1206,19 +1211,19 @@ impl Render for ConfigurationView {
             .size_full()
             .on_action(cx.listener(ConfigurationView::save_credentials))
             .child(Label::new("To use Zed's assistant with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
-            .child(Label::new("Though to access models on AWS first, you will have to: "))
+            .child(Label::new("But, to access models on AWS, you need to:").mt_1())
             .child(
                 List::new()
                     .child(
                         InstructionListItem::new(
-                            "Grant permissions to the strategy you plan to use according to this documentation: ",
+                            "Grant permissions to the strategy you'll use according to the:",
                             Some("Prerequisites"),
                             Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
                         )
                     )
                     .child(
                         InstructionListItem::new(
-                            "Select the models you would like access to: ",
+                            "Select the models you would like access to:",
                             Some("Bedrock Model Catalog"),
                             Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
                         )
@@ -1228,7 +1233,15 @@ impl Render for ConfigurationView {
             .child(self.render_common_fields(cx))
             .child(
                 Label::new(
-                    format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed.\n Optionally, if your environment uses AWS CLI profiles, you can set {ZED_AWS_PROFILE_VAR}; if it requires a custom endpoint, you can set {ZED_AWS_ENDPOINT_VAR}; and if it requires a Session Token, you can set {ZED_BEDROCK_SESSION_TOKEN_VAR}."),
+                    format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),
+                )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .my_1(),
+            )
+            .child(
+                Label::new(
+                    format!("Optionally, if your environment uses AWS CLI profiles, you can set {ZED_AWS_PROFILE_VAR}; if it requires a custom endpoint, you can set {ZED_AWS_ENDPOINT_VAR}; and if it requires a Session Token, you can set {ZED_BEDROCK_SESSION_TOKEN_VAR}."),
                 )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -1307,7 +1320,6 @@ impl ConfigurationView {
                 Label::new(
                     "This method uses your AWS access key ID and secret access key directly.",
                 )
-                    .size(LabelSize::Small),
             )
             .child(
                 List::new()
@@ -1357,16 +1369,11 @@ impl ConfigurationView {
 
     fn render_common_fields(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
-            .my_2()
-            .gap_1p5()
+            .gap_0p5()
+            .child(Label::new("Region").size(LabelSize::Small))
             .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Label::new("Region").size(LabelSize::Small))
-                    .child(
-                        self.make_input_styles(cx)
-                            .child(self.render_region_editor(cx)),
-                    ),
+                self.make_input_styles(cx)
+                    .child(self.render_region_editor(cx)),
             )
             .into_any_element()
     }

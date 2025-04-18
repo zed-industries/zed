@@ -425,6 +425,8 @@ impl CodegenAlternative {
         request_message.content.push(prompt.into());
 
         Ok(LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: None,

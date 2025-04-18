@@ -1813,7 +1813,10 @@ impl ContextEditor {
                     .selections
                     .all_adjusted(cx)
                     .into_iter()
-                    .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+                    .filter_map(|s| {
+                        (!s.is_empty())
+                            .then(|| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+                    })
                     .collect::<Vec<_>>()
             });
             Some((selections, buffer))

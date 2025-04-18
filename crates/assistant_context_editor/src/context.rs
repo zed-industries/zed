@@ -2555,6 +2555,8 @@ impl AssistantContext {
         }
 
         let mut completion_request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages: Vec::new(),
             tools: Vec::new(),
             stop: Vec::new(),
