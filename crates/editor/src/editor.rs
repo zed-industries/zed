@@ -5013,15 +5013,15 @@ impl Editor {
                             None => None,
                         };
                         let resolved_tasks =
-                            tasks.zip(task_context).map(|(tasks, task_context)| {
-                                Rc::new(ResolvedTasks {
+                            tasks
+                                .zip(task_context)
+                                .map(|(tasks, task_context)| ResolvedTasks {
                                     templates: tasks.resolve(&task_context).collect(),
                                     position: snapshot.buffer_snapshot.anchor_before(Point::new(
                                         multibuffer_point.row,
                                         tasks.column,
                                     )),
-                                })
-                            });
+                                });
                         let spawn_straight_away = resolved_tasks.as_ref().map_or(false, |tasks| {
                             tasks
                                 .templates
@@ -5042,10 +5042,11 @@ impl Editor {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
-                                    actions: CodeActionContents {
-                                        tasks: resolved_tasks,
-                                        actions: code_actions,
-                                    },
+                                    actions: CodeActionContents::new(
+                                        resolved_tasks,
+                                        code_actions,
+                                        cx,
+                                    ),
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
                                     deployed_from_indicator,
