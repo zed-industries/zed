@@ -545,7 +545,7 @@ impl CommitModal {
             .active_repository
             .as_ref()
             .and_then(|repo| repo.read(cx).head_commit.as_ref())
-            .is_some()
+            .is_none()
         {
             return;
         }
