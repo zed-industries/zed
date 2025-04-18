@@ -145,7 +145,7 @@ This example is unacceptable because the path is in the wrong place. The path mu
 </style>
 
 {{#if has_default_user_rules}}
-The user has configured the following rules that should be applied:
+The user has specified the following rules that should be applied:
 {{#each default_user_rules}}
 
 {{#if title}}
@@ -164,7 +164,7 @@ The user has opened a project that contains the following root directories/files
 {{/each}}
 {{#if has_rules}}
 
-There are rules that apply to these root directories:
+There are project rules that apply to these root directories:
 {{#each worktrees}}
 {{#if rules_file}}
 
