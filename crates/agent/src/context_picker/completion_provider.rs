@@ -13,9 +13,9 @@ use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
+use project::{Completion, CompletionIntent, ProjectItem, ProjectPath, Symbol, WorktreeId};
 use rope::Point;
-use text::{Anchor, ToPoint};
+use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -29,8 +29,8 @@ use super::file_context_picker::FileMatch;
 use super::symbol_context_picker::SymbolMatch;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
-    ContextPickerMode, MentionLink, RecentEntry, recent_context_picker_entries,
-    supported_context_picker_modes,
+    ContextPickerMode, MentionLink, RecentEntry, available_context_picker_modes,
+    recent_context_picker_entries, selection_ranges,
 };
 
 pub(crate) enum Match {
@@ -38,12 +38,19 @@ pub(crate) enum Match {
     File(FileMatch),
     Thread(ThreadMatch),
     Fetch(SharedString),
+    Selection(SelectionMatch),
     Mode(ModeMatch),
 }
 
 pub struct ModeMatch {
     mat: Option<StringMatch>,
     mode: ContextPickerMode,
+}
+
+pub struct SelectionMatch {
+    mat: Option<StringMatch>,
+    range: Range<text::Anchor>,
+    buffer: Entity<Buffer>,
 }
 
 impl Match {
@@ -54,6 +61,9 @@ impl Match {
             Match::Thread(_) => 1.,
             Match::Symbol(_) => 1.,
             Match::Fetch(_) => 1.,
+            Match::Selection(selection) => {
+                selection.mat.as_ref().map(|mat| mat.score).unwrap_or(1.)
+            }
         }
     }
 }
@@ -90,7 +100,17 @@ fn search(
                     .collect()
             })
         }
-        Some(ContextPickerMode::Selection) => Task::ready(Vec::new()),
+        Some(ContextPickerMode::Selection) => {
+            let search_selections_task =
+                search_selections(query.clone(), cancellation_flag.clone(), &workspace, cx);
+            cx.background_spawn(async move {
+                search_selections_task
+                    .await
+                    .into_iter()
+                    .map(Match::Selection)
+                    .collect()
+            })
+        }
         Some(ContextPickerMode::Thread) => {
             if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
                 let search_threads_task =
@@ -143,7 +163,7 @@ fn search(
                     .collect::<Vec<_>>();
 
                 matches.extend(
-                    supported_context_picker_modes(&thread_store, &workspace, cx)
+                    available_context_picker_modes(&thread_store, &workspace, cx)
                         .into_iter()
                         .map(|mode| Match::Mode(ModeMatch { mode, mat: None })),
                 );
@@ -155,7 +175,7 @@ fn search(
                 let search_files_task =
                     search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
 
-                let modes = supported_context_picker_modes(&thread_store, &workspace, cx);
+                let modes = available_context_picker_modes(&thread_store, &workspace, cx);
                 let mode_candidates = modes
                     .iter()
                     .enumerate()
@@ -221,8 +241,33 @@ impl ContextPickerCompletionProvider {
         }
     }
 
-    fn completion_for_mode(source_range: Range<Anchor>, mode: ContextPickerMode) -> Completion {
-        Completion {
+    fn completion_for_mode(
+        mode: ContextPickerMode,
+        excerpt_id: ExcerptId,
+        source_range: Range<Anchor>,
+        editor: Entity<Editor>,
+        context_store: Entity<ContextStore>,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        if mode == ContextPickerMode::Selection {
+            let mut selections = selection_ranges(workspace, cx);
+            if selections.len() == 1 {
+                let (buffer, range) = selections.remove(0);
+                return Self::completion_for_selection(
+                    excerpt_id,
+                    source_range,
+                    buffer,
+                    range,
+                    context_store,
+                    editor,
+                    workspace,
+                    cx,
+                );
+            }
+        }
+
+        Some(Completion {
             replace_range: source_range.clone(),
             new_text: format!("@{} ", mode.mention_prefix()),
             label: CodeLabel::plain(mode.label().to_string(), None),
@@ -234,7 +279,86 @@ impl ContextPickerCompletionProvider {
             // completion menu will still be shown after "@category " is
             // inserted
             confirm: Some(Arc::new(|_, _, _| true)),
-        }
+        })
+    }
+
+    fn completion_for_selection(
+        excerpt_id: ExcerptId,
+        source_range: Range<Anchor>,
+        buffer: Entity<Buffer>,
+        excerpt_range: Range<text::Anchor>,
+        context_store: Entity<ContextStore>,
+        editor: Entity<Editor>,
+        workspace: &Entity<Workspace>,
+        cx: &App,
+    ) -> Option<Completion> {
+        let line_range = excerpt_range.to_point(&buffer.read(cx).snapshot());
+
+        //TODO: Make it work for untitled buffers
+
+        let project_path = buffer.read(cx).project_path(cx)?;
+        let path_prefix = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .root_name();
+
+        let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
+            &project_path.path,
+            path_prefix,
+        );
+
+        let line_range_text = format!(":({}-{})", line_range.start.row, line_range.end.row);
+
+        let label = build_code_label_for_full_path(
+            &format!("{}{}", file_name, line_range_text),
+            directory.as_ref().map(|s| s.as_ref()),
+            cx,
+        );
+        let mut full_path = if let Some(directory) = directory {
+            format!("{}{}", directory, file_name)
+        } else {
+            file_name.to_string()
+        };
+
+        full_path.push_str(&line_range_text);
+
+        let new_text = MentionLink::for_excerpt(
+            &file_name,
+            &full_path,
+            line_range.start.row as usize..line_range.end.row as usize,
+        );
+        let new_text_len = new_text.len();
+        let icon: SharedString = IconName::Context.path().into();
+        Some(Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label,
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon.clone()),
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                icon.clone(),
+                file_name,
+                excerpt_id,
+                source_range.start,
+                new_text_len,
+                editor,
+                move |cx| {
+                    let context_store = context_store.clone();
+                    {
+                        context_store.update(cx, |context_store, cx| {
+                            context_store
+                                .add_excerpt(excerpt_range.clone(), buffer.clone(), cx)
+                                .detach_and_log_err(cx);
+                        })
+                    }
+                },
+            )),
+        })
     }
 
     fn completion_for_thread(
@@ -602,9 +726,27 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             context_store.clone(),
                             http_client.clone(),
                         )),
-                        Match::Mode(ModeMatch { mode, .. }) => {
-                            Some(Self::completion_for_mode(source_range.clone(), mode))
+                        Match::Selection(SelectionMatch { buffer, range, .. }) => {
+                            Self::completion_for_selection(
+                                excerpt_id,
+                                source_range.clone(),
+                                buffer,
+                                range,
+                                context_store.clone(),
+                                editor.clone(),
+                                &workspace,
+                                cx,
+                            )
                         }
+                        Match::Mode(ModeMatch { mode, .. }) => Self::completion_for_mode(
+                            mode,
+                            excerpt_id,
+                            source_range.clone(),
+                            editor.clone(),
+                            context_store.clone(),
+                            &workspace,
+                            cx,
+                        ),
                     })
                     .collect()
             })?))
@@ -653,6 +795,49 @@ impl CompletionProvider for ContextPickerCompletionProvider {
     fn filter_completions(&self) -> bool {
         false
     }
+}
+
+fn search_selections(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) -> Task<Vec<SelectionMatch>> {
+    let selection_ranges = selection_ranges(workspace, cx);
+    let candidates = selection_ranges
+        .iter()
+        .enumerate()
+        .map(|(index, (buffer, _))| {
+            let text = buffer
+                .read(cx)
+                .file()
+                .map(|file| file.full_path(cx).to_string_lossy().to_string());
+            if let Some(text) = text {
+                StringMatchCandidate::new(index, &text)
+            } else {
+                StringMatchCandidate::new(index, "untitled")
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let executor = cx.background_executor().clone();
+
+    cx.background_spawn(async move {
+        let matches =
+            fuzzy::match_strings(&candidates, &query, false, 50, &cancellation_flag, executor)
+                .await;
+        matches
+            .into_iter()
+            .map(|mat| {
+                let (buffer, range) = selection_ranges[mat.candidate_id].clone();
+                SelectionMatch {
+                    buffer,
+                    range,
+                    mat: Some(mat),
+                }
+            })
+            .collect()
+    })
 }
 
 fn confirm_completion_callback(

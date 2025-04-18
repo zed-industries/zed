@@ -672,6 +672,26 @@ fn open_markdown_link(
                 })
                 .detach_and_log_err(cx);
         }
+        Some(MentionLink::Excerpt(path, line_range)) => {
+            let open_task = workspace.update(cx, |workspace, cx| {
+                workspace.open_path(path, None, true, window, cx)
+            });
+            window
+                .spawn(cx, async move |cx| {
+                    let active_editor = open_task
+                        .await?
+                        .downcast::<Editor>()
+                        .context("Item is not an editor")?;
+                    active_editor.update_in(cx, |editor, window, cx| {
+                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
+                            s.select_ranges([Point::new(line_range.start as u32, 0)
+                                ..Point::new(line_range.start as u32, 0)])
+                        });
+                        anyhow::Ok(())
+                    })
+                })
+                .detach_and_log_err(cx);
+        }
         Some(MentionLink::Thread(thread_id)) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 panel.update(cx, |panel, cx| {

@@ -16,6 +16,7 @@ use gpui::{
     App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task,
     WeakEntity,
 };
+use language::Buffer;
 use multi_buffer::MultiBufferRow;
 use project::{Entry, ProjectPath};
 use symbol_context_picker::SymbolContextPicker;
@@ -163,7 +164,7 @@ impl ContextPicker {
             let modes = self
                 .workspace
                 .upgrade()
-                .map(|workspace| supported_context_picker_modes(&self.thread_store, &workspace, cx))
+                .map(|workspace| available_context_picker_modes(&self.thread_store, &workspace, cx))
                 .unwrap_or_default();
 
             menu.when(has_recent, |menu| {
@@ -439,7 +440,7 @@ enum RecentEntry {
     Thread(ThreadContextEntry),
 }
 
-fn supported_context_picker_modes(
+fn available_context_picker_modes(
     thread_store: &Option<WeakEntity<ThreadStore>>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
@@ -527,15 +528,29 @@ fn add_selections_as_context(
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
+    let selection_ranges = selection_ranges(workspace, cx);
+    context_store.update(cx, |context_store, cx| {
+        for (buffer, range) in selection_ranges {
+            context_store
+                .add_excerpt(range, buffer, cx)
+                .detach_and_log_err(cx);
+        }
+    })
+}
+
+fn selection_ranges(
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) -> Vec<(Entity<Buffer>, Range<text::Anchor>)> {
     let Some(editor) = workspace
         .read(cx)
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx))
     else {
-        return;
+        return Vec::new();
     };
 
-    let selection_ranges = editor.update(cx, |editor, cx| {
+    editor.update(cx, |editor, cx| {
         let selections = editor.selections.all_adjusted(cx);
 
         let buffer = editor.buffer().clone().read(cx);
@@ -553,14 +568,6 @@ fn add_selections_as_context(
                 Some((start_buffer, start..end))
             })
             .collect::<Vec<_>>()
-    });
-
-    context_store.update(cx, |context_store, cx| {
-        for (buffer, range) in selection_ranges {
-            context_store
-                .add_excerpt(range, buffer, cx)
-                .detach_and_log_err(cx);
-        }
     })
 }
 
@@ -697,6 +704,7 @@ fn fold_toggle(
 pub enum MentionLink {
     File(ProjectPath, Entry),
     Symbol(ProjectPath, String),
+    Excerpt(ProjectPath, Range<usize>),
     Fetch(String),
     Thread(ThreadId),
 }
@@ -704,6 +712,7 @@ pub enum MentionLink {
 impl MentionLink {
     const FILE: &str = "@file";
     const SYMBOL: &str = "@symbol";
+    const EXCERPT: &str = "@excerpt";
     const THREAD: &str = "@thread";
     const FETCH: &str = "@fetch";
 
@@ -732,6 +741,17 @@ impl MentionLink {
 
     pub fn for_fetch(url: &str) -> String {
         format!("[@{}]({}:{})", url, Self::FETCH, url)
+    }
+
+    pub fn for_excerpt(file_name: &str, full_path: &str, line_range: Range<usize>) -> String {
+        format!(
+            "[@{}]({}:{}:{}-{})",
+            file_name,
+            Self::FILE,
+            full_path,
+            line_range.start,
+            line_range.end
+        )
     }
 
     pub fn for_thread(thread: &ThreadContextEntry) -> String {
@@ -773,6 +793,20 @@ impl MentionLink {
                 let (path, symbol) = argument.split_once(Self::SEPARATOR)?;
                 let project_path = extract_project_path_from_link(path, workspace, cx)?;
                 Some(MentionLink::Symbol(project_path, symbol.to_string()))
+            }
+            Self::EXCERPT => {
+                let (path, line_args) = argument.split_once(Self::SEPARATOR)?;
+                let project_path = extract_project_path_from_link(path, workspace, cx)?;
+
+                let line_range = {
+                    let (start, end) = line_args
+                        .trim_start_matches('(')
+                        .trim_end_matches(')')
+                        .split_once('-')?;
+                    start.parse::<usize>().ok()?..end.parse::<usize>().ok()?
+                };
+
+                Some(MentionLink::Excerpt(project_path, line_range))
             }
             Self::THREAD => {
                 let thread_id = ThreadId::from(argument);
