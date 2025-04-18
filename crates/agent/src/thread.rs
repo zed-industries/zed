@@ -923,7 +923,6 @@ impl Thread {
         request_kind: RequestKind,
         cx: &mut Context<Self>,
     ) {
-
         let mut request = self.to_completion_request(request_kind, cx);
         if model.supports_tools() {
             request.tools = {
@@ -969,6 +968,8 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(self.last_prompt_id.to_string()),
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
