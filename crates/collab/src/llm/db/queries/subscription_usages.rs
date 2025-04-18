@@ -1,6 +1,7 @@
 use time::PrimitiveDateTime;
 
 use crate::db::UserId;
+use crate::db::billing_subscription::SubscriptionKind;
 
 use super::*;
 
@@ -29,6 +30,7 @@ impl LlmDatabase {
         user_id: UserId,
         period_start_at: DateTimeUtc,
         period_end_at: DateTimeUtc,
+        plan: SubscriptionKind,
         model_requests: i32,
         edit_predictions: i32,
     ) -> Result<subscription_usage::Model> {
@@ -42,6 +44,7 @@ impl LlmDatabase {
                     user_id: ActiveValue::set(user_id),
                     period_start_at: ActiveValue::set(period_start_at),
                     period_end_at: ActiveValue::set(period_end_at),
+                    plan: ActiveValue::set(plan),
                     model_requests: ActiveValue::set(model_requests),
                     edit_predictions: ActiveValue::set(edit_predictions),
                 })

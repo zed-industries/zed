@@ -870,6 +870,7 @@ async fn handle_customer_subscription_event(
                             billing_customer.user_id,
                             period_start_at,
                             period_end_at,
+                            subscription_kind.unwrap_or(existing_usage.plan),
                             existing_usage.model_requests,
                             existing_usage.edit_predictions,
                         )
