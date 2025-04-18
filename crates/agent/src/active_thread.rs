@@ -2965,6 +2965,11 @@ impl ActiveThread {
             ))
         };
 
+        let first_default_user_rules_id = project_context
+            .default_user_rules
+            .first()
+            .map(|user_rules| user_rules.uuid);
+
         let rules_files = project_context
             .worktrees
             .iter()
@@ -3015,8 +3020,13 @@ impl ActiveThread {
                                     .icon_color(Color::Ignored)
                                     // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
                                     .tooltip(Tooltip::text("View User Rules"))
-                                    .on_click(|_event, window, cx| {
-                                        window.dispatch_action(Box::new(OpenPromptLibrary), cx)
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(OpenPromptLibrary {
+                                                prompt_to_focus: first_default_user_rules_id,
+                                            }),
+                                            cx,
+                                        )
                                     }),
                             ),
                     )

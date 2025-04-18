@@ -18322,6 +18322,7 @@ dependencies = [
  "gpui",
  "schemars",
  "serde",
+ "uuid",
  "workspace-hack",
 ]
 
