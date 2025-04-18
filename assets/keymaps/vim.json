@@ -190,7 +190,8 @@
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
-      "ctrl-6": "pane::AlternateFile"
+      "ctrl-6": "pane::AlternateFile",
+      "ctrl-^": "pane::AlternateFile"
     }
   },
   {
@@ -786,8 +787,7 @@
       "{": "project_panel::SelectPrevDirectory",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
-      "-": "project_panel::SelectParent",
-      "ctrl-6": "pane::AlternateFile"
+      "-": "project_panel::SelectParent"
     }
   },
   {

@@ -1222,7 +1222,7 @@ impl Window {
         Evt: 'static,
     {
         let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
+        let handle = entity.downgrade();
         let window_handle = self.handle;
         cx.new_subscription(
             entity_id,
@@ -1231,9 +1231,9 @@ impl Window {
                 Box::new(move |event, cx| {
                     window_handle
                         .update(cx, |_, window, cx| {
-                            if let Some(handle) = Entity::<Emitter>::upgrade_from(&entity) {
+                            if let Some(entity) = handle.upgrade() {
                                 let event = event.downcast_ref().expect("invalid event type");
-                                on_event(handle, event, window, cx);
+                                on_event(entity, event, window, cx);
                                 true
                             } else {
                                 false

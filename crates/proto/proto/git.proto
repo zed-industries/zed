@@ -120,6 +120,7 @@ message UpdateRepository {
     repeated string current_merge_conflicts = 8;
     uint64 scan_id = 9;
     bool is_last_update = 10;
+    optional GitCommitDetails head_commit_details = 11;
 }
 
 message RemoveRepository {

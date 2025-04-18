@@ -5,7 +5,7 @@ mod env_config;
 pub mod filter;
 pub mod sink;
 
-pub use sink::{init_output_file, init_output_stdout};
+pub use sink::{flush, init_output_file, init_output_stdout};
 
 pub const SCOPE_DEPTH_MAX: usize = 4;
 

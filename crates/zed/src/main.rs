@@ -180,6 +180,11 @@ fn main() {
 
     let args = Args::parse();
 
+    if let Some(socket) = &args.askpass {
+        askpass::main(socket);
+        return;
+    }
+
     // Set custom data directory.
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);
@@ -1001,6 +1006,11 @@ struct Args {
     /// that prevents Zed from starting, so you can't run `zed: copy system specs to clipboard`
     #[arg(long)]
     system_specs: bool,
+
+    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long, hide = true)]
+    askpass: Option<String>,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
     #[arg(long)]

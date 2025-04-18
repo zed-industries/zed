@@ -46,6 +46,7 @@ use workspace::{
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
 
+#[derive(Default)]
 pub(crate) struct IncludeWarnings(bool);
 impl Global for IncludeWarnings {}
 
