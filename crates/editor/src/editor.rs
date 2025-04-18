@@ -1620,8 +1620,6 @@ impl Editor {
             }));
 
         this.end_selection(window, cx);
-        this.scroll_manager
-            .set_forbid_vertical_scroll(matches!(mode, EditorMode::SingleLine { .. }));
         this.scroll_manager.show_scrollbars(window, cx);
         jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut this, &buffer, cx);
 
