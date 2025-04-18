@@ -97,7 +97,7 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> usize {
-        self.capabilities.limits.max_output_tokens
+        self.capabilities.limits.max_prompt_tokens
     }
 
     pub fn supports_tools(&self) -> bool {
