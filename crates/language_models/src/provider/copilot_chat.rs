@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
-    ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
+    ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest, ModelVendor,
     ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
@@ -94,22 +94,27 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = CopilotChatModel::default();
-        Some(Arc::new(CopilotChatLanguageModel {
-            model,
-            request_limiter: RateLimiter::new(4),
-        }) as Arc<dyn LanguageModel>)
+        None
+        // let model = CopilotChatModel::default();
+        // Some(Arc::new(CopilotChatLanguageModel {
+        //     model,
+        //     request_limiter: RateLimiter::new(4),
+        // }) as Arc<dyn LanguageModel>)
     }
 
-    fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        CopilotChatModel::iter()
-            .map(|model| {
-                Arc::new(CopilotChatLanguageModel {
-                    model,
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
-            .collect()
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        if let Some(models) = CopilotChat::global(cx).and_then(|m| m.read(cx).models()) {
+            models.iter()
+                .map(|model| {
+                    Arc::new(CopilotChatLanguageModel {
+                        model: model.clone(),
+                        request_limiter: RateLimiter::new(4),
+                    }) as Arc<dyn LanguageModel>
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -185,12 +190,7 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        match self.model {
-            CopilotChatModel::Claude3_5Sonnet
-            | CopilotChatModel::Claude3_7Sonnet
-            | CopilotChatModel::Claude3_7SonnetThinking => true,
-            _ => false,
-        }
+        self.model.supports_tools()
     }
 
     fn telemetry_id(&self) -> String {
@@ -206,28 +206,11 @@ impl LanguageModel for CopilotChatLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        match self.model {
-            CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Gemini20Flash | CopilotChatModel::Gemini25Pro => {
-                count_google_tokens(request, cx)
-            }
-            _ => {
-                let model = match self.model {
-                    CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
-                    CopilotChatModel::Gpt4 => open_ai::Model::Four,
-                    CopilotChatModel::Gpt4_1 => open_ai::Model::FourPointOne,
-                    CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-                    CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
-                    CopilotChatModel::Claude3_5Sonnet
-                    | CopilotChatModel::Claude3_7Sonnet
-                    | CopilotChatModel::Claude3_7SonnetThinking
-                    | CopilotChatModel::Gemini20Flash
-                    | CopilotChatModel::Gemini25Pro => {
-                        unreachable!()
-                    }
-                };
+        match self.model.vendor() {
+            ModelVendor::Anthropic => count_anthropic_tokens(request, cx),
+            ModelVendor::Google => count_google_tokens(request, cx),
+            ModelVendor::OpenAI | ModelVendor::AzureOpenAI => {
+                let model = open_ai::Model::from_id(self.model.id()).unwrap_or_default();
                 count_open_ai_tokens(request, model, cx)
             }
         }

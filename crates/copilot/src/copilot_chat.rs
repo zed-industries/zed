@@ -16,6 +16,7 @@ use strum::EnumIter;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
 pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
+pub const COPILOT_CHAT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -25,114 +26,131 @@ pub enum Role {
     System,
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-pub enum Model {
-    #[default]
-    #[serde(alias = "gpt-4o", rename = "gpt-4o-2024-05-13")]
-    Gpt4o,
-    #[serde(alias = "gpt-4", rename = "gpt-4")]
-    Gpt4,
-    #[serde(alias = "gpt-4.1", rename = "gpt-4.1")]
-    Gpt4_1,
-    #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
-    Gpt3_5Turbo,
-    #[serde(alias = "o1", rename = "o1")]
-    O1,
-    #[serde(alias = "o1-mini", rename = "o3-mini")]
-    O3Mini,
-    #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
-    Claude3_5Sonnet,
-    #[serde(alias = "claude-3-7-sonnet", rename = "claude-3.7-sonnet")]
-    Claude3_7Sonnet,
-    #[serde(
-        alias = "claude-3.7-sonnet-thought",
-        rename = "claude-3.7-sonnet-thought"
-    )]
-    Claude3_7SonnetThinking,
-    #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
-    Gemini20Flash,
-    #[serde(alias = "gemini-2.5-pro", rename = "gemini-2.5-pro")]
-    Gemini25Pro,
+#[derive(Deserialize)]
+struct ModelSchema {
+    data: Vec<Model>,
 }
+
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct Model {
+    capabilities: ModelCapabilities,
+    id: String,
+    name: String,
+    policy: Option<ModelPolicy>,
+    vendor: ModelVendor,
+    model_picker_enabled: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct ModelCapabilities {
+    family: String,
+    #[serde(default)]
+    limits: ModelLimits,
+    supports: ModelSupportedFeatures,
+}
+
+#[derive(Default, Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct ModelLimits {
+    #[serde(default)]
+    max_context_window_tokens: usize,
+    #[serde(default)]
+    max_output_tokens: usize,
+    #[serde(default)]
+    max_prompt_tokens: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct ModelPolicy {
+    state: String
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct ModelSupportedFeatures {
+    #[serde(default)]
+    streaming: bool,
+    #[serde(default)]
+    tool_calls: bool,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub enum ModelVendor {
+    #[serde(rename = "Azure OpenAI")]
+    AzureOpenAI,
+    OpenAI,
+    Google,
+    Anthropic,
+}
+
+// #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
+// pub enum Model {
+//     #[default]
+//     #[serde(alias = "gpt-4o", rename = "gpt-4o-2024-05-13")]
+//     Gpt4o,
+//     #[serde(alias = "gpt-4", rename = "gpt-4")]
+//     Gpt4,
+//     #[serde(alias = "gpt-4.1", rename = "gpt-4.1")]
+//     Gpt4_1,
+//     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
+//     Gpt3_5Turbo,
+//     #[serde(alias = "o1", rename = "o1")]
+//     O1,
+//     #[serde(alias = "o1-mini", rename = "o3-mini")]
+//     O3Mini,
+//     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
+//     Claude3_5Sonnet,
+//     #[serde(alias = "claude-3-7-sonnet", rename = "claude-3.7-sonnet")]
+//     Claude3_7Sonnet,
+//     #[serde(
+//         alias = "claude-3.7-sonnet-thought",
+//         rename = "claude-3.7-sonnet-thought"
+//     )]
+//     Claude3_7SonnetThinking,
+//     #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
+//     Gemini20Flash,
+//     #[serde(alias = "gemini-2.5-pro", rename = "gemini-2.5-pro")]
+//     Gemini25Pro,
+// }
 
 impl Model {
     pub fn uses_streaming(&self) -> bool {
-        match self {
-            Self::Gpt4o
-            | Self::Gpt4
-            | Self::Gpt4_1
-            | Self::Gpt3_5Turbo
-            | Self::Claude3_5Sonnet
-            | Self::Claude3_7Sonnet
-            | Self::Claude3_7SonnetThinking => true,
-            Self::O3Mini | Self::O1 | Self::Gemini20Flash | Self::Gemini25Pro => false,
-        }
+        self.capabilities.supports.streaming
     }
 
-    pub fn from_id(id: &str) -> Result<Self> {
-        match id {
-            "gpt-4o" => Ok(Self::Gpt4o),
-            "gpt-4" => Ok(Self::Gpt4),
-            "gpt-4.1" => Ok(Self::Gpt4_1),
-            "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
-            "o1" => Ok(Self::O1),
-            "o3-mini" => Ok(Self::O3Mini),
-            "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
-            "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
-            "claude-3.7-sonnet-thought" => Ok(Self::Claude3_7SonnetThinking),
-            "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
-            "gemini-2.5-pro" => Ok(Self::Gemini25Pro),
-            _ => Err(anyhow!("Invalid model id: {}", id)),
-        }
+    // pub fn from_id(id: &str) -> Result<Self> {
+    //     match id {
+    //         "gpt-4o" => Ok(Self::Gpt4o),
+    //         "gpt-4" => Ok(Self::Gpt4),
+    //         "gpt-4.1" => Ok(Self::Gpt4_1),
+    //         "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
+    //         "o1" => Ok(Self::O1),
+    //         "o3-mini" => Ok(Self::O3Mini),
+    //         "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
+    //         "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
+    //         "claude-3.7-sonnet-thought" => Ok(Self::Claude3_7SonnetThinking),
+    //         "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
+    //         "gemini-2.5-pro" => Ok(Self::Gemini25Pro),
+    //         _ => Err(anyhow!("Invalid model id: {}", id)),
+    //     }
+    // }
+
+    pub fn id(&self) -> &str {
+        self.id.as_str()
     }
 
-    pub fn id(&self) -> &'static str {
-        match self {
-            Self::Gpt3_5Turbo => "gpt-3.5-turbo",
-            Self::Gpt4 => "gpt-4",
-            Self::Gpt4_1 => "gpt-4.1",
-            Self::Gpt4o => "gpt-4o",
-            Self::O3Mini => "o3-mini",
-            Self::O1 => "o1",
-            Self::Claude3_5Sonnet => "claude-3-5-sonnet",
-            Self::Claude3_7Sonnet => "claude-3-7-sonnet",
-            Self::Claude3_7SonnetThinking => "claude-3.7-sonnet-thought",
-            Self::Gemini20Flash => "gemini-2.0-flash-001",
-            Self::Gemini25Pro => "gemini-2.5-pro",
-        }
-    }
-
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::Gpt3_5Turbo => "GPT-3.5",
-            Self::Gpt4 => "GPT-4",
-            Self::Gpt4_1 => "GPT-4.1",
-            Self::Gpt4o => "GPT-4o",
-            Self::O3Mini => "o3-mini",
-            Self::O1 => "o1",
-            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
-            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
-            Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
-            Self::Gemini20Flash => "Gemini 2.0 Flash",
-            Self::Gemini25Pro => "Gemini 2.5 Pro",
-        }
+    pub fn display_name(&self) -> &str {
+        self.name.as_str()
     }
 
     pub fn max_token_count(&self) -> usize {
-        match self {
-            Self::Gpt4o => 64_000,
-            Self::Gpt4 => 32_768,
-            Self::Gpt4_1 => 1_047_576,
-            Self::Gpt3_5Turbo => 12_288,
-            Self::O3Mini => 64_000,
-            Self::O1 => 20_000,
-            Self::Claude3_5Sonnet => 200_000,
-            Self::Claude3_7Sonnet => 90_000,
-            Self::Claude3_7SonnetThinking => 90_000,
-            Self::Gemini20Flash => 128_000,
-            Self::Gemini25Pro => 128_000,
-        }
+        self.capabilities.limits.max_output_tokens
+    }
+
+    pub fn supports_tools(&self) -> bool {
+        self.capabilities.supports.tool_calls && matches!(self.vendor, ModelVendor::Anthropic)
+    }
+
+    pub fn vendor(&self) -> ModelVendor {
+        self.vendor
     }
 }
 
@@ -288,6 +306,7 @@ impl Global for GlobalCopilotChat {}
 pub struct CopilotChat {
     oauth_token: Option<String>,
     api_token: Option<ApiToken>,
+    models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
 }
 
@@ -324,6 +343,7 @@ impl CopilotChat {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
 
+        let client_async = client.clone();
         cx.spawn(async move |cx| {
             let mut parent_watch_rx = watch_config_dir(
                 cx.background_executor(),
@@ -336,11 +356,33 @@ impl CopilotChat {
                 cx.update(|cx| {
                     if let Some(this) = Self::global(cx).as_ref() {
                         this.update(cx, |this, cx| {
-                            this.oauth_token = oauth_token;
+                            this.oauth_token = oauth_token.clone();
                             cx.notify();
                         });
                     }
                 })?;
+
+                if let Some(ref oauth_token) = oauth_token {
+                    let api_token = request_api_token(oauth_token, client_async.clone()).await?;
+                    cx.update(|cx| {
+                        if let Some(this) = Self::global(cx).as_ref() {
+                            this.update(cx, |this, cx| {
+                                this.api_token = Some(api_token.clone());
+                                cx.notify();
+                            });
+                        }
+                    })?;
+                    let models = request_models(api_token.api_key, client_async.clone()).await?;
+                    dbg!(&models);
+                    cx.update(|cx| {
+                        if let Some(this) = Self::global(cx).as_ref() {
+                            this.update(cx, |this, cx| {
+                                this.models = Some(models);
+                                cx.notify();
+                            });
+                        }
+                    })?;
+                }
             }
             anyhow::Ok(())
         })
@@ -349,12 +391,17 @@ impl CopilotChat {
         Self {
             oauth_token: None,
             api_token: None,
+            models: None,
             client,
         }
     }
 
     pub fn is_authenticated(&self) -> bool {
         self.oauth_token.is_some()
+    }
+
+    pub fn models(&self) -> Option<&[Model]> {
+        self.models.as_ref().map(|models| models.as_slice())
     }
 
     pub async fn stream_completion(
@@ -388,6 +435,32 @@ impl CopilotChat {
         };
 
         stream_completion(client.clone(), token.api_key, request).await
+    }
+}
+
+async fn request_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Vec<Model>> {
+    let request_builder = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(COPILOT_CHAT_MODELS_URL)
+        .header("Authorization", format!("Bearer {}", api_token))
+        .header("Content-Type", "application/json")
+        .header("Copilot-Integration-Id", "vscode-chat");
+
+    let request = request_builder.body(AsyncBody::empty())?;
+
+    let mut response = client.send(request).await?;
+
+    if response.status().is_success() {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+
+        let body_str = std::str::from_utf8(&body)?;
+
+        let models = serde_json::from_str::<ModelSchema>(body_str).inspect_err(|e| {dbg!(e);})?.data;
+
+        Ok(models)
+    } else {
+        Err(anyhow!("Failed to request models: {}", response.status()))
     }
 }
 
