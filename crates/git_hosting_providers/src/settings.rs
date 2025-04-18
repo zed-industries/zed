@@ -81,4 +81,6 @@ impl Settings for GitHostingProviderSettings {
     fn load(sources: settings::SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
 }

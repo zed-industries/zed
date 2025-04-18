@@ -60,4 +60,6 @@ impl Settings for JupyterSettings {
 
         Ok(settings)
     }
+
+    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
 }

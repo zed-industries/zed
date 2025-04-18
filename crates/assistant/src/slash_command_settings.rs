@@ -44,4 +44,6 @@ impl Settings for SlashCommandSettings {
                 .chain(sources.server),
         )
     }
+
+    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) { }
 }

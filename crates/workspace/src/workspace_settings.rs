@@ -48,7 +48,7 @@ impl OnLastWindowClosed {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivePanelModifiers {
     /// Scale by which to zoom the active pane.
@@ -277,6 +277,97 @@ impl Settings for WorkspaceSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+        if vscode
+            .read_value("accessibility.dimUnfocused.enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_default()
+        {
+            if let Some(opacity) = vscode
+                .read_value("accessibility.dimUnfocused.opacity")
+                .and_then(|v| v.as_f64())
+            {
+                if let Some(settings) = old.active_pane_modifiers.as_mut() {
+                    settings.inactive_opacity = Some(opacity as f32)
+                } else {
+                    old.active_pane_modifiers = Some(ActivePanelModifiers {
+                        inactive_opacity: Some(opacity as f32),
+                        ..Default::default()
+                    })
+                }
+            }
+        }
+
+        vscode.enum_setting(
+            "window.confirmBeforeClose",
+            &mut old.confirm_quit,
+            |s| match s {
+                "always" | "keyboardOnly" => Some(true),
+                "never" => Some(false),
+                _ => None,
+            },
+        );
+
+        vscode.bool_setting(
+            "workbench.editor.restoreViewState",
+            &mut old.restore_on_file_reopen,
+        );
+
+        if let Some(b) = vscode
+            .read_value("window.closeWhenEmpty")
+            .and_then(|v| v.as_bool())
+        {
+            old.when_closing_with_no_tabs = Some(if b {
+                CloseWindowWhenNoItems::CloseWindow
+            } else {
+                CloseWindowWhenNoItems::KeepWindowOpen
+            })
+        }
+
+        if let Some(b) = vscode
+            .read_value("files.simpleDialog.enable")
+            .and_then(|v| v.as_bool())
+        {
+            old.use_system_path_prompts = Some(!b);
+        }
+
+        vscode.enum_setting("files.autoSave", &mut old.autosave, |s| match s {
+            "off" => Some(AutosaveSetting::Off),
+            "afterDelay" => Some(AutosaveSetting::AfterDelay {
+                milliseconds: vscode
+                    .read_value("files.autoSaveDelay")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1000),
+            }),
+            "onFocusChange" => Some(AutosaveSetting::OnFocusChange),
+            "onWindowChange" => Some(AutosaveSetting::OnWindowChange),
+            _ => None,
+        });
+
+        // workbench.editor.limit contains "enabled", "value", and "perEditorGroup"
+        // our semantics match if those are set to true, some N, and true respectively.
+        // we'll ignore "perEditorGroup" for now since we only support a global max
+        if let Some(n) = vscode
+            .read_value("workbench.editor.limit.value")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| NonZeroUsize::new(n as usize))
+        {
+            if vscode
+                .read_value("workbench.editor.limit.enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or_default()
+            {
+                old.max_tabs = Some(n)
+            }
+        }
+
+        // some combination of "window.restoreWindows" and "workbench.startupEditor" might
+        // map to our "restore_on_startup"
+
+        // there doesn't seem to be a way to read whether the bottom dock's "justified"
+        // setting is enabled in vscode. that'd be our equivilant to "bottom_dock_layout"
+    }
 }
 
 impl Settings for TabBarSettings {
@@ -286,5 +377,16 @@ impl Settings for TabBarSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
+    }
+
+    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+        vscode.enum_setting("workbench.editor.showTabs", &mut old.show, |s| match s {
+            "multiple" => Some(true),
+            "single" | "none" => Some(false),
+            _ => None,
+        });
+        if Some("hidden") == vscode.read_string("workbench.editor.editorActionsLocation") {
+            old.show_tab_bar_buttons = Some(false)
+        }
     }
 }

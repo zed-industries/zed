@@ -50,4 +50,10 @@ impl Settings for ExtensionSettings {
                 .chain(sources.server),
         )
     }
+
+    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {
+        // settingsSync.ignoredExtensions controls autoupdate for vscode extensions, but we
+        // don't have a mapping to zed-extensions. there's also extensions.autoCheckUpdates
+        // and extensions.autoUpdate which are global switches, we don't support those yet
+    }
 }

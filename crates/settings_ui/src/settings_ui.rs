@@ -5,7 +5,9 @@ use std::any::TypeId;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
+use fs::Fs;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, actions};
+use settings::SettingsStore;
 use ui::prelude::*;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
@@ -39,6 +41,12 @@ pub fn init(cx: &mut App) {
                 let settings_page = SettingsPage::new(workspace, cx);
                 workspace.add_item_to_active_pane(Box::new(settings_page), None, true, window, cx)
             }
+        });
+
+        workspace.register_action(|_workspace, _: &ImportVSCodeSettings, _window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            cx.global::<SettingsStore>().import_vscode_settings(fs);
+            println!("imported settings, need to reload?");
         });
 
         let settings_ui_actions = [TypeId::of::<OpenSettingsEditor>()];

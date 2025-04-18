@@ -70,7 +70,7 @@ pub trait Settings: 'static + Send + Sync {
     }
 
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
-    /// equivilant settings from a vscode config to the zed settings
+    /// equivalent settings from a vscode config to our config
     fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent);
 
     #[track_caller]
@@ -315,7 +315,6 @@ impl SettingsStore {
         let setting_value = entry.or_insert(Box::new(SettingValue::<T> {
             global_value: None,
             local_values: Vec::new(),
-            // vscode_importer: Self as SettingImported::import_vscode_settings,
         }));
 
         if let Some(default_settings) = setting_value

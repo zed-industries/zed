@@ -708,6 +708,28 @@ impl Settings for AssistantSettings {
 
         Ok(settings)
     }
+
+    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+        if let Some(b) = vscode
+            .read_value("chat.agent.enabled")
+            .and_then(|b| b.as_bool())
+        {
+            match old {
+                AssistantSettingsContent::Versioned(versioned) => match versioned.as_mut() {
+                    VersionedAssistantSettingsContent::V1(setting) => {
+                        setting.enabled = Some(b);
+                        setting.button = Some(b);
+                    }
+
+                    VersionedAssistantSettingsContent::V2(setting) => {
+                        setting.enabled = Some(b);
+                        setting.button = Some(b);
+                    }
+                },
+                AssistantSettingsContent::Legacy(setting) => setting.button = Some(b),
+            };
+        }
+    }
 }
 
 fn merge<T>(target: &mut T, value: Option<T>) {
