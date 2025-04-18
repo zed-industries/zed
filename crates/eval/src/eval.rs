@@ -245,8 +245,6 @@ fn main() {
             let concurrency = args.concurrency;
             let cohort_id = args.cohort_id.clone();
 
-            println!("DEBUG: Command line cohort_id = {:?}", cohort_id);
-
             let tasks = examples.iter().map(|example| {
                 let app_state = app_state.clone();
                 let model = model.clone();
@@ -369,10 +367,6 @@ async fn run_example(
     optional_cohort_id: Option<String>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Result<JudgeOutput>>> {
-    println!(
-        "DEBUG: run_example received optional_cohort_id = {:?}",
-        optional_cohort_id
-    );
     let run_output = cx
         .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
         .await?;
