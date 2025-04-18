@@ -202,7 +202,7 @@ pub struct VimGlobals {
     pub pre_count: Option<usize>,
     /// post_count is the number after an operator is specified (2 in 3d2d)
     pub post_count: Option<usize>,
-
+    pub forced_motion: bool,
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
     pub recorded_count: Option<usize>,

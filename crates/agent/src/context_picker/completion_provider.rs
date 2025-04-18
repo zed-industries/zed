@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use file_icons::FileIcons;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use language::{Buffer, CodeLabel, HighlightId};
@@ -37,7 +38,24 @@ pub(crate) enum Match {
     File(FileMatch),
     Thread(ThreadMatch),
     Fetch(SharedString),
-    Mode(ContextPickerMode),
+    Mode(ModeMatch),
+}
+
+pub struct ModeMatch {
+    mat: Option<StringMatch>,
+    mode: ContextPickerMode,
+}
+
+impl Match {
+    pub fn score(&self) -> f64 {
+        match self {
+            Match::File(file) => file.mat.score,
+            Match::Mode(mode) => mode.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
+            Match::Thread(_) => 1.,
+            Match::Symbol(_) => 1.,
+            Match::Fetch(_) => 1.,
+        }
+    }
 }
 
 fn search(
@@ -126,19 +144,54 @@ fn search(
                 matches.extend(
                     supported_context_picker_modes(&thread_store)
                         .into_iter()
-                        .map(Match::Mode),
+                        .map(|mode| Match::Mode(ModeMatch { mode, mat: None })),
                 );
 
                 Task::ready(matches)
             } else {
+                let executor = cx.background_executor().clone();
+
                 let search_files_task =
                     search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+
+                let modes = supported_context_picker_modes(&thread_store);
+                let mode_candidates = modes
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, mode)| StringMatchCandidate::new(ix, mode.mention_prefix()))
+                    .collect::<Vec<_>>();
+
                 cx.background_spawn(async move {
-                    search_files_task
+                    let mut matches = search_files_task
                         .await
                         .into_iter()
                         .map(Match::File)
-                        .collect()
+                        .collect::<Vec<_>>();
+
+                    let mode_matches = fuzzy::match_strings(
+                        &mode_candidates,
+                        &query,
+                        false,
+                        100,
+                        &Arc::new(AtomicBool::default()),
+                        executor,
+                    )
+                    .await;
+
+                    matches.extend(mode_matches.into_iter().map(|mat| {
+                        Match::Mode(ModeMatch {
+                            mode: modes[mat.candidate_id],
+                            mat: Some(mat),
+                        })
+                    }));
+
+                    matches.sort_by(|a, b| {
+                        b.score()
+                            .partial_cmp(&a.score())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                    matches
                 })
             }
         }
@@ -548,7 +601,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             context_store.clone(),
                             http_client.clone(),
                         )),
-                        Match::Mode(mode) => {
+                        Match::Mode(ModeMatch { mode, .. }) => {
                             Some(Self::completion_for_mode(source_range.clone(), mode))
                         }
                     })

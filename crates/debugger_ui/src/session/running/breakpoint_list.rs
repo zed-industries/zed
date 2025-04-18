@@ -27,7 +27,7 @@ use ui::{
 use util::{ResultExt, maybe};
 use workspace::Workspace;
 
-pub(super) struct BreakpointList {
+pub(crate) struct BreakpointList {
     workspace: WeakEntity<Workspace>,
     breakpoint_store: Entity<BreakpointStore>,
     worktree_store: Entity<WorktreeStore>,
@@ -291,7 +291,7 @@ impl LineBreakpoint {
         .end_hover_slot(
             IconButton::new(
                 SharedString::from(format!(
-                    "breakpoint-ui-on-click-go-to-line-{:?}/{}:{}",
+                    "breakpoint-ui-on-click-go-to-line-remove-{:?}/{}:{}",
                     dir, name, line
                 )),
                 IconName::Close,

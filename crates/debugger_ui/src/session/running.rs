@@ -1,20 +1,22 @@
-mod breakpoint_list;
-mod console;
-mod loaded_source_list;
-mod module_list;
+pub(crate) mod breakpoint_list;
+pub(crate) mod console;
+pub(crate) mod loaded_source_list;
+pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
 
-use std::{any::Any, ops::ControlFlow, sync::Arc};
+use std::{any::Any, ops::ControlFlow, sync::Arc, time::Duration};
+
+use crate::persistence::{self, DebuggerPaneItem, SerializedPaneLayout};
 
 use super::DebugPanelItemEvent;
 use breakpoint_list::BreakpointList;
-use collections::HashMap;
+use collections::{HashMap, IndexMap};
 use console::Console;
 use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
 use gpui::{
     Action as _, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    NoAction, Subscription, WeakEntity,
+    NoAction, Pixels, Point, Subscription, Task, WeakEntity,
 };
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
@@ -26,13 +28,15 @@ use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use ui::{
-    AnyElement, App, Context, ContextMenu, DropdownMenu, InteractiveElement, IntoElement, Label,
-    LabelCommon as _, ParentElement, Render, SharedString, Styled, Window, div, h_flex, v_flex,
+    ActiveTheme, AnyElement, App, Context, ContextMenu, DropdownMenu, FluentBuilder,
+    InteractiveElement, IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Tab, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, Pane, PaneGroup, Workspace, move_item, pane::Event,
+    ActivePaneDecorator, DraggedTab, Item, Member, Pane, PaneGroup, Workspace,
+    item::TabContentParams, move_item, pane::Event,
 };
 
 pub struct RunningState {
@@ -45,10 +49,13 @@ pub struct RunningState {
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
-    _module_list: Entity<module_list::ModuleList>,
+    loaded_sources_list: Entity<LoadedSourceList>,
+    module_list: Entity<module_list::ModuleList>,
     _console: Entity<Console>,
+    breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
+    _schedule_serialize: Option<Task<()>>,
 }
 
 impl Render for RunningState {
@@ -82,27 +89,31 @@ impl Render for RunningState {
     }
 }
 
-struct SubView {
+pub(crate) struct SubView {
     inner: AnyView,
     pane_focus_handle: FocusHandle,
-    tab_name: SharedString,
+    kind: DebuggerPaneItem,
     show_indicator: Box<dyn Fn(&App) -> bool>,
 }
 
 impl SubView {
-    fn new(
+    pub(crate) fn new(
         pane_focus_handle: FocusHandle,
         view: AnyView,
-        tab_name: SharedString,
+        kind: DebuggerPaneItem,
         show_indicator: Option<Box<dyn Fn(&App) -> bool>>,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|_| Self {
-            tab_name,
+            kind,
             inner: view,
             pane_focus_handle,
             show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
         })
+    }
+
+    pub(crate) fn view_kind(&self) -> DebuggerPaneItem {
+        self.kind
     }
 }
 impl Focusable for SubView {
@@ -114,15 +125,22 @@ impl EventEmitter<()> for SubView {}
 impl Item for SubView {
     type Event = ();
 
+    /// This is used to serialize debugger pane layouts
+    /// A SharedString gets converted to a enum and back during serialization/deserialization.
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
+        Some(self.kind.to_shared_string())
+    }
+
     fn tab_content(
         &self,
         params: workspace::item::TabContentParams,
         _: &Window,
         cx: &App,
     ) -> AnyElement {
-        let label = Label::new(self.tab_name.clone())
+        let label = Label::new(self.kind.to_shared_string())
+            .size(ui::LabelSize::Small)
             .color(params.text_color())
-            .into_any_element();
+            .line_height_style(ui::LineHeightStyle::UiLabel);
 
         if !params.selected && self.show_indicator.as_ref()(cx) {
             return h_flex()
@@ -133,7 +151,7 @@ impl Item for SubView {
                 .into_any_element();
         }
 
-        label
+        label.into_any_element()
     }
 }
 
@@ -143,7 +161,7 @@ impl Render for SubView {
     }
 }
 
-fn new_debugger_pane(
+pub(crate) fn new_debugger_pane(
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     window: &mut Window,
@@ -182,7 +200,7 @@ fn new_debugger_pane(
                             new_debugger_pane(workspace.clone(), project.clone(), window, cx);
                         let _previous_subscription = running.pane_close_subscriptions.insert(
                             new_pane.entity_id(),
-                            cx.subscribe(&new_pane, RunningState::handle_pane_event),
+                            cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
                         );
                         debug_assert!(_previous_subscription.is_none());
                         running
@@ -266,7 +284,81 @@ fn new_debugger_pane(
         })));
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
+        pane.set_should_display_tab_bar(|_, _| true);
         pane.set_render_tab_bar_buttons(cx, |_, _, _| (None, None));
+        pane.set_render_tab_bar(cx, |pane, window, cx| {
+            let active_pane_item = pane.active_item();
+            h_flex()
+                .w_full()
+                .px_2()
+                .gap_1()
+                .h(Tab::container_height(cx))
+                .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                    bar.bg(cx.theme().colors().drop_target_background)
+                })
+                .on_drop(
+                    cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
+                        this.drag_split_direction = None;
+                        this.handle_tab_drop(dragged_tab, this.items_len(), window, cx)
+                    }),
+                )
+                .bg(cx.theme().colors().tab_bar_background)
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .children(pane.items().enumerate().map(|(ix, item)| {
+                    let selected = active_pane_item
+                        .as_ref()
+                        .map_or(false, |active| active.item_id() == item.item_id());
+                    let item_ = item.boxed_clone();
+                    div()
+                        .id(SharedString::from(format!(
+                            "debugger_tab_{}",
+                            item.item_id().as_u64()
+                        )))
+                        .p_1()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .map(|this| {
+                            if selected {
+                                this.bg(cx.theme().colors().tab_active_background)
+                            } else {
+                                let hover_color = cx.theme().colors().element_hover;
+                                this.hover(|style| style.bg(hover_color))
+                            }
+                        })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let index = this.index_for_item(&*item_);
+                            if let Some(index) = index {
+                                this.activate_item(index, true, true, window, cx);
+                            }
+                        }))
+                        .child(item.tab_content(
+                            TabContentParams {
+                                selected,
+                                ..Default::default()
+                            },
+                            window,
+                            cx,
+                        ))
+                        .on_drop(
+                            cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
+                                this.drag_split_direction = None;
+                                this.handle_tab_drop(dragged_tab, ix, window, cx)
+                            }),
+                        )
+                        .on_drag(
+                            DraggedTab {
+                                item: item.boxed_clone(),
+                                pane: cx.entity().clone(),
+                                detail: 0,
+                                is_active: selected,
+                                ix,
+                            },
+                            |tab, _, _, cx| cx.new(|_| tab.clone()),
+                        )
+                }))
+                .into_any_element()
+        });
         pane
     });
 
@@ -277,6 +369,7 @@ impl RunningState {
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        serialized_pane_layout: Option<SerializedPaneLayout>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -292,7 +385,6 @@ impl RunningState {
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
-        #[expect(unused)]
         let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), cx));
 
         let console = cx.new(|cx| {
@@ -304,6 +396,8 @@ impl RunningState {
                 cx,
             )
         });
+
+        let breakpoint_list = BreakpointList::new(session.clone(), workspace.clone(), &project, cx);
 
         let _subscriptions = vec![
             cx.observe(&module_list, |_, _, cx| cx.notify()),
@@ -328,114 +422,69 @@ impl RunningState {
                 }
                 cx.notify()
             }),
+            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+                this.serialize_layout(window, cx);
+            }),
         ];
 
-        let leftmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-        leftmost_pane.update(cx, |this, cx| {
-            this.add_item(
-                Box::new(SubView::new(
-                    this.focus_handle(cx),
-                    stack_frame_list.clone().into(),
-                    SharedString::new_static("Frames"),
-                    None,
-                    cx,
-                )),
-                true,
-                false,
-                None,
+        let mut pane_close_subscriptions = HashMap::default();
+        let panes = if let Some(root) = serialized_pane_layout.and_then(|serialized_layout| {
+            persistence::deserialize_pane_layout(
+                serialized_layout,
+                &workspace,
+                &project,
+                &stack_frame_list,
+                &variable_list,
+                &module_list,
+                &console,
+                &breakpoint_list,
+                &loaded_source_list,
+                &mut pane_close_subscriptions,
                 window,
                 cx,
-            );
-            let breakpoints = BreakpointList::new(session.clone(), workspace.clone(), &project, cx);
-            this.add_item(
-                Box::new(SubView::new(
-                    breakpoints.focus_handle(cx),
-                    breakpoints.into(),
-                    SharedString::new_static("Breakpoints"),
-                    None,
-                    cx,
-                )),
-                true,
-                false,
-                None,
-                window,
-                cx,
-            );
-            this.activate_item(0, false, false, window, cx);
-        });
-        let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-        center_pane.update(cx, |this, cx| {
-            this.add_item(
-                Box::new(SubView::new(
-                    variable_list.focus_handle(cx),
-                    variable_list.clone().into(),
-                    SharedString::new_static("Variables"),
-                    None,
-                    cx,
-                )),
-                true,
-                false,
-                None,
-                window,
-                cx,
-            );
-            this.add_item(
-                Box::new(SubView::new(
-                    this.focus_handle(cx),
-                    module_list.clone().into(),
-                    SharedString::new_static("Modules"),
-                    None,
-                    cx,
-                )),
-                false,
-                false,
-                None,
-                window,
-                cx,
-            );
-            this.activate_item(0, false, false, window, cx);
-        });
-        let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-        rightmost_pane.update(cx, |this, cx| {
-            let weak_console = console.downgrade();
-            this.add_item(
-                Box::new(SubView::new(
-                    this.focus_handle(cx),
-                    console.clone().into(),
-                    SharedString::new_static("Console"),
-                    Some(Box::new(move |cx| {
-                        weak_console
-                            .read_with(cx, |console, cx| console.show_indicator(cx))
-                            .unwrap_or_default()
-                    })),
-                    cx,
-                )),
-                true,
-                false,
-                None,
-                window,
-                cx,
-            );
-        });
-        let pane_close_subscriptions = HashMap::from_iter(
-            [&leftmost_pane, &center_pane, &rightmost_pane]
-                .into_iter()
-                .map(|entity| {
-                    (
-                        entity.entity_id(),
-                        cx.subscribe(entity, Self::handle_pane_event),
-                    )
-                }),
-        );
-        let group_root = workspace::PaneAxis::new(
-            gpui::Axis::Horizontal,
-            [leftmost_pane, center_pane, rightmost_pane]
-                .into_iter()
-                .map(workspace::Member::Pane)
-                .collect(),
-        );
+            )
+        }) {
+            workspace::PaneGroup::with_root(root)
+        } else {
+            pane_close_subscriptions.clear();
+            let module_list = if session
+                .read(cx)
+                .capabilities()
+                .supports_modules_request
+                .unwrap_or(false)
+            {
+                Some(&module_list)
+            } else {
+                None
+            };
 
-        let panes = PaneGroup::with_root(workspace::Member::Axis(group_root));
+            let loaded_source_list = if session
+                .read(cx)
+                .capabilities()
+                .supports_loaded_sources_request
+                .unwrap_or(false)
+            {
+                Some(&loaded_source_list)
+            } else {
+                None
+            };
+
+            let root = Self::default_pane_layout(
+                project,
+                &workspace,
+                &stack_frame_list,
+                &variable_list,
+                module_list,
+                loaded_source_list,
+                &console,
+                &breakpoint_list,
+                &mut pane_close_subscriptions,
+                window,
+                cx,
+            );
+
+            workspace::PaneGroup::with_root(root)
+        };
 
         Self {
             session,
@@ -448,29 +497,195 @@ impl RunningState {
             stack_frame_list,
             session_id,
             panes,
-            _module_list: module_list,
+            module_list,
             _console: console,
+            breakpoint_list,
+            loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
+            _schedule_serialize: None,
         }
     }
 
-    fn handle_pane_event(
+    pub(crate) fn remove_pane_item(
+        &mut self,
+        item_kind: DebuggerPaneItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        debug_assert!(
+            item_kind.is_supported(self.session.read(cx).capabilities()),
+            "We should only allow removing supported item kinds"
+        );
+
+        if let Some((pane, item_id)) = self.panes.panes().iter().find_map(|pane| {
+            Some(pane).zip(
+                pane.read(cx)
+                    .items()
+                    .find(|item| {
+                        item.act_as::<SubView>(cx)
+                            .is_some_and(|view| view.read(cx).kind == item_kind)
+                    })
+                    .map(|item| item.item_id()),
+            )
+        }) {
+            pane.update(cx, |pane, cx| {
+                pane.remove_item(item_id, false, true, window, cx)
+            })
+        }
+    }
+
+    pub(crate) fn has_pane_at_position(&self, position: Point<Pixels>) -> bool {
+        self.panes.pane_at_pixel_position(position).is_some()
+    }
+
+    pub(crate) fn add_pane_item(
+        &mut self,
+        item_kind: DebuggerPaneItem,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        debug_assert!(
+            item_kind.is_supported(self.session.read(cx).capabilities()),
+            "We should only allow adding supported item kinds"
+        );
+
+        if let Some(pane) = self.panes.pane_at_pixel_position(position) {
+            let sub_view = match item_kind {
+                DebuggerPaneItem::Console => {
+                    let weak_console = self._console.clone().downgrade();
+
+                    Box::new(SubView::new(
+                        pane.focus_handle(cx),
+                        self._console.clone().into(),
+                        item_kind,
+                        Some(Box::new(move |cx| {
+                            weak_console
+                                .read_with(cx, |console, cx| console.show_indicator(cx))
+                                .unwrap_or_default()
+                        })),
+                        cx,
+                    ))
+                }
+                DebuggerPaneItem::Variables => Box::new(SubView::new(
+                    self.variable_list.focus_handle(cx),
+                    self.variable_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
+                    self.breakpoint_list.focus_handle(cx),
+                    self.breakpoint_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::Frames => Box::new(SubView::new(
+                    self.stack_frame_list.focus_handle(cx),
+                    self.stack_frame_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::Modules => Box::new(SubView::new(
+                    self.module_list.focus_handle(cx),
+                    self.module_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
+                    self.loaded_sources_list.focus_handle(cx),
+                    self.loaded_sources_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+            };
+
+            pane.update(cx, |pane, cx| {
+                pane.add_item(sub_view, false, false, None, window, cx);
+            })
+        }
+    }
+
+    pub(crate) fn pane_items_status(&self, cx: &App) -> IndexMap<DebuggerPaneItem, bool> {
+        let caps = self.session.read(cx).capabilities();
+        let mut pane_item_status = IndexMap::from_iter(
+            DebuggerPaneItem::all()
+                .iter()
+                .filter(|kind| kind.is_supported(&caps))
+                .map(|kind| (*kind, false)),
+        );
+        self.panes.panes().iter().for_each(|pane| {
+            pane.read(cx)
+                .items()
+                .filter_map(|item| item.act_as::<SubView>(cx))
+                .for_each(|view| {
+                    pane_item_status.insert(view.read(cx).kind, true);
+                });
+        });
+
+        pane_item_status
+    }
+
+    pub(crate) fn serialize_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self._schedule_serialize.is_none() {
+            self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+
+                let Some((adapter_name, pane_group)) = this
+                    .update(cx, |this, cx| {
+                        let adapter_name = this.session.read(cx).adapter_name();
+                        (
+                            adapter_name,
+                            persistence::build_serialized_pane_layout(&this.panes.root, cx),
+                        )
+                    })
+                    .ok()
+                else {
+                    return;
+                };
+
+                persistence::serialize_pane_layout(adapter_name, pane_group)
+                    .await
+                    .log_err();
+
+                this.update(cx, |this, _| {
+                    this._schedule_serialize.take();
+                })
+                .ok();
+            }));
+        }
+    }
+
+    pub(crate) fn handle_pane_event(
         this: &mut RunningState,
-        source_pane: Entity<Pane>,
+        source_pane: &Entity<Pane>,
         event: &Event,
+        window: &mut Window,
         cx: &mut Context<RunningState>,
     ) {
+        this.serialize_layout(window, cx);
         if let Event::Remove { .. } = event {
             let _did_find_pane = this.panes.remove(&source_pane).is_ok();
             debug_assert!(_did_find_pane);
             cx.notify();
         }
     }
+
     pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
                 .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx));
         }
+    }
+
+    pub(crate) fn has_open_context_menu(&self, cx: &App) -> bool {
+        self.variable_list.read(cx).has_open_context_menu()
     }
 
     pub fn session(&self) -> &Entity<Session> {
@@ -497,7 +712,7 @@ impl RunningState {
 
     #[cfg(test)]
     pub(crate) fn module_list(&self) -> &Entity<ModuleList> {
-        &self._module_list
+        &self.module_list
     }
 
     #[cfg(test)]
@@ -509,7 +724,7 @@ impl RunningState {
             .find_map(|pane| {
                 pane.read(cx)
                     .items_of_type::<SubView>()
-                    .position(|view| view.read(cx).tab_name == *"Modules")
+                    .position(|view| view.read(cx).view_kind().to_shared_string() == *"Modules")
                     .map(|view| (view, pane))
             })
             .unwrap();
@@ -711,7 +926,7 @@ impl RunningState {
         DropdownMenu::new(
             ("thread-list", self.session_id.0),
             selected_thread_name,
-            ContextMenu::build(window, cx, move |mut this, _, _| {
+            ContextMenu::build_eager(window, cx, move |mut this, _, _| {
                 for (thread, _) in threads {
                     let state = state.clone();
                     let thread_id = thread.id;
@@ -724,6 +939,150 @@ impl RunningState {
                 this
             }),
         )
+    }
+
+    fn default_pane_layout(
+        project: Entity<Project>,
+        workspace: &WeakEntity<Workspace>,
+        stack_frame_list: &Entity<StackFrameList>,
+        variable_list: &Entity<VariableList>,
+        module_list: Option<&Entity<ModuleList>>,
+        loaded_source_list: Option<&Entity<LoadedSourceList>>,
+        console: &Entity<Console>,
+        breakpoints: &Entity<BreakpointList>,
+        subscriptions: &mut HashMap<EntityId, Subscription>,
+        window: &mut Window,
+        cx: &mut Context<'_, RunningState>,
+    ) -> Member {
+        let leftmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        leftmost_pane.update(cx, |this, cx| {
+            this.add_item(
+                Box::new(SubView::new(
+                    this.focus_handle(cx),
+                    stack_frame_list.clone().into(),
+                    DebuggerPaneItem::Frames,
+                    None,
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+            this.add_item(
+                Box::new(SubView::new(
+                    breakpoints.focus_handle(cx),
+                    breakpoints.clone().into(),
+                    DebuggerPaneItem::BreakpointList,
+                    None,
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+            this.activate_item(0, false, false, window, cx);
+        });
+        let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+
+        center_pane.update(cx, |this, cx| {
+            this.add_item(
+                Box::new(SubView::new(
+                    variable_list.focus_handle(cx),
+                    variable_list.clone().into(),
+                    DebuggerPaneItem::Variables,
+                    None,
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+            if let Some(module_list) = module_list {
+                this.add_item(
+                    Box::new(SubView::new(
+                        module_list.focus_handle(cx),
+                        module_list.clone().into(),
+                        DebuggerPaneItem::Modules,
+                        None,
+                        cx,
+                    )),
+                    false,
+                    false,
+                    None,
+                    window,
+                    cx,
+                );
+                this.activate_item(0, false, false, window, cx);
+            }
+
+            if let Some(loaded_source_list) = loaded_source_list {
+                this.add_item(
+                    Box::new(SubView::new(
+                        loaded_source_list.focus_handle(cx),
+                        loaded_source_list.clone().into(),
+                        DebuggerPaneItem::LoadedSources,
+                        None,
+                        cx,
+                    )),
+                    false,
+                    false,
+                    None,
+                    window,
+                    cx,
+                );
+                this.activate_item(1, false, false, window, cx);
+            }
+        });
+
+        let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        rightmost_pane.update(cx, |this, cx| {
+            let weak_console = console.downgrade();
+            this.add_item(
+                Box::new(SubView::new(
+                    this.focus_handle(cx),
+                    console.clone().into(),
+                    DebuggerPaneItem::Console,
+                    Some(Box::new(move |cx| {
+                        weak_console
+                            .read_with(cx, |console, cx| console.show_indicator(cx))
+                            .unwrap_or_default()
+                    })),
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+        });
+
+        subscriptions.extend(
+            [&leftmost_pane, &center_pane, &rightmost_pane]
+                .into_iter()
+                .map(|entity| {
+                    (
+                        entity.entity_id(),
+                        cx.subscribe_in(entity, window, Self::handle_pane_event),
+                    )
+                }),
+        );
+
+        let group_root = workspace::PaneAxis::new(
+            gpui::Axis::Horizontal,
+            [leftmost_pane, center_pane, rightmost_pane]
+                .into_iter()
+                .map(workspace::Member::Pane)
+                .collect(),
+        );
+
+        Member::Axis(group_root)
     }
 }
 

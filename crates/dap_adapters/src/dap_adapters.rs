@@ -2,7 +2,6 @@ mod codelldb;
 mod gdb;
 mod go;
 mod javascript;
-mod lldb;
 mod php;
 mod python;
 
@@ -12,7 +11,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use codelldb::CodeLldbDebugAdapter;
 use dap::{
-    DapRegistry,
+    DapRegistry, DebugRequestType,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
@@ -21,18 +20,16 @@ use dap::{
 use gdb::GdbDebugAdapter;
 use go::GoDebugAdapter;
 use javascript::JsDebugAdapter;
-use lldb::LldbDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use serde_json::{Value, json};
-use task::{DebugAdapterConfig, TCPHost};
+use task::TCPHost;
 
 pub fn init(registry: Arc<DapRegistry>) {
     registry.add_adapter(Arc::from(CodeLldbDebugAdapter::default()));
     registry.add_adapter(Arc::from(PythonDebugAdapter));
     registry.add_adapter(Arc::from(PhpDebugAdapter));
-    registry.add_adapter(Arc::from(JsDebugAdapter::default()));
-    registry.add_adapter(Arc::from(LldbDebugAdapter));
+    registry.add_adapter(Arc::from(JsDebugAdapter));
     registry.add_adapter(Arc::from(GoDebugAdapter));
     registry.add_adapter(Arc::from(GdbDebugAdapter));
 }
@@ -50,4 +47,17 @@ pub(crate) async fn configure_tcp_connection(
     };
 
     Ok((host, port, timeout))
+}
+
+trait ToDap {
+    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest;
+}
+
+impl ToDap for DebugRequestType {
+    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest {
+        match self {
+            Self::Launch(_) => dap::StartDebuggingRequestArgumentsRequest::Launch,
+            Self::Attach(_) => dap::StartDebuggingRequestArgumentsRequest::Attach,
+        }
+    }
 }

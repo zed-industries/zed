@@ -16,8 +16,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub use debug_format::{
-    AttachConfig, DebugAdapterConfig, DebugConnectionType, DebugRequestDisposition,
-    DebugRequestType, DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
+    AttachConfig, DebugConnectionType, DebugRequestDisposition, DebugRequestType,
+    DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
 };
 pub use task_template::{
     DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,
@@ -104,7 +104,7 @@ impl ResolvedTask {
     }
 
     /// Get the configuration for the debug adapter that should be used for this task.
-    pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
+    pub fn resolved_debug_adapter_config(&self) -> Option<DebugTaskDefinition> {
         match self.original_task.task_type.clone() {
             TaskType::Debug(debug_args) if self.resolved.is_some() => {
                 let resolved = self
@@ -127,10 +127,10 @@ impl ResolvedTask {
                     })
                     .collect();
 
-                Some(DebugAdapterConfig {
+                Some(DebugTaskDefinition {
                     label: resolved.label.clone(),
                     adapter: debug_args.adapter.clone(),
-                    request: DebugRequestDisposition::UserConfigured(match debug_args.request {
+                    request: match debug_args.request {
                         crate::task_template::DebugArgsRequest::Launch => {
                             DebugRequestType::Launch(LaunchConfig {
                                 program: resolved.command.clone(),
@@ -141,7 +141,7 @@ impl ResolvedTask {
                         crate::task_template::DebugArgsRequest::Attach(attach_config) => {
                             DebugRequestType::Attach(attach_config)
                         }
-                    }),
+                    },
                     initialize_args: debug_args.initialize_args,
                     tcp_connection: debug_args.tcp_connection,
                     locator: debug_args.locator.clone(),

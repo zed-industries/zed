@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context as _, Result, anyhow};
 use assistant_settings::AssistantSettings;
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
 use feature_flags::{self, FeatureFlagAppExt};
@@ -15,14 +15,17 @@ use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    PaymentRequiredError, Role, StopReason, TokenUsage,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
+    TokenUsage,
 };
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use prompt_store::PromptBuilder;
+use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -225,10 +228,36 @@ pub enum DetailedSummaryState {
 pub struct TotalTokenUsage {
     pub total: usize,
     pub max: usize,
-    pub ratio: TokenUsageRatio,
 }
 
-#[derive(Default, PartialEq, Eq)]
+impl TotalTokenUsage {
+    pub fn ratio(&self) -> TokenUsageRatio {
+        #[cfg(debug_assertions)]
+        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
+            .unwrap_or("0.8".to_string())
+            .parse()
+            .unwrap();
+        #[cfg(not(debug_assertions))]
+        let warning_threshold: f32 = 0.8;
+
+        if self.total >= self.max {
+            TokenUsageRatio::Exceeded
+        } else if self.total as f32 / self.max as f32 >= warning_threshold {
+            TokenUsageRatio::Warning
+        } else {
+            TokenUsageRatio::Normal
+        }
+    }
+
+    pub fn add(&self, tokens: usize) -> TotalTokenUsage {
+        TotalTokenUsage {
+            total: self.total + tokens,
+            max: self.max,
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum TokenUsageRatio {
     #[default]
     Normal,
@@ -253,22 +282,32 @@ pub struct Thread {
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
     prompt_builder: Arc<PromptBuilder>,
-    tools: Arc<ToolWorkingSet>,
+    tools: Entity<ToolWorkingSet>,
     tool_use: ToolUseState,
     action_log: Entity<ActionLog>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
+    request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
+    exceeded_window_error: Option<ExceededWindowError>,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExceededWindowError {
+    /// Model used when last message exceeded context window
+    model_id: LanguageModelId,
+    /// Token count including last message
+    token_count: usize,
+}
+
 impl Thread {
     pub fn new(
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         system_prompt: SharedProjectContext,
         cx: &mut Context<Self>,
@@ -300,7 +339,9 @@ impl Thread {
                     .spawn(async move { Some(project_snapshot.await) })
                     .shared()
             },
+            request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
+            exceeded_window_error: None,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -311,7 +352,7 @@ impl Thread {
         id: ThreadId,
         serialized: SerializedThread,
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         project_context: SharedProjectContext,
         cx: &mut Context<Self>,
@@ -366,7 +407,9 @@ impl Thread {
             tool_use,
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
+            request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
+            exceeded_window_error: None,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -446,7 +489,7 @@ impl Thread {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
     }
 
-    pub fn tools(&self) -> &Arc<ToolWorkingSet> {
+    pub fn tools(&self) -> &Entity<ToolWorkingSet> {
         &self.tools
     }
 
@@ -618,8 +661,28 @@ impl Thread {
         self.tool_use.tool_result(id)
     }
 
+    pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
+        Some(&self.tool_use.tool_result(id)?.content)
+    }
+
+    pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<AnyToolCard> {
+        self.tool_use.tool_result_card(id).cloned()
+    }
+
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
         self.tool_use.message_has_tool_results(message_id)
+    }
+
+    /// Filter out contexts that have already been included in previous messages
+    pub fn filter_new_context<'a>(
+        &self,
+        context: impl Iterator<Item = &'a AssistantContext>,
+    ) -> impl Iterator<Item = &'a AssistantContext> {
+        context.filter(|ctx| self.is_context_new(ctx))
+    }
+
+    fn is_context_new(&self, context: &AssistantContext) -> bool {
+        !self.context.contains_key(&context.id())
     }
 
     pub fn insert_user_message(
@@ -633,10 +696,9 @@ impl Thread {
 
         let message_id = self.insert_message(Role::User, vec![MessageSegment::Text(text)], cx);
 
-        // Filter out contexts that have already been included in previous messages
         let new_context: Vec<_> = context
             .into_iter()
-            .filter(|ctx| !self.context.contains_key(&ctx.id()))
+            .filter(|ctx| self.is_context_new(ctx))
             .collect();
 
         if !new_context.is_empty() {
@@ -661,6 +723,12 @@ impl Thread {
                         AssistantContext::Symbol(symbol_ctx) => {
                             log.buffer_added_as_context(
                                 symbol_ctx.context_symbol.buffer.clone(),
+                                cx,
+                            );
+                        }
+                        AssistantContext::Excerpt(excerpt_context) => {
+                            log.buffer_added_as_context(
+                                excerpt_context.context_buffer.buffer.clone(),
                                 cx,
                             );
                         }
@@ -815,8 +883,10 @@ impl Thread {
                     })
                     .collect(),
                 initial_project_snapshot,
-                cumulative_token_usage: this.cumulative_token_usage.clone(),
+                cumulative_token_usage: this.cumulative_token_usage,
+                request_token_usage: this.request_token_usage.clone(),
                 detailed_summary_state: this.detailed_summary_state.clone(),
+                exceeded_window_error: this.exceeded_window_error.clone(),
             })
         })
     }
@@ -831,13 +901,21 @@ impl Thread {
         if model.supports_tools() {
             request.tools = {
                 let mut tools = Vec::new();
-                tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
-                    LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema: tool.input_schema(model.tool_input_format()),
-                    }
-                }));
+                tools.extend(
+                    self.tools()
+                        .read(cx)
+                        .enabled_tools(cx)
+                        .into_iter()
+                        .filter_map(|tool| {
+                            // Skip tools that cannot be supported
+                            let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
+                            Some(LanguageModelRequestTool {
+                                name: tool.name(),
+                                description: tool.description(),
+                                input_schema,
+                            })
+                        }),
+                );
 
                 tools
             };
@@ -992,15 +1070,22 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
-
         let task = cx.spawn(async move |thread, cx| {
-            let stream = model.stream_completion(request, &cx);
+            let stream_completion_future = model.stream_completion_with_usage(request, &cx);
             let initial_token_usage =
-                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage.clone());
+                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
-                let mut events = stream.await?;
+                let (mut events, usage) = stream_completion_future.await?;
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
+
+                if let Some(usage) = usage {
+                    thread
+                        .update(cx, |_thread, cx| {
+                            cx.emit(ThreadEvent::UsageUpdated(usage));
+                        })
+                        .ok();
+                }
 
                 while let Some(event) = events.next().await {
                     let event = event?;
@@ -1018,9 +1103,10 @@ impl Thread {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
-                                thread.cumulative_token_usage =
-                                    thread.cumulative_token_usage.clone() + token_usage.clone()
-                                        - current_token_usage.clone();
+                                thread.update_token_usage_at_last_message(token_usage);
+                                thread.cumulative_token_usage = thread.cumulative_token_usage
+                                    + token_usage
+                                    - current_token_usage;
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
@@ -1129,6 +1215,26 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::MaxMonthlySpendReached,
                                 ));
+                            } else if let Some(error) =
+                                error.downcast_ref::<ModelRequestLimitReachedError>()
+                            {
+                                cx.emit(ThreadEvent::ShowError(
+                                    ThreadError::ModelRequestLimitReached { plan: error.plan },
+                                ));
+                            } else if let Some(known_error) =
+                                error.downcast_ref::<LanguageModelKnownError>()
+                            {
+                                match known_error {
+                                    LanguageModelKnownError::ContextWindowLimitExceeded {
+                                        tokens,
+                                    } => {
+                                        thread.exceeded_window_error = Some(ExceededWindowError {
+                                            model_id: model.id(),
+                                            token_count: *tokens,
+                                        });
+                                        cx.notify();
+                                    }
+                                }
                             } else {
                                 let error_message = error
                                     .chain()
@@ -1149,7 +1255,7 @@ impl Thread {
                     thread.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
-                        let usage = thread.cumulative_token_usage.clone() - initial_usage;
+                        let usage = thread.cumulative_token_usage - initial_usage;
 
                         telemetry::event!(
                             "Assistant Thread Completion",
@@ -1196,8 +1302,15 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
-                let stream = model.model.stream_completion_text(request, &cx);
-                let mut messages = stream.await?;
+                let stream = model.model.stream_completion_text_with_usage(request, &cx);
+                let (mut messages, usage) = stream.await?;
+
+                if let Some(usage) = usage {
+                    this.update(cx, |_thread, cx| {
+                        cx.emit(ThreadEvent::UsageUpdated(usage));
+                    })
+                    .ok();
+                }
 
                 let mut new_summary = String::new();
                 while let Some(message) = messages.stream.next().await {
@@ -1320,7 +1433,7 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for tool_use in pending_tool_uses.iter() {
-            if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+            if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
                 if tool.needs_confirmation(&tool_use.input, cx)
                     && !AssistantSettings::get_global(cx).always_allow_tool_actions
                 {
@@ -1372,8 +1485,8 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
-            Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
+        let tool_result = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
+            Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))).into()
         } else {
             tool.run(
                 input,
@@ -1384,9 +1497,15 @@ impl Thread {
             )
         };
 
+        // Store the card separately if it exists
+        if let Some(card) = tool_result.card.clone() {
+            self.tool_use
+                .insert_tool_result_card(tool_use_id.clone(), card);
+        }
+
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
-                let output = run_tool.await;
+                let output = tool_result.output.await;
 
                 thread
                     .update(cx, |thread, cx| {
@@ -1487,6 +1606,7 @@ impl Thread {
 
         let enabled_tool_names: Vec<String> = self
             .tools()
+            .read(cx)
             .enabled_tools(cx)
             .iter()
             .map(|tool| tool.name().to_string())
@@ -1765,14 +1885,14 @@ impl Thread {
             .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
-    pub fn reject_edits_in_range(
+    pub fn reject_edits_in_ranges(
         &mut self,
         buffer: Entity<language::Buffer>,
-        buffer_range: Range<language::Anchor>,
+        buffer_ranges: Vec<Range<language::Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.action_log.update(cx, |action_log, cx| {
-            action_log.reject_edits_in_range(buffer, buffer_range, cx)
+            action_log.reject_edits_in_ranges(buffer, buffer_ranges, cx)
         })
     }
 
@@ -1782,10 +1902,6 @@ impl Thread {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
-    }
-
-    pub fn cumulative_token_usage(&self) -> TokenUsage {
-        self.cumulative_token_usage.clone()
     }
 
     pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
@@ -1832,6 +1948,39 @@ impl Thread {
             .detach();
     }
 
+    pub fn cumulative_token_usage(&self) -> TokenUsage {
+        self.cumulative_token_usage
+    }
+
+    pub fn token_usage_up_to_message(&self, message_id: MessageId, cx: &App) -> TotalTokenUsage {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
+            return TotalTokenUsage::default();
+        };
+
+        let max = model.model.max_token_count();
+
+        let index = self
+            .messages
+            .iter()
+            .position(|msg| msg.id == message_id)
+            .unwrap_or(0);
+
+        if index == 0 {
+            return TotalTokenUsage { total: 0, max };
+        }
+
+        let token_usage = &self
+            .request_token_usage
+            .get(index - 1)
+            .cloned()
+            .unwrap_or_default();
+
+        TotalTokenUsage {
+            total: token_usage.total_tokens() as usize,
+            max,
+        }
+    }
+
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(model) = model_registry.default_model() else {
@@ -1840,25 +1989,38 @@ impl Thread {
 
         let max = model.model.max_token_count();
 
-        #[cfg(debug_assertions)]
-        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
-            .unwrap_or("0.8".to_string())
-            .parse()
-            .unwrap();
-        #[cfg(not(debug_assertions))]
-        let warning_threshold: f32 = 0.8;
+        if let Some(exceeded_error) = &self.exceeded_window_error {
+            if model.model.id() == exceeded_error.model_id {
+                return TotalTokenUsage {
+                    total: exceeded_error.token_count,
+                    max,
+                };
+            }
+        }
 
-        let total = self.cumulative_token_usage.total_tokens() as usize;
+        let total = self
+            .token_usage_at_last_message()
+            .unwrap_or_default()
+            .total_tokens() as usize;
 
-        let ratio = if total >= max {
-            TokenUsageRatio::Exceeded
-        } else if total as f32 / max as f32 >= warning_threshold {
-            TokenUsageRatio::Warning
-        } else {
-            TokenUsageRatio::Normal
-        };
+        TotalTokenUsage { total, max }
+    }
 
-        TotalTokenUsage { total, max, ratio }
+    fn token_usage_at_last_message(&self) -> Option<TokenUsage> {
+        self.request_token_usage
+            .get(self.messages.len().saturating_sub(1))
+            .or_else(|| self.request_token_usage.last())
+            .cloned()
+    }
+
+    fn update_token_usage_at_last_message(&mut self, token_usage: TokenUsage) {
+        let placeholder = self.token_usage_at_last_message().unwrap_or_default();
+        self.request_token_usage
+            .resize(self.messages.len(), placeholder);
+
+        if let Some(last) = self.request_token_usage.last_mut() {
+            *last = token_usage;
+        }
     }
 
     pub fn deny_tool_use(
@@ -1883,6 +2045,8 @@ pub enum ThreadError {
     PaymentRequired,
     #[error("Max monthly spend reached")]
     MaxMonthlySpendReached,
+    #[error("Model request limit reached")]
+    ModelRequestLimitReached { plan: Plan },
     #[error("Message {header}: {message}")]
     Message {
         header: SharedString,
@@ -1893,6 +2057,7 @@ pub enum ThreadError {
 #[derive(Debug, Clone)]
 pub enum ThreadEvent {
     ShowError(ThreadError),
+    UsageUpdated(RequestUsage),
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
@@ -2297,7 +2462,7 @@ fn main() {{
             .update(|_, cx| {
                 ThreadStore::load(
                     project.clone(),
-                    Arc::default(),
+                    cx.new(|_| ToolWorkingSet::default()),
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )

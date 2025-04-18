@@ -1,7 +1,7 @@
 use crate::*;
 use dap::{
-    ErrorResponse, RunInTerminalRequestArguments, SourceBreakpoint, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest,
+    ErrorResponse, Message, RunInTerminalRequestArguments, SourceBreakpoint,
+    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
     client::SessionId,
     requests::{
         Continue, Disconnect, Launch, Next, RunInTerminal, SetBreakpoints, StackTrace,
@@ -25,7 +25,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use task::LaunchConfig;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
@@ -49,37 +48,28 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
 
-    client
-        .on_request::<StackTrace, _>(move |_, _| {
-            Ok(dap::StackTraceResponse {
-                stack_frames: Vec::default(),
-                total_frames: None,
-            })
+    client.on_request::<StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: Vec::default(),
+            total_frames: None,
         })
-        .await;
+    });
+
+    cx.run_until_parked();
 
     // assert we have a debug panel item before the session has stopped
     workspace
@@ -197,37 +187,28 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
 
-    client
-        .on_request::<StackTrace, _>(move |_, _| {
-            Ok(dap::StackTraceResponse {
-                stack_frames: Vec::default(),
-                total_frames: None,
-            })
+    client.on_request::<StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: Vec::default(),
+            total_frames: None,
         })
-        .await;
+    });
+
+    cx.run_until_parked();
 
     // assert we have a debug panel item before the session has stopped
     workspace
@@ -373,16 +354,9 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client
@@ -470,16 +444,9 @@ async fn test_handle_error_run_in_terminal_reverse_request(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client
@@ -555,28 +522,19 @@ async fn test_handle_start_debugging_reverse_request(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    client
-        .on_request::<dap::requests::Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<dap::requests::Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
 
     client
         .on_response::<StartDebugging, _>({
@@ -589,7 +547,9 @@ async fn test_handle_start_debugging_reverse_request(
             }
         })
         .await;
-
+    // Set up handlers for sessions spawned with reverse request too.
+    let _reverse_request_subscription =
+        project::debugger::test::intercept_debug_sessions(cx, |_| {});
     client
         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
             configuration: json!({}),
@@ -608,20 +568,16 @@ async fn test_handle_start_debugging_reverse_request(
     });
     let child_client = child_session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    child_client
-        .on_request::<dap::requests::Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    child_client.on_request::<dap::requests::Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
 
-    child_client
-        .on_request::<Disconnect, _>(move |_, _| Ok(()))
-        .await;
+    child_client.on_request::<Disconnect, _>(move |_, _| Ok(()));
 
     child_client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -673,31 +629,24 @@ async fn test_shutdown_children_when_parent_session_shutdown(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let parent_session = task.await.unwrap();
+    let parent_session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = parent_session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    client
-        .on_request::<dap::requests::Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<dap::requests::Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
 
     client.on_response::<StartDebugging, _>(move |_| {}).await;
-
+    // Set up handlers for sessions spawned with reverse request too.
+    let _reverse_request_subscription =
+        project::debugger::test::intercept_debug_sessions(cx, |_| {});
     // start first child session
     client
         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
@@ -725,9 +674,7 @@ async fn test_shutdown_children_when_parent_session_shutdown(
     let first_child_client =
         first_child_session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    first_child_client
-        .on_request::<Disconnect, _>(move |_, _| Ok(()))
-        .await;
+    first_child_client.on_request::<Disconnect, _>(move |_, _| Ok(()));
 
     // configure second child session
     let second_child_session = dap_store.read_with(cx, |dap_store, _| {
@@ -736,9 +683,7 @@ async fn test_shutdown_children_when_parent_session_shutdown(
     let second_child_client =
         second_child_session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    second_child_client
-        .on_request::<Disconnect, _>(move |_, _| Ok(()))
-        .await;
+    second_child_client.on_request::<Disconnect, _>(move |_, _| Ok(()));
 
     cx.run_until_parked();
 
@@ -792,20 +737,15 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let parent_session = task.await.unwrap();
+    let parent_session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = parent_session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_response::<StartDebugging, _>(move |_| {}).await;
-
+    // Set up handlers for sessions spawned with reverse request too.
+    let _reverse_request_subscription =
+        project::debugger::test::intercept_debug_sessions(cx, |_| {});
     // start first child session
     client
         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
@@ -833,9 +773,7 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
     let first_child_client =
         first_child_session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    first_child_client
-        .on_request::<Disconnect, _>(move |_, _| Ok(()))
-        .await;
+    first_child_client.on_request::<Disconnect, _>(move |_, _| Ok(()));
 
     // configure second child session
     let second_child_session = dap_store.read_with(cx, |dap_store, _| {
@@ -844,9 +782,7 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
     let second_child_client =
         second_child_session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    second_child_client
-        .on_request::<Disconnect, _>(move |_, _| Ok(()))
-        .await;
+    second_child_client.on_request::<Disconnect, _>(move |_, _| Ok(()));
 
     cx.run_until_parked();
 
@@ -922,123 +858,107 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            Some(dap::Capabilities {
+    let session = debugger::test::start_debug_session(&project, cx, |client| {
+        client.on_request::<dap::requests::Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
                 supports_step_back: Some(true),
                 ..Default::default()
-            }),
-            false,
-            cx,
-        )
-    });
+            })
+        });
+    })
+    .await
+    .unwrap();
 
-    let session = task.await.unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
     const THREAD_ID_NUM: u64 = 1;
 
-    client
-        .on_request::<dap::requests::Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: THREAD_ID_NUM,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<dap::requests::Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: THREAD_ID_NUM,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
 
-    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+    client.on_request::<Launch, _>(move |_, _| Ok(()));
 
-    client
-        .on_request::<StackTrace, _>(move |_, _| {
-            Ok(dap::StackTraceResponse {
-                stack_frames: Vec::default(),
-                total_frames: None,
-            })
+    client.on_request::<StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: Vec::default(),
+            total_frames: None,
         })
-        .await;
+    });
 
-    client
-        .on_request::<Next, _>(move |_, _| {
-            Err(ErrorResponse {
-                error: Some(dap::Message {
-                    id: 1,
-                    format: "error".into(),
-                    variables: None,
-                    send_telemetry: None,
-                    show_user: None,
-                    url: None,
-                    url_label: None,
-                }),
-            })
+    client.on_request::<Next, _>(move |_, _| {
+        Err(ErrorResponse {
+            error: Some(dap::Message {
+                id: 1,
+                format: "error".into(),
+                variables: None,
+                send_telemetry: None,
+                show_user: None,
+                url: None,
+                url_label: None,
+            }),
         })
-        .await;
+    });
 
-    client
-        .on_request::<StepOut, _>(move |_, _| {
-            Err(ErrorResponse {
-                error: Some(dap::Message {
-                    id: 1,
-                    format: "error".into(),
-                    variables: None,
-                    send_telemetry: None,
-                    show_user: None,
-                    url: None,
-                    url_label: None,
-                }),
-            })
+    client.on_request::<StepOut, _>(move |_, _| {
+        Err(ErrorResponse {
+            error: Some(dap::Message {
+                id: 1,
+                format: "error".into(),
+                variables: None,
+                send_telemetry: None,
+                show_user: None,
+                url: None,
+                url_label: None,
+            }),
         })
-        .await;
+    });
 
-    client
-        .on_request::<StepIn, _>(move |_, _| {
-            Err(ErrorResponse {
-                error: Some(dap::Message {
-                    id: 1,
-                    format: "error".into(),
-                    variables: None,
-                    send_telemetry: None,
-                    show_user: None,
-                    url: None,
-                    url_label: None,
-                }),
-            })
+    client.on_request::<StepIn, _>(move |_, _| {
+        Err(ErrorResponse {
+            error: Some(dap::Message {
+                id: 1,
+                format: "error".into(),
+                variables: None,
+                send_telemetry: None,
+                show_user: None,
+                url: None,
+                url_label: None,
+            }),
         })
-        .await;
+    });
 
-    client
-        .on_request::<StepBack, _>(move |_, _| {
-            Err(ErrorResponse {
-                error: Some(dap::Message {
-                    id: 1,
-                    format: "error".into(),
-                    variables: None,
-                    send_telemetry: None,
-                    show_user: None,
-                    url: None,
-                    url_label: None,
-                }),
-            })
+    client.on_request::<StepBack, _>(move |_, _| {
+        Err(ErrorResponse {
+            error: Some(dap::Message {
+                id: 1,
+                format: "error".into(),
+                variables: None,
+                send_telemetry: None,
+                show_user: None,
+                url: None,
+                url_label: None,
+            }),
         })
-        .await;
+    });
 
-    client
-        .on_request::<Continue, _>(move |_, _| {
-            Err(ErrorResponse {
-                error: Some(dap::Message {
-                    id: 1,
-                    format: "error".into(),
-                    variables: None,
-                    send_telemetry: None,
-                    show_user: None,
-                    url: None,
-                    url_label: None,
-                }),
-            })
+    client.on_request::<Continue, _>(move |_, _| {
+        Err(ErrorResponse {
+            error: Some(dap::Message {
+                id: 1,
+                format: "error".into(),
+                variables: None,
+                send_telemetry: None,
+                show_user: None,
+                url: None,
+                url_label: None,
+            }),
         })
-        .await;
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -1051,6 +971,8 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
             hit_breakpoint_ids: None,
         }))
         .await;
+
+    cx.run_until_parked();
 
     let running_state = active_debug_session_panel(workspace, cx).update_in(cx, |item, _, _| {
         item.mode()
@@ -1151,16 +1073,9 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         .update(cx, |_, _, cx| worktree.read(cx).id())
         .unwrap();
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     let buffer = project
@@ -1180,16 +1095,14 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         )
     });
 
-    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+    client.on_request::<Launch, _>(move |_, _| Ok(()));
 
-    client
-        .on_request::<StackTrace, _>(move |_, _| {
-            Ok(dap::StackTraceResponse {
-                stack_frames: Vec::default(),
-                total_frames: None,
-            })
+    client.on_request::<StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: Vec::default(),
+            total_frames: None,
         })
-        .await;
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -1204,32 +1117,30 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         .await;
 
     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
-    client
-        .on_request::<SetBreakpoints, _>({
-            let called_set_breakpoints = called_set_breakpoints.clone();
-            move |_, args| {
-                assert_eq!(path!("/project/main.rs"), args.source.path.unwrap());
-                assert_eq!(
-                    vec![SourceBreakpoint {
-                        line: 2,
-                        column: None,
-                        condition: None,
-                        hit_condition: None,
-                        log_message: None,
-                        mode: None
-                    }],
-                    args.breakpoints.unwrap()
-                );
-                assert!(!args.source_modified.unwrap());
+    client.on_request::<SetBreakpoints, _>({
+        let called_set_breakpoints = called_set_breakpoints.clone();
+        move |_, args| {
+            assert_eq!(path!("/project/main.rs"), args.source.path.unwrap());
+            assert_eq!(
+                vec![SourceBreakpoint {
+                    line: 2,
+                    column: None,
+                    condition: None,
+                    hit_condition: None,
+                    log_message: None,
+                    mode: None
+                }],
+                args.breakpoints.unwrap()
+            );
+            assert!(!args.source_modified.unwrap());
 
-                called_set_breakpoints.store(true, Ordering::SeqCst);
+            called_set_breakpoints.store(true, Ordering::SeqCst);
 
-                Ok(dap::SetBreakpointsResponse {
-                    breakpoints: Vec::default(),
-                })
-            }
-        })
-        .await;
+            Ok(dap::SetBreakpointsResponse {
+                breakpoints: Vec::default(),
+            })
+        }
+    });
 
     editor.update_in(cx, |editor, window, cx| {
         editor.move_down(&actions::MoveDown, window, cx);
@@ -1244,32 +1155,30 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
     );
 
     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
-    client
-        .on_request::<SetBreakpoints, _>({
-            let called_set_breakpoints = called_set_breakpoints.clone();
-            move |_, args| {
-                assert_eq!(path!("/project/main.rs"), args.source.path.unwrap());
-                assert_eq!(
-                    vec![SourceBreakpoint {
-                        line: 3,
-                        column: None,
-                        condition: None,
-                        hit_condition: None,
-                        log_message: None,
-                        mode: None
-                    }],
-                    args.breakpoints.unwrap()
-                );
-                assert!(args.source_modified.unwrap());
+    client.on_request::<SetBreakpoints, _>({
+        let called_set_breakpoints = called_set_breakpoints.clone();
+        move |_, args| {
+            assert_eq!(path!("/project/main.rs"), args.source.path.unwrap());
+            assert_eq!(
+                vec![SourceBreakpoint {
+                    line: 3,
+                    column: None,
+                    condition: None,
+                    hit_condition: None,
+                    log_message: None,
+                    mode: None
+                }],
+                args.breakpoints.unwrap()
+            );
+            assert!(args.source_modified.unwrap());
 
-                called_set_breakpoints.store(true, Ordering::SeqCst);
+            called_set_breakpoints.store(true, Ordering::SeqCst);
 
-                Ok(dap::SetBreakpointsResponse {
-                    breakpoints: Vec::default(),
-                })
-            }
-        })
-        .await;
+            Ok(dap::SetBreakpointsResponse {
+                breakpoints: Vec::default(),
+            })
+        }
+    });
 
     editor.update_in(cx, |editor, window, cx| {
         editor.move_up(&actions::MoveUp, window, cx);
@@ -1381,49 +1290,40 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
     });
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
 
-    client
-        .on_request::<SetBreakpoints, _>({
-            let called_set_breakpoints = called_set_breakpoints.clone();
-            move |_, args| {
-                assert!(
-                    args.breakpoints.is_none_or(|bps| bps.is_empty()),
-                    "Send empty breakpoint sets to clear them from DAP servers"
-                );
+    client.on_request::<SetBreakpoints, _>({
+        let called_set_breakpoints = called_set_breakpoints.clone();
+        move |_, args| {
+            assert!(
+                args.breakpoints.is_none_or(|bps| bps.is_empty()),
+                "Send empty breakpoint sets to clear them from DAP servers"
+            );
 
-                match args
-                    .source
-                    .path
-                    .expect("We should always send a breakpoint's path")
-                    .as_str()
-                {
-                    "/project/main.rs" | "/project/second.rs" => {}
-                    _ => {
-                        panic!("Unset breakpoints for path that doesn't have any")
-                    }
+            match args
+                .source
+                .path
+                .expect("We should always send a breakpoint's path")
+                .as_str()
+            {
+                "/project/main.rs" | "/project/second.rs" => {}
+                _ => {
+                    panic!("Unset breakpoints for path that doesn't have any")
                 }
-
-                called_set_breakpoints.store(true, Ordering::SeqCst);
-
-                Ok(dap::SetBreakpointsResponse {
-                    breakpoints: Vec::default(),
-                })
             }
-        })
-        .await;
+
+            called_set_breakpoints.store(true, Ordering::SeqCst);
+
+            Ok(dap::SetBreakpointsResponse {
+                breakpoints: Vec::default(),
+            })
+        }
+    });
 
     cx.dispatch_action(crate::ClearAllBreakpoints);
     cx.run_until_parked();
@@ -1458,13 +1358,20 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            true,
-            cx,
-        )
+    let task = project::debugger::test::start_debug_session(&project, cx, |client| {
+        client.on_request::<dap::requests::Initialize, _>(|_, _| {
+            Err(ErrorResponse {
+                error: Some(Message {
+                    format: "failed to launch".to_string(),
+                    id: 1,
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        });
     });
 
     assert!(

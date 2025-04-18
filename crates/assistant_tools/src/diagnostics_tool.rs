@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -58,7 +58,7 @@ impl Tool for DiagnosticsTool {
         IconName::XCircle
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<DiagnosticsToolInput>(format)
     }
 
@@ -83,14 +83,15 @@ impl Tool for DiagnosticsTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         match serde_json::from_value::<DiagnosticsToolInput>(input)
             .ok()
             .and_then(|input| input.path)
         {
             Some(path) if !path.is_empty() => {
                 let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
+                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)))
+                        .into();
                 };
 
                 let buffer =
@@ -125,6 +126,7 @@ impl Tool for DiagnosticsTool {
                         Ok(output)
                     }
                 })
+                .into()
             }
             _ => {
                 let project = project.read(cx);
@@ -155,9 +157,10 @@ impl Tool for DiagnosticsTool {
                 });
 
                 if has_diagnostics {
-                    Task::ready(Ok(output))
+                    Task::ready(Ok(output)).into()
                 } else {
                     Task::ready(Ok("No errors or warnings found in the project.".to_string()))
+                        .into()
                 }
             }
         }

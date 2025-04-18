@@ -632,6 +632,7 @@ impl CompletionsMenu {
                     MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
                         .code_block_renderer(markdown::CodeBlockRenderer::Default {
                             copy_button: false,
+                            border: false,
                         })
                         .on_url_click(open_markdown_url),
                 )

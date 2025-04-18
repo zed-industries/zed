@@ -291,13 +291,14 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 ```json
 [
   {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bin/rails",
-    "args": ["test", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "label": "test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
+    "command": "bin/rails test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
     "tags": ["ruby-test"]
   }
 ]
 ```
+
+Note: We can't use `args` here because of the way quotes are handled.
 
 ### Minitest
 
