@@ -1224,13 +1224,19 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
+    // let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
+    let mut keyboard_layout = cx.keyboard_layout().to_string();
     cx.on_keyboard_layout_change(move |cx| {
-        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
-        if next_mapping != current_mapping {
-            current_mapping = next_mapping;
+        let current_layout = cx.keyboard_layout().id().to_string();
+        if current_layout != keyboard_layout {
+            keyboard_layout = current_layout;
             keyboard_layout_tx.unbounded_send(()).ok();
         }
+        // let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+        // if next_mapping != current_mapping {
+        //     current_mapping = next_mapping;
+        //     keyboard_layout_tx.unbounded_send(()).ok();
+        // }
     })
     .detach();
 
