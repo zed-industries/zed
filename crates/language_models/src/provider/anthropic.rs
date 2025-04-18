@@ -664,10 +664,7 @@ pub fn map_to_language_model_completion_events(
                                     state,
                                 ));
                             }
-                            ResponseContent::Thinking {
-                                thinking,
-                                signature,
-                            } => {
+                            ResponseContent::Thinking { thinking } => {
                                 return Some((
                                     vec![Ok(LanguageModelCompletionEvent::Thinking {
                                         text: thinking,
