@@ -13,6 +13,8 @@ use uuid::Uuid;
 
 use crate::thread::Thread;
 
+pub const RULES_ICON: IconName = IconName::Context;
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextId(pub(crate) usize);
 
@@ -29,7 +31,7 @@ pub enum ContextKind {
     Excerpt,
     FetchedUrl,
     Thread,
-    UserRules,
+    Rules,
 }
 
 impl ContextKind {
@@ -41,8 +43,7 @@ impl ContextKind {
             ContextKind::Excerpt => IconName::Code,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
-            // todo! Better icon?
-            ContextKind::UserRules => IconName::File,
+            ContextKind::Rules => RULES_ICON,
         }
     }
 }
@@ -55,7 +56,7 @@ pub enum AssistantContext {
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
     Excerpt(ExcerptContext),
-    UserRules(UserRulesContext),
+    Rules(RulesContext),
 }
 
 impl AssistantContext {
@@ -67,7 +68,7 @@ impl AssistantContext {
             Self::FetchedUrl(url) => url.id,
             Self::Thread(thread) => thread.id,
             Self::Excerpt(excerpt) => excerpt.id,
-            Self::UserRules(user_rules) => user_rules.id,
+            Self::Rules(user_rules) => user_rules.id,
         }
     }
 }
@@ -176,7 +177,7 @@ pub struct ExcerptContext {
 }
 
 #[derive(Debug, Clone)]
-pub struct UserRulesContext {
+pub struct RulesContext {
     pub id: ContextId,
     pub prompt_id: Uuid,
     pub title: SharedString,
@@ -204,7 +205,7 @@ pub fn format_context_as_string<'a>(
             AssistantContext::Excerpt(context) => excerpt_context.push(context),
             AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context),
-            AssistantContext::UserRules(context) => user_rules_context.push(context),
+            AssistantContext::Rules(context) => user_rules_context.push(context),
         }
     }
 

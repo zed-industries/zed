@@ -8,15 +8,16 @@ use prompt_store::PromptId;
 use ui::{ListItem, prelude::*};
 use uuid::Uuid;
 
+use crate::context::RULES_ICON;
 use crate::context_picker::ContextPicker;
 use crate::context_store::{self, ContextStore};
 use crate::thread_store::ThreadStore;
 
-pub struct UserRulesContextPicker {
-    picker: Entity<Picker<UserRulesContextPickerDelegate>>,
+pub struct RulesContextPicker {
+    picker: Entity<Picker<RulesContextPickerDelegate>>,
 }
 
-impl UserRulesContextPicker {
+impl RulesContextPicker {
     pub fn new(
         thread_store: WeakEntity<ThreadStore>,
         context_picker: WeakEntity<ContextPicker>,
@@ -24,47 +25,46 @@ impl UserRulesContextPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate =
-            UserRulesContextPickerDelegate::new(thread_store, context_picker, context_store);
+        let delegate = RulesContextPickerDelegate::new(thread_store, context_picker, context_store);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
-        UserRulesContextPicker { picker }
+        RulesContextPicker { picker }
     }
 }
 
-impl Focusable for UserRulesContextPicker {
+impl Focusable for RulesContextPicker {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
-impl Render for UserRulesContextPicker {
+impl Render for RulesContextPicker {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct UserRulesContextEntry {
+pub struct RulesContextEntry {
     pub prompt_id: Uuid,
     pub title: SharedString,
 }
 
-pub struct UserRulesContextPickerDelegate {
+pub struct RulesContextPickerDelegate {
     thread_store: WeakEntity<ThreadStore>,
     context_picker: WeakEntity<ContextPicker>,
     context_store: WeakEntity<context_store::ContextStore>,
-    matches: Vec<UserRulesContextEntry>,
+    matches: Vec<RulesContextEntry>,
     selected_index: usize,
 }
 
-impl UserRulesContextPickerDelegate {
+impl RulesContextPickerDelegate {
     pub fn new(
         thread_store: WeakEntity<ThreadStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
     ) -> Self {
-        UserRulesContextPickerDelegate {
+        RulesContextPickerDelegate {
             thread_store,
             context_picker,
             context_store,
@@ -74,7 +74,7 @@ impl UserRulesContextPickerDelegate {
     }
 }
 
-impl PickerDelegate for UserRulesContextPickerDelegate {
+impl PickerDelegate for RulesContextPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
@@ -95,7 +95,7 @@ impl PickerDelegate for UserRulesContextPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search user rules…".into()
+        "Search available rules…".into()
     }
 
     fn update_matches(
@@ -177,7 +177,7 @@ impl PickerDelegate for UserRulesContextPickerDelegate {
 }
 
 pub fn render_thread_context_entry(
-    user_rules: &UserRulesContextEntry,
+    user_rules: &RulesContextEntry,
     context_store: WeakEntity<ContextStore>,
     cx: &mut App,
 ) -> Div {
@@ -197,8 +197,7 @@ pub fn render_thread_context_entry(
                 .gap_1p5()
                 .max_w_72()
                 .child(
-                    // todo! icon
-                    Icon::new(IconName::File)
+                    Icon::new(RULES_ICON)
                         .size(IconSize::XSmall)
                         .color(Color::Muted),
                 )
@@ -219,8 +218,8 @@ pub fn render_thread_context_entry(
 }
 
 #[derive(Clone)]
-pub struct UserRulesMatch {
-    pub user_rules: UserRulesContextEntry,
+pub struct RulesMatch {
+    pub user_rules: RulesContextEntry,
     pub is_recent: bool,
 }
 
@@ -229,7 +228,7 @@ pub(crate) fn search_user_rules(
     cancellation_flag: Arc<AtomicBool>,
     thread_store: Entity<ThreadStore>,
     cx: &mut App,
-) -> Task<Vec<UserRulesMatch>> {
+) -> Task<Vec<RulesMatch>> {
     let Some(prompt_store) = thread_store.read(cx).prompt_store() else {
         return Task::ready(vec![]);
     };
@@ -245,8 +244,8 @@ pub(crate) fn search_user_rules(
                 } else {
                     match metadata.id {
                         PromptId::EditWorkflow => None,
-                        PromptId::User { uuid } => Some(UserRulesMatch {
-                            user_rules: UserRulesContextEntry {
+                        PromptId::User { uuid } => Some(RulesMatch {
+                            user_rules: RulesContextEntry {
                                 prompt_id: uuid,
                                 title: metadata.title?,
                             },

@@ -20,6 +20,7 @@ use text::{Anchor, ToPoint};
 use ui::prelude::*;
 use workspace::Workspace;
 
+use crate::context::RULES_ICON;
 use crate::context_picker::file_context_picker::search_files;
 use crate::context_picker::symbol_context_picker::search_symbols;
 use crate::context_store::ContextStore;
@@ -27,9 +28,9 @@ use crate::thread_store::ThreadStore;
 
 use super::fetch_context_picker::fetch_url_content;
 use super::file_context_picker::FileMatch;
+use super::rules_context_picker::{RulesContextEntry, RulesMatch, search_user_rules};
 use super::symbol_context_picker::SymbolMatch;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
-use super::user_rules_context_picker::{UserRulesContextEntry, UserRulesMatch, search_user_rules};
 use super::{
     ContextPickerMode, MentionLink, RecentEntry, recent_context_picker_entries,
     supported_context_picker_modes,
@@ -40,7 +41,7 @@ pub(crate) enum Match {
     File(FileMatch),
     Thread(ThreadMatch),
     Fetch(SharedString),
-    UserRules(UserRulesMatch),
+    Rules(RulesMatch),
     Mode(ModeMatch),
 }
 
@@ -58,7 +59,7 @@ impl Match {
             Match::Symbol(_) => 1.,
             Match::Fetch(_) => 1.,
             // todo! what should this be?
-            Match::UserRules(_) => 1.,
+            Match::Rules(_) => 1.,
         }
     }
 }
@@ -117,7 +118,7 @@ fn search(
                 Task::ready(Vec::new())
             }
         }
-        Some(ContextPickerMode::UserRules) => {
+        Some(ContextPickerMode::Rules) => {
             if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
                 let search_user_rules_task =
                     search_user_rules(query.clone(), cancellation_flag.clone(), thread_store, cx);
@@ -125,7 +126,7 @@ fn search(
                     search_user_rules_task
                         .await
                         .into_iter()
-                        .map(Match::UserRules)
+                        .map(Match::Rules)
                         .collect()
                 })
             } else {
@@ -308,7 +309,7 @@ impl ContextPickerCompletionProvider {
     }
 
     fn completion_for_user_rules(
-        user_rules: UserRulesContextEntry,
+        user_rules: RulesContextEntry,
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
         recent: bool,
@@ -320,8 +321,7 @@ impl ContextPickerCompletionProvider {
             // todo! is this ever true?
             IconName::HistoryRerun
         } else {
-            // todo! icon
-            IconName::File
+            RULES_ICON
         };
 
         let new_text = "todo!".to_string();
@@ -336,8 +336,7 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
-                // todo! icon
-                IconName::MessageBubbles.path().into(),
+                RULES_ICON.path().into(),
                 user_rules.title.clone(),
                 excerpt_id,
                 source_range.start,
@@ -678,7 +677,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 thread_store,
                             ))
                         }
-                        Match::UserRules(UserRulesMatch {
+                        Match::Rules(RulesMatch {
                             user_rules,
                             is_recent,
                             ..

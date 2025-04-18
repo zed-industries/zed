@@ -22,27 +22,24 @@ pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
     /// Whether any worktree has a rules_file. Provided as a field because handlebars can't do this.
     pub has_rules: bool,
-    pub default_user_rules: Vec<DefaultUserRulesContext>,
-    /// `!default_user_rules.is_empty()` - provided as a field because handlebars can't do this.
-    pub has_default_user_rules: bool,
+    pub user_rules: Vec<UserRulesContext>,
+    /// `!user_rules.is_empty()` - provided as a field because handlebars can't do this.
+    pub has_user_rules: bool,
     pub os: String,
     pub arch: String,
     pub shell: String,
 }
 
 impl ProjectContext {
-    pub fn new(
-        worktrees: Vec<WorktreeContext>,
-        default_user_rules: Vec<DefaultUserRulesContext>,
-    ) -> Self {
+    pub fn new(worktrees: Vec<WorktreeContext>, default_user_rules: Vec<UserRulesContext>) -> Self {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
         Self {
             worktrees,
             has_rules,
-            has_default_user_rules: !default_user_rules.is_empty(),
-            default_user_rules,
+            has_user_rules: !default_user_rules.is_empty(),
+            user_rules: default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             shell: get_system_shell(),
@@ -51,7 +48,7 @@ impl ProjectContext {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct DefaultUserRulesContext {
+pub struct UserRulesContext {
     pub uuid: Uuid,
     pub title: Option<String>,
     pub contents: String,
@@ -410,7 +407,7 @@ mod test {
                 text: "".into(),
             }),
         }];
-        let default_user_rules = vec![DefaultUserRulesContext {
+        let default_user_rules = vec![UserRulesContext {
             uuid: Uuid::nil(),
             title: Some("Rules title".into()),
             contents: "Rules contents".into(),

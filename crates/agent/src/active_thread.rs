@@ -1,4 +1,4 @@
-use crate::context::{AssistantContext, ContextId, format_context_as_string};
+use crate::context::{AssistantContext, ContextId, RULES_ICON, format_context_as_string};
 use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
@@ -2952,10 +2952,10 @@ impl ActiveThread {
             return div().into_any();
         };
 
-        let default_user_rules_text = if project_context.default_user_rules.is_empty() {
+        let default_user_rules_text = if project_context.user_rules.is_empty() {
             None
-        } else if project_context.default_user_rules.len() == 1 {
-            let user_rules = &project_context.default_user_rules[0];
+        } else if project_context.user_rules.len() == 1 {
+            let user_rules = &project_context.user_rules[0];
 
             match user_rules.title.as_ref() {
                 Some(title) => Some(format!("Using \"{title}\" user rule")),
@@ -2964,12 +2964,12 @@ impl ActiveThread {
         } else {
             Some(format!(
                 "Using {} user rules",
-                project_context.default_user_rules.len()
+                project_context.user_rules.len()
             ))
         };
 
         let first_default_user_rules_id = project_context
-            .default_user_rules
+            .user_rules
             .first()
             .map(|user_rules| user_rules.uuid);
 
@@ -3003,7 +3003,7 @@ impl ActiveThread {
                         h_flex()
                             .w_full()
                             .child(
-                                Icon::new(IconName::File)
+                                Icon::new(RULES_ICON)
                                     .size(IconSize::XSmall)
                                     .color(Color::Disabled),
                             )
@@ -3311,7 +3311,7 @@ pub(crate) fn open_context(
                 }
             })
         }
-        AssistantContext::UserRules(user_rules_context) => window.dispatch_action(
+        AssistantContext::Rules(user_rules_context) => window.dispatch_action(
             Box::new(OpenPromptLibrary {
                 prompt_to_focus: Some(user_rules_context.prompt_id),
             }),

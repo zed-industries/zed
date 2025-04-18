@@ -144,9 +144,9 @@ In Markdown, hash marks signify headings. For example:
 This example is unacceptable because the path is in the wrong place. The path must be directly after the opening backticks.
 </style>
 
-{{#if has_default_user_rules}}
+{{#if has_user_rules}}
 The user has specified the following rules that should be applied:
-{{#each default_user_rules}}
+{{#each user_rules}}
 
 {{#if title}}
 Rules title: {{title}}

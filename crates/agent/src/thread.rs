@@ -759,7 +759,7 @@ impl Thread {
                         }
                         AssistantContext::FetchedUrl(_)
                         | AssistantContext::Thread(_)
-                        | AssistantContext::UserRules(_) => {}
+                        | AssistantContext::Rules(_) => {}
                     }
                 }
             });
