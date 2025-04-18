@@ -302,33 +302,6 @@ impl DebugPanel {
         self.active_session.clone()
     }
 
-    pub fn debug_panel_items_by_client(
-        &self,
-        client_id: &SessionId,
-        cx: &Context<Self>,
-    ) -> Vec<Entity<DebugSession>> {
-        self.sessions
-            .iter()
-            .filter(|item| item.read(cx).session_id(cx) == *client_id)
-            .map(|item| item.clone())
-            .collect()
-    }
-
-    pub fn debug_panel_item_by_client(
-        &self,
-        client_id: SessionId,
-        cx: &mut Context<Self>,
-    ) -> Option<Entity<DebugSession>> {
-        self.sessions
-            .iter()
-            .find(|item| {
-                let item = item.read(cx);
-
-                item.session_id(cx) == client_id
-            })
-            .cloned()
-    }
-
     fn handle_dap_store_event(
         &mut self,
         dap_store: &Entity<DapStore>,

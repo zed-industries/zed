@@ -1070,12 +1070,7 @@ impl Project {
                 cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone().into()));
 
             let dap_store = cx.new(|cx| {
-                DapStore::new_ssh(
-                    SSH_PROJECT_ID,
-                    ssh_proto.clone(),
-                    breakpoint_store.clone(),
-                    cx,
-                )
+                DapStore::new_ssh(SSH_PROJECT_ID, ssh.clone(), breakpoint_store.clone(), cx)
             });
 
             let git_store = cx.new(|cx| {

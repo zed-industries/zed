@@ -31,6 +31,7 @@ use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
+use remote::SshRemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -83,19 +84,20 @@ pub struct LocalDapStore {
     http_client: Arc<dyn HttpClient>,
     environment: Entity<ProjectEnvironment>,
     language_registry: Arc<LanguageRegistry>,
-    worktree_store: Entity<WorktreeStore>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     locators: HashMap<String, Arc<dyn DapLocator>>,
 }
 
 pub struct SshDapStore {
     upstream_client: AnyProtoClient,
+    ssh_client: Entity<SshRemoteClient>,
     upstream_project_id: u64,
 }
 
 pub struct DapStore {
     mode: DapStoreMode,
     downstream_client: Option<(AnyProtoClient, u64)>,
+    worktree_store: Entity<WorktreeStore>,
     breakpoint_store: Entity<BreakpointStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
     next_session_id: u32,
@@ -136,39 +138,43 @@ impl DapStore {
             http_client,
             node_runtime,
             toolchain_store,
-            worktree_store,
             language_registry,
             locators,
         });
 
-        Self::new(mode, breakpoint_store, cx)
+        Self::new(mode, worktree_store, breakpoint_store, cx)
     }
 
     pub fn new_ssh(
         project_id: u64,
-        upstream_client: AnyProtoClient,
+        ssh_client: Entity<SshRemoteClient>,
+        worktree_store: Entity<WorktreeStore>,
         breakpoint_store: Entity<BreakpointStore>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let upstream_client = ssh_client.read(cx).proto_client();
         let mode = DapStoreMode::Ssh(SshDapStore {
             upstream_client,
+            ssh_client,
             upstream_project_id: project_id,
         });
 
-        Self::new(mode, breakpoint_store, cx)
+        Self::new(mode, worktree_store, breakpoint_store, cx)
     }
 
     pub fn new_collab(
         _project_id: u64,
         _upstream_client: AnyProtoClient,
+        worktree_store: Entity<WorktreeStore>,
         breakpoint_store: Entity<BreakpointStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new(DapStoreMode::Collab, breakpoint_store, cx)
+        Self::new(DapStoreMode::Collab, worktree_store, breakpoint_store, cx)
     }
 
     fn new(
         mode: DapStoreMode,
+        worktree_store: Entity<WorktreeStore>,
         breakpoint_store: Entity<BreakpointStore>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -201,6 +207,7 @@ impl DapStore {
             start_debugging_tx,
             next_session_id: 0,
             downstream_client: None,
+            worktree_store,
             breakpoint_store,
             sessions: Default::default(),
         }
@@ -211,12 +218,11 @@ impl DapStore {
         definition: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugAdapterBinary>> {
+        let Some(worktree) = self.worktree_store.read(cx).visible_worktrees(cx).next() else {
+            return Task::ready(Err(anyhow!("Failed to find a worktree")));
+        };
         match &self.mode {
             DapStoreMode::Local(local) => {
-                let Some(worktree) = local.worktree_store.read(cx).visible_worktrees(cx).next()
-                else {
-                    return Task::ready(Err(anyhow!("Failed to find a worktree")));
-                };
                 let Some(adapter) = DapRegistry::global(cx).adapter(&definition.adapter) else {
                     return Task::ready(Err(anyhow!("Failed to find a debug adapter")));
                 };
@@ -261,10 +267,50 @@ impl DapStore {
                     project_id: ssh.upstream_project_id,
                     task: Some(definition.to_proto()),
                 });
+                let ssh_client = ssh.ssh_client.clone();
 
                 cx.background_spawn(async move {
                     let response = request.await?;
-                    DebugAdapterBinary::from_proto(response)
+                    let binary = DebugAdapterBinary::from_proto(response)?;
+
+                    let mut ssh_command = ssh_client.update(cx, |ssh, _| {
+                        anyhow::Ok(SshCommand {
+                            arguments: ssh
+                                .ssh_args()
+                                .ok_or_else(|| anyhow!("SSH arguments not found"))?,
+                        })
+                    })??;
+
+                    let mut connection = None;
+                    if let Some(c) = binary.connection {
+                        let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
+                        let port =
+                            dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
+
+                        ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
+                        connection = Some(TcpArguments {
+                            port: c.port,
+                            host: local_bind_addr,
+                            timeout: c.timeout,
+                        })
+                    }
+
+                    let (program, args) = wrap_for_ssh(
+                        &ssh_command,
+                        Some((&binary.command, &binary.arguments)),
+                        binary.cwd.as_deref(),
+                        binary.envs,
+                        None,
+                    );
+
+                    Ok(DebugAdapterBinary {
+                        command: program,
+                        arguments: args,
+                        envs: HashMap::default(),
+                        cwd: None,
+                        connection,
+                        request_args: binary.request_args.into(),
+                    })
                 })
             }
             DapStoreMode::Collab => {
@@ -314,6 +360,133 @@ impl DapStore {
             DapStoreMode::Local(local_dap_store) => Some(local_dap_store),
             _ => None,
         }
+    }
+
+    pub fn start_session(
+        &mut self,
+        template: DebugTaskDefinition,
+        parent_session: Option<Entity<Session>>,
+        cx: &mut Context<Self>,
+    ) -> Result<Entity<Session>> {
+        let Some(worktree) = self.worktree_store.read(cx).visible_worktrees(cx).next() else {
+            return Err(anyhow!("Failed to find a worktree"));
+        };
+        let session_id = SessionId(util::post_inc(&mut self.next_session_id));
+
+        if let Some(session) = &parent_session {
+            session.update(cx, |session, _| {
+                session.add_child_session_id(session_id);
+            });
+        }
+
+        let start_debugging_tx = self.start_debugging_tx.clone();
+
+        let (initialized_tx, initialized_rx) = oneshot::channel();
+
+        let session = Session::new(
+            self.breakpoint_store.clone(),
+            cx.entity().downgrade(),
+            worktree.downgrade(),
+            session_id,
+            parent_session,
+            template.clone(),
+            start_debugging_tx,
+            initialized_tx,
+            cx,
+        );
+
+        self.sessions.insert(session_id, session.clone());
+        cx.emit(DapStoreEvent::DebugClientStarted(session_id));
+        cx.notify();
+
+        cx.subscribe(
+            &session,
+            move |this: &mut DapStore, session, event: &SessionStateEvent, cx| match event {
+                SessionStateEvent::Shutdown => {
+                    this.shutdown_session(session_id, cx).detach_and_log_err(cx);
+                }
+                SessionStateEvent::Restart => {
+                    let Some((config, binary)) = session.read_with(cx, |session, _| {
+                        session
+                            .configuration()
+                            .map(|config| (config, session.binary().clone()))
+                    }) else {
+                        log::error!("Failed to get debug config from session");
+                        return;
+                    };
+
+                    let mut curr_session = session;
+                    while let Some(parent_id) = curr_session.read(cx).parent_id() {
+                        if let Some(parent_session) = this.sessions.get(&parent_id).cloned() {
+                            curr_session = parent_session;
+                        } else {
+                            log::error!("Failed to get parent session from parent session id");
+                            break;
+                        }
+                    }
+
+                    let session_id = curr_session.read(cx).session_id();
+
+                    let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
+
+                    let worktree = worktree.clone();
+                    cx.spawn(async move |this, cx| {
+                        task.await;
+
+                        this.update(cx, |this, cx| {
+                            this.sessions.remove(&session_id);
+                            this.new_session(binary, config, worktree.downgrade(), None, cx)
+                        })?
+                        .1
+                        .await?;
+
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+            },
+        )
+        .detach();
+
+        Self::boot_session(template, session.clone(), cx);
+        Ok(session)
+    }
+
+    fn boot_session(
+        definition: DebugTaskDefinition,
+        session: Entity<Session>,
+        cx: &mut Context<Self>,
+    ) {
+        let session_id = session.read(cx).session_id();
+
+        let result = cx.spawn(async move |this, cx| {
+            let mut binary = this
+                .update(cx, |this, cx| {
+                    this.get_debug_adapter_binary(definition.clone(), cx)
+                })?
+                .await?;
+
+            session
+                .update(cx, |session, cx| session.boot(binary, cx))?
+                .await
+        });
+        cx.spawn(async move |this, cx| match result.await {
+            Ok(_) => {
+                this.update(cx, |this, cx| {
+                    cx.emit(DapStoreEvent::DebugSessionInitialized(session_id));
+                })
+                .ok();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    cx.emit(DapStoreEvent::Notification(error.to_string()));
+                })
+                .ok();
+                session
+                    .update(cx, |session, cx| cx.emit(SessionStateEvent::Shutdown))
+                    .ok();
+            }
+        });
     }
 
     pub fn add_remote_client(
