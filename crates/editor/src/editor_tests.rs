@@ -5121,6 +5121,36 @@ if is_entire_line {
         ),
         "When selecting past the indent, nothing is trimmed"
     );
+
+    cx.set_state(
+        r#"            «for selection in selections.iter() {
+            let mut start = selection.start;
+
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty();
+            if is_entire_line {
+                start = Point::new(start.row, 0);
+ˇ»                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+        "#,
+    );
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "for selection in selections.iter() {
+let mut start = selection.start;
+
+let mut end = selection.end;
+let is_entire_line = selection.is_empty();
+if is_entire_line {
+    start = Point::new(start.row, 0);
+"
+            .to_string()
+        ),
+        "Copying with stripping should ignore empty lines"
+    );
 }
 
 #[gpui::test]
