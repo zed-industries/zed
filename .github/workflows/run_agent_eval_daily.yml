@@ -31,13 +31,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build eval binary
-        run: cargo build --release -p eval
+      - name: Build entire Zed application
+        run: cargo build --release
 
-      - name: Install rust-analyzer
-        run: |
-          curl -L https://github.com/rust-lang/rust-analyzer/releases/latest/download/rust-analyzer-x86_64-unknown-linux-gnu.gz | gunzip -c - > /usr/local/bin/rust-analyzer
-          chmod +x /usr/local/bin/rust-analyzer
+      - name: Build eval binary separately to ensure it's available
+        run: cargo build --release -p eval
 
       - name: Upload eval binary
         uses: actions/upload-artifact@v4
