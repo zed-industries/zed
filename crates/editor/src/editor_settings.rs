@@ -545,10 +545,7 @@ impl Settings for EditorSettings {
         }
 
         // TODO: map editor.scrollbar.horizontal/vertical to our scrollbar.axes and scrollbar.show
-        if let Some(b) = vscode
-            .read_value("editor.scrollBeyondLastLine")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(b) = vscode.read_bool("editor.scrollBeyondLastLine") {
             old.scroll_beyond_last_line = Some(if b {
                 ScrollBeyondLastLine::OnePage
             } else {

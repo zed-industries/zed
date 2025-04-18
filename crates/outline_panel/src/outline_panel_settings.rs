@@ -120,7 +120,7 @@ impl Settings for OutlinePanelSettings {
     }
 
     fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
-        if let Some(b) = vscode.read_value("outline.icons").and_then(|v| v.as_bool()) {
+        if let Some(b) = vscode.read_bool("outline.icons") {
             old.file_icons = Some(b);
             old.folder_icons = Some(b);
         }

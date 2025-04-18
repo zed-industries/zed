@@ -164,27 +164,15 @@ impl Settings for ProjectPanelSettings {
         vscode.bool_setting("explorer.autoReveal", &mut old.auto_reveal_entries);
         vscode.bool_setting("explorer.compactFolders", &mut old.auto_fold_dirs);
 
-        if Some(false)
-            == vscode
-                .read_value("git.decorations.enabled")
-                .and_then(|v| v.as_bool())
-        {
+        if Some(false) == vscode.read_bool("git.decorations.enabled") {
             old.git_status = Some(false);
         }
-        if Some(false)
-            == vscode
-                .read_value("problems.decorations.enabled")
-                .and_then(|v| v.as_bool())
-        {
+        if Some(false) == vscode.read_bool("problems.decorations.enabled") {
             old.show_diagnostics = Some(ShowDiagnostics::Off);
         }
         if let (Some(false), Some(false)) = (
-            vscode
-                .read_value("explorer.decorations.badges")
-                .and_then(|v| v.as_bool()),
-            vscode
-                .read_value("explorer.decorations.colors")
-                .and_then(|v| v.as_bool()),
+            vscode.read_bool("explorer.decorations.badges"),
+            vscode.read_bool("explorer.decorations.colors"),
         ) {
             old.git_status = Some(false);
             old.show_diagnostics = Some(ShowDiagnostics::Off);

@@ -143,10 +143,7 @@ impl Settings for ItemSettings {
     }
 
     fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
-        if let Some(b) = vscode
-            .read_value("workbench.editor.tabActionCloseVisibility")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(b) = vscode.read_bool("workbench.editor.tabActionCloseVisibility") {
             old.show_close_button = Some(if b {
                 ShowCloseButton::Always
             } else {
@@ -162,10 +159,7 @@ impl Settings for ItemSettings {
                 _ => None,
             },
         );
-        if let Some(b) = vscode
-            .read_value("workbench.editor.focusRecentEditorAfterClose")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(b) = vscode.read_bool("workbench.editor.focusRecentEditorAfterClose") {
             old.activate_on_close = Some(if b {
                 ActivateOnClose::History
             } else {

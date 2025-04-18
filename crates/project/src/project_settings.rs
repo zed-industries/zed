@@ -339,10 +339,7 @@ impl Settings for ProjectSettings {
             _ => None,
         });
 
-        if let Some(b) = vscode
-            .read_value("git.blame.editorDecoration.enabled")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(b) = vscode.read_bool("git.blame.editorDecoration.enabled") {
             if let Some(blame) = old.git.inline_blame.as_mut() {
                 blame.enabled = b
             } else {

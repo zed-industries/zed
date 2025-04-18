@@ -280,8 +280,7 @@ impl Settings for WorkspaceSettings {
 
     fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
         if vscode
-            .read_value("accessibility.dimUnfocused.enabled")
-            .and_then(|v| v.as_bool())
+            .read_bool("accessibility.dimUnfocused.enabled")
             .unwrap_or_default()
         {
             if let Some(opacity) = vscode
@@ -314,10 +313,7 @@ impl Settings for WorkspaceSettings {
             &mut old.restore_on_file_reopen,
         );
 
-        if let Some(b) = vscode
-            .read_value("window.closeWhenEmpty")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(b) = vscode.read_bool("window.closeWhenEmpty") {
             old.when_closing_with_no_tabs = Some(if b {
                 CloseWindowWhenNoItems::CloseWindow
             } else {
@@ -325,10 +321,7 @@ impl Settings for WorkspaceSettings {
             })
         }
 
-        if let Some(b) = vscode
-            .read_value("files.simpleDialog.enable")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(b) = vscode.read_bool("files.simpleDialog.enable") {
             old.use_system_path_prompts = Some(!b);
         }
 
@@ -354,8 +347,7 @@ impl Settings for WorkspaceSettings {
             .and_then(|n| NonZeroUsize::new(n as usize))
         {
             if vscode
-                .read_value("workbench.editor.limit.enabled")
-                .and_then(|v| v.as_bool())
+                .read_bool("workbench.editor.limit.enabled")
                 .unwrap_or_default()
             {
                 old.max_tabs = Some(n)
