@@ -97,10 +97,10 @@ impl DebugPanel {
                             window,
                             |panel, _, event: &tasks_ui::ShowAttachModal, window, cx| {
                                 panel.workspace.update(cx, |workspace, cx| {
-                                    let project = workspace.project().clone();
+                                    let workspace_handle = cx.entity().clone();
                                     workspace.toggle_modal(window, cx, |window, cx| {
                                         crate::attach_modal::AttachModal::new(
-                                            project,
+                                            workspace_handle,
                                             event.debug_config.clone(),
                                             true,
                                             window,
@@ -245,6 +245,7 @@ impl DebugPanel {
                     });
                 })
                 .detach();
+                workspace.set_debugger_provider(DebuggerProvider(debug_panel.clone()));
 
                 debug_panel
             })
@@ -1083,5 +1084,15 @@ impl Render for DebugPanel {
                 }
             })
             .into_any()
+    }
+}
+
+struct DebuggerProvider(Entity<DebugPanel>);
+
+impl workspace::DebuggerProvider for DebuggerProvider {
+    fn start_session(&self, definition: DebugTaskDefinition, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| {
+            this.start_session(definition, window, cx);
+        })
     }
 }

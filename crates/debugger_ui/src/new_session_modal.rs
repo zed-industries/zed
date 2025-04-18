@@ -10,7 +10,6 @@ use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
     WeakEntity,
 };
-use project::Project;
 use settings::Settings;
 use task::{DebugTaskDefinition, DebugTaskTemplate, LaunchRequest};
 use theme::ThemeSettings;
@@ -207,15 +206,12 @@ impl NewSessionModal {
                                     );
                                 }
                                 DebugRequest::Attach(_) => {
-                                    let Ok(project) = this
-                                        .workspace
-                                        .read_with(cx, |this, _| this.project().clone())
-                                    else {
+                                    let Some(workspace) = this.workspace.upgrade() else {
                                         return;
                                     };
                                     this.mode = NewSessionMode::attach(
                                         this.debugger.clone(),
-                                        project,
+                                        workspace,
                                         window,
                                         cx,
                                     );
@@ -315,7 +311,7 @@ struct AttachMode {
 impl AttachMode {
     fn new(
         debugger: Option<SharedString>,
-        project: Entity<Project>,
+        workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Entity<Self> {
@@ -328,7 +324,7 @@ impl AttachMode {
             stop_on_entry: Some(false),
         };
         let attach_picker = cx.new(|cx| {
-            let modal = AttachModal::new(project, debug_definition.clone(), false, window, cx);
+            let modal = AttachModal::new(workspace, debug_definition.clone(), false, window, cx);
             window.focus(&modal.focus_handle(cx));
 
             modal
@@ -428,11 +424,11 @@ impl RenderOnce for NewSessionMode {
 impl NewSessionMode {
     fn attach(
         debugger: Option<SharedString>,
-        project: Entity<Project>,
+        workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Self {
-        Self::Attach(AttachMode::new(debugger, project, window, cx))
+        Self::Attach(AttachMode::new(debugger, workspace, window, cx))
     }
     fn launch(
         past_launch_config: Option<LaunchRequest>,
@@ -527,15 +523,12 @@ impl Render for NewSessionModal {
                                 .toggle_state(matches!(self.mode, NewSessionMode::Attach(_)))
                                 .style(ui::ButtonStyle::Subtle)
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    let Ok(project) = this
-                                        .workspace
-                                        .read_with(cx, |this, _| this.project().clone())
-                                    else {
+                                    let Some(workspace) = this.workspace.upgrade() else {
                                         return;
                                     };
                                     this.mode = NewSessionMode::attach(
                                         this.debugger.clone(),
-                                        project,
+                                        workspace,
                                         window,
                                         cx,
                                     );

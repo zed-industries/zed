@@ -99,9 +99,10 @@ async fn test_show_attach_modal_and_select_process(
         });
     let attach_modal = workspace
         .update(cx, |workspace, window, cx| {
+            let workspace_handle = cx.entity();
             workspace.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
-                    project.clone(),
+                    workspace_handle,
                     DebugTaskDefinition {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
                         request: dap::DebugRequest::Attach(AttachRequest::default()),
