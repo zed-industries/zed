@@ -41,8 +41,8 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
-    ButtonOrScroll, LinuxKeyboardLayout, ScrollDirection, button_or_scroll_from_event_detail,
-    get_valuator_axis_index, modifiers_from_state, pressed_button_from_mask,
+    ButtonOrScroll, ScrollDirection, button_or_scroll_from_event_detail, get_valuator_axis_index,
+    modifiers_from_state, pressed_button_from_mask,
 };
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
@@ -59,9 +59,9 @@ use crate::platform::{
 };
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform, PlatformDisplay,
-    PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions, ScaledPixels,
-    ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
+    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
+    ScaledPixels, ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
     modifiers_from_xinput_info, point, px,
 };
 

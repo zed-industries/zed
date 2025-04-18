@@ -67,7 +67,6 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
-    LinuxKeyboardLayout,
     display::WaylandDisplay,
     window::{ImeInput, WaylandWindowStatePtr},
 };
@@ -86,11 +85,11 @@ use crate::platform::linux::{
 use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, SCROLL_LINES,
-    ScaledPixels, ScreenCaptureSource, ScrollDelta, ScrollWheelEvent, Size, TouchPhase,
-    WindowParams, point, px, size,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
+    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScreenCaptureSource,
+    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
 };
 
 /// Used to convert evdev scancode to xkb scancode
