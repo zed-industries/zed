@@ -358,7 +358,7 @@ impl Settings for WorkspaceSettings {
         // map to our "restore_on_startup"
 
         // there doesn't seem to be a way to read whether the bottom dock's "justified"
-        // setting is enabled in vscode. that'd be our equivilant to "bottom_dock_layout"
+        // setting is enabled in vscode. that'd be our equivalent to "bottom_dock_layout"
     }
 }
 
