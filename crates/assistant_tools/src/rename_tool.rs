@@ -129,13 +129,9 @@ impl Tool for RenameTool {
                 })?
                 .await?;
 
-            project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
-                .await?;
-
             action_log.update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), cx)
-            })?;
+                log.save_edited_buffer(buffer.clone(), cx)
+            })?.await?;
 
             Ok(format!("Renamed '{}' to '{}'", input.symbol, input.new_name))
         }).into()

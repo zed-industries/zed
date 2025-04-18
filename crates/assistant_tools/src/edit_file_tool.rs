@@ -1,15 +1,15 @@
 use crate::{replace::replace_with_flexible_indent, schema::json_schema_for};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use futures::{FutureExt as _, channel::oneshot};
+
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
-use language::{Anchor, Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity};
+
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
-use std::{path::PathBuf, sync::Arc, time::Duration};
+
+use std::{path::PathBuf, sync::Arc};
 use ui::IconName;
 
 use crate::replace::replace_exact;
@@ -104,7 +104,6 @@ impl Tool for EditFileTool {
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let old_diagnostics = save_buffer_and_get_project_diagnostics(&buffer, &project, cx).await;
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
             if input.old_string.is_empty() {
@@ -164,13 +163,12 @@ impl Tool for EditFileTool {
                     buffer.finalize_last_transaction();
                     buffer.snapshot()
                 });
-                action_log.update(cx, |log, cx| {
-                    log.buffer_edited(buffer.clone(), cx)
-                });
                 snapshot
             })?;
 
-            let mut output = String::new();
+            action_log.update(cx, |log, cx| {
+                log.save_edited_buffer(buffer.clone(), cx)
+            })?.await?;
 
             let diff_str = cx.background_spawn({
                 let snapshot = snapshot.clone();
@@ -179,158 +177,8 @@ impl Tool for EditFileTool {
                     language::unified_diff(&old_text, &new_text)
                 }
             }).await;
-            writeln!(&mut output, "Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str)?;
 
-            let new_diagnostics = save_buffer_and_get_project_diagnostics(&buffer, &project, cx).await;
-
-            if let Some((old_diagnostics, new_diagnostics)) = old_diagnostics.ok().zip(new_diagnostics.ok()) {
-                let diagnostics_diff = cx.background_spawn(async move {
-                    DiagnosticDiff::new(old_diagnostics, new_diagnostics, &snapshot)
-                }).await;
-
-                writeln!(&mut output, "{}", diagnostics_diff)?;
-            }
-
-            Ok(output)
+            Ok(format!("Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str))
         }).into()
-    }
-}
-
-async fn save_buffer_and_get_project_diagnostics(
-    buffer: &Entity<Buffer>,
-    project: &Entity<Project>,
-    cx: &mut AsyncApp,
-) -> Result<Vec<DiagnosticEntry<Anchor>>> {
-    let (tx, mut rx) = oneshot::channel();
-    let mut tx = Some(tx);
-
-    let _subscription = cx.subscribe(&project, move |_, event, _| match event {
-        project::Event::DiskBasedDiagnosticsFinished { .. } => {
-            if let Some(tx) = tx.take() {
-                tx.send(()).ok();
-            }
-        }
-        _ => {}
-    });
-
-    project
-        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
-        .await?;
-
-    let has_lang_server = project.update(cx, |project, cx| {
-        project.lsp_store().update(cx, |lsp_store, cx| {
-            buffer.update(cx, |buffer, cx| {
-                lsp_store
-                    .language_servers_for_local_buffer(buffer, cx)
-                    .next()
-                    .is_some()
-            })
-        })
-    })?;
-
-    if has_lang_server {
-        let timeout = cx.background_executor().timer(Duration::from_secs(60));
-        futures::select! {
-           _ = rx => buffer.read_with(cx, |buffer, _| buffer.snapshot().diagnostics_in_range(0..buffer.len(), false).collect()),
-           _ = timeout.fuse() => Err(anyhow!("LSP timeout"))
-        }
-    } else {
-        Ok(Vec::new())
-    }
-}
-
-struct DiagnosticDiff {
-    added: Vec<DiagnosticEntry<Anchor>>,
-    removed: Vec<DiagnosticEntry<Anchor>>,
-}
-
-impl DiagnosticDiff {
-    fn new(
-        old: Vec<DiagnosticEntry<Anchor>>,
-        new: Vec<DiagnosticEntry<Anchor>>,
-        buffer: &BufferSnapshot,
-    ) -> Self {
-        let mut added = Vec::new();
-        let mut removed = Vec::new();
-
-        let mut old_iter = old.into_iter().peekable();
-        let mut new_iter = new.into_iter().peekable();
-
-        loop {
-            match (old_iter.peek(), new_iter.peek()) {
-                (Some(old_entry), Some(new_entry)) => {
-                    match old_entry.cmp(&new_entry, buffer) {
-                        std::cmp::Ordering::Less => {
-                            // Old entry comes first and isn't in new - it's removed
-                            removed.push(old_iter.next().unwrap());
-                        }
-                        std::cmp::Ordering::Greater => {
-                            // New entry comes first and isn't in old - it's added
-                            added.push(new_iter.next().unwrap());
-                        }
-                        std::cmp::Ordering::Equal => {
-                            // They're the same - just advance both iterators
-                            old_iter.next();
-                            new_iter.next();
-                        }
-                    }
-                }
-                (Some(_), None) => {
-                    // Only old entries left - they're all removed
-                    removed.push(old_iter.next().unwrap());
-                }
-                (None, Some(_)) => {
-                    // Only new entries left - they're all added
-                    added.push(new_iter.next().unwrap());
-                }
-                (None, None) => break,
-            }
-        }
-
-        Self { added, removed }
-    }
-}
-
-impl std::fmt::Display for DiagnosticDiff {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.added.is_empty() && self.removed.is_empty() {
-            return Ok(());
-        }
-
-        if !self.removed.is_empty() {
-            writeln!(f, "Fixed diagnostics:")?;
-            for diag in &self.removed {
-                writeln!(
-                    f,
-                    "  - {}: {}",
-                    severity_to_str(diag.diagnostic.severity),
-                    diag.diagnostic.message
-                )?;
-            }
-        }
-
-        if !self.added.is_empty() {
-            writeln!(f, "Introduced diagnostics:")?;
-            for diag in &self.added {
-                writeln!(
-                    f,
-                    "  + {}: {}",
-                    severity_to_str(diag.diagnostic.severity),
-                    diag.diagnostic.message
-                )?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-fn severity_to_str(severity: DiagnosticSeverity) -> &'static str {
-    match severity {
-        DiagnosticSeverity::ERROR => "Error",
-        DiagnosticSeverity::WARNING => "Warning",
-        DiagnosticSeverity::INFORMATION => "Info",
-        DiagnosticSeverity::HINT => "Hint",
-        _ => "Diagnostic",
     }
 }

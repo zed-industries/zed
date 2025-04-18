@@ -1,7 +1,10 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::{BTreeMap, HashMap, HashSet};
-use futures::{StreamExt, channel::mpsc};
+use futures::{
+    FutureExt as _, StreamExt,
+    channel::{mpsc, oneshot},
+};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::{Anchor, Buffer, BufferEvent, DiagnosticEntry, DiskState, Point, ToPoint};
 use project::{Project, ProjectItem, ProjectPath, lsp_store::OpenLspBufferHandle};
@@ -9,6 +12,7 @@ use std::{
     cmp::{self, Ordering},
     ops::Range,
     sync::Arc,
+    time::Duration,
 };
 use text::{Edit, Patch, PointUtf16, Rope, Unclipped};
 use util::RangeExt;
@@ -336,14 +340,22 @@ impl ActionLog {
         self.track_buffer(buffer, false, cx);
     }
 
-    /// Track a buffer as read, so we can notify the model about user edits.
-    pub fn will_create_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+    /// Save and track a new buffer
+    pub fn save_new_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         self.track_buffer(buffer.clone(), true, cx);
-        self.buffer_edited(buffer, cx)
+        self.save_edited_buffer(buffer, cx)
     }
 
-    /// Mark a buffer as edited, so we can refresh it in the context
-    pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+    /// Save and track an edited buffer
+    pub fn save_edited_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         self.edited_since_diagnostics_report = true;
 
         let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
@@ -351,6 +363,51 @@ impl ActionLog {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
         tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
+
+        let project = self.project.clone();
+
+        cx.spawn(async move |_this, cx| {
+            let (tx, mut rx) = oneshot::channel();
+            let mut tx = Some(tx);
+
+            let _subscription = cx.subscribe(&project, move |_, event, _| match event {
+                project::Event::DiskBasedDiagnosticsFinished { .. } => {
+                    if let Some(tx) = tx.take() {
+                        tx.send(()).ok();
+                    }
+                }
+                _ => {}
+            });
+
+            project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                .await?;
+
+            let has_lang_server = project.update(cx, |project, cx| {
+                project.lsp_store().update(cx, |lsp_store, cx| {
+                    buffer.update(cx, |buffer, cx| {
+                        lsp_store
+                            .language_servers_for_local_buffer(buffer, cx)
+                            .next()
+                            .is_some()
+                    })
+                })
+            })?;
+
+            if has_lang_server {
+                let timeout = cx.background_executor().timer(Duration::from_secs(30));
+                futures::select! {
+                    _ = rx => Ok(()),
+                    _ = timeout.fuse() => {
+                        log::info!("Did not receive diagnostics update 30s after agent edit");
+                        // We don't want to fail the tool here
+                        Ok(())
+                    }
+                }
+            } else {
+                Ok(())
+            }
+        })
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
@@ -917,8 +974,10 @@ mod tests {
                     .edit([(Point::new(4, 2)..Point::new(4, 3), "O")], None, cx)
                     .unwrap()
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -989,8 +1048,10 @@ mod tests {
                     .unwrap();
                 buffer.finalize_last_transaction();
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -1056,8 +1117,10 @@ mod tests {
                     .edit([(Point::new(1, 2)..Point::new(2, 3), "F\nGHI")], None, cx)
                     .unwrap()
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -1152,12 +1215,10 @@ mod tests {
             .unwrap();
         cx.update(|cx| {
             buffer.update(cx, |buffer, cx| buffer.set_text("lorem", cx));
-            action_log.update(cx, |log, cx| log.will_create_buffer(buffer.clone(), cx));
-        });
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .await
-            .unwrap();
+            action_log.update(cx, |log, cx| log.save_new_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
@@ -1274,9 +1335,8 @@ mod tests {
             .await
             .unwrap();
         buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
-        action_log.update(cx, |log, cx| log.will_create_buffer(buffer2.clone(), cx));
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer2.clone(), cx))
+        action_log
+            .update(cx, |log, cx| log.save_new_buffer(buffer2.clone(), cx))
             .await
             .unwrap();
 
@@ -1330,8 +1390,11 @@ mod tests {
                     .edit([(Point::new(5, 2)..Point::new(5, 3), "O")], None, cx)
                     .unwrap()
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
+
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -1465,8 +1528,10 @@ mod tests {
                     .edit([(Point::new(5, 2)..Point::new(5, 3), "O")], None, cx)
                     .unwrap()
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -1588,8 +1653,10 @@ mod tests {
             .unwrap();
         cx.update(|cx| {
             buffer.update(cx, |buffer, cx| buffer.set_text("content", cx));
-            action_log.update(cx, |log, cx| log.will_create_buffer(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_new_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
             .await
@@ -1713,9 +1780,14 @@ mod tests {
                     cx.update(|cx| {
                         buffer.update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
                         if is_agent_change {
-                            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                            action_log
+                                .update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+                        } else {
+                            Task::ready(Ok(()))
                         }
-                    });
+                    })
+                    .await
+                    .unwrap();
                 }
             }
 
