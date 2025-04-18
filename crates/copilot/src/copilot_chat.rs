@@ -26,8 +26,10 @@ pub enum Role {
     System,
 }
 
+#[serde_with::serde_as]
 #[derive(Deserialize)]
 struct ModelSchema {
+    #[serde_as(as = "serde_with::VecSkipError<_>")]
     data: Vec<Model>,
 }
 
