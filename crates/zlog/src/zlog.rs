@@ -143,7 +143,7 @@ macro_rules! error {
 /// However, this is a feature not a bug, as it allows for a more accurate
 /// understanding of how long the action actually took to complete, including
 /// interruptions, which can help explain why something may have timed out,
-/// why it took longer to complete than it would had the await points resolved
+/// why it took longer to complete than it would have had the await points resolved
 /// immediately, etc.
 #[macro_export]
 macro_rules! time {
@@ -242,6 +242,30 @@ const SCOPE_STRING_SEP_CHAR: char = '.';
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Logger {
     pub scope: Scope,
+}
+
+impl log::Log for Logger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        filter::is_possibly_enabled_level(metadata.level())
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let level = record.metadata().level();
+        if !filter::is_scope_enabled(&self.scope, level) {
+            return;
+        }
+        sink::submit(sink::Record {
+            scope: self.scope,
+            level,
+            message: record.args(),
+        });
+    }
+    fn flush(&self) {
+        sink::flush();
+    }
 }
 
 pub struct Timer {
