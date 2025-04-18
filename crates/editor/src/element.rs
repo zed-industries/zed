@@ -6907,12 +6907,18 @@ impl Element for EditorElement {
                         && settings.scrollbar.axes.vertical)
                         .then_some(style.scrollbar_width)
                         .unwrap_or_default();
-                    let minimap_width = match settings.minimap.show {
-                        ShowMinimap::Never => None,
-                        ShowMinimap::Always => Some(px(settings.minimap.width)),
-                        ShowMinimap::Auto => scrollbars_shown.then_some(px(settings.minimap.width)),
-                    }
-                    .unwrap_or_default();
+                    let minimap_width = self
+                        .editor
+                        .read_with(cx, |editor, _| editor.has_minimap())
+                        .then(|| match settings.minimap.show {
+                            ShowMinimap::Never => None,
+                            ShowMinimap::Always => Some(px(settings.minimap.width)),
+                            ShowMinimap::Auto => {
+                                scrollbars_shown.then_some(px(settings.minimap.width))
+                            }
+                        })
+                        .flatten()
+                        .unwrap_or_default();
 
                     let editor_width = text_width
                         - gutter_dimensions.margin

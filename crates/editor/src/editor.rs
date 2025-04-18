@@ -15924,8 +15924,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        self.minimap_settings
-            .requires_entity()
+        (self.minimap_settings.requires_entity() && self.is_singleton(cx))
             .then(|| self.new_minimap(window, cx))
     }
 
@@ -15945,6 +15944,10 @@ impl Editor {
 
     pub fn minimap(&self) -> Option<Entity<Self>> {
         self.minimap_entity.clone()
+    }
+
+    pub fn has_minimap(&self) -> bool {
+        self.minimap_entity.is_some()
     }
 
     pub fn wrap_guides(&self, cx: &App) -> SmallVec<[(usize, bool); 2]> {
