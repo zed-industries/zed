@@ -213,7 +213,7 @@ impl AssistantPanel {
                     let project = workspace.project().clone();
                     ThreadStore::load(project, tools.clone(), prompt_builder.clone(), cx)
                 })?
-                .await;
+                .await?;
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace

@@ -42,6 +42,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
+use zed_actions::assistant::OpenPromptLibrary;
 
 use crate::context_store::ContextStore;
 
@@ -2948,53 +2949,106 @@ impl ActiveThread {
             return div().into_any();
         };
 
+        let default_user_rules_text = if project_context.default_user_rules.is_empty() {
+            None
+        } else if project_context.default_user_rules.len() == 1 {
+            let user_rules = &project_context.default_user_rules[0];
+
+            match user_rules.title.as_ref() {
+                Some(title) => Some(format!("Using \"{title}\" user rule")),
+                None => Some("Using user rule".into()),
+            }
+        } else {
+            Some(format!(
+                "Using {} user rules",
+                project_context.default_user_rules.len()
+            ))
+        };
+
         let rules_files = project_context
             .worktrees
             .iter()
             .filter_map(|worktree| worktree.rules_file.as_ref())
             .collect::<Vec<_>>();
 
-        let label_text = match rules_files.as_slice() {
-            &[] => return div().into_any(),
-            &[rules_file] => {
-                format!("Using {:?} file", rules_file.path_in_worktree)
-            }
-            rules_files => {
-                format!("Using {} rules files", rules_files.len())
-            }
+        let rules_file_text = match rules_files.as_slice() {
+            &[] => None,
+            &[rules_file] => Some(format!(
+                "Using project {:?} file",
+                rules_file.path_in_worktree
+            )),
+            rules_files => Some(format!("Using {} project rules files", rules_files.len())),
         };
 
-        div()
+        if default_user_rules_text.is_none() && rules_file_text.is_none() {
+            return div().into_any();
+        }
+
+        v_flex()
             .pt_2()
             .px_2p5()
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_0p5()
-                    .child(
+            .gap_1()
+            .when_some(
+                default_user_rules_text,
+                |parent, default_user_rules_text| {
+                    parent.child(
                         h_flex()
-                            .gap_1p5()
+                            .w_full()
                             .child(
                                 Icon::new(IconName::File)
                                     .size(IconSize::XSmall)
                                     .color(Color::Disabled),
                             )
                             .child(
-                                Label::new(label_text)
+                                Label::new(default_user_rules_text)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
-                                    .buffer_font(cx),
+                                    .truncate()
+                                    .buffer_font(cx)
+                                    .ml_1p5()
+                                    .mr_0p5(),
+                            )
+                            .child(
+                                IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Ignored)
+                                    // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
+                                    .tooltip(Tooltip::text("View User Rules"))
+                                    .on_click(|_event, window, cx| {
+                                        window.dispatch_action(Box::new(OpenPromptLibrary), cx)
+                                    }),
                             ),
                     )
-                    .child(
-                        IconButton::new("open-rule", IconName::ArrowUpRightAlt)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Ignored)
-                            .on_click(cx.listener(Self::handle_open_rules))
-                            .tooltip(Tooltip::text("View Rules")),
-                    ),
+                },
             )
+            .when_some(rules_file_text, |parent, rules_file_text| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .child(
+                            Icon::new(IconName::File)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                        .child(
+                            Label::new(rules_file_text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx)
+                                .ml_1p5()
+                                .mr_0p5(),
+                        )
+                        .child(
+                            IconButton::new("open-rule", IconName::ArrowUpRightAlt)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                .on_click(cx.listener(Self::handle_open_rules))
+                                .tooltip(Tooltip::text("View Rules")),
+                        ),
+                )
+            })
             .into_any()
     }
 

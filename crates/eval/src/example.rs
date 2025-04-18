@@ -309,7 +309,7 @@ impl Example {
                 return Err(anyhow!("Setup only mode"));
             }
 
-            let thread_store = thread_store.await;
+            let thread_store = thread_store.await?;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
 
