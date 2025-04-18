@@ -27,7 +27,6 @@ impl DapRegistry {
     }
 
     pub fn add_adapter(&self, adapter: Arc<dyn DebugAdapter>) {
-        log::error!("adding {}", adapter.name());
         let name = adapter.name();
         let _previous_value = self.0.write().adapters.insert(name, adapter);
         debug_assert!(
@@ -37,7 +36,6 @@ impl DapRegistry {
     }
 
     pub fn adapter(&self, name: &str) -> Option<Arc<dyn DebugAdapter>> {
-        log::error!("reading {}/ {:?}", &name, self.enumerate_adapters());
         self.0.read().adapters.get(name).cloned()
     }
 

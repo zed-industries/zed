@@ -1070,7 +1070,7 @@ impl Project {
                 cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone().into()));
 
             let dap_store = cx.new(|cx| {
-                DapStore::new_remote(
+                DapStore::new_ssh(
                     SSH_PROJECT_ID,
                     ssh_proto.clone(),
                     breakpoint_store.clone(),
@@ -1254,7 +1254,7 @@ impl Project {
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
         let dap_store = cx.new(|cx| {
-            DapStore::new_remote(
+            DapStore::new_collab(
                 remote_id,
                 client.clone().into(),
                 breakpoint_store.clone(),
@@ -1482,6 +1482,7 @@ impl Project {
                     })
                 })?
                 .await?;
+            dbg!(&binary);
 
             if let Some(ssh_client) = ssh_client {
                 let mut ssh_command = ssh_client.update(cx, |ssh, _| {
@@ -1496,10 +1497,11 @@ impl Project {
                 if let Some(c) = binary.connection {
                     let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
                     let port = dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
+                    std::thread::sleep(Duration::from_millis(100));
 
                     ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
                     connection = Some(TcpArguments {
-                        port,
+                        port: c.port,
                         host: local_bind_addr,
                         timeout: c.timeout,
                     })
@@ -1513,14 +1515,14 @@ impl Project {
                     None,
                 );
 
-                binary = DebugAdapterBinary {
+                binary = dbg!(DebugAdapterBinary {
                     command: program,
                     arguments: args,
                     envs: HashMap::default(),
                     cwd: None,
                     connection,
                     request_args: binary.request_args.into(),
-                }
+                })
             };
 
             let ret = this

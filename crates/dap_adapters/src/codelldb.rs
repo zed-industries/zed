@@ -140,7 +140,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             .ok_or_else(|| anyhow!("Adapter path is expected to be valid UTF-8"))?;
         Ok(DebugAdapterBinary {
             command,
-            cwd: Some(adapter_dir),
+            cwd: None,
             arguments: vec![
                 "--settings".into(),
                 json!({"sourceLanguages": ["cpp", "rust"]})

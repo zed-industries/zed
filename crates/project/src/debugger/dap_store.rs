@@ -38,7 +38,6 @@ use rpc::{
 use serde_json::Value;
 use settings::{Settings, WorktreeId};
 use smol::{lock::Mutex, stream::StreamExt};
-use std::collections::VecDeque;
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
@@ -72,9 +71,10 @@ pub enum DapStoreEvent {
 }
 
 #[allow(clippy::large_enum_variant)]
-pub enum DapStoreMode {
-    Local(LocalDapStore),   // ssh host and collab host
-    Remote(RemoteDapStore), // collab guest
+enum DapStoreMode {
+    Local(LocalDapStore),
+    Ssh(SshDapStore),
+    Collab,
 }
 
 pub struct LocalDapStore {
@@ -88,10 +88,9 @@ pub struct LocalDapStore {
     locators: HashMap<String, Arc<dyn DapLocator>>,
 }
 
-pub struct RemoteDapStore {
+pub struct SshDapStore {
     upstream_client: AnyProtoClient,
     upstream_project_id: u64,
-    event_queue: Option<VecDeque<DapStoreEvent>>,
 }
 
 pub struct DapStore {
@@ -145,19 +144,27 @@ impl DapStore {
         Self::new(mode, breakpoint_store, cx)
     }
 
-    pub fn new_remote(
+    pub fn new_ssh(
         project_id: u64,
         upstream_client: AnyProtoClient,
         breakpoint_store: Entity<BreakpointStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mode = DapStoreMode::Remote(RemoteDapStore {
+        let mode = DapStoreMode::Ssh(SshDapStore {
             upstream_client,
             upstream_project_id: project_id,
-            event_queue: Some(VecDeque::default()),
         });
 
         Self::new(mode, breakpoint_store, cx)
+    }
+
+    pub fn new_collab(
+        _project_id: u64,
+        _upstream_client: AnyProtoClient,
+        breakpoint_store: Entity<BreakpointStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new(DapStoreMode::Collab, breakpoint_store, cx)
     }
 
     fn new(
@@ -220,25 +227,50 @@ impl DapStore {
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from));
 
                 let delegate = self.delegate(&worktree, cx);
+                let cwd: Arc<Path> = definition
+                    .cwd()
+                    .unwrap_or(worktree.read(cx).abs_path().as_ref())
+                    .into();
 
-                cx.spawn(async move |_, cx| {
-                    adapter
+                cx.spawn(async move |this, cx| {
+                    let mut binary = adapter
                         .get_binary(&delegate, &definition, user_installed_path, cx)
-                        .await
+                        .await?;
+
+                    let env = this
+                        .update(cx, |this, cx| {
+                            this.as_local()
+                                .unwrap()
+                                .environment
+                                .update(cx, |environment, cx| {
+                                    environment.get_directory_environment(cwd, cx)
+                                })
+                        })?
+                        .await;
+
+                    log::error!("{:?}", &env);
+
+                    if let Some(mut env) = env {
+                        env.extend(std::mem::take(&mut binary.envs));
+                        binary.envs = env;
+                    }
+
+                    Ok(binary)
                 })
             }
-            DapStoreMode::Remote(remote) => {
-                let request = remote
-                    .upstream_client
-                    .request(proto::GetDebugAdapterBinary {
-                        project_id: remote.upstream_project_id,
-                        task: Some(definition.to_proto()),
-                    });
+            DapStoreMode::Ssh(ssh) => {
+                let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {
+                    project_id: ssh.upstream_project_id,
+                    task: Some(definition.to_proto()),
+                });
 
                 cx.background_spawn(async move {
-                    let response = request.await?;
+                    let response = dbg!(request.await?);
                     DebugAdapterBinary::from_proto(response)
                 })
+            }
+            DapStoreMode::Collab => {
+                Task::ready(Err(anyhow!("Debugging is not yet supported via collab")))
             }
         }
     }
@@ -262,9 +294,9 @@ impl DapStore {
                     Task::ready(Err(anyhow!("Couldn't find locator {}", locator_name)))
                 }
             }
-            DapStoreMode::Remote(remote) => {
-                let request = remote.upstream_client.request(proto::RunDebugLocator {
-                    project_id: remote.upstream_project_id,
+            DapStoreMode::Ssh(ssh) => {
+                let request = ssh.upstream_client.request(proto::RunDebugLocator {
+                    project_id: ssh.upstream_project_id,
                     locator: locator_name,
                     task: Some(template.definition.to_proto()),
                 });
@@ -273,52 +305,17 @@ impl DapStore {
                     DebugTaskDefinition::from_proto(response)
                 })
             }
+            DapStoreMode::Collab => {
+                Task::ready(Err(anyhow!("Debugging is not yet supported via collab")))
+            }
         }
     }
 
-    pub fn as_remote(&self) -> Option<&RemoteDapStore> {
-        match &self.mode {
-            DapStoreMode::Remote(remote_dap_store) => Some(remote_dap_store),
-            _ => None,
-        }
-    }
-
-    pub fn remote_event_queue(&mut self) -> Option<VecDeque<DapStoreEvent>> {
-        if let DapStoreMode::Remote(remote) = &mut self.mode {
-            remote.event_queue.take()
-        } else {
-            None
-        }
-    }
-
-    pub fn as_local(&self) -> Option<&LocalDapStore> {
+    fn as_local(&self) -> Option<&LocalDapStore> {
         match &self.mode {
             DapStoreMode::Local(local_dap_store) => Some(local_dap_store),
             _ => None,
         }
-    }
-
-    pub fn as_local_mut(&mut self) -> Option<&mut LocalDapStore> {
-        match &mut self.mode {
-            DapStoreMode::Local(local_dap_store) => Some(local_dap_store),
-            _ => None,
-        }
-    }
-
-    pub fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
-        match &self.mode {
-            DapStoreMode::Remote(RemoteDapStore {
-                upstream_client,
-                upstream_project_id,
-                ..
-            }) => Some((upstream_client.clone(), *upstream_project_id)),
-
-            DapStoreMode::Local(_) => None,
-        }
-    }
-
-    pub fn downstream_client(&self) -> Option<&(AnyProtoClient, u64)> {
-        self.downstream_client.as_ref()
     }
 
     pub fn add_remote_client(
@@ -327,7 +324,7 @@ impl DapStore {
         ignore: Option<bool>,
         cx: &mut Context<Self>,
     ) {
-        if let DapStoreMode::Remote(remote) = &self.mode {
+        if let DapStoreMode::Ssh(remote) = &self.mode {
             self.sessions.insert(
                 session_id,
                 cx.new(|_| {
@@ -394,7 +391,7 @@ impl DapStore {
         Ok(())
     }
 
-    pub fn delegate(&self, worktree: &Entity<Worktree>, cx: &mut App) -> DapAdapterDelegate {
+    fn delegate(&self, worktree: &Entity<Worktree>, cx: &mut App) -> DapAdapterDelegate {
         let Some(local_store) = self.as_local() else {
             unimplemented!("Starting session on remote side");
         };
@@ -744,10 +741,6 @@ impl DapStore {
         session_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(_) = self.as_local_mut() else {
-            return Task::ready(Err(anyhow!("Cannot shutdown session on remote side")));
-        };
-
         let Some(session) = self.sessions.remove(&session_id) else {
             return Task::ready(Err(anyhow!("Could not find session: {:?}", session_id)));
         };
