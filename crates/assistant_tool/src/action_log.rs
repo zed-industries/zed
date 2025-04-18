@@ -63,7 +63,9 @@ impl ActionLog {
 
         let new_state = self.diagnostic_state(cx);
         let change = new_state.compare(&self.diagnostic_state, cx);
+        self.diagnostic_state = new_state;
         self.edited_since_diagnostics_report = false;
+
         Some(change)
     }
 
@@ -95,7 +97,7 @@ impl ActionLog {
 
         DiagnosticState {
             diagnostics_for_open_buffers,
-            diagnostics_for_non_open_buffers,
+            diagnostics_for_non_open_paths: diagnostics_for_non_open_buffers,
         }
     }
 
@@ -566,7 +568,7 @@ impl ActionLog {
 #[derive(Default)]
 struct DiagnosticState {
     diagnostics_for_open_buffers: HashMap<Entity<Buffer>, Vec<DiagnosticEntry<Anchor>>>,
-    diagnostics_for_non_open_buffers:
+    diagnostics_for_non_open_paths:
         HashMap<ProjectPath, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>>,
 }
 
@@ -574,7 +576,7 @@ pub struct DiagnosticChange {
     pub project_path: ProjectPath,
     pub fixed_diagnostic_count: usize,
     pub introduced_diagnostic_count: usize,
-    pub diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+    pub diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
 }
 
 impl DiagnosticState {
@@ -592,46 +594,7 @@ impl DiagnosticState {
                 continue;
             };
 
-            let mut introduced = 0;
-            let mut fixed = 0;
-
-            let mut old_iter = old.into_iter().peekable();
-            let mut new_iter = new.into_iter().peekable();
-
-            loop {
-                match (old_iter.peek(), new_iter.peek()) {
-                    (Some(old_entry), Some(new_entry)) => {
-                        match old_entry.cmp(&new_entry, buffer) {
-                            Ordering::Less => {
-                                // Old entry comes first and isn't in new - it'sfixed
-                                fixed += 1;
-                                old_iter.next();
-                            }
-                            Ordering::Greater => {
-                                // New entry comes first and isn't in old - it'sintroduced
-                                introduced += 1;
-                                new_iter.next();
-                            }
-                            Ordering::Equal => {
-                                // They're the same - just advance both iterators
-                                old_iter.next();
-                                new_iter.next();
-                            }
-                        }
-                    }
-                    (Some(_), None) => {
-                        // Only old entries left - they're allfixed
-                        old_iter.next();
-                        fixed += 1;
-                    }
-                    (None, Some(_)) => {
-                        // Only new entries left - they're allintroduced
-                        new_iter.next();
-                        introduced += 1;
-                    }
-                    (None, None) => break,
-                }
-            }
+            let (introduced, fixed) = Self::compare_diagnostics(new, old, |a, b| a.cmp(b, buffer));
 
             changes.push(DiagnosticChange {
                 project_path,
@@ -651,12 +614,93 @@ impl DiagnosticState {
                     project_path,
                     fixed_diagnostic_count: old.len(),
                     introduced_diagnostic_count: 0,
-                    diagnostics: old.into_iter().map(|entry| entry.resolve(buffer)).collect(),
+                    diagnostics: vec![],
+                });
+            }
+        }
+
+        let empty = Vec::new();
+
+        for (project_path, new) in &self.diagnostics_for_non_open_paths {
+            let old = old_state
+                .diagnostics_for_non_open_paths
+                .get(&project_path)
+                .unwrap_or(&empty);
+
+            let (introduced, fixed) = Self::compare_diagnostics(new, old, |a, b| a.cmp(b));
+
+            changes.push(DiagnosticChange {
+                project_path: project_path.clone(),
+                fixed_diagnostic_count: fixed,
+                introduced_diagnostic_count: introduced,
+                diagnostics: new.clone(),
+            });
+        }
+
+        for (project_path, old) in &old_state.diagnostics_for_non_open_paths {
+            if !self
+                .diagnostics_for_non_open_paths
+                .contains_key(&project_path)
+            {
+                changes.push(DiagnosticChange {
+                    project_path: project_path.clone(),
+                    fixed_diagnostic_count: old.len(),
+                    introduced_diagnostic_count: 0,
+                    diagnostics: vec![],
                 });
             }
         }
 
         changes
+    }
+
+    fn compare_diagnostics<T>(
+        new: &[DiagnosticEntry<T>],
+        old: &[DiagnosticEntry<T>],
+        cmp: impl Fn(&DiagnosticEntry<T>, &DiagnosticEntry<T>) -> Ordering,
+    ) -> (usize, usize) {
+        let mut introduced = 0;
+        let mut fixed = 0;
+
+        let mut old_iter = old.iter().peekable();
+        let mut new_iter = new.iter().peekable();
+
+        loop {
+            match (old_iter.peek(), new_iter.peek()) {
+                (Some(old_entry), Some(new_entry)) => {
+                    match cmp(old_entry, new_entry) {
+                        Ordering::Less => {
+                            // Old entry comes first and isn't in new - it's fixed
+                            fixed += 1;
+                            old_iter.next();
+                        }
+                        Ordering::Greater => {
+                            // New entry comes first and isn't in old - it's introduced
+                            introduced += 1;
+                            new_iter.next();
+                        }
+                        Ordering::Equal => {
+                            // They're the same - just advance both iterators
+                            old_iter.next();
+                            new_iter.next();
+                        }
+                    }
+                }
+                (Some(_), None) => {
+                    // Only old entries left - they're all fixed
+                    old_iter.next();
+                    fixed += 1;
+                }
+                (None, Some(_)) => {
+                    // Only new entries left - they're all introduced
+                    new_iter.next();
+                    introduced += 1;
+                }
+                (None, None) => break,
+            }
+        }
+
+        (introduced, fixed)
     }
 }
 

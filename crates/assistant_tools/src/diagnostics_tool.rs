@@ -81,7 +81,7 @@ impl Tool for DiagnosticsTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
-        action_log: Entity<ActionLog>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> ToolResult {
         match serde_json::from_value::<DiagnosticsToolInput>(input)
