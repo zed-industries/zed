@@ -17747,6 +17747,7 @@ dependencies = [
  "hyper-rustls 0.27.5",
  "indexmap",
  "inout",
+ "itertools 0.12.1",
  "itertools 0.13.0",
  "lazy_static",
  "libc",
