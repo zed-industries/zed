@@ -92,13 +92,17 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         IconName::Copilot
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        None
-        // let model = CopilotChatModel::default();
-        // Some(Arc::new(CopilotChatLanguageModel {
-        //     model,
-        //     request_limiter: RateLimiter::new(4),
-        // }) as Arc<dyn LanguageModel>)
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        CopilotChat::global(cx)
+            .and_then(|m| m.read(cx).models())
+            .and_then(|models| {
+                models.first().map(|model| {
+                    Arc::new(CopilotChatLanguageModel {
+                        model: model.clone(),
+                        request_limiter: RateLimiter::new(4),
+                    }) as Arc<dyn LanguageModel>
+                })
+            })
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
