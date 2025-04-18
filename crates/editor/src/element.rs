@@ -7329,7 +7329,6 @@ impl Element for EditorElement {
                         glyph_grid_cell,
                         size(longest_line_width, max_row.as_f32() * line_height),
                         longest_line_blame_width,
-                        style.scrollbar_width,
                         editor_width,
                         EditorSettings::get_global(cx),
                     );
@@ -7397,7 +7396,7 @@ impl Element for EditorElement {
                         MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
 
                     let scroll_max = point(
-                        ((scroll_width - editor_text_bounds.size.width) / em_width).max(0.0),
+                        ((scroll_width - editor_width) / em_width).max(0.0),
                         max_scroll_top,
                     );
 
@@ -7407,8 +7406,7 @@ impl Element for EditorElement {
                         let autoscrolled = if autoscroll_horizontally {
                             editor.autoscroll_horizontally(
                                 start_row,
-                                editor_width - (glyph_grid_cell.width / 2.0)
-                                    + style.scrollbar_width,
+                                editor_width - content_offset.x,
                                 scroll_width,
                                 em_width,
                                 &line_layouts,
@@ -8008,7 +8006,6 @@ impl ScrollbarLayoutInformation {
         glyph_grid_cell: Size<Pixels>,
         document_size: Size<Pixels>,
         longest_line_blame_width: Pixels,
-        scrollbar_width: Pixels,
         editor_width: Pixels,
         settings: &EditorSettings,
     ) -> Self {
@@ -8021,7 +8018,7 @@ impl ScrollbarLayoutInformation {
         };
 
         let right_margin = if document_size.width + longest_line_blame_width >= editor_width {
-            glyph_grid_cell.width + scrollbar_width
+            glyph_grid_cell.width
         } else {
             px(0.0)
         };
@@ -8151,23 +8148,25 @@ impl EditorScrollbars {
             glyph_grid_cell,
         } = layout_information;
 
+        let viewport_size = size(
+            if settings_visibility.vertical {
+                editor_bounds.size.width - minimap_width - scrollbar_width
+            } else {
+                editor_bounds.size.width - minimap_width
+            },
+            editor_bounds.size.height,
+        );
+
         let scrollbar_bounds_for = |axis: ScrollbarAxis| match axis {
             ScrollbarAxis::Horizontal => Bounds::from_corner_and_size(
                 Corner::BottomLeft,
                 editor_bounds.bottom_left(),
-                size(
-                    if settings_visibility.vertical {
-                        editor_bounds.size.width - minimap_width - scrollbar_width
-                    } else {
-                        editor_bounds.size.width - minimap_width
-                    },
-                    scrollbar_width,
-                ),
+                size(viewport_size.width, scrollbar_width),
             ),
             ScrollbarAxis::Vertical => Bounds::from_corner_and_size(
                 Corner::TopRight,
                 editor_bounds.top_right(),
-                size(scrollbar_width, editor_bounds.size.height),
+                size(scrollbar_width, viewport_size.height),
             ),
         };
 
@@ -8176,21 +8175,21 @@ impl EditorScrollbars {
                 .along(axis)
                 .then(|| {
                     (
-                        editor_bounds.size.along(axis) - content_offset.along(axis),
+                        viewport_size.along(axis) - content_offset.along(axis),
                         scroll_range.along(axis),
                     )
                 })
-                .filter(|(editor_content_size, scroll_range)| {
+                .filter(|(viewport_size, scroll_range)| {
                     // The scrollbar should only be rendered if the content does
                     // not entirely fit into the editor
                     // However, this only applies to the horizontal scrollbar, as information about the
                     // vertical scrollbar layout is always needed for scrollbar diagnostics.
-                    axis != ScrollbarAxis::Horizontal || editor_content_size < scroll_range
+                    axis != ScrollbarAxis::Horizontal || viewport_size < scroll_range
                 })
-                .map(|(editor_content_size, scroll_range)| {
+                .map(|(viewport_size, scroll_range)| {
                     ScrollbarLayout::new(
                         window.insert_hitbox(scrollbar_bounds_for(axis), false),
-                        editor_content_size,
+                        viewport_size,
                         scroll_range,
                         glyph_grid_cell.along(axis),
                         content_offset.along(axis),
@@ -8241,7 +8240,7 @@ impl ScrollbarLayout {
 
     fn new(
         scrollbar_track_hitbox: Hitbox,
-        editor_content_size: Pixels,
+        viewport_size: Pixels,
         scroll_range: Pixels,
         glyph_space: Pixels,
         content_offset: Pixels,
@@ -8256,7 +8255,7 @@ impl ScrollbarLayout {
         Self::new_with_hitbox_and_track_length(
             scrollbar_track_hitbox,
             track_length,
-            editor_content_size,
+            viewport_size,
             scroll_range,
             glyph_space,
             content_offset,
@@ -8268,14 +8267,14 @@ impl ScrollbarLayout {
     fn new_with_hitbox_and_track_length(
         scrollbar_track_hitbox: Hitbox,
         track_length: Pixels,
-        editor_content_size: Pixels,
+        viewport_size: Pixels,
         scroll_range: Pixels,
         glyph_space: Pixels,
         content_offset: Pixels,
         scroll_position: f32,
         axis: ScrollbarAxis,
     ) -> Self {
-        let text_units_per_page = editor_content_size / glyph_space;
+        let text_units_per_page = viewport_size / glyph_space;
         let visible_range = scroll_position..scroll_position + text_units_per_page;
         let total_text_units = scroll_range / glyph_space;
 
