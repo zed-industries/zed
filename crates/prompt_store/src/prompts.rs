@@ -15,6 +15,7 @@ use std::{
 };
 use text::LineEnding;
 use util::{ResultExt, get_system_shell};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectContext {
@@ -51,6 +52,7 @@ impl ProjectContext {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DefaultUserRulesContext {
+    pub uuid: Uuid,
     pub title: Option<String>,
     pub contents: String,
 }
@@ -409,6 +411,7 @@ mod test {
             }),
         }];
         let default_user_rules = vec![DefaultUserRulesContext {
+            uuid: Uuid::nil(),
             title: Some("Rules title".into()),
             contents: "Rules contents".into(),
         }];
