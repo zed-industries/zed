@@ -3,9 +3,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{FutureExt as _, channel::oneshot};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
-use language::{
-    Anchor, AnchorRangeExt, Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity,
-};
+use language::{Anchor, Buffer, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -106,7 +104,7 @@ impl Tool for EditFileTool {
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let old_diagnostics = save_and_get_diagnostics_for_buffer(&buffer, &project, cx).await;
+            let old_diagnostics = save_buffer_and_get_project_diagnostics(&buffer, &project, cx).await;
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
             if input.old_string.is_empty() {
@@ -183,7 +181,7 @@ impl Tool for EditFileTool {
             }).await;
             writeln!(&mut output, "Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str)?;
 
-            let new_diagnostics = save_and_get_diagnostics_for_buffer(&buffer, &project, cx).await;
+            let new_diagnostics = save_buffer_and_get_project_diagnostics(&buffer, &project, cx).await;
 
             if let Some((old_diagnostics, new_diagnostics)) = old_diagnostics.ok().zip(new_diagnostics.ok()) {
                 let diagnostics_diff = cx.background_spawn(async move {
@@ -198,7 +196,7 @@ impl Tool for EditFileTool {
     }
 }
 
-async fn save_and_get_diagnostics_for_buffer(
+async fn save_buffer_and_get_project_diagnostics(
     buffer: &Entity<Buffer>,
     project: &Entity<Project>,
     cx: &mut AsyncApp,

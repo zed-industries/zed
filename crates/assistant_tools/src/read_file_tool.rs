@@ -186,7 +186,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let result = cx
             .update(|cx| {
                 let input = json!({
@@ -216,7 +216,7 @@ mod test {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let result = cx
             .update(|cx| {
                 let input = json!({
@@ -245,7 +245,7 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(Arc::new(rust_lang()));
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
 
         let result = cx
             .update(|cx| {
@@ -314,7 +314,7 @@ mod test {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let result = cx
             .update(|cx| {
                 let input = json!({

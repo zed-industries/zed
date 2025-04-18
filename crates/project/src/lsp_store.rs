@@ -5930,6 +5930,29 @@ impl LspStore {
         }
     }
 
+    pub fn all_diagnostics(
+        &self,
+    ) -> HashMap<ProjectPath, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>> {
+        let mut result = HashMap::default();
+        if let Some(this) = self.as_local() {
+            for (worktree_id, diagnostics_by_path) in &this.diagnostics {
+                for (path, diagnostics_by_server_id) in diagnostics_by_path {
+                    let project_path = ProjectPath {
+                        worktree_id: *worktree_id,
+                        path: path.clone(),
+                    };
+                    let mut all_diagnostics = Vec::new();
+                    for (_, diagnostics) in diagnostics_by_server_id {
+                        all_diagnostics.extend_from_slice(&diagnostics);
+                    }
+                    all_diagnostics.sort_unstable_by_key(|entry| entry.range.start);
+                    result.insert(project_path, all_diagnostics);
+                }
+            }
+        }
+        result
+    }
+
     pub fn diagnostic_summary(&self, include_ignored: bool, cx: &App) -> DiagnosticSummary {
         let mut summary = DiagnosticSummary::default();
         for (_, _, path_summary) in self.diagnostic_summaries(include_ignored, cx) {

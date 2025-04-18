@@ -152,10 +152,6 @@ impl Tool for DiagnosticsTool {
                     }
                 }
 
-                action_log.update(cx, |action_log, _cx| {
-                    action_log.checked_project_diagnostics();
-                });
-
                 if has_diagnostics {
                     Task::ready(Ok(output)).into()
                 } else {

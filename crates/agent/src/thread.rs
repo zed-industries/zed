@@ -355,7 +355,7 @@ impl Thread {
             last_restore_checkpoint: None,
             pending_checkpoint: None,
             tool_use: ToolUseState::new(tools.clone()),
-            action_log: cx.new(|_| ActionLog::new(project.clone())),
+            action_log: cx.new(|cx| ActionLog::new(project.clone(), cx)),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
                 cx.foreground_executor()
@@ -430,7 +430,7 @@ impl Thread {
             prompt_builder,
             tools,
             tool_use,
-            action_log: cx.new(|_| ActionLog::new(project)),
+            action_log: cx.new(|cx| ActionLog::new(project, cx)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
