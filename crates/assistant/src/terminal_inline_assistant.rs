@@ -292,6 +292,8 @@ impl TerminalInlineAssistant {
         });
 
         Ok(LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages,
             tools: Vec::new(),
             stop: Vec::new(),

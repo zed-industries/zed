@@ -499,6 +499,8 @@ impl Example {
         )?;
 
         let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text(prompt)],
