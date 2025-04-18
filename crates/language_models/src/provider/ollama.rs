@@ -413,28 +413,25 @@ impl Render for ConfigurationView {
                 .gap_3()
                 .child(
                     v_flex()
-                        .size_full()
                         .gap_2()
-                        .p_1()
                         .child(Label::new(ollama_intro))
                         .child(Label::new(ollama_reqs))
                         .child(
                             h_flex()
                                 .gap_0p5()
-                                .child(Label::new("Once installed, try "))
+                                .child(Label::new("Once installed, try"))
                                 .child(
-                                    div()
-                                        .bg(inline_code_bg)
-                                        .px_1p5()
-                                        .rounded_sm()
-                                        .child(Label::new("ollama run llama3.2")),
+                                    div().bg(inline_code_bg).ml_1().rounded_sm().child(
+                                        Label::new("ollama run llama3.2")
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx),
+                                    ),
                                 ),
                         ),
                 )
                 .child(
                     h_flex()
                         .w_full()
-                        .pt_2()
                         .justify_between()
                         .gap_2()
                         .child(

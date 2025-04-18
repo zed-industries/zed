@@ -416,13 +416,10 @@ impl Render for ConfigurationView {
             div().child(Label::new("Loading models...")).into_any()
         } else {
             v_flex()
-                .size_full()
                 .gap_3()
                 .child(
                     v_flex()
-                        .size_full()
                         .gap_2()
-                        .p_1()
                         .child(Label::new(lmstudio_intro))
                         .child(Label::new(lmstudio_reqs))
                         .child(
@@ -430,18 +427,17 @@ impl Render for ConfigurationView {
                                 .gap_0p5()
                                 .child(Label::new("To get your first model, try running"))
                                 .child(
-                                    div()
-                                        .bg(inline_code_bg)
-                                        .px_1p5()
-                                        .rounded_sm()
-                                        .child(Label::new("lms get qwen2.5-coder-7b")),
+                                    div().bg(inline_code_bg).ml_1().rounded_sm().child(
+                                        Label::new("lms get qwen2.5-coder-7b")
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx),
+                                    ),
                                 ),
                         ),
                 )
                 .child(
                     h_flex()
                         .w_full()
-                        .pt_2()
                         .justify_between()
                         .gap_2()
                         .child(
