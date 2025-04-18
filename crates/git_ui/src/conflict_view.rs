@@ -1,7 +1,7 @@
 use collections::{HashMap, HashSet};
 use editor::{
     ConflictHint, ConflictHintPair, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
-    ConflictsTheirs, ConflictsTheirsMarker, Editor, EditorEvent, ExcerptId, InlayId, MultiBuffer,
+    ConflictsTheirs, ConflictsTheirsMarker, Editor, EditorEvent, ExcerptId, MultiBuffer,
     RowHighlightOptions,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
@@ -321,17 +321,31 @@ fn conflicts_updated(
             }),
             priority: 0,
         });
+        let repository_snapshot = repository.read(cx).snapshot();
+        let Some(ours_blame_entry) = repository_snapshot
+            .head
+            .as_ref()
+            .and_then(git::blame::BlameEntry::from_details)
+        else {
+            continue;
+        };
+        let Some(theirs_blame_entry) = repository_snapshot
+            .theirs_details()
+            .and_then(git::blame::BlameEntry::from_details)
+        else {
+            continue;
+        };
         conflict_hints.push(ConflictHintPair {
             ours: ConflictHint {
                 anchor: ours_hint_anchor,
-                blame_entry: git::blame::BlameEntry::default(),
-                description: "hello!".into(),
+                blame_entry: ours_blame_entry,
+                description: repository.read(cx).ours_name().into(),
                 repository: repository.downgrade(),
             },
             theirs: ConflictHint {
                 anchor: theirs_hint_anchor,
-                blame_entry: git::blame::BlameEntry::default(),
-                description: "goodbye!".into(),
+                blame_entry: theirs_blame_entry,
+                description: repository.read(cx).theirs_name().into(),
                 repository: repository.downgrade(),
             },
         })

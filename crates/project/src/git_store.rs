@@ -20,7 +20,7 @@ use futures::{
     future::{self, Shared, join_all},
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
+    BuildPermalinkParams, GitHostingProvider, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
     blame::Blame,
     parse_git_remote_url,
     repository::{
@@ -305,7 +305,6 @@ pub enum GitStoreEvent {
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
     JobsUpdated,
-    // FIXME scope
     ConflictsUpdated,
 }
 
@@ -786,13 +785,10 @@ impl GitStore {
             .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
         let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, is_unmerged, cx));
 
-        self._subscriptions.push(cx.subscribe(
-            &conflict_set,
-            |git_store, conflict_set, event, cx| {
-                //
+        self._subscriptions
+            .push(cx.subscribe(&conflict_set, |_, _, _, cx| {
                 cx.emit(GitStoreEvent::ConflictsUpdated);
-            },
-        ));
+            }));
 
         buffer_git_state.update(cx, |state, cx| {
             state.conflict_set = Some(conflict_set.downgrade());
@@ -2722,6 +2718,13 @@ impl RepositorySnapshot {
             "Incoming Change"
         }
     }
+
+    pub fn theirs_details(&self) -> Option<&CommitDetails> {
+        self.rebase_head
+            .as_ref()
+            .or(self.cherry_pick_head.as_ref())
+            .or(self.merge_heads.first())
+    }
 }
 
 impl Repository {
@@ -4580,6 +4583,31 @@ async fn compute_snapshot(
     };
 
     Ok((snapshot, events))
+}
+
+fn parse_commit_message(
+    sha: Oid,
+    message: SharedString,
+    remote: &ParsedGitRemote,
+    provider: Arc<dyn GitHostingProvider + Send + Sync>,
+) -> ParsedCommitMessage {
+    let permalink =
+        provider.build_commit_permalink(remote, git::BuildCommitPermalinkParams { sha });
+
+    let remote = GitRemote {
+        host: provider.clone(),
+        owner: remote.owner.to_string(),
+        repo: remote.repo.to_string(),
+    };
+
+    let pull_request = provider.extract_pull_request(remote, &message);
+
+    git::blame::ParsedCommitMessage {
+        message,
+        permalink: Some(permalink),
+        remote,
+        pull_request,
+    }
 }
 
 fn status_from_proto(

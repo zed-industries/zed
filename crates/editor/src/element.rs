@@ -40,9 +40,8 @@ use gpui::{
     InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
-    transparent_black,
+    TextRun, TextStyleRefinement, Window, anchored, deferred, div, fill, linear_color_stop,
+    linear_gradient, outline, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::language_settings::{
@@ -1748,7 +1747,6 @@ impl EditorElement {
         row_block_types: &HashMap<DisplayRow, bool>,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
-        inline_completion_popover_origin: Option<gpui::Point<Pixels>>,
         start_row: DisplayRow,
         end_row: DisplayRow,
         line_height: Pixels,
@@ -1792,6 +1790,9 @@ impl EditorElement {
                     (
                         hint.repository.clone(),
                         hint.blame_entry.clone(),
+                        hint.
+                        // FIXME
+                        None,
                         Some(hint.description.clone()),
                     ),
                 )
@@ -1826,14 +1827,18 @@ impl EditorElement {
 
         // Conflict hints override the regular inline blame.
         if let Some((display_row, repository, blame_entry)) = blamed_row {
+            let details = blame
+                .as_ref()
+                .and_then(|blame| blame.read(cx).details_for_entry(&blame_entry));
             blamed_rows
                 .entry(display_row)
-                .or_insert_with(|| (repository, blame_entry, None));
+                .or_insert_with(|| (repository, blame_entry, details, None));
         }
 
         let mut layout_blamed_row = |display_row: DisplayRow,
                                      repository,
                                      blame_entry,
+                                     details,
                                      description|
          -> Option<AnyElement> {
             let line_ix = display_row.minus(start_row) as usize;
@@ -1860,14 +1865,11 @@ impl EditorElement {
             };
 
             let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-            // FIXME get commit details without a blame (grab off repository snapshot set)
-            let details = blame
-                .as_ref()
-                .and_then(|blame| blame.read(cx).details_for_entry(&blame_entry));
             let mut element = renderer.render_inline_blame_entry(
                 &style.text,
                 blame_entry,
                 details,
+                description,
                 repository,
                 workspace.downgrade(),
                 editor.clone(),
@@ -1904,10 +1906,10 @@ impl EditorElement {
 
         blamed_rows
             .into_iter()
-            .filter_map(|(row, (repository, blame_entry, description))| {
+            .filter_map(|(row, (repository, blame_entry, details, description))| {
                 Some((
                     row,
-                    layout_blamed_row(row, repository, blame_entry, description)?,
+                    layout_blamed_row(row, repository, blame_entry, details, description)?,
                 ))
             })
             .collect()
@@ -7108,6 +7110,7 @@ impl Element for EditorElement {
                                 &style.text,
                                 blame_entry,
                                 details,
+                                None,
                                 repository,
                                 workspace,
                                 cx.entity(),
@@ -7308,7 +7311,6 @@ impl Element for EditorElement {
                         &row_block_types,
                         content_origin,
                         scroll_pixel_position,
-                        inline_completion_popover_origin,
                         start_row,
                         end_row,
                         line_height,

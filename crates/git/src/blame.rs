@@ -1,5 +1,6 @@
 use crate::commit::get_messages;
 
+use crate::repository::CommitDetails;
 use crate::{GitRemote, Oid};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -7,6 +8,7 @@ use futures::AsyncWriteExt;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
+use std::str::FromStr;
 use std::{ops::Range, path::Path};
 use text::Rope;
 use time::OffsetDateTime;
@@ -184,6 +186,20 @@ impl BlameEntry {
             // Directly return current time in UTC if there's no committer time or timezone
             Ok(time::OffsetDateTime::now_utc())
         }
+    }
+
+    pub fn from_details(details: &CommitDetails) -> Option<Self> {
+        let sha = Oid::from_str(&details.sha).ok()?;
+        Some(Self {
+            sha,
+            author: Some(details.author_name.to_string()),
+            author_mail: Some(details.author_email.to_string()),
+            // FIXME
+            author_time: Some(details.commit_timestamp),
+            committer_time: Some(details.commit_timestamp),
+            summary: Some(details.message.to_string()),
+            ..Default::default()
+        })
     }
 }
 

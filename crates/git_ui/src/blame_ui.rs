@@ -12,7 +12,8 @@ use gpui::{
 use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
 use ui::{
-    ActiveTheme, Color, ContextMenu, FluentBuilder as _, Icon, IconName, ParentElement as _, h_flex,
+    ActiveTheme, Color, ContextMenu, FluentBuilder as _, Icon, IconName, ParentElement as _,
+    SharedString, h_flex,
 };
 use workspace::Workspace;
 
@@ -116,22 +117,25 @@ impl BlameRenderer for GitBlameRenderer {
         style: &TextStyle,
         blame_entry: BlameEntry,
         details: Option<ParsedCommitMessage>,
+        description: Option<SharedString>,
         repository: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
         editor: Entity<Editor>,
         cx: &mut App,
     ) -> Option<AnyElement> {
+        dbg!(&details);
         let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
         let author = blame_entry.author.as_deref().unwrap_or_default();
         let summary_enabled = ProjectSettings::get_global(cx)
             .git
             .show_inline_commit_summary();
 
-        let text = match blame_entry.summary.as_ref() {
-            Some(summary) if summary_enabled => {
-                format!("{}, {} - {}", author, relative_timestamp, summary)
-            }
-            _ => format!("{}, {}", author, relative_timestamp),
+        let text = if let Some(description) = description {
+            format!("{author} ({description})")
+        } else if let Some(summary) = blame_entry.summary.as_ref().filter(|_| summary_enabled) {
+            format!("{}, {} - {}", author, relative_timestamp, summary)
+        } else {
+            format!("{}, {}", author, relative_timestamp)
         };
 
         Some(

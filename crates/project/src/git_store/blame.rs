@@ -369,7 +369,7 @@ impl GitBlame {
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
                         let commit_details =
-                            parse_commit_messages(messages, remote_url, provider_registry).await;
+                            parse_commit_messages(messages, remote_url, provider_registry);
 
                         anyhow::Ok(Some((entries, commit_details)))
                     }
@@ -458,7 +458,7 @@ fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree
     entries
 }
 
-async fn parse_commit_messages(
+fn parse_commit_messages(
     messages: impl IntoIterator<Item = (Oid, String)>,
     remote_url: Option<String>,
     provider_registry: Arc<GitHostingProviderRegistry>,
