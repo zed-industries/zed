@@ -30,7 +30,7 @@ use settings::Settings;
 use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
-use task::DebugTaskDefinition;
+use task::{DebugTaskDefinition, DebugTaskTemplate};
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use util::debug_panic;
@@ -249,6 +249,52 @@ impl DebugPanel {
                 debug_panel
             })
         })
+    }
+
+    pub fn start_session(
+        &mut self,
+        definition: DebugTaskDefinition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let task_contexts = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                tasks_ui::task_contexts(workspace, window, cx)
+            })
+            .ok();
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+
+        cx.spawn(async move |_, cx| {
+            let task_context = if let Some(task) = task_contexts {
+                task.await
+                    .active_worktree_context
+                    .map_or(task::TaskContext::default(), |context| context.1)
+            } else {
+                task::TaskContext::default()
+            };
+
+            project
+                .update(cx, |project, cx| {
+                    let template = DebugTaskTemplate {
+                        locator: None,
+                        definition: definition.clone(),
+                    };
+                    if let Some(debug_config) = template
+                        .to_zed_format()
+                        .resolve_task("debug_task", &task_context)
+                        .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
+                    {
+                        project.start_debug_session(debug_config.definition, cx)
+                    } else {
+                        project.start_debug_session(definition, cx)
+                    }
+                })?
+                .await
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn active_session(&self) -> Option<Entity<DebugSession>> {

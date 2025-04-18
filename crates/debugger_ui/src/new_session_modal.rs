@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Result, anyhow};
 use dap::{DapRegistry, DebugRequest};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
@@ -21,7 +20,6 @@ use ui::{
     LabelCommon as _, ParentElement, RenderOnce, SharedString, Styled, StyledExt, ToggleButton,
     ToggleState, Toggleable, Window, div, h_flex, relative, rems, v_flex,
 };
-use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
@@ -88,11 +86,11 @@ impl NewSessionModal {
         }
     }
 
-    fn debug_config(&self, cx: &App) -> Option<DebugTaskDefinition> {
+    fn debug_config(&self, cx: &App, debugger: &str) -> DebugTaskDefinition {
         let request = self.mode.debug_task(cx);
-        Some(DebugTaskDefinition {
-            adapter: self.debugger.clone()?.to_string(),
-            label: suggested_label(&request, self.debugger.as_deref()?),
+        DebugTaskDefinition {
+            adapter: debugger.to_owned(),
+            label: suggested_label(&request, debugger),
             request,
             initialize_args: self.initialize_args.clone(),
             tcp_connection: None,
@@ -100,62 +98,22 @@ impl NewSessionModal {
                 ToggleState::Selected => Some(true),
                 _ => None,
             },
-        })
+        }
     }
 
-    fn start_new_session(&self, window: &mut Window, cx: &mut Context<Self>) -> Result<()> {
-        let workspace = self.workspace.clone();
-        let config = self
-            .debug_config(cx)
-            .ok_or_else(|| anyhow!("Failed to create a debug config"))?;
+    fn start_new_session(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(debugger) = self.debugger.as_ref() else {
+            // todo: show in UI.
+            log::error!("No debugger selected");
+            return;
+        };
+        let config = self.debug_config(cx, debugger);
 
-        let _ = self.debug_panel.update(cx, |panel, _| {
+        let _ = self.debug_panel.update(cx, |panel, cx| {
             panel.past_debug_definition = Some(config.clone());
+            panel.start_session(config, window, cx)
         });
-
-        let task_contexts = workspace
-            .update(cx, |workspace, cx| {
-                tasks_ui::task_contexts(workspace, window, cx)
-            })
-            .ok();
-
-        cx.spawn(async move |this, cx| {
-            let task_context = if let Some(task) = task_contexts {
-                task.await
-                    .active_worktree_context
-                    .map_or(task::TaskContext::default(), |context| context.1)
-            } else {
-                task::TaskContext::default()
-            };
-            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
-
-            let task = project.update(cx, |this, cx| {
-                let template = DebugTaskTemplate {
-                    locator: None,
-                    definition: config.clone(),
-                };
-                if let Some(debug_config) = template
-                    .to_zed_format()
-                    .resolve_task("debug_task", &task_context)
-                    .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
-                {
-                    this.start_debug_session(debug_config.definition, cx)
-                } else {
-                    this.start_debug_session(config, cx)
-                }
-            })?;
-            let spawn_result = task.await;
-            if spawn_result.is_ok() {
-                this.update(cx, |_, cx| {
-                    cx.emit(DismissEvent);
-                })
-                .ok();
-            }
-            spawn_result?;
-            anyhow::Result::<_, anyhow::Error>::Ok(())
-        })
-        .detach_and_log_err(cx);
-        Ok(())
+        cx.emit(DismissEvent);
     }
 
     fn update_attach_picker(
@@ -631,7 +589,7 @@ impl Render for NewSessionModal {
                             .child(
                                 Button::new("debugger-spawn", "Start")
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.start_new_session(window, cx).log_err();
+                                        this.start_new_session(window, cx);
                                     }))
                                     .disabled(self.debugger.is_none()),
                             ),
