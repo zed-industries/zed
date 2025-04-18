@@ -46,7 +46,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|_workspace, _: &ImportVsCodeSettings, _window, cx| {
             let fs = <dyn Fs>::global(cx);
             cx.global::<SettingsStore>().import_vscode_settings(fs);
-            println!("imported settings, need to reload?");
+            log::info!("Imported settings from VsCode");
         });
 
         let settings_ui_actions = [TypeId::of::<OpenSettingsEditor>()];
