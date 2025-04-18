@@ -12,8 +12,9 @@ use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use fs::Fs;
-use futures::FutureExt as _;
+use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     App, BackgroundExecutor, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString,
     Subscription, Task, prelude::*,
@@ -23,8 +24,8 @@ use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
 use prompt_store::{
-    DefaultUserRulesContext, ProjectContext, PromptBuilder, PromptStore, RulesFileContext,
-    WorktreeContext,
+    DefaultUserRulesContext, ProjectContext, PromptBuilder, PromptStore, PromptsUpdatedEvent,
+    RulesFileContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
@@ -65,6 +66,8 @@ pub struct ThreadStore {
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
     project_context: SharedProjectContext,
+    reload_system_prompt_tx: mpsc::Sender<()>,
+    _reload_system_prompt_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -80,12 +83,22 @@ impl ThreadStore {
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
-    ) -> Task<Entity<Self>> {
-        let thread_store = cx.new(|cx| Self::new(project, tools, prompt_builder, cx));
-        let reload = thread_store.update(cx, |store, cx| store.reload_system_prompt(cx));
-        cx.foreground_executor().spawn(async move {
-            reload.await;
-            thread_store
+    ) -> Task<Result<Entity<Self>>> {
+        let prompt_store = PromptStore::global(cx);
+        cx.spawn(async move |cx| {
+            let prompt_store = prompt_store.await.ok();
+            let (thread_store, ready_rx) = cx.update(|cx| {
+                let mut option_ready_rx = None;
+                let thread_store = cx.new(|cx| {
+                    let (thread_store, ready_rx) =
+                        Self::new(project, tools, prompt_builder, prompt_store, cx);
+                    option_ready_rx = Some(ready_rx);
+                    thread_store
+                });
+                (thread_store, option_ready_rx.take().unwrap())
+            })?;
+            ready_rx.await?;
+            Ok(thread_store)
         })
     }
 
@@ -93,17 +106,51 @@ impl ThreadStore {
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
+        prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
-    ) -> Self {
+    ) -> (Self, oneshot::Receiver<()>) {
         let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
         let context_server_manager = cx.new(|cx| {
             ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
         });
-        let settings_subscription =
+
+        // This channel and task prevent concurrent and redundant loading of the system prompt.
+        let (reload_system_prompt_tx, mut reload_system_prompt_rx) = mpsc::channel(1);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let mut ready_tx = Some(ready_tx);
+        let reload_system_prompt_task = cx.spawn({
+            async move |thread_store, cx| {
+                loop {
+                    let Some(reload_task) = thread_store
+                        .update(cx, |thread_store, cx| thread_store.reload_system_prompt(cx))
+                        .ok()
+                    else {
+                        return;
+                    };
+                    reload_task.await;
+                    if let Some(ready_tx) = ready_tx.take() {
+                        ready_tx.send(()).ok();
+                    }
+                    reload_system_prompt_rx.next().await;
+                }
+            }
+        });
+
+        let mut subscriptions = vec![
             cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
                 this.load_default_profile(cx);
-            });
-        let project_subscription = cx.subscribe(&project, Self::handle_project_event);
+            }),
+            cx.subscribe(&project, Self::handle_project_event),
+        ];
+
+        if let Some(prompt_store) = prompt_store {
+            subscriptions.push(cx.subscribe(
+                &prompt_store,
+                |this, _prompt_store, PromptsUpdatedEvent, _cx| {
+                    this.enqueue_system_prompt_reload();
+                },
+            ))
+        }
 
         let this = Self {
             project,
@@ -113,23 +160,25 @@ impl ThreadStore {
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
             project_context: SharedProjectContext::default(),
-            _subscriptions: vec![settings_subscription, project_subscription],
+            reload_system_prompt_tx,
+            _reload_system_prompt_task: reload_system_prompt_task,
+            _subscriptions: subscriptions,
         };
         this.load_default_profile(cx);
         this.register_context_server_handlers(cx);
         this.reload(cx).detach_and_log_err(cx);
-        this
+        (this, ready_rx)
     }
 
     fn handle_project_event(
         &mut self,
         _project: Entity<Project>,
         event: &project::Event,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         match event {
             project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
-                self.reload_system_prompt(cx).detach();
+                self.enqueue_system_prompt_reload();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
                 if items.iter().any(|(path, _, _)| {
@@ -137,14 +186,20 @@ impl ThreadStore {
                         .iter()
                         .any(|name| path.as_ref() == Path::new(name))
                 }) {
-                    self.reload_system_prompt(cx).detach();
+                    self.enqueue_system_prompt_reload();
                 }
             }
             _ => {}
         }
     }
 
-    pub fn reload_system_prompt(&self, cx: &mut Context<Self>) -> Task<()> {
+    fn enqueue_system_prompt_reload(&mut self) {
+        self.reload_system_prompt_tx.try_send(()).ok();
+    }
+
+    // Note that this should only be called from `reload_system_prompt_task`. Instead use
+    // `enqueue_system_prompt_reload`.
+    fn reload_system_prompt(&self, cx: &mut Context<Self>) -> Task<()> {
         let prompt_store = PromptStore::global(cx);
         let project = self.project.read(cx);
         let tasks = project
@@ -168,16 +223,17 @@ impl ThreadStore {
                     vec![]
                 }
                 Ok(prompt_store) => {
-                    let prompts = prompt_store.default_prompt_metadata();
-                    let default_user_rules =
-                        future::join_all(prompts.into_iter().map(|prompt_metadata| {
-                            let prompt_store = prompt_store.clone();
-                            async move {
-                                let contents = prompt_store.load(prompt_metadata.id);
-                                (contents.await, prompt_metadata)
-                            }
-                        }))
-                        .await;
+                    let task = prompt_store
+                        .read_with(cx, |prompt_store, cx| {
+                            let prompts = prompt_store.default_prompt_metadata();
+                            let load_tasks = prompts.into_iter().map(|prompt_metadata| {
+                                let contents = prompt_store.load(prompt_metadata.id, cx);
+                                async move { (contents.await, prompt_metadata) }
+                            });
+                            cx.background_spawn(future::join_all(load_tasks))
+                        })
+                        .unwrap_or_else(|_| Task::ready(vec![]));
+                    let default_user_rules = task.await;
                     default_user_rules
                         .into_iter()
                         .flat_map(|(contents, prompt_metadata)| match contents {

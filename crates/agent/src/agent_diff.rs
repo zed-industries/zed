@@ -952,7 +952,8 @@ mod tests {
                     cx,
                 )
             })
-            .await;
+            .await
+            .unwrap();
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 

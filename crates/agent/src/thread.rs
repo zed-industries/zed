@@ -2458,7 +2458,8 @@ fn main() {{
                     cx,
                 )
             })
-            .await;
+            .await
+            .unwrap();
 
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
