@@ -97,18 +97,16 @@ impl Workspace {
                 if !exit_code.success() {
                     return anyhow::Ok(());
                 }
+                dbg!("a");
 
                 let ret = project
                     .update(cx, |project, cx| {
                         project.dap_store().update(cx, |dap_store, cx| {
-                            if let Some(as_local) = dap_store.as_local() {
-                                as_local.run_locator(debug_config, cx)
-                            } else {
-                                Task::ready(Err(anyhow!("unreachable")))
-                            }
+                            dap_store.run_debug_locator(debug_config, cx)
                         })
                     })?
                     .await?;
+                dbg!("a");
                 ret
             } else {
                 debug_config.definition

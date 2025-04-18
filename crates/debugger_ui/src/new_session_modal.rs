@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use dap::DebugRequest;
+use dap::{DapRegistry, DebugRequest};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
@@ -209,12 +209,7 @@ impl NewSessionModal {
                 };
 
                 let available_adapters = workspace
-                    .update(cx, |this, cx| {
-                        this.project()
-                            .read(cx)
-                            .debug_adapters()
-                            .enumerate_adapters()
-                    })
+                    .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
                     .ok()
                     .unwrap_or_default();
 

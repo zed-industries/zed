@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use util::serde::default_true;
 use util::{ResultExt, truncate_and_remove_front};
 
+use crate::debug_format::TcpHost;
 use crate::{
-    AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext,
-    TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
+    AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId,
+    VariableName, ZED_VARIABLE_NAME_PREFIX,
     serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema},
 };
 
@@ -94,7 +95,7 @@ pub struct DebugArgs {
     /// Adapter choice
     pub adapter: String,
     /// TCP connection to make with debug adapter
-    pub tcp_connection: Option<TCPHost>,
+    pub tcp_connection: Option<TcpHost>,
     /// Args to send to debug adapter
     pub initialize_args: Option<serde_json::value::Value>,
     /// the locator to use

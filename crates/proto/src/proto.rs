@@ -304,6 +304,8 @@ messages!(
     (GitInit, Background),
     (GetDebugAdapterBinary, Background),
     (DebugAdapterBinary, Background),
+    (RunDebugLocator, Background),
+    (DebugTaskDefinition, Background),
 );
 
 request_messages!(
@@ -463,6 +465,7 @@ request_messages!(
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
     (GetDebugAdapterBinary, DebugAdapterBinary),
+    (RunDebugLocator, DebugTaskDefinition),
 );
 
 entity_messages!(
@@ -582,6 +585,8 @@ entity_messages!(
     GitInit,
     BreakpointsForFile,
     ToggleBreakpoint,
+    RunDebugLocator,
+    GetDebugAdapterBinary,
 );
 
 entity_messages!(

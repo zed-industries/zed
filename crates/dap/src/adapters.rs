@@ -17,7 +17,7 @@ use std::{
     borrow::Borrow, collections::HashSet, ffi::OsStr, fmt::Debug, net::Ipv4Addr, ops::Deref,
     path::PathBuf, sync::Arc,
 };
-use task::DebugTaskDefinition;
+use task::{DebugTaskDefinition, TcpHost};
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,6 +88,27 @@ pub struct TcpArguments {
     pub port: u16,
     pub timeout: Option<u64>,
 }
+
+impl TcpArguments {
+    pub fn from_proto(proto: proto::TcpHost) -> anyhow::Result<Self> {
+        let host = TcpHost::from_proto(proto)?;
+        Ok(TcpArguments {
+            host: host.host.ok_or_else(|| anyhow!("missing host"))?,
+            port: host.port.ok_or_else(|| anyhow!("missing port"))?,
+            timeout: host.timeout,
+        })
+    }
+
+    pub fn to_proto(&self) -> proto::TcpHost {
+        TcpHost {
+            host: Some(self.host.clone()),
+            port: Some(self.port.clone()),
+            timeout: self.timeout.clone(),
+        }
+        .to_proto()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
     pub command: String,
@@ -100,15 +121,6 @@ pub struct DebugAdapterBinary {
 
 impl DebugAdapterBinary {
     pub fn from_proto(binary: proto::DebugAdapterBinary) -> anyhow::Result<Self> {
-        let connection = if let Some(c) = binary.connection.as_ref() {
-            Some(TcpArguments {
-                host: c.host.parse()?,
-                port: c.port.try_into()?,
-                timeout: c.timeout,
-            })
-        } else {
-            None
-        };
         let request = match binary.launch_type() {
             proto::debug_adapter_binary::LaunchType::Launch => {
                 StartDebuggingRequestArgumentsRequest::Launch
@@ -122,7 +134,10 @@ impl DebugAdapterBinary {
             command: binary.command,
             arguments: binary.arguments,
             envs: binary.envs.into_iter().collect(),
-            connection,
+            connection: binary
+                .connection
+                .map(|c| TcpArguments::from_proto(c))
+                .transpose()?,
             request_args: StartDebuggingRequestArguments {
                 configuration: serde_json::from_str(&binary.configuration)?,
                 request,
@@ -144,11 +159,7 @@ impl DebugAdapterBinary {
                 .cwd
                 .as_ref()
                 .map(|cwd| cwd.to_string_lossy().to_string()),
-            connection: self.connection.as_ref().map(|c| proto::TcpHost {
-                host: c.host.to_string(),
-                port: c.port.into(),
-                timeout: c.timeout,
-            }),
+            connection: self.connection.as_ref().map(|c| c.to_proto()),
             launch_type: match self.request_args.request {
                 StartDebuggingRequestArgumentsRequest::Launch => {
                     proto::debug_adapter_binary::LaunchType::Launch.into()

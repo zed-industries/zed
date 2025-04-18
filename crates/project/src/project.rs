@@ -39,7 +39,10 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{DapRegistry, adapters::DebugAdapterBinary, client::DebugAdapterClient};
+use dap::{
+    adapters::{DebugAdapterBinary, TcpArguments},
+    client::DebugAdapterClient,
+};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -94,6 +97,7 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
+    net::Ipv4Addr,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -165,7 +169,6 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
-    debug_adapters: Arc<DapRegistry>,
     dap_store: Entity<DapStore>,
 
     breakpoint_store: Entity<BreakpointStore>,
@@ -834,7 +837,6 @@ impl Project {
         node: NodeRuntime,
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
-        debug_adapters: Arc<DapRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
         cx: &mut App,
@@ -873,6 +875,7 @@ impl Project {
                     languages.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
+                    worktree_store.clone(),
                     breakpoint_store.clone(),
                     cx,
                 )
@@ -955,7 +958,6 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
-                debug_adapters,
                 client,
                 task_store,
                 user_store,
@@ -1065,13 +1067,14 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into()));
+                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone().into()));
 
-            let dap_store = cx.new(|_| {
+            let dap_store = cx.new(|cx| {
                 DapStore::new_remote(
                     SSH_PROJECT_ID,
-                    client.clone().into(),
+                    ssh_proto.clone(),
                     breakpoint_store.clone(),
+                    cx,
                 )
             });
 
@@ -1113,7 +1116,6 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
-                debug_adapters: Arc::new(DapRegistry::default()),
                 client,
                 task_store,
                 user_store,
@@ -1251,8 +1253,13 @@ impl Project {
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
-        let dap_store = cx.new(|_cx| {
-            DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())
+        let dap_store = cx.new(|cx| {
+            DapStore::new_remote(
+                remote_id,
+                client.clone().into(),
+                breakpoint_store.clone(),
+                cx,
+            )
         })?;
 
         let lsp_store = cx.new(|cx| {
@@ -1337,7 +1344,6 @@ impl Project {
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
                 languages,
-                debug_adapters: Arc::new(DapRegistry::default()),
                 user_store: user_store.clone(),
                 task_store,
                 snippets,
@@ -1459,37 +1465,26 @@ impl Project {
 
     pub fn start_debug_session(
         &mut self,
-        config: DebugTaskDefinition,
+        definition: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
         let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
         };
 
-        let Some(adapter) = self.debug_adapters.adapter(&config.adapter) else {
-            return Task::ready(Err(anyhow!("Failed to find a debug adapter")));
-        };
-
-        let user_installed_path = ProjectSettings::get_global(cx)
-            .dap
-            .get(&adapter.name())
-            .and_then(|s| s.binary.as_ref().map(PathBuf::from));
-
         let ssh_client = self.ssh_client().clone();
-        self.ssh_details(cx);
 
         let result = cx.spawn(async move |this, cx| {
-            let binary = if let Some(ssh_client) = ssh_client {
-                let response = DebugAdapterBinary::from_proto(
-                    ssh_client
-                        .update(cx, |ssh, _| {
-                            ssh.proto_client().request(proto::GetDebugAdapterBinary {
-                                task: Some(config.to_proto()),
-                            })
-                        })?
-                        .await?,
-                )?;
-                let ssh_command = ssh_client.update(cx, |ssh, _| {
+            let mut binary = this
+                .update(cx, |this, cx| {
+                    this.dap_store.update(cx, |dap_store, cx| {
+                        dap_store.get_debug_adapter_binary(definition.clone(), cx)
+                    })
+                })?
+                .await?;
+
+            if let Some(ssh_client) = ssh_client {
+                let mut ssh_command = ssh_client.update(cx, |ssh, _| {
                     anyhow::Ok(SshCommand {
                         arguments: ssh
                             .ssh_args()
@@ -1497,37 +1492,41 @@ impl Project {
                     })
                 })??;
 
+                let mut connection = None;
+                if let Some(c) = binary.connection {
+                    let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
+                    let port = dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
+
+                    ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
+                    connection = Some(TcpArguments {
+                        port,
+                        host: local_bind_addr,
+                        timeout: c.timeout,
+                    })
+                }
+
                 let (program, args) = wrap_for_ssh(
                     &ssh_command,
-                    Some((&response.command, &response.arguments)),
-                    response.cwd.as_deref(),
-                    response.envs,
+                    Some((&binary.command, &binary.arguments)),
+                    binary.cwd.as_deref(),
+                    binary.envs,
                     None,
                 );
 
-                DebugAdapterBinary {
+                binary = DebugAdapterBinary {
                     command: program,
                     arguments: args,
                     envs: HashMap::default(),
                     cwd: None,
-                    connection: response.connection,
-                    request_args: response.request_args.into(),
+                    connection,
+                    request_args: binary.request_args.into(),
                 }
-            } else {
-                let delegate = this.update(cx, |project, cx| {
-                    project
-                        .dap_store
-                        .update(cx, |dap_store, cx| dap_store.delegate(&worktree, cx))
-                })?;
-                adapter
-                    .get_binary(&delegate, &config, user_installed_path, cx)
-                    .await?
             };
 
             let ret = this
                 .update(cx, |project, cx| {
                     project.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.new_session(binary, config, worktree.downgrade(), None, cx)
+                        dap_store.new_session(binary, definition, worktree.downgrade(), None, cx)
                     })
                 })?
                 .1
@@ -1546,7 +1545,6 @@ impl Project {
 
         let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
         let languages = LanguageRegistry::test(cx.background_executor().clone());
-        let debug_adapters = DapRegistry::default().into();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx
@@ -1560,7 +1558,6 @@ impl Project {
                     node_runtime::NodeRuntime::unavailable(),
                     user_store,
                     Arc::new(languages),
-                    debug_adapters,
                     fs,
                     None,
                     cx,
@@ -1591,7 +1588,6 @@ impl Project {
         use clock::FakeSystemClock;
 
         let languages = LanguageRegistry::test(cx.executor());
-        let debug_adapters = DapRegistry::fake();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
@@ -1602,7 +1598,6 @@ impl Project {
                 node_runtime::NodeRuntime::unavailable(),
                 user_store,
                 Arc::new(languages),
-                Arc::new(debug_adapters),
                 fs,
                 None,
                 cx,
@@ -1644,10 +1639,6 @@ impl Project {
 
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
-    }
-
-    pub fn debug_adapters(&self) -> &Arc<DapRegistry> {
-        &self.debug_adapters
     }
 
     pub fn client(&self) -> Arc<Client> {

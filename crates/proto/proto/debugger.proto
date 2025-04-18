@@ -534,8 +534,8 @@ message DebugTaskDefinition {
 }
 
 message TcpHost {
-    uint32 port = 1;
-    string host = 2;
+    optional uint32 port = 1;
+    optional string host = 2;
     optional uint64 timeout = 3;
 }
 
@@ -557,7 +557,8 @@ message DapModuleId {
 }
 
 message GetDebugAdapterBinary {
-    DebugTaskDefinition task = 1;
+    uint64 project_id = 1;
+    DebugTaskDefinition task = 2;
 }
 
 message DebugAdapterBinary {
@@ -572,4 +573,10 @@ message DebugAdapterBinary {
         Attach = 0;
         Launch = 1;
     }
+}
+
+message RunDebugLocator {
+    uint64 project_id = 1;
+    string locator = 2;
+    DebugTaskDefinition task = 3;
 }

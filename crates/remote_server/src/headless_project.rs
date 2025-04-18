@@ -1,6 +1,6 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{Result, anyhow};
-use dap::DapRegistry;
+
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
@@ -41,6 +41,7 @@ pub struct HeadlessProject {
     pub buffer_store: Entity<BufferStore>,
     pub lsp_store: Entity<LspStore>,
     pub task_store: Entity<TaskStore>,
+    pub dap_store: Entity<DapStore>,
     pub settings_observer: Entity<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
@@ -54,7 +55,6 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
-    pub debug_adapters: Arc<DapRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
@@ -72,7 +72,6 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
-            debug_adapters: _debug_adapters,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut Context<Self>,
@@ -114,6 +113,7 @@ impl HeadlessProject {
                 languages.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
+                worktree_store.clone(),
                 breakpoint_store.clone(),
                 cx,
             )
@@ -258,6 +258,7 @@ impl HeadlessProject {
             buffer_store,
             lsp_store,
             task_store,
+            dap_store,
             next_entry_id: Default::default(),
             languages,
             extensions,

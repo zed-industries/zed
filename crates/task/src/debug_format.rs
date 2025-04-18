@@ -1,19 +1,14 @@
+use anyhow::Result;
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
-use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::{net::Ipv4Addr, path::Path};
 
 use crate::{TaskTemplate, TaskType, task_template::DebugArgs};
 
-impl Default for DebugConnectionType {
-    fn default() -> Self {
-        DebugConnectionType::TCP(TCPHost::default())
-    }
-}
-
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-pub struct TCPHost {
+pub struct TcpHost {
     /// The port that the debug adapter is listening on
     ///
     /// Default: We will try to find an open port
@@ -28,10 +23,26 @@ pub struct TCPHost {
     pub timeout: Option<u64>,
 }
 
-impl TCPHost {
+impl TcpHost {
     /// Get the host or fallback to the default host
     pub fn host(&self) -> Ipv4Addr {
         self.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1))
+    }
+
+    pub fn from_proto(proto: proto::TcpHost) -> Result<Self> {
+        Ok(Self {
+            port: proto.port.map(|p| p.try_into()).transpose()?,
+            host: proto.host.map(|h| h.parse()).transpose()?,
+            timeout: proto.timeout,
+        })
+    }
+
+    pub fn to_proto(&self) -> proto::TcpHost {
+        proto::TcpHost {
+            port: self.port.map(|p| p.into()),
+            host: self.host.map(|h| h.to_string()),
+            timeout: self.timeout,
+        }
     }
 }
 
@@ -146,15 +157,6 @@ impl DebugTaskTemplate {
         }
     }
 }
-/// Represents the type of the debugger adapter connection
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase", tag = "connection")]
-pub enum DebugConnectionType {
-    /// Connect to the debug adapter via TCP
-    TCP(TCPHost),
-    /// Connect to the debug adapter via STDIO
-    STDIO,
-}
 
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -185,13 +187,19 @@ pub struct DebugTaskDefinition {
     /// If provided, this will be used to connect to the debug adapter instead of
     /// spawning a new process. This is useful for connecting to a debug adapter
     /// that is already running or is started by another process.
-    pub tcp_connection: Option<TCPHost>,
+    pub tcp_connection: Option<TcpHost>,
     /// Whether to tell the debug adapter to stop on entry
     pub stop_on_entry: Option<bool>,
 }
 
 impl DebugTaskDefinition {
-    ///
+    pub fn cwd(&self) -> Option<&Path> {
+        if let DebugRequest::Launch(config) = &self.request {
+            config.cwd.as_deref()
+        } else {
+            None
+        }
+    }
     pub fn to_proto(&self) -> proto::DebugTaskDefinition {
         proto::DebugTaskDefinition {
             adapter: self.adapter.clone(),
@@ -215,13 +223,41 @@ impl DebugTaskDefinition {
             }),
             label: self.label.clone(),
             initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
-            tcp_connection: self.tcp_connection.as_ref().map(|t| proto::TcpHost {
-                port: t.port.unwrap_or(0) as u32,
-                host: t.host.as_ref().map(|h| h.to_string()).unwrap_or_default(),
-                timeout: t.timeout,
-            }),
+            tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
             stop_on_entry: self.stop_on_entry,
         }
+    }
+
+    ///
+    pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
+        let request = proto
+            .request
+            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
+        Ok(Self {
+            label: proto.label,
+            initialize_args: proto.initialize_args.map(|v| v.into()),
+            tcp_connection: proto
+                .tcp_connection
+                .map(|t| TcpHost::from_proto(t))
+                .transpose()?,
+            stop_on_entry: proto.stop_on_entry,
+            adapter: proto.adapter.clone(),
+            request: match request {
+                proto::debug_task_definition::Request::DebugAttachRequest(config) => {
+                    DebugRequest::Attach(AttachRequest {
+                        process_id: Some(config.process_id),
+                    })
+                }
+
+                proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
+                    DebugRequest::Launch(LaunchRequest {
+                        program: config.program,
+                        cwd: config.cwd.map(|cwd| cwd.into()),
+                        args: config.args,
+                    })
+                }
+            },
+        })
     }
 }
 

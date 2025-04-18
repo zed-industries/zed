@@ -15,7 +15,6 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-use dap::DapRegistry;
 pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -636,7 +635,6 @@ pub fn register_serializable_item<I: SerializableItem>(cx: &mut App) {
 
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
-    pub debug_adapters: Arc<DapRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
     pub workspace_store: Entity<WorkspaceStore>,
@@ -688,7 +686,6 @@ impl AppState {
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let debug_adapters = Arc::new(DapRegistry::fake());
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
@@ -704,7 +701,6 @@ impl AppState {
             client,
             fs,
             languages,
-            debug_adapters,
             user_store,
             workspace_store,
             node_runtime: NodeRuntime::unavailable(),
@@ -1206,7 +1202,6 @@ impl Workspace {
             app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
-            app_state.debug_adapters.clone(),
             app_state.fs.clone(),
             env,
             cx,
@@ -5085,7 +5080,6 @@ impl Workspace {
         window.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
-            debug_adapters: project.read(cx).debug_adapters().clone(),
             workspace_store,
             client,
             user_store,

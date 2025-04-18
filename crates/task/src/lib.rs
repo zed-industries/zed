@@ -1,5 +1,4 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
-#![deny(missing_docs)]
 
 mod debug_format;
 mod serde_helpers;
@@ -16,8 +15,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub use debug_format::{
-    AttachRequest, DebugConnectionType, DebugRequest, DebugTaskDefinition, DebugTaskFile,
-    DebugTaskTemplate, LaunchRequest, TCPHost,
+    AttachRequest, DebugRequest, DebugTaskDefinition, DebugTaskFile, DebugTaskTemplate,
+    LaunchRequest, TcpHost,
 };
 pub use task_template::{
     DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,

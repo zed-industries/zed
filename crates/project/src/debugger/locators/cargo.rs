@@ -8,7 +8,7 @@ use smol::{
 };
 use task::DebugTaskDefinition;
 
-pub(super) struct CargoLocator;
+pub(crate) struct CargoLocator;
 
 async fn find_best_executable(executables: &[String], test_name: &str) -> Option<String> {
     if executables.len() == 1 {

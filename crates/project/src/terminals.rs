@@ -9,7 +9,6 @@ use smol::channel::bounded;
 use std::{
     borrow::Cow,
     env::{self},
-    iter,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -19,9 +18,6 @@ use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettings},
 };
 use util::ResultExt;
-
-// #[cfg(target_os = "macos")]
-// use std::os::unix::ffi::OsStrExt;
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
@@ -52,10 +48,10 @@ pub struct SshCommand {
 }
 
 impl SshCommand {
-    pub fn add_port_forwarding(&mut self, local_port: u16, remote_port: u16) {
+    pub fn add_port_forwarding(&mut self, local_port: u16, host: String, remote_port: u16) {
         self.arguments.push("-L".to_string());
         self.arguments
-            .push(format!("{}:localhost:{}", local_port, remote_port));
+            .push(format!("{}:{}:{}", local_port, host, remote_port));
     }
 }
 
@@ -567,9 +563,15 @@ pub fn wrap_for_ssh(
     venv_directory: Option<&Path>,
 ) -> (String, Vec<String>) {
     let to_run = if let Some((command, args)) = command {
-        let command = Cow::Borrowed(command.as_str());
+        dbg!(&command);
+        let command: Option<Cow<str>> = if command.starts_with('"') {
+            Some(command.into())
+        } else {
+            shlex::try_quote(command).ok()
+        };
+        dbg!(&command);
         let args = args.iter().filter_map(|arg| shlex::try_quote(arg).ok());
-        iter::once(command).chain(args).join(" ")
+        command.into_iter().chain(args).join(" ")
     } else {
         "exec ${SHELL:-sh} -l".to_string()
     };
