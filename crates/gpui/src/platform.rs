@@ -214,7 +214,7 @@ pub(crate) trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
-    fn keyboard_layout(&self) -> String;
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -1635,26 +1635,10 @@ impl From<String> for ClipboardString {
     }
 }
 
-/// Information about the keyboard layout
-#[derive(Clone, Debug)]
-pub struct KeyboardLayout {
-    id: String,
-    name: String,
-}
-
-impl KeyboardLayout {
-    /// Create a new keyboard layout with the given ID and name
-    pub fn new(id: String, name: String) -> Self {
-        Self { id, name }
-    }
-
-    /// Get the ID of the keyboard layout, the ID should be unique to the layout
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    /// Get the name of the keyboard layout
-    pub fn name(&self) -> &str {
-        &self.name
-    }
+//// A trait for platform-specific keyboard layouts
+pub trait PlatformKeyboardLayout {
+    /// Get the keyboard layout ID, which should be unique to the layout
+    fn id(&self) -> &str;
+    /// Get the keyboard layout display name
+    fn name(&self) -> &str;
 }
