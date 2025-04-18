@@ -41,4 +41,4 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run cargo eval
-        run: cargo run -p eval -- --cohort-id daily-run-${{ github.run_id }}
+        run: cargo run -p eval -- --cohort-id dailyrun${{ github.run_id }} metal_i64_support find_and_replace_diff_card

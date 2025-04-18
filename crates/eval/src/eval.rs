@@ -35,33 +35,44 @@ pub const RUNS_DIR: &str = "./crates/eval/runs";
 #[derive(Parser, Debug)]
 #[command(name = "eval", disable_version_flag = true)]
 struct Args {
-    /// Runs all examples that contain these substrings. If unspecified, all examples are run.
-    #[arg(value_name = "EXAMPLE_SUBSTRING")]
-    examples: Vec<String>,
+    /// Optional cohort ID to group runs together (useful for GitHub Actions)
+    #[arg(long)]
+    cohort_id: Option<String>,
+    
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
+    
     #[arg(long, value_delimiter = ',')]
     languages: Option<Vec<String>>,
+    
     /// How many times to run each example. Note that this is currently not very efficient as N
     /// worktrees will be created for the examples.
     #[arg(long, default_value = "1")]
     repetitions: u32,
+    
     /// How many times to run the judge on each example run.
     #[arg(long, default_value = "3")]
     judge_repetitions: u32,
+    
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "10")]
     concurrency: usize,
-    /// Optional cohort ID to group runs together (useful for GitHub Actions)
-    #[arg(long)]
-    cohort_id: Option<String>,
+    
+    /// Runs all examples that contain these substrings. If unspecified, all examples are run.
+    #[arg(value_name = "EXAMPLE_SUBSTRING")]
+    examples: Vec<String>,
 }
 
 fn main() {
     env_logger::init();
 
     let args = Args::parse();
+    
+    // Debug print the raw command line arguments
+    println!("DEBUG: Raw command line args = {:?}", std::env::args().collect::<Vec<_>>());
+    println!("DEBUG: Parsed args = {:?}", args);
+    
     let all_available_examples = list_all_examples().unwrap();
     let languages = args.languages.unwrap_or_else(|| vec!["rs".to_string()]);
 
@@ -238,6 +249,8 @@ fn main() {
             let concurrency = args.concurrency;
             let cohort_id = args.cohort_id.clone();
 
+            println!("DEBUG: Command line cohort_id = {:?}", cohort_id);
+
             let tasks = examples.iter().map(|example| {
                 let app_state = app_state.clone();
                 let model = model.clone();
@@ -360,6 +373,10 @@ async fn run_example(
     optional_cohort_id: Option<String>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Result<JudgeOutput>>> {
+    println!(
+        "DEBUG: run_example received optional_cohort_id = {:?}",
+        optional_cohort_id
+    );
     let run_output = cx
         .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
         .await?;
@@ -560,23 +577,29 @@ async fn run_judge_repetition(
     optional_cohort_id: Option<String>,
     cx: &AsyncApp,
 ) -> Result<JudgeOutput> {
+    // Debug print to check if optional_cohort_id is being passed correctly
+    println!("DEBUG: optional_cohort_id = {:?}", optional_cohort_id);
+
     let judge_result = example.judge(model.clone(), &run_output, round, cx).await;
 
     if let Ok(judge_output) = &judge_result {
-        let cohort_id = example
-            .run_directory_path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+        let cohort_id = if let Some(id) = optional_cohort_id.clone() {
+            println!("DEBUG: Using command-line cohort_id: {}", id);
+            id
+        } else {
+            let fallback_id = example
+                .run_directory_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+            println!("DEBUG: Using fallback cohort_id: {}", fallback_id);
+            fallback_id
+        };
 
         let path = std::path::Path::new(".");
         let commit_id = get_current_commit_id(path).await.unwrap_or_default();
 
         if let Some(thread) = &judge_output.thread {
-            let cohort_id = optional_cohort_id.clone().unwrap_or_else(|| cohort_id);
-
-            let path = std::path::Path::new(".");
-            let commit_id = get_current_commit_id(path).await.unwrap_or_default();
             telemetry::event!(
                 "Agent Eval Completed",
                 cohort_id = cohort_id,
