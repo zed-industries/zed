@@ -413,7 +413,6 @@ impl Thread {
                 })
                 .collect(),
             next_message_id,
-            // TODO: Persist with Thread.
             last_prompt_id: PromptId::new(),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
