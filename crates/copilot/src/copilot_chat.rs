@@ -113,7 +113,6 @@ pub enum ModelVendor {
 
 impl Model {
     pub fn uses_streaming(&self) -> bool {
-<<<<<<< HEAD
         self.capabilities.supports.streaming
     }
 
