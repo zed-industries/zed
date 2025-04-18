@@ -3311,6 +3311,12 @@ pub(crate) fn open_context(
                 }
             })
         }
+        AssistantContext::UserRules(user_rules_context) => window.dispatch_action(
+            Box::new(OpenPromptLibrary {
+                prompt_to_focus: Some(user_rules_context.prompt_id),
+            }),
+            cx,
+        ),
     }
 }
 

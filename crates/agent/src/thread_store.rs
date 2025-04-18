@@ -24,12 +24,13 @@ use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
 use prompt_store::{
-    DefaultUserRulesContext, ProjectContext, PromptBuilder, PromptId, PromptStore,
+    DefaultUserRulesContext, ProjectContext, PromptBuilder, PromptId, PromptMetadata, PromptStore,
     PromptsUpdatedEvent, RulesFileContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
+use uuid::Uuid;
 
 use crate::thread::{
     DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
@@ -62,6 +63,7 @@ pub struct ThreadStore {
     project: Entity<Project>,
     tools: Entity<ToolWorkingSet>,
     prompt_builder: Arc<PromptBuilder>,
+    prompt_store: Option<Entity<PromptStore>>,
     context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
@@ -135,6 +137,7 @@ impl ThreadStore {
         let (ready_tx, ready_rx) = oneshot::channel();
         let mut ready_tx = Some(ready_tx);
         let reload_system_prompt_task = cx.spawn({
+            let prompt_store = prompt_store.clone();
             async move |thread_store, cx| {
                 loop {
                     let Some(reload_task) = thread_store
@@ -158,6 +161,7 @@ impl ThreadStore {
             project,
             tools,
             prompt_builder,
+            prompt_store,
             context_server_manager,
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
@@ -347,6 +351,27 @@ impl ThreadStore {
 
     pub fn context_server_manager(&self) -> Entity<ContextServerManager> {
         self.context_server_manager.clone()
+    }
+
+    pub fn prompt_store(&self) -> Option<Entity<PromptStore>> {
+        self.prompt_store.clone()
+    }
+
+    pub fn load_user_rules(
+        &self,
+        prompt_id: Uuid,
+        cx: &App,
+    ) -> Task<Result<(PromptMetadata, String)>> {
+        let prompt_id = PromptId::User { uuid: prompt_id };
+        let Some(prompt_store) = self.prompt_store.as_ref() else {
+            return Task::ready(Err(anyhow!("Prompt store unexpectedly missing.")));
+        };
+        let prompt_store = prompt_store.read(cx);
+        let Some(metadata) = prompt_store.metadata(prompt_id) else {
+            return Task::ready(Err(anyhow!("User rules not found in library.")));
+        };
+        let text_task = prompt_store.load(prompt_id, cx);
+        cx.background_spawn(async move { Ok((metadata, text_task.await?)) })
     }
 
     pub fn tools(&self) -> Entity<ToolWorkingSet> {

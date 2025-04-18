@@ -16,6 +16,7 @@ use release_channel::ReleaseChannel;
 use rope::Rope;
 use settings::Settings;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{
@@ -221,7 +222,8 @@ impl PickerDelegate for PromptPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let search = self.store.read(cx).search(query, cx);
+        let cancellation_flag = Arc::new(AtomicBool::default());
+        let search = self.store.read(cx).search(query, cancellation_flag, cx);
         let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
         cx.spawn_in(window, async move |this, cx| {
             let (matches, selected_index) = cx

@@ -354,6 +354,16 @@ impl AddedContext {
                     .read(cx)
                     .is_generating_detailed_summary(),
             },
+
+            AssistantContext::UserRules(user_rules_context) => AddedContext {
+                id: user_rules_context.id,
+                kind: ContextKind::UserRules,
+                name: user_rules_context.title.clone(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                summarizing: false,
+            },
         }
     }
 }

@@ -3,6 +3,7 @@ mod fetch_context_picker;
 mod file_context_picker;
 mod symbol_context_picker;
 mod thread_context_picker;
+mod user_rules_context_picker;
 
 use std::ops::Range;
 use std::path::PathBuf;
@@ -30,6 +31,7 @@ pub use crate::context_picker::completion_provider::ContextPickerCompletionProvi
 use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
+use crate::context_picker::user_rules_context_picker::UserRulesContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
@@ -40,6 +42,7 @@ enum ContextPickerMode {
     Symbol,
     Fetch,
     Thread,
+    UserRules,
 }
 
 impl TryFrom<&str> for ContextPickerMode {
@@ -51,6 +54,7 @@ impl TryFrom<&str> for ContextPickerMode {
             "symbol" => Ok(Self::Symbol),
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
+            "rules" => Ok(Self::UserRules),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -63,6 +67,7 @@ impl ContextPickerMode {
             Self::Symbol => "symbol",
             Self::Fetch => "fetch",
             Self::Thread => "thread",
+            Self::UserRules => "rules",
         }
     }
 
@@ -72,6 +77,7 @@ impl ContextPickerMode {
             Self::Symbol => "Symbols",
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
+            Self::UserRules => "User Rules",
         }
     }
 
@@ -81,6 +87,8 @@ impl ContextPickerMode {
             Self::Symbol => IconName::Code,
             Self::Fetch => IconName::Globe,
             Self::Thread => IconName::MessageBubbles,
+            // todo! icon
+            Self::UserRules => IconName::File,
         }
     }
 }
@@ -92,6 +100,7 @@ enum ContextPickerState {
     Symbol(Entity<SymbolContextPicker>),
     Fetch(Entity<FetchContextPicker>),
     Thread(Entity<ThreadContextPicker>),
+    UserRules(Entity<UserRulesContextPicker>),
 }
 
 pub(super) struct ContextPicker {
@@ -253,6 +262,19 @@ impl ContextPicker {
                     }));
                 }
             }
+            ContextPickerMode::UserRules => {
+                if let Some(thread_store) = self.thread_store.as_ref() {
+                    self.mode = ContextPickerState::UserRules(cx.new(|cx| {
+                        UserRulesContextPicker::new(
+                            thread_store.clone(),
+                            context_picker.clone(),
+                            self.context_store.clone(),
+                            window,
+                            cx,
+                        )
+                    }));
+                }
+            }
         }
 
         cx.notify();
@@ -381,6 +403,7 @@ impl ContextPicker {
             ContextPickerState::Symbol(entity) => entity.update(cx, |_, cx| cx.notify()),
             ContextPickerState::Fetch(entity) => entity.update(cx, |_, cx| cx.notify()),
             ContextPickerState::Thread(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::UserRules(entity) => entity.update(cx, |_, cx| cx.notify()),
         }
     }
 }
@@ -395,6 +418,7 @@ impl Focusable for ContextPicker {
             ContextPickerState::Symbol(symbol_picker) => symbol_picker.focus_handle(cx),
             ContextPickerState::Fetch(fetch_picker) => fetch_picker.focus_handle(cx),
             ContextPickerState::Thread(thread_picker) => thread_picker.focus_handle(cx),
+            ContextPickerState::UserRules(user_rules_picker) => user_rules_picker.focus_handle(cx),
         }
     }
 }
@@ -410,6 +434,9 @@ impl Render for ContextPicker {
                 ContextPickerState::Symbol(symbol_picker) => parent.child(symbol_picker.clone()),
                 ContextPickerState::Fetch(fetch_picker) => parent.child(fetch_picker.clone()),
                 ContextPickerState::Thread(thread_picker) => parent.child(thread_picker.clone()),
+                ContextPickerState::UserRules(user_rules_picker) => {
+                    parent.child(user_rules_picker.clone())
+                }
             })
     }
 }
@@ -431,6 +458,7 @@ fn supported_context_picker_modes(
     ];
     if thread_store.is_some() {
         modes.push(ContextPickerMode::Thread);
+        modes.push(ContextPickerMode::UserRules);
     }
     modes
 }

@@ -44,9 +44,10 @@ impl SlashCommand for PromptSlashCommand {
         let store = PromptStore::global(cx);
         let query = arguments.to_owned().join(" ");
         cx.spawn(async move |cx| {
+            let cancellation_flag = Arc::new(AtomicBool::default());
             let prompts: Vec<PromptMetadata> = store
                 .await?
-                .read_with(cx, |store, cx| store.search(query, cx))?
+                .read_with(cx, |store, cx| store.search(query, cancellation_flag, cx))?
                 .await;
             Ok(prompts
                 .into_iter()

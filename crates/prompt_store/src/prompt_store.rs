@@ -314,7 +314,12 @@ impl PromptStore {
         Some(metadata.id)
     }
 
-    pub fn search(&self, query: String, cx: &App) -> Task<Vec<PromptMetadata>> {
+    pub fn search(
+        &self,
+        query: String,
+        cancellation_flag: Arc<AtomicBool>,
+        cx: &App,
+    ) -> Task<Vec<PromptMetadata>> {
         let cached_metadata = self.metadata_cache.read().metadata.clone();
         let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
@@ -333,7 +338,7 @@ impl PromptStore {
                     &query,
                     false,
                     100,
-                    &AtomicBool::default(),
+                    &cancellation_flag,
                     executor,
                 )
                 .await;
