@@ -51,7 +51,7 @@ pub fn init_env_filter(filter: env_config::EnvFilter) {
 }
 
 pub fn is_possibly_enabled_level(level: log::Level) -> bool {
-    return LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed) <= level as u8;
+    return level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed);
 }
 
 pub fn is_scope_enabled(scope: &Scope, level: log::Level) -> bool {
