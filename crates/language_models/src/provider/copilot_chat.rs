@@ -24,7 +24,6 @@ use language_model::{
 };
 use settings::SettingsStore;
 use std::time::Duration;
-use strum::IntoEnumIterator;
 use ui::prelude::*;
 use util::maybe;
 
@@ -210,7 +209,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         match self.model.vendor() {
             ModelVendor::Anthropic => count_anthropic_tokens(request, cx),
             ModelVendor::Google => count_google_tokens(request, cx),
-            ModelVendor::OpenAI | ModelVendor::AzureOpenAI => {
+            ModelVendor::OpenAI => {
                 let model = open_ai::Model::from_id(self.model.id()).unwrap_or_default();
                 count_open_ai_tokens(request, model, cx)
             }

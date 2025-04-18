@@ -9,10 +9,10 @@ use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{prelude::*, App, AsyncApp, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use itertools::Itertools;
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_dir;
-use strum::EnumIter;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
 pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
@@ -74,64 +74,17 @@ struct ModelSupportedFeatures {
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub enum ModelVendor {
-    #[serde(rename = "Azure OpenAI")]
-    AzureOpenAI,
+    // Azure OpenAI should have no functional difference from OpenAI in Copilot Chat
+    #[serde(alias = "Azure OpenAI")]
     OpenAI,
     Google,
     Anthropic,
 }
 
-// #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-// pub enum Model {
-//     #[default]
-//     #[serde(alias = "gpt-4o", rename = "gpt-4o-2024-05-13")]
-//     Gpt4o,
-//     #[serde(alias = "gpt-4", rename = "gpt-4")]
-//     Gpt4,
-//     #[serde(alias = "gpt-4.1", rename = "gpt-4.1")]
-//     Gpt4_1,
-//     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
-//     Gpt3_5Turbo,
-//     #[serde(alias = "o1", rename = "o1")]
-//     O1,
-//     #[serde(alias = "o1-mini", rename = "o3-mini")]
-//     O3Mini,
-//     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
-//     Claude3_5Sonnet,
-//     #[serde(alias = "claude-3-7-sonnet", rename = "claude-3.7-sonnet")]
-//     Claude3_7Sonnet,
-//     #[serde(
-//         alias = "claude-3.7-sonnet-thought",
-//         rename = "claude-3.7-sonnet-thought"
-//     )]
-//     Claude3_7SonnetThinking,
-//     #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
-//     Gemini20Flash,
-//     #[serde(alias = "gemini-2.5-pro", rename = "gemini-2.5-pro")]
-//     Gemini25Pro,
-// }
-
 impl Model {
     pub fn uses_streaming(&self) -> bool {
         self.capabilities.supports.streaming
     }
-
-    // pub fn from_id(id: &str) -> Result<Self> {
-    //     match id {
-    //         "gpt-4o" => Ok(Self::Gpt4o),
-    //         "gpt-4" => Ok(Self::Gpt4),
-    //         "gpt-4.1" => Ok(Self::Gpt4_1),
-    //         "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
-    //         "o1" => Ok(Self::O1),
-    //         "o3-mini" => Ok(Self::O3Mini),
-    //         "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
-    //         "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
-    //         "claude-3.7-sonnet-thought" => Ok(Self::Claude3_7SonnetThinking),
-    //         "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
-    //         "gemini-2.5-pro" => Ok(Self::Gemini25Pro),
-    //         _ => Err(anyhow!("Invalid model id: {}", id)),
-    //     }
-    // }
 
     pub fn id(&self) -> &str {
         self.id.as_str()
@@ -372,8 +325,7 @@ impl CopilotChat {
                             });
                         }
                     })?;
-                    let models = request_models(api_token.api_key, client_async.clone()).await?;
-                    dbg!(&models);
+                    let models = get_models(api_token.api_key, client_async.clone()).await?;
                     cx.update(|cx| {
                         if let Some(this) = Self::global(cx).as_ref() {
                             this.update(cx, |this, cx| {
@@ -401,7 +353,7 @@ impl CopilotChat {
     }
 
     pub fn models(&self) -> Option<&[Model]> {
-        self.models.as_ref().map(|models| models.as_slice())
+        self.models.as_deref()
     }
 
     pub async fn stream_completion(
@@ -438,6 +390,28 @@ impl CopilotChat {
     }
 }
 
+async fn get_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Vec<Model>> {
+    let all_models = request_models(api_token, client).await?;
+
+    let models: Vec<Model> = all_models
+        .into_iter()
+        .filter(|model| model.model_picker_enabled)
+        .filter(|model| {
+            // Ensure user has access to the model; Policy is present only for models that must be
+            // enabled in the GitHub dashboard
+            model
+                .policy
+                .as_ref()
+                .is_none_or(|policy| policy.state == "enabled")
+        })
+        // The first model from the API response, in any given family, appear to be the non-tagged
+        // models, which are likely the best choice (e.g. gpt-4o rather than gpt-4o-2024-11-20)
+        .dedup_by(|a, b| a.capabilities.family == b.capabilities.family)
+        .collect();
+
+    Ok(models)
+}
+
 async fn request_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Vec<Model>> {
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
@@ -456,11 +430,7 @@ async fn request_models(api_token: String, client: Arc<dyn HttpClient>) -> Resul
 
         let body_str = std::str::from_utf8(&body)?;
 
-        let models = serde_json::from_str::<ModelSchema>(body_str)
-            .inspect_err(|e| {
-                dbg!(e);
-            })?
-            .data;
+        let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
 
         Ok(models)
     } else {
