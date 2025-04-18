@@ -478,6 +478,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     languages::init(languages.clone(), node_runtime.clone(), cx);
     assistant_tools::init(client.http_client().clone(), cx);
     context_server::init(cx);
+    prompt_store::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
     agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
