@@ -1,3 +1,0 @@
-1. All Goose packages (`goose`, `goose-bench`, `goose-cli`, `goose-mcp`, `goose-server`) were updated from version `1.0.17` to `1.0.18` in `Cargo.lock`. These updates ensure compatibility and consistency across related packages.
-2. The `goose-app` version in `ui/desktop/package-lock.json` was also updated to `1.0.18`, maintaining alignment with the backend and shared libraries.
-3. In `App.tsx`, the `useConfig` hook was destructured to directly use `addExtension` instead of the older `addExtensionToConfig` function. All occurrences of the old function name were updated, including inside effects and async calls, to use the new unified method. This change simplifies extension handling logic while preserving current behavior.

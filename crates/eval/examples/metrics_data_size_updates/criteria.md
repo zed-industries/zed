@@ -1,6 +1,0 @@
-1. The function `report_data_size` has been refactored to have a more accessible visibility by changing from `pub(super)` to `pub` in the `CommittedState` struct, making it usable outside of its previous scope.
-2. The `record_tx_metrics` function has been modified to remove the previously commented-out code that invoked `report_data_size` from `committed_state`. The intention to possibly inline this functionality or refactor the metrics updates is noted.
-3. A new function `update_data_size_metrics` has been introduced in the `RelationalDB` struct to simplify calling the `report_data_size` method, enhancing clarity and direct usage within the database context.
-4. The `storage_monitor` function has been renamed and refactored to `metric_reporter`, which is tasked with collecting disk usage statistics and invoking `update_data_size_metrics` for database state updates.
-5. Various asynchronous operations involving time intervals for disk usage measurement and reporting have been restructured for improved metric collection, reducing unnecessary operations and improving clarity.
-6. Comments and TODOs are placed where further improvements, such as adding heap usage metrics, are possible, guiding future enhancements.

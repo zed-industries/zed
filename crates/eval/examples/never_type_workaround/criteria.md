@@ -1,5 +1,0 @@
-1. Introduces a stable-Rust-compatible workaround for the unstable `!` (never) type by implementing a custom `Never` alias based on a trait (`FnRet`) and function signature (`fn() -> !`), mimicking the behavior of the `never_say_never` crate without an external dependency.
-2. Adds trait impls that enable Bevy systems and commands to accept `Never` as an output type, ensuring compatibility with panicking closures or intentionally non-returning functions like `todo!()` or `panic!()`.
-3. Updates internal wrappers (`InfallibleSystemWrapper`, `InfallibleObserverWrapper`) and trait bounds across observer and schedule systems to support this workaround by allowing `Never` as a valid output type while maintaining existing fallible/infallible behavior.
-4. Adds robust regression test coverage to ensure these `Never`-based trait implementations compile and function as expected, specifically targeting closures and functions that use `todo!()` or diverge without returning.
-5. Ensures this workaround does not compromise stability guarantees by isolating `Never` usage to internal APIs and clearly documenting the risks and rationale in the new `never.rs` module.
