@@ -80,6 +80,7 @@ use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
 };
+use git::blame::BlameEntry;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, AnyWeakEntity, App, AppContext,
     AsyncWindowContext, AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry,
@@ -229,7 +230,7 @@ pub trait BlameRenderer {
     fn render_blame_entry(
         &self,
         _: &TextStyle,
-        _: git::blame::BlameEntry,
+        _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
@@ -242,7 +243,7 @@ pub trait BlameRenderer {
     fn render_inline_blame_entry(
         &self,
         _: &TextStyle,
-        _: git::blame::BlameEntry,
+        _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Option<SharedString>,
         _: WeakEntity<Repository>,
@@ -253,7 +254,7 @@ pub trait BlameRenderer {
 
     fn open_blame_commit(
         &self,
-        _: git::blame::BlameEntry,
+        _: BlameEntry,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
         _: &mut Window,
@@ -269,7 +270,7 @@ impl BlameRenderer for () {
     fn render_blame_entry(
         &self,
         _: &TextStyle,
-        _: git::blame::BlameEntry,
+        _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
@@ -284,7 +285,7 @@ impl BlameRenderer for () {
     fn render_inline_blame_entry(
         &self,
         _: &TextStyle,
-        _: git::blame::BlameEntry,
+        _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Option<SharedString>,
         _: WeakEntity<Repository>,
@@ -297,7 +298,7 @@ impl BlameRenderer for () {
 
     fn open_blame_commit(
         &self,
-        _: git::blame::BlameEntry,
+        _: BlameEntry,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
         _: &mut Window,
@@ -646,7 +647,8 @@ pub struct ConflictHintPair {
 #[derive(Clone, Debug)]
 pub struct ConflictHint {
     pub anchor: Anchor,
-    pub blame_entry: git::blame::BlameEntry,
+    pub blame_entry: BlameEntry,
+    pub parsed_commit_message: ParsedCommitMessage,
     pub description: SharedString,
     pub repository: WeakEntity<Repository>,
 }

@@ -153,6 +153,10 @@ impl CommitDetails {
     pub fn short_sha(&self) -> SharedString {
         self.sha[..SHORT_SHA_LENGTH].to_string().into()
     }
+
+    pub fn sha_eq(&self, other: &Self) -> bool {
+        self.sha == other.sha
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]

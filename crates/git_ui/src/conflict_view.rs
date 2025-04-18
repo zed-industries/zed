@@ -322,16 +322,22 @@ fn conflicts_updated(
             priority: 0,
         });
         let repository_snapshot = repository.read(cx).snapshot();
-        let Some(ours_blame_entry) = repository_snapshot
+        let Some((ours_blame_entry, ours_commit_message)) = repository_snapshot
             .head
             .as_ref()
-            .and_then(git::blame::BlameEntry::from_details)
+            .and_then(|(details, commit_message)| {
+                let blame_entry = git::blame::BlameEntry::from_details(details)?;
+                Some((blame_entry, commit_message.clone()))
+            })
         else {
             continue;
         };
-        let Some(theirs_blame_entry) = repository_snapshot
-            .theirs_details()
-            .and_then(git::blame::BlameEntry::from_details)
+        let Some((theirs_blame_entry, theirs_commit_message)) = repository_snapshot
+            .theirs()
+            .and_then(|(details, commit_message)| {
+                let blame_entry = git::blame::BlameEntry::from_details(details)?;
+                Some((blame_entry, commit_message.clone()))
+            })
         else {
             continue;
         };
@@ -339,12 +345,14 @@ fn conflicts_updated(
             ours: ConflictHint {
                 anchor: ours_hint_anchor,
                 blame_entry: ours_blame_entry,
+                parsed_commit_message: ours_commit_message,
                 description: repository.read(cx).ours_name().into(),
                 repository: repository.downgrade(),
             },
             theirs: ConflictHint {
                 anchor: theirs_hint_anchor,
                 blame_entry: theirs_blame_entry,
+                parsed_commit_message: theirs_commit_message,
                 description: repository.read(cx).theirs_name().into(),
                 repository: repository.downgrade(),
             },
@@ -441,7 +449,7 @@ fn render_conflict_buttons(
     let ours_details = repo_snapshot
         .head
         .as_ref()
-        .and_then(|info| CommitDetails::parse(info).ok());
+        .and_then(|(info, _)| CommitDetails::parse(info).ok());
     let workspace = editor
         .upgrade()
         .and_then(|editor| editor.read(cx).workspace());

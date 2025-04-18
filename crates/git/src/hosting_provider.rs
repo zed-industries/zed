@@ -22,6 +22,14 @@ pub struct GitRemote {
     pub repo: String,
 }
 
+impl PartialEq for GitRemote {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.host, &other.host) && self.owner == other.owner && self.repo == other.repo
+    }
+}
+
+impl Eq for GitRemote {}
+
 impl std::fmt::Debug for GitRemote {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GitRemote")

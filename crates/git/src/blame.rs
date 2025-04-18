@@ -24,7 +24,7 @@ pub struct Blame {
     pub remote_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ParsedCommitMessage {
     pub message: SharedString,
     pub permalink: Option<url::Url>,

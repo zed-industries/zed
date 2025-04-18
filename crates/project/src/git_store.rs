@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::AskPassDelegate;
+use blame::parse_commit_message;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
@@ -20,8 +21,9 @@ use futures::{
     future::{self, Shared, join_all},
 };
 use git::{
-    BuildPermalinkParams, GitHostingProvider, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
-    blame::Blame,
+    BuildPermalinkParams, GitHostingProvider, GitHostingProviderRegistry, ParsedGitRemote,
+    WORK_DIRECTORY_REPO_PATH,
+    blame::{Blame, ParsedCommitMessage},
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, DiffType, GitRepository,
@@ -238,10 +240,10 @@ pub struct RepositorySnapshot {
     pub work_directory_abs_path: Arc<Path>,
     pub branch: Option<Branch>,
     pub merge_conflicts: TreeSet<RepoPath>,
-    pub head: Option<CommitDetails>,
-    pub merge_heads: Vec<CommitDetails>,
-    pub cherry_pick_head: Option<CommitDetails>,
-    pub rebase_head: Option<CommitDetails>,
+    pub head: Option<(CommitDetails, ParsedCommitMessage)>,
+    pub merge_heads: Vec<(CommitDetails, ParsedCommitMessage)>,
+    pub cherry_pick_head: Option<(CommitDetails, ParsedCommitMessage)>,
+    pub rebase_head: Option<(CommitDetails, ParsedCommitMessage)>,
     pub scan_id: u64,
 }
 
@@ -2713,13 +2715,13 @@ impl RepositorySnapshot {
         if self.rebase_head.is_some() {
             "Rebased Change"
         } else if self.cherry_pick_head.is_some() {
-            "Cherry-picked Change"
+            "Cherry-Picked Change"
         } else {
             "Incoming Change"
         }
     }
 
-    pub fn theirs_details(&self) -> Option<&CommitDetails> {
+    pub fn theirs(&self) -> Option<&(CommitDetails, ParsedCommitMessage)> {
         self.rebase_head
             .as_ref()
             .or(self.cherry_pick_head.as_ref())
@@ -3991,6 +3993,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) {
         let this = cx.weak_entity();
+        let provider_registry = GitHostingProviderRegistry::global(cx);
         let _ = self.send_keyed_job(
             Some(GitJobKey::ReloadGitState),
             None,
@@ -4008,6 +4011,7 @@ impl Repository {
                             this.work_directory_abs_path.clone(),
                             this.snapshot.clone(),
                             backend.clone(),
+                            provider_registry,
                         )
                     })?
                     .await?;
@@ -4489,7 +4493,25 @@ async fn compute_snapshot(
     work_directory_abs_path: Arc<Path>,
     prev_snapshot: RepositorySnapshot,
     backend: Arc<dyn GitRepository>,
+    provider_registry: Arc<GitHostingProviderRegistry>,
 ) -> Result<(RepositorySnapshot, Vec<RepositoryEvent>)> {
+    async fn load_commit(
+        backend: &Arc<dyn GitRepository>,
+        reference: String,
+        remote: Option<&(Arc<dyn GitHostingProvider + Send + Sync>, ParsedGitRemote)>,
+    ) -> Option<(CommitDetails, ParsedCommitMessage)> {
+        let details = backend.show(reference).await.ok()?;
+        let parsed_message = parse_commit_message(&details.sha, details.message.clone(), remote);
+        Some((details, parsed_message))
+    }
+
+    fn sha_eq(
+        left: Option<&(CommitDetails, ParsedCommitMessage)>,
+        right: Option<&(CommitDetails, ParsedCommitMessage)>,
+    ) -> bool {
+        todo!()
+    }
+
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
@@ -4498,27 +4520,32 @@ async fn compute_snapshot(
         .merge_message()
         .await
         .and_then(|msg| Some(msg.lines().nth(0)?.to_owned().into()));
-    let head = backend.show("HEAD".into()).await.ok();
+
+    // TODO: ORIG_HEAD
+    let remotes = backend
+        .get_remotes(None)
+        .await
+        .log_err()
+        .unwrap_or_default();
+    let remote = remotes
+        .iter()
+        .find(|remote| remote.name == "origin")
+        .or_else(|| remotes.first())
+        .and_then(|remote| backend.remote_url(&remote.name))
+        .and_then(|url| parse_git_remote_url(provider_registry, &url));
+    let head = load_commit(&backend, "HEAD".into(), remote.as_ref()).await;
     let merge_heads = join_all(
         backend
             .merge_head_shas()
             .into_iter()
-            .map(|sha| backend.show(sha)),
+            .map(|sha| load_commit(&backend, sha, remote.as_ref())),
     )
     .await
     .into_iter()
-    .flat_map(|result| result.log_err())
+    .filter_map(|opt| opt)
     .collect::<Vec<_>>();
-    let cherry_pick_head = if let Some(sha) = backend.cherry_pick_head_sha() {
-        backend.show(sha).await.log_err()
-    } else {
-        None
-    };
-    let rebase_head = if let Some(sha) = backend.rebase_head_sha() {
-        backend.show(sha).await.log_err()
-    } else {
-        None
-    };
+    let cherry_pick_head = load_commit(&backend, "CHERRY_PICK_HEAD".into(), remote.as_ref()).await;
+    let rebase_head = load_commit(&backend, "REBASE_HEAD".into(), remote.as_ref()).await;
 
     let statuses_by_path = SumTree::from_iter(
         statuses
@@ -4533,18 +4560,16 @@ async fn compute_snapshot(
 
     let merge_state_changed = merge_heads
         .iter()
-        .map(|commit| commit.sha.clone())
+        .map(|(commit, _)| &commit.sha)
         .ne(prev_snapshot
             .merge_heads
             .iter()
-            .map(|commit| commit.sha.clone()))
-        || cherry_pick_head.as_ref().map(|commit| &commit.sha)
-            != prev_snapshot
-                .cherry_pick_head
-                .as_ref()
-                .map(|commit| &commit.sha)
-        || rebase_head.as_ref().map(|commit| &commit.sha)
-            != prev_snapshot.rebase_head.as_ref().map(|commit| &commit.sha);
+            .map(|(commit, _)| &commit.sha))
+        || !sha_eq(
+            cherry_pick_head.as_ref(),
+            prev_snapshot.cherry_pick_head.as_ref(),
+        )
+        || !sha_eq(rebase_head.as_ref(), prev_snapshot.rebase_head.as_ref());
 
     if merge_state_changed
         || branch != prev_snapshot.branch
@@ -4583,31 +4608,6 @@ async fn compute_snapshot(
     };
 
     Ok((snapshot, events))
-}
-
-fn parse_commit_message(
-    sha: Oid,
-    message: SharedString,
-    remote: &ParsedGitRemote,
-    provider: Arc<dyn GitHostingProvider + Send + Sync>,
-) -> ParsedCommitMessage {
-    let permalink =
-        provider.build_commit_permalink(remote, git::BuildCommitPermalinkParams { sha });
-
-    let remote = GitRemote {
-        host: provider.clone(),
-        owner: remote.owner.to_string(),
-        repo: remote.repo.to_string(),
-    };
-
-    let pull_request = provider.extract_pull_request(remote, &message);
-
-    git::blame::ParsedCommitMessage {
-        message,
-        permalink: Some(permalink),
-        remote,
-        pull_request,
-    }
 }
 
 fn status_from_proto(

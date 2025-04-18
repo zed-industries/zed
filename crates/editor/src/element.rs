@@ -1790,9 +1790,7 @@ impl EditorElement {
                     (
                         hint.repository.clone(),
                         hint.blame_entry.clone(),
-                        hint.
-                        // FIXME
-                        None,
+                        Some(hint.parsed_commit_message.clone()),
                         Some(hint.description.clone()),
                     ),
                 )
