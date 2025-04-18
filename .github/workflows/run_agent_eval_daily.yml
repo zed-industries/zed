@@ -34,7 +34,7 @@ jobs:
         run: cargo build --release -p eval
 
       - name: Upload eval binary
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: eval-binary
           path: target/release/eval
@@ -61,7 +61,7 @@ jobs:
           - time_detail_merge_update
           - tool_response_handling
           - virtio_block_request_refactor
-    
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -81,12 +81,12 @@ jobs:
           mkdir -p ./crates/eval/repos
           mkdir -p ./crates/eval/worktrees
           mkdir -p ./crates/eval/runs
-          
+
       - name: Set up Anthropic API key
         run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
 
       - name: Download eval binary
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: eval-binary
           path: ./target/release/
