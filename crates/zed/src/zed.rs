@@ -1224,9 +1224,9 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
     cx.on_keyboard_layout_change(move |cx| {
-        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
         if next_mapping != current_mapping {
             current_mapping = next_mapping;
             keyboard_layout_tx.unbounded_send(()).ok();
