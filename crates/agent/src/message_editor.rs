@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::format_context_as_string;
+use crate::context::{AssistantContext, format_context_as_string};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -290,6 +290,21 @@ impl MessageEditor {
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).context().clone();
                     thread.insert_user_message(user_message, context, checkpoint, cx);
+                })
+                .log_err();
+
+            context_store
+                .update(cx, |context_store, cx| {
+                    let excerpt_ids = context_store
+                        .context()
+                        .iter()
+                        .filter(|ctx| matches!(ctx, AssistantContext::Excerpt(_)))
+                        .map(|ctx| ctx.id())
+                        .collect::<Vec<_>>();
+
+                    for id in excerpt_ids {
+                        context_store.remove_context(id, cx);
+                    }
                 })
                 .log_err();
 
