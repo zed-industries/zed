@@ -742,7 +742,7 @@ pub fn get_bedrock_tokens(
 
                 for content in message.content {
                     match content {
-                        MessageContent::Text(text) | MessageContent::Thinking(text) => {
+                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                             string_contents.push_str(&text);
                         }
                         MessageContent::Image(image) => {
@@ -830,12 +830,13 @@ pub fn map_to_language_model_completion_events(
                                                         redacted,
                                                     ) => {
                                                         let thinking_event =
-                                                            LanguageModelCompletionEvent::Thinking(
+                                                            LanguageModelCompletionEvent::Thinking { text:
                                                                 String::from_utf8(
                                                                     redacted.into_inner(),
                                                                 )
                                                                 .unwrap_or("REDACTED".to_string()),
-                                                            );
+                                                                signature: None,
+                                                            };
 
                                                         return Some((
                                                             Some(Ok(thinking_event)),
@@ -846,9 +847,10 @@ pub fn map_to_language_model_completion_events(
                                                     }
                                                     ReasoningContentBlockDelta::Text(thoughts) => {
                                                         let thinking_event =
-                                                            LanguageModelCompletionEvent::Thinking(
-                                                                thoughts.to_string(),
-                                                            );
+                                                            LanguageModelCompletionEvent::Thinking {
+                                                                text:
+                                                                thoughts.to_string(), signature: None
+                                                            };
 
                                                         return Some((
                                                             Some(Ok(thinking_event)),

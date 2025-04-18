@@ -510,6 +510,7 @@ pub enum RequestContent {
     #[serde(rename = "thinking")]
     Thinking {
         thinking: String,
+        signature: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
@@ -543,7 +544,7 @@ pub enum ResponseContent {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "thinking")]
-    Thinking { thinking: String },
+    Thinking { thinking: String, signature: String },
     #[serde(rename = "redacted_thinking")]
     RedactedThinking { data: String },
     #[serde(rename = "tool_use")]

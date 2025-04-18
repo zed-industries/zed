@@ -133,7 +133,7 @@ impl RenderedMessage {
 
     fn push_segment(&mut self, segment: &MessageSegment, cx: &mut App) {
         let rendered_segment = match segment {
-            MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
+            MessageSegment::Thinking { text, .. } => RenderedMessageSegment::Thinking {
                 content: parse_markdown(text.into(), self.language_registry.clone(), cx),
                 scroll_handle: ScrollHandle::default(),
             },

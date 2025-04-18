@@ -333,8 +333,11 @@ pub fn count_anthropic_tokens(
 
             for content in message.content {
                 match content {
-                    MessageContent::Text(text) | MessageContent::Thinking(text) => {
+                    MessageContent::Text(text) => {
                         string_contents.push_str(&text);
+                    }
+                    MessageContent::Thinking { .. } => {
+                        // Thinking blocks are not included in the input token count.
                     }
                     MessageContent::Image(image) => {
                         tokens_from_images += image.estimate_tokens();
@@ -515,10 +518,14 @@ pub fn into_anthropic(
                                 None
                             }
                         }
-                        MessageContent::Thinking(thinking) => {
+                        MessageContent::Thinking {
+                            text: thinking,
+                            signature,
+                        } => {
                             if !thinking.is_empty() {
                                 Some(anthropic::RequestContent::Thinking {
                                     thinking,
+                                    signature: signature.unwrap_or_default(), //TODO
                                     cache_control,
                                 })
                             } else {
@@ -645,9 +652,15 @@ pub fn map_to_language_model_completion_events(
                                     state,
                                 ));
                             }
-                            ResponseContent::Thinking { thinking } => {
+                            ResponseContent::Thinking {
+                                thinking,
+                                signature,
+                            } => {
                                 return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Thinking(thinking))],
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: thinking,
+                                        signature: Some(signature),
+                                    })],
                                     state,
                                 ));
                             }
@@ -675,11 +688,22 @@ pub fn map_to_language_model_completion_events(
                             }
                             ContentDelta::ThinkingDelta { thinking } => {
                                 return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Thinking(thinking))],
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: thinking,
+                                        signature: None,
+                                    })],
                                     state,
                                 ));
                             }
-                            ContentDelta::SignatureDelta { .. } => {}
+                            ContentDelta::SignatureDelta { signature } => {
+                                return Some((
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: "".to_string(),
+                                        signature: Some(signature),
+                                    })],
+                                    state,
+                                ));
+                            }
                             ContentDelta::InputJsonDelta { partial_json } => {
                                 if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
                                     tool_use.input_json.push_str(&partial_json);

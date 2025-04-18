@@ -564,7 +564,11 @@ pub enum SerializedMessageSegment {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "thinking")]
-    Thinking { text: String },
+    Thinking {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
