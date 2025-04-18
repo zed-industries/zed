@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::ThreadStore;
 use crate::context::{
     AssistantContext, ContextBuffer, ContextId, ContextSymbol, ContextSymbolId, DirectoryContext,
-    ExcerptContext, FetchedUrlContext, FileContext, SymbolContext, ThreadContext, UserRulesContext,
+    ExcerptContext, FetchedUrlContext, FileContext, RulesContext, SymbolContext, ThreadContext,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -420,13 +420,12 @@ impl ContextStore {
         let id = self.next_context_id.post_inc();
 
         self.user_rules.insert(prompt_id, id);
-        self.context
-            .push(AssistantContext::UserRules(UserRulesContext {
-                id,
-                prompt_id,
-                title: title.into(),
-                text: text.into(),
-            }));
+        self.context.push(AssistantContext::Rules(RulesContext {
+            id,
+            prompt_id,
+            title: title.into(),
+            text: text.into(),
+        }));
         cx.notify();
     }
 
@@ -558,7 +557,7 @@ impl ContextStore {
             AssistantContext::Thread(_) => {
                 self.threads.retain(|_, context_id| *context_id != id);
             }
-            AssistantContext::UserRules(UserRulesContext { prompt_id, .. }) => {
+            AssistantContext::Rules(RulesContext { prompt_id, .. }) => {
                 self.user_rules.remove(&prompt_id);
             }
         }
@@ -689,7 +688,7 @@ impl ContextStore {
                 | AssistantContext::Excerpt(_)
                 | AssistantContext::FetchedUrl(_)
                 | AssistantContext::Thread(_)
-                | AssistantContext::UserRules(_) => None,
+                | AssistantContext::Rules(_) => None,
             })
             .collect()
     }
@@ -924,7 +923,7 @@ pub fn refresh_context_store_text(
                 // and doing the caching properly could be tricky (unless it's already handled by
                 // the HttpClient?).
                 AssistantContext::FetchedUrl(_) => {}
-                AssistantContext::UserRules(user_rules_context) => {
+                AssistantContext::Rules(user_rules_context) => {
                     let context_store = context_store.clone();
                     return Some(refresh_user_rules(context_store, user_rules_context, cx));
                 }
@@ -1080,7 +1079,7 @@ fn refresh_thread_text(
 
 fn refresh_user_rules(
     context_store: Entity<ContextStore>,
-    user_rules_context: &UserRulesContext,
+    user_rules_context: &RulesContext,
     cx: &App,
 ) -> Task<()> {
     let id = user_rules_context.id;
@@ -1098,14 +1097,12 @@ fn refresh_user_rules(
             if let Some(title) = metadata.title.clone() {
                 context_store
                     .update(cx, |context_store, _cx| {
-                        context_store.replace_context(AssistantContext::UserRules(
-                            UserRulesContext {
-                                id,
-                                prompt_id,
-                                title,
-                                text: text.into(),
-                            },
-                        ));
+                        context_store.replace_context(AssistantContext::Rules(RulesContext {
+                            id,
+                            prompt_id,
+                            title,
+                            text: text.into(),
+                        }));
                     })
                     .ok();
                 return;
