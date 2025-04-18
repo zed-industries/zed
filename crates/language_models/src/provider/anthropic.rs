@@ -671,7 +671,7 @@ pub fn map_to_language_model_completion_events(
                                 return Some((
                                     vec![Ok(LanguageModelCompletionEvent::Thinking {
                                         text: thinking,
-                                        signature: Some(signature),
+                                        signature: None,
                                     })],
                                     state,
                                 ));
