@@ -693,7 +693,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(cx.theme().colors().border)
                         .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
@@ -712,8 +712,13 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -725,7 +730,8 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
+                        .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
