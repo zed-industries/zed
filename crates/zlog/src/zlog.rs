@@ -168,15 +168,7 @@ macro_rules! scoped {
         if index >= scope.len() {
             #[cfg(debug_assertions)]
             {
-                panic!("Scope overflow trying to add scope {}", name);
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                $crate::warn!(
-                    parent =>
-                    "Scope overflow trying to add scope {}... ignoring scope",
-                    name
-                );
+                unreachable!("Scope overflow trying to add scope... ignoring scope");
             }
         }
         scope[index] = name;
@@ -208,17 +200,31 @@ macro_rules! crate_name {
 pub mod private {
     use super::*;
 
-    pub fn extract_crate_name_from_module_path(module_path: &'static str) -> &'static str {
-        return module_path
-            .split_once("::")
-            .map(|(crate_name, _)| crate_name)
-            .unwrap_or(module_path);
+    pub const fn extract_crate_name_from_module_path(module_path: &'static str) -> &'static str {
+        let mut i = 0;
+        let mod_path_bytes = module_path.as_bytes();
+        let mut index = mod_path_bytes.len();
+        while i + 1 < mod_path_bytes.len() {
+            if mod_path_bytes[i] == b':' && mod_path_bytes[i + 1] == b':' {
+                index = i;
+                break;
+            }
+            i += 1;
+        }
+        let Some((crate_name, _)) = module_path.split_at_checked(index) else {
+            return module_path;
+        };
+        return crate_name;
     }
 
-    pub fn scope_new(scopes: &[&'static str]) -> Scope {
+    pub const fn scope_new(scopes: &[&'static str]) -> Scope {
         assert!(scopes.len() <= SCOPE_DEPTH_MAX);
         let mut scope = [""; SCOPE_DEPTH_MAX];
-        scope[0..scopes.len()].copy_from_slice(scopes);
+        let mut i = 0;
+        while i < scopes.len() {
+            scope[i] = scopes[i];
+            i += 1;
+        }
         scope
     }
 
@@ -337,5 +343,21 @@ mod tests {
     #[test]
     fn test_crate_name() {
         assert_eq!(crate_name!(), "zlog");
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_⚡️_crate::some_module"),
+            "my_speedy_⚡️_crate"
+        );
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_crate_⚡️::some_module"),
+            "my_speedy_crate_⚡️"
+        );
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_crate_:⚡️:some_module"),
+            "my_speedy_crate_:⚡️:some_module"
+        );
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_crate_::⚡️some_module"),
+            "my_speedy_crate_"
+        );
     }
 }
