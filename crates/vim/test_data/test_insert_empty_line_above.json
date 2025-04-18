@@ -1,0 +1,24 @@
+{"Put":{"state":"ˇ"}}
+{"Key":"["}
+{"Key":"space"}
+{"Get":{"state":"\nˇ","mode":"Normal"}}
+{"Put":{"state":"The ˇquick"}}
+{"Key":"["}
+{"Key":"space"}
+{"Get":{"state":"\nThe ˇquick","mode":"Normal"}}
+{"Put":{"state":"The qˇuick\nbrown fox\njumps over"}}
+{"Key":"["}
+{"Key":"space"}
+{"Get":{"state":"\nThe qˇuick\nbrown fox\njumps over","mode":"Normal"}}
+{"Put":{"state":"The quick\nbrown ˇfox\njumps over"}}
+{"Key":"["}
+{"Key":"space"}
+{"Get":{"state":"The quick\n\nbrown ˇfox\njumps over","mode":"Normal"}}
+{"Put":{"state":"The quick\nbrown fox\njumps ˇover"}}
+{"Key":"["}
+{"Key":"space"}
+{"Get":{"state":"The quick\nbrown fox\n\njumps ˇover","mode":"Normal"}}
+{"Put":{"state":"The quick\nˇ\nbrown fox"}}
+{"Key":"["}
+{"Key":"space"}
+{"Get":{"state":"The quick\n\nˇ\nbrown fox","mode":"Normal"}}

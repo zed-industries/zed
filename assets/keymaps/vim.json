@@ -54,8 +54,8 @@
       "[ b": "pane::ActivatePreviousItem",
       "] shift-b": "pane::ActivateLastItem",
       "[ shift-b": ["pane::ActivateItem", 0],
-      "] space": ["workspace::SendKeystrokes", "o escape -"],
-      "[ space": ["workspace::SendKeystrokes", "shift-o escape +"],
+      "] space": "vim::InsertEmptyLineBelow",
+      "[ space": "vim::InsertEmptyLineAbove",
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
