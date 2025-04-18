@@ -220,9 +220,18 @@ pub(crate) fn get_key_from_vkey(vkey: u32) -> Option<(String, bool)> {
     Some((key.to_ascii_lowercase().to_string(), is_dead_key))
 }
 
-pub(crate) fn get_keyboard_layout_name() -> Result<String> {
+pub(crate) fn get_keyboard_layout_id() -> Result<String> {
     let mut buffer = [0u16; KL_NAMELENGTH as usize];
     unsafe { GetKeyboardLayoutNameW(&mut buffer) }?;
     let kbd_layout_name = HSTRING::from_wide(&buffer);
     Ok(kbd_layout_name.to_string())
+}
+
+pub(crate) fn get_keyboard_layout_name(id: &str) -> Result<String> {
+    let entry = format!(
+        "System\\CurrentControlSet\\Control\\Keyboard Layouts\\{}",
+        id
+    );
+    let key = windows_registry::LOCAL_MACHINE.open(entry)?;
+    Ok(key.get_hstring("Layout Text")?.to_string())
 }

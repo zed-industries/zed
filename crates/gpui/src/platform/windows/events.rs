@@ -95,6 +95,7 @@ pub(crate) fn handle_msg(
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
+        WM_INPUTLANGCHANGE => handle_input_language_changed(lparam, state_ptr),
         _ => None,
     };
     if let Some(n) = handled {
@@ -1244,6 +1245,19 @@ fn handle_system_theme_changed(
     callback();
     state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     configure_dwm_dark_mode(handle);
+    Some(0)
+}
+
+fn handle_input_language_changed(
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    println!("\nWM_INPUTLANGCHANGE: {:?}, {:x}", lparam, lparam.0);
+    let thread = state_ptr.main_thread_id_win32;
+    let validation = state_ptr.validation_number;
+    unsafe {
+        PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
+    }
     Some(0)
 }
 
