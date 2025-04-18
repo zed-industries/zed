@@ -7,9 +7,9 @@ use super::{
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
-    PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task, WindowAppearance,
-    WindowParams, hash,
+    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
+    SemanticVersion, Task, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -1492,6 +1492,7 @@ unsafe extern "C" {
     pub(super) fn LMGetKbdType() -> u16;
     pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     pub(super) static kTISPropertyInputSourceID: CFStringRef;
+    pub(super) static kTISPropertyLocalizedName: CFStringRef;
 }
 
 mod security {
