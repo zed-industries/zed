@@ -264,10 +264,7 @@ impl settings::Settings for TerminalSettings {
         vscode.bool_setting(&name("copyOnSelection"), &mut old.copy_on_select);
         vscode.bool_setting("macOptionIsMeta", &mut old.option_as_meta);
         vscode.usize_setting("scrollback", &mut old.max_scroll_history_lines);
-        match vscode
-            .read_value(&name("cursorBlinking"))
-            .and_then(|v| v.as_bool())
-        {
+        match vscode.read_bool(&name("cursorBlinking")) {
             Some(true) => old.blinking = Some(TerminalBlink::On),
             Some(false) => old.blinking = Some(TerminalBlink::Off),
             None => {}

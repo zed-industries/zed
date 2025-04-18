@@ -26,13 +26,17 @@ impl VSCodeSettings {
         if let Some(value) = self.content.get(setting) {
             return Some(value);
         }
-        // TODO: check if it's in [platform] settings for current platform
+        // TODO: maybe check if it's in [platform] settings for current platform as a fallback
         // TODO: deal with language specific settings
         None
     }
 
     pub fn read_string(&self, setting: &str) -> Option<&str> {
-        self.content.get(setting).and_then(|v| v.as_str())
+        self.read_value(setting).and_then(|v| v.as_str())
+    }
+
+    pub fn read_bool(&self, setting: &str) -> Option<bool> {
+        self.read_value(setting).and_then(|v| v.as_bool())
     }
 
     pub fn string_setting(&self, key: &str, setting: &mut Option<String>) {
@@ -43,18 +47,6 @@ impl VSCodeSettings {
 
     pub fn bool_setting(&self, key: &str, setting: &mut Option<bool>) {
         if let Some(s) = self.content.get(key).and_then(Value::as_bool) {
-            *setting = Some(s)
-        }
-    }
-
-    pub fn i32_setting(&self, key: &str, setting: &mut Option<i32>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_i64) {
-            *setting = Some(s as i32)
-        }
-    }
-
-    pub fn i64_setting(&self, key: &str, setting: &mut Option<i64>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_i64) {
             *setting = Some(s)
         }
     }
@@ -80,12 +72,6 @@ impl VSCodeSettings {
     pub fn f32_setting(&self, key: &str, setting: &mut Option<f32>) {
         if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
             *setting = Some(s as f32)
-        }
-    }
-
-    pub fn f64_setting(&self, key: &str, setting: &mut Option<f64>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
-            *setting = Some(s)
         }
     }
 

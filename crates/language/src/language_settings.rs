@@ -1380,10 +1380,7 @@ impl settings::Settings for AllLanguageSettings {
         {
             d.tab_size = Some(size);
         }
-        if let Some(v) = vscode
-            .read_value("editor.insertSpaces")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(v) = vscode.read_bool("editor.insertSpaces") {
             d.hard_tabs = Some(!v);
         }
 
@@ -1403,10 +1400,7 @@ impl settings::Settings for AllLanguageSettings {
         {
             d.wrap_guides = arr;
         }
-        if let Some(b) = vscode
-            .read_value("editor.guides.indentation")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(b) = vscode.read_bool("editor.guides.indentation") {
             if let Some(guide_settings) = d.indent_guides.as_mut() {
                 guide_settings.enabled = b;
             } else {
@@ -1417,10 +1411,7 @@ impl settings::Settings for AllLanguageSettings {
             }
         }
 
-        if let Some(b) = vscode
-            .read_value("editor.guides.formatOnSave")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(b) = vscode.read_bool("editor.guides.formatOnSave") {
             d.format_on_save = Some(if b {
                 FormatOnSave::On
             } else {
@@ -1460,10 +1451,7 @@ impl settings::Settings for AllLanguageSettings {
             "editor.suggestOnTriggerCharacters",
             &mut d.show_completions_on_input,
         );
-        if let Some(b) = vscode
-            .read_value("editor.suggest.showWords")
-            .and_then(|v| v.as_bool())
-        {
+        if let Some(b) = vscode.read_bool("editor.suggest.showWords") {
             let mode = if b {
                 WordsCompletionMode::Enabled
             } else {
