@@ -124,7 +124,6 @@ impl ActionLog {
                 if created {
                     base_text = Rope::default();
                     status = TrackedBufferStatus::Created;
-                    self.edited_since_diagnostics_report = true;
                     unreviewed_changes = Patch::new(vec![Edit {
                         old: 0..1,
                         new: 0..text_snapshot.max_point().row + 1,
