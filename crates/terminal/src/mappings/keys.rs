@@ -1,6 +1,6 @@
 /// The mappings defined in this file where created from reading the alacritty source
 use alacritty_terminal::term::TermMode;
-use gpui::Keystroke;
+use gpui::{KeyboardMapper, Keystroke};
 
 #[derive(Debug, PartialEq, Eq)]
 enum AlacModifiers {
@@ -41,8 +41,14 @@ impl AlacModifiers {
     }
 }
 
-pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> Option<String> {
-    let modifiers = AlacModifiers::new(keystroke);
+pub fn to_esc_str(
+    keystroke: &Keystroke,
+    mode: &TermMode,
+    alt_is_meta: bool,
+    mapper: &dyn KeyboardMapper,
+) -> Option<String> {
+    let keystroke = mapper.to_vim_keystroke(keystroke);
+    let modifiers = AlacModifiers::new(&keystroke);
 
     // Manual Bindings including modifiers
     let manual_esc_str = match (keystroke.key.as_ref(), &modifiers) {
@@ -201,7 +207,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
 
     // Automated bindings applying modifiers
     if modifiers.any() {
-        let modifier_code = modifier_code(keystroke);
+        let modifier_code = modifier_code(&keystroke);
         let modified_esc_str = match keystroke.key.as_ref() {
             "up" => Some(format!("\x1b[1;{}A", modifier_code)),
             "down" => Some(format!("\x1b[1;{}B", modifier_code)),
@@ -284,12 +290,13 @@ fn modifier_code(keystroke: &Keystroke) -> u32 {
 
 #[cfg(test)]
 mod test {
-    use gpui::Modifiers;
+    use gpui::{Modifiers, TestKeyboardMapper};
 
     use super::*;
 
     #[test]
     fn test_scroll_keys() {
+        let mapper = TestKeyboardMapper::new();
         //These keys should be handled by the scrolling element directly
         //Need to signify this by returning 'None'
         let shift_pageup = Keystroke::parse("shift-pageup").unwrap();
@@ -298,26 +305,26 @@ mod test {
         let shift_end = Keystroke::parse("shift-end").unwrap();
 
         let none = TermMode::NONE;
-        assert_eq!(to_esc_str(&shift_pageup, &none, false), None);
-        assert_eq!(to_esc_str(&shift_pagedown, &none, false), None);
-        assert_eq!(to_esc_str(&shift_home, &none, false), None);
-        assert_eq!(to_esc_str(&shift_end, &none, false), None);
+        assert_eq!(to_esc_str(&shift_pageup, &none, false, &mapper), None);
+        assert_eq!(to_esc_str(&shift_pagedown, &none, false, &mapper), None);
+        assert_eq!(to_esc_str(&shift_home, &none, false, &mapper), None);
+        assert_eq!(to_esc_str(&shift_end, &none, false, &mapper), None);
 
         let alt_screen = TermMode::ALT_SCREEN;
         assert_eq!(
-            to_esc_str(&shift_pageup, &alt_screen, false),
+            to_esc_str(&shift_pageup, &alt_screen, false, &mapper),
             Some("\x1b[5;2~".to_string())
         );
         assert_eq!(
-            to_esc_str(&shift_pagedown, &alt_screen, false),
+            to_esc_str(&shift_pagedown, &alt_screen, false, &mapper),
             Some("\x1b[6;2~".to_string())
         );
         assert_eq!(
-            to_esc_str(&shift_home, &alt_screen, false),
+            to_esc_str(&shift_home, &alt_screen, false, &mapper),
             Some("\x1b[1;2H".to_string())
         );
         assert_eq!(
-            to_esc_str(&shift_end, &alt_screen, false),
+            to_esc_str(&shift_end, &alt_screen, false, &mapper),
             Some("\x1b[1;2F".to_string())
         );
 
@@ -326,17 +333,18 @@ mod test {
         let any = TermMode::ANY;
 
         assert_eq!(
-            to_esc_str(&pageup, &any, false),
+            to_esc_str(&pageup, &any, false, &mapper),
             Some("\x1b[5~".to_string())
         );
         assert_eq!(
-            to_esc_str(&pagedown, &any, false),
+            to_esc_str(&pagedown, &any, false, &mapper),
             Some("\x1b[6~".to_string())
         );
     }
 
     #[test]
     fn test_plain_inputs() {
+        let mapper = TestKeyboardMapper::new();
         let ks = Keystroke {
             modifiers: Modifiers {
                 control: false,
@@ -348,11 +356,12 @@ mod test {
             key: "🖖🏻".to_string(), //2 char string
             key_char: None,
         };
-        assert_eq!(to_esc_str(&ks, &TermMode::NONE, false), None);
+        assert_eq!(to_esc_str(&ks, &TermMode::NONE, false, &mapper), None);
     }
 
     #[test]
     fn test_application_mode() {
+        let mapper = TestKeyboardMapper::new();
         let app_cursor = TermMode::APP_CURSOR;
         let none = TermMode::NONE;
 
@@ -361,31 +370,44 @@ mod test {
         let left = Keystroke::parse("left").unwrap();
         let right = Keystroke::parse("right").unwrap();
 
-        assert_eq!(to_esc_str(&up, &none, false), Some("\x1b[A".to_string()));
-        assert_eq!(to_esc_str(&down, &none, false), Some("\x1b[B".to_string()));
-        assert_eq!(to_esc_str(&right, &none, false), Some("\x1b[C".to_string()));
-        assert_eq!(to_esc_str(&left, &none, false), Some("\x1b[D".to_string()));
+        assert_eq!(
+            to_esc_str(&up, &none, false, &mapper),
+            Some("\x1b[A".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&down, &none, false, &mapper),
+            Some("\x1b[B".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&right, &none, false, &mapper),
+            Some("\x1b[C".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&left, &none, false, &mapper),
+            Some("\x1b[D".to_string())
+        );
 
         assert_eq!(
-            to_esc_str(&up, &app_cursor, false),
+            to_esc_str(&up, &app_cursor, false, &mapper),
             Some("\x1bOA".to_string())
         );
         assert_eq!(
-            to_esc_str(&down, &app_cursor, false),
+            to_esc_str(&down, &app_cursor, false, &mapper),
             Some("\x1bOB".to_string())
         );
         assert_eq!(
-            to_esc_str(&right, &app_cursor, false),
+            to_esc_str(&right, &app_cursor, false, &mapper),
             Some("\x1bOC".to_string())
         );
         assert_eq!(
-            to_esc_str(&left, &app_cursor, false),
+            to_esc_str(&left, &app_cursor, false, &mapper),
             Some("\x1bOD".to_string())
         );
     }
 
     #[test]
     fn test_ctrl_codes() {
+        let mapper = TestKeyboardMapper::new();
         let letters_lower = 'a'..='z';
         let letters_upper = 'A'..='Z';
         let mode = TermMode::ANY;
@@ -395,12 +417,14 @@ mod test {
                 to_esc_str(
                     &Keystroke::parse(&format!("ctrl-shift-{}", lower)).unwrap(),
                     &mode,
-                    false
+                    false,
+                    &mapper
                 ),
                 to_esc_str(
                     &Keystroke::parse(&format!("ctrl-{}", upper)).unwrap(),
                     &mode,
-                    false
+                    false,
+                    &mapper
                 ),
                 "On letter: {}/{}",
                 lower,
@@ -411,13 +435,15 @@ mod test {
 
     #[test]
     fn alt_is_meta() {
+        let mapper = TestKeyboardMapper::new();
         let ascii_printable = ' '..='~';
         for character in ascii_printable {
             assert_eq!(
                 to_esc_str(
                     &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
                     &TermMode::NONE,
-                    true
+                    true,
+                    &mapper
                 )
                 .unwrap(),
                 format!("\x1b{}", character)
@@ -435,7 +461,8 @@ mod test {
                 to_esc_str(
                     &Keystroke::parse(&format!("alt-{}", key)).unwrap(),
                     &TermMode::NONE,
-                    true
+                    true,
+                    &mapper
                 )
                 .unwrap(),
                 format!("\x1b{}", key)

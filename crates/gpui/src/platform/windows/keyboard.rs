@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use anyhow::{Context, Result};
 use util::ResultExt;
 use windows::Win32::UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::KL_NAMELENGTH};
@@ -38,6 +40,87 @@ impl KeyboardMapper for WindowsKeyboardMapper {
             key,
             key_char,
         }
+    }
+
+    fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
+        if keystroke.is_immutable_key() {
+            return Cow::Borrowed(keystroke);
+        }
+        let mut modifiers = keystroke.modifiers;
+        let vkey = match keystroke.key.as_str() {
+            "a" => VK_A,
+            "b" => VK_B,
+            "c" => VK_C,
+            "d" => VK_D,
+            "e" => VK_E,
+            "f" => VK_F,
+            "g" => VK_G,
+            "h" => VK_H,
+            "i" => VK_I,
+            "j" => VK_J,
+            "k" => VK_K,
+            "l" => VK_L,
+            "m" => VK_M,
+            "n" => VK_N,
+            "o" => VK_O,
+            "p" => VK_P,
+            "q" => VK_Q,
+            "r" => VK_R,
+            "s" => VK_S,
+            "t" => VK_T,
+            "u" => VK_U,
+            "v" => VK_V,
+            "w" => VK_W,
+            "x" => VK_X,
+            "y" => VK_Y,
+            "z" => VK_Z,
+            key => {
+                if key.len() != 1 {
+                    log::error!(
+                        "Failed to convert keystroke to vim keystroke: {}",
+                        keystroke
+                    );
+                    return Cow::Borrowed(keystroke);
+                }
+                let Some(key) = self.get_vkey_from_char(key, &mut modifiers).log_err() else {
+                    log::error!(
+                        "Failed to convert keystroke to vim keystroke: {}",
+                        keystroke
+                    );
+                    return Cow::Borrowed(keystroke);
+                };
+                key
+            }
+        };
+        let new_key = {
+            let mut state = [0; 256];
+            if modifiers.shift {
+                state[VK_SHIFT.0 as usize] = 0x80;
+            }
+            let scan_code = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_VSC) };
+            let mut buffer = [0; 8];
+            let len =
+                unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 1 << 2) };
+            if len > 0 {
+                let candidate = String::from_utf16_lossy(&buffer[..len as usize]);
+                if candidate.is_empty() {
+                    keystroke.key.clone()
+                } else {
+                    if candidate.chars().next().unwrap().is_control() {
+                        keystroke.key.clone()
+                    } else {
+                        candidate
+                    }
+                }
+            } else {
+                keystroke.key.clone()
+            }
+        };
+        Cow::Owned(Keystroke {
+            modifiers,
+            key: new_key,
+            key_char: keystroke.key_char.clone(),
+        })
     }
 }
 
@@ -120,7 +203,7 @@ impl WindowsKeyboardMapper {
             "?" => (VK_OEM_2, true),
             _ => return Err(anyhow::anyhow!("Unrecognized key to virtual key: {}", key)),
         };
-        let (key, _) = get_key_from_vkey(virtual_key.0 as u32).context(format!(
+        let (key, _) = get_key_from_vkey(virtual_key).context(format!(
             "Failed to generate char given virtual key: {}, {:?}",
             key, virtual_key
         ))?;
@@ -137,6 +220,15 @@ impl WindowsKeyboardMapper {
     }
 
     fn map_for_char(&self, key: &str, modifiers: &mut Modifiers) -> Result<String> {
+        let virtual_key = self.get_vkey_from_char(key, modifiers)?;
+        let (key, _) = get_key_from_vkey(virtual_key).context(format!(
+            "Failed to generate char given virtual key: {}, {:?}",
+            key, virtual_key
+        ))?;
+        Ok(key)
+    }
+
+    fn get_vkey_from_char(&self, key: &str, modifiers: &mut Modifiers) -> Result<VIRTUAL_KEY> {
         if key.len() != 1 {
             return Err(anyhow::anyhow!(
                 "Key must be a single character, but got: {}",
@@ -149,7 +241,7 @@ impl WindowsKeyboardMapper {
             .context("Empty key in keystorke")?;
         let result = unsafe { VkKeyScanW(key_char) };
         if result == -1 {
-            return Err(anyhow::anyhow!("Unrecognized key to virtual key: {}", key));
+            return Err(anyhow::anyhow!("Failed to get vkey from char: {}", key));
         }
         let high = (result >> 8) as i8;
         let low = result as u8;
@@ -181,12 +273,7 @@ impl WindowsKeyboardMapper {
             }
             modifiers.alt = true;
         }
-        let virtual_key = low as u32;
-        let (key, _) = get_key_from_vkey(virtual_key).context(format!(
-            "Failed to generate char given virtual key: {}, {:?}",
-            key, virtual_key
-        ))?;
-        Ok(key)
+        Ok(VIRTUAL_KEY(low as u16))
     }
 }
 
@@ -207,8 +294,8 @@ fn get_modifiers(high: i8) -> (bool, bool, bool) {
 ///   A dead key is a key that doesn't produce a character by itself but modifies the next key pressed
 ///   (e.g., accent keys like ^ or `).
 /// * `None` - If the virtual key code doesn't map to a character
-pub(crate) fn get_key_from_vkey(vkey: u32) -> Option<(String, bool)> {
-    let key_data = unsafe { MapVirtualKeyW(vkey, MAPVK_VK_TO_CHAR) };
+pub(crate) fn get_key_from_vkey(vkey: VIRTUAL_KEY) -> Option<(String, bool)> {
+    let key_data = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_CHAR) };
     if key_data == 0 {
         return None;
     }

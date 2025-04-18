@@ -315,6 +315,7 @@ impl TerminalView {
                 term.try_keystroke(
                     &Keystroke::parse("ctrl-cmd-space").unwrap(),
                     TerminalSettings::get_global(cx).option_as_meta,
+                    cx.keyboard_mapper(),
                 )
             });
         } else {
@@ -583,7 +584,11 @@ impl TerminalView {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
-                term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
+                term.try_keystroke(
+                    &keystroke,
+                    TerminalSettings::get_global(cx).option_as_meta,
+                    cx.keyboard_mapper(),
+                );
             });
         }
     }
@@ -1274,6 +1279,7 @@ impl TerminalView {
             let handled = term.try_keystroke(
                 &event.keystroke,
                 TerminalSettings::get_global(cx).option_as_meta,
+                cx.keyboard_mapper(),
             );
             if handled {
                 cx.stop_propagation();

@@ -61,8 +61,9 @@ use thiserror::Error;
 
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
+    KeyboardMapper, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
+    Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -1336,14 +1337,19 @@ impl Terminal {
         }
     }
 
-    pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+    pub fn try_keystroke(
+        &mut self,
+        keystroke: &Keystroke,
+        alt_is_meta: bool,
+        mapper: &dyn KeyboardMapper,
+    ) -> bool {
         if self.vi_mode_enabled {
             self.vi_motion(keystroke);
             return true;
         }
 
         // Keep default terminal behavior
-        let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
+        let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta, mapper);
         if let Some(esc) = esc {
             self.input(esc);
             true

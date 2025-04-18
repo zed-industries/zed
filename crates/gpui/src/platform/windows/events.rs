@@ -1286,7 +1286,7 @@ where
                     key_char: None,
                 }));
             }
-            let (key, is_dead_key) = get_key_from_vkey(virtual_key.0 as u32)?;
+            let (key, is_dead_key) = get_key_from_vkey(virtual_key)?;
             let scan_code = lparam.hiword() & 0xFF;
             let key_char = if !is_dead_key {
                 generate_key_char(virtual_key.0 as u32, scan_code as u32, &modifiers)
