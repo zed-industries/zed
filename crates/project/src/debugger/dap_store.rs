@@ -248,8 +248,6 @@ impl DapStore {
                         })?
                         .await;
 
-                    log::error!("{:?}", &env);
-
                     if let Some(mut env) = env {
                         env.extend(std::mem::take(&mut binary.envs));
                         binary.envs = env;
