@@ -27,7 +27,7 @@ use language_model::{
 };
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::PromptBuilder;
+use prompt_store::{PromptBuilder, PromptId};
 
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
@@ -62,7 +62,7 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
+                            panel.deploy_prompt_library(&OpenPromptLibrary::default(), window, cx)
                         });
                     }
                 });
@@ -272,7 +272,10 @@ impl AssistantPanel {
                                     menu.context(focus_handle.clone())
                                         .action("New Chat", Box::new(NewChat))
                                         .action("History", Box::new(DeployHistory))
-                                        .action("Prompt Library", Box::new(OpenPromptLibrary))
+                                        .action(
+                                            "Prompt Library",
+                                            Box::new(OpenPromptLibrary::default()),
+                                        )
                                         .action("Configure", Box::new(ShowConfiguration))
                                         .action(zoom_label, Box::new(ToggleZoom))
                                 }))
@@ -1043,7 +1046,7 @@ impl AssistantPanel {
 
     fn deploy_prompt_library(
         &mut self,
-        _: &OpenPromptLibrary,
+        action: &OpenPromptLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1057,6 +1060,7 @@ impl AssistantPanel {
                     None,
                 ))
             }),
+            action.prompt_to_focus.map(|uuid| PromptId::User { uuid }),
             cx,
         )
         .detach_and_log_err(cx);

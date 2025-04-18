@@ -24,8 +24,8 @@ use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
 use prompt_store::{
-    DefaultUserRulesContext, ProjectContext, PromptBuilder, PromptStore, PromptsUpdatedEvent,
-    RulesFileContext, WorktreeContext,
+    DefaultUserRulesContext, ProjectContext, PromptBuilder, PromptId, PromptStore,
+    PromptsUpdatedEvent, RulesFileContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
@@ -246,6 +246,10 @@ impl ThreadStore {
                 .into_iter()
                 .flat_map(|(contents, prompt_metadata)| match contents {
                     Ok(contents) => Some(DefaultUserRulesContext {
+                        uuid: match prompt_metadata.id {
+                            PromptId::User { uuid } => uuid,
+                            PromptId::EditWorkflow => return None,
+                        },
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
                     }),
