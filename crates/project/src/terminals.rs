@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, ShellBuilder, SpawnInTerminal};
+use task::{DEFAULT_REMOTE_SHELL, Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder,
     terminal_settings::{self, TerminalSettings, VenvSettings},
@@ -563,8 +563,8 @@ pub fn wrap_for_ssh(
     venv_directory: Option<&Path>,
 ) -> (String, Vec<String>) {
     let to_run = if let Some((command, args)) = command {
-        dbg!(&command);
-        let command: Option<Cow<str>> = if command.starts_with('"') {
+        // DEFAULT_REMOTE_SHELL is '"${SHELL:-sh}"' so must not be escaped
+        let command: Option<Cow<str>> = if command == DEFAULT_REMOTE_SHELL {
             Some(command.into())
         } else {
             shlex::try_quote(command).ok()

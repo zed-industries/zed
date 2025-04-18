@@ -367,6 +367,8 @@ pub struct ShellBuilder {
     args: Vec<String>,
 }
 
+pub static DEFAULT_REMOTE_SHELL: &str = "\"${SHELL:-sh}\"";
+
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
     pub fn new(is_local: bool, shell: &Shell) -> Self {
@@ -375,7 +377,7 @@ impl ShellBuilder {
                 if is_local {
                     (Self::system_shell(), Vec::new())
                 } else {
-                    ("\"${SHELL:-sh}\"".to_string(), Vec::new())
+                    (DEFAULT_REMOTE_SHELL.to_string(), Vec::new())
                 }
             }
             Shell::Program(shell) => (shell.clone(), Vec::new()),
