@@ -1406,13 +1406,20 @@ impl GitPanel {
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
-            if !self.amend_pending {
-                self.set_amend_pending(true, cx);
-                self.load_last_commit_message_if_empty(cx);
-            } else {
-                telemetry::event!("Git Amended", source = "Git Panel");
-                self.set_amend_pending(false, cx);
-                self.commit_changes(CommitOptions { amend: true }, window, cx);
+            if self
+                .active_repository
+                .as_ref()
+                .and_then(|repo| repo.read(cx).head_commit.as_ref())
+                .is_some()
+            {
+                if !self.amend_pending {
+                    self.set_amend_pending(true, cx);
+                    self.load_last_commit_message_if_empty(cx);
+                } else {
+                    telemetry::event!("Git Amended", source = "Git Panel");
+                    self.set_amend_pending(false, cx);
+                    self.commit_changes(CommitOptions { amend: true }, window, cx);
+                }
             }
         } else {
             cx.propagate();
@@ -1426,11 +1433,9 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
-            return;
-        };
-        let Some(recent_sha) = branch
-            .most_recent_commit
+        let Some(recent_sha) = active_repository
+            .read(cx)
+            .head_commit
             .as_ref()
             .map(|commit| commit.sha.to_string())
         else {
@@ -2958,10 +2963,7 @@ impl GitPanel {
         let editor_is_long = self.commit_editor.update(cx, |editor, cx| {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
-        let has_previous_commit = branch
-            .as_ref()
-            .and_then(|branch| branch.most_recent_commit.as_ref())
-            .is_some();
+        let has_previous_commit = head_commit.is_some();
 
         let footer = v_flex()
             .child(PanelRepoFooter::new(
