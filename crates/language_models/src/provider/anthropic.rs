@@ -528,7 +528,7 @@ pub fn into_anthropic(
                             if !thinking.is_empty() {
                                 Some(anthropic::RequestContent::Thinking {
                                     thinking,
-                                    signature: signature.unwrap_or_default(), //TODO
+                                    signature: signature.unwrap_or_default(),
                                     cache_control,
                                 })
                             } else {

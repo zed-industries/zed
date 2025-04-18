@@ -1005,6 +1005,12 @@ impl Thread {
                 }
             }
 
+            if !message.context.is_empty() {
+                request_message
+                    .content
+                    .push(MessageContent::Text(message.context.to_string()));
+            }
+
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(text) => {
