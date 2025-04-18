@@ -310,7 +310,7 @@ impl settings::Settings for TerminalSettings {
                 if let Some(zed_env) = old.env.as_mut() {
                     zed_env.insert(k.clone(), v.to_owned());
                 } else {
-                    old.env = Some(HashMap::from([(k.clone(), v.to_owned())]))
+                    old.env = Some([(k.clone(), v.to_owned())].into_iter().collect())
                 }
             }
         }
