@@ -159,7 +159,7 @@ impl Settings for ProjectPanelSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         vscode.bool_setting("explorer.excludeGitIgnore", &mut old.hide_gitignore);
         vscode.bool_setting("explorer.autoReveal", &mut old.auto_reveal_entries);
         vscode.bool_setting("explorer.compactFolders", &mut old.auto_fold_dirs);

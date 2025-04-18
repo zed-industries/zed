@@ -28,7 +28,7 @@ use util::{ResultExt as _, merge_non_null_json_value_into};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
-use crate::{SettingsJsonSchemaParams, VSCodeSettings, WorktreeId};
+use crate::{SettingsJsonSchemaParams, VsCodeSettings, WorktreeId};
 
 /// A value that can be defined as a user setting.
 ///
@@ -71,7 +71,7 @@ pub trait Settings: 'static + Send + Sync {
 
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
     /// equivalent settings from a vscode config to our config
-    fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent);
+    fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent);
 
     #[track_caller]
     fn register(cx: &mut App)
@@ -257,7 +257,7 @@ trait AnySettingValue: 'static + Send + Sync {
         &self,
         raw_settings: &serde_json::Value,
         tab_size: usize,
-        vscode_settings: &VSCodeSettings,
+        vscode_settings: &VsCodeSettings,
         text: &mut String,
         edits: &mut Vec<(Range<usize>, String)>,
     );
@@ -479,7 +479,7 @@ impl SettingsStore {
             .unbounded_send(Box::new(move |cx: AsyncApp| {
                 async move {
                     let old_text = Self::load_settings(&fs).await?;
-                    let vscode = VSCodeSettings::load_user_settings(fs.clone()).await?;
+                    let vscode = VsCodeSettings::load_user_settings(fs.clone()).await?;
                     let new_text = cx.read_global(|store: &SettingsStore, _cx| {
                         store.get_vscode_edits(old_text, &vscode)
                     })?;
@@ -525,7 +525,7 @@ impl SettingsStore {
         new_text
     }
 
-    pub fn get_vscode_edits(&self, mut old_text: String, vscode: &VSCodeSettings) -> String {
+    pub fn get_vscode_edits(&self, mut old_text: String, vscode: &VsCodeSettings) -> String {
         let mut new_text = old_text.clone();
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
         let raw_settings = parse_json_with_comments::<Value>(&old_text).unwrap_or_default();
@@ -1216,7 +1216,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         &self,
         raw_settings: &serde_json::Value,
         tab_size: usize,
-        vscode_settings: &VSCodeSettings,
+        vscode_settings: &VsCodeSettings,
         text: &mut String,
         edits: &mut Vec<(Range<usize>, String)>,
     ) {
@@ -1943,7 +1943,7 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old, cx).ok();
-        let new = store.get_vscode_edits(old, &VSCodeSettings::from_str(&vscode).unwrap());
+        let new = store.get_vscode_edits(old, &VsCodeSettings::from_str(&vscode).unwrap());
         pretty_assertions::assert_eq!(new, expected);
     }
 
@@ -1969,7 +1969,7 @@ mod tests {
             sources.json_merge()
         }
 
-        fn import_from_vscode(vscode: &VSCodeSettings, current: &mut Self::FileContent) {
+        fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
             vscode.u32_setting("user.age", &mut current.age);
         }
     }
@@ -1985,7 +1985,7 @@ mod tests {
             sources.json_merge()
         }
 
-        fn import_from_vscode(_vscode: &VSCodeSettings, _old: &mut Self::FileContent) {}
+        fn import_from_vscode(_vscode: &VsCodeSettings, _old: &mut Self::FileContent) {}
     }
 
     #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -2011,7 +2011,7 @@ mod tests {
             sources.json_merge()
         }
 
-        fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent) {
+        fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent) {
             let first_value = vscode.read_string("key_1_first");
             let second_value = vscode.read_string("key_1_second");
 
@@ -2049,7 +2049,7 @@ mod tests {
             sources.json_merge()
         }
 
-        fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent) {
+        fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent) {
             vscode.enum_setting("time_format", &mut old.hour_format, |s| match s {
                 "12" => Some(HourFormat::Hour12),
                 "24" => Some(HourFormat::Hour24),
@@ -2079,7 +2079,7 @@ mod tests {
             sources.json_merge()
         }
 
-        fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent) {
+        fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent) {
             old.languages.extend(
                 vscode
                     .read_value("vscode_languages")

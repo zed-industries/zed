@@ -87,7 +87,7 @@ impl Settings for CollaborationPanelSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {}
 }
 
 impl Settings for ChatPanelSettings {
@@ -102,7 +102,7 @@ impl Settings for ChatPanelSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {}
 }
 
 impl Settings for NotificationPanelSettings {
@@ -117,7 +117,7 @@ impl Settings for NotificationPanelSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {}
 }
 
 impl Settings for MessageEditorSettings {
@@ -132,5 +132,5 @@ impl Settings for MessageEditorSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {}
 }

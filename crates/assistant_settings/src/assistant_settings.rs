@@ -709,7 +709,7 @@ impl Settings for AssistantSettings {
         Ok(settings)
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         if let Some(b) = vscode
             .read_value("chat.agent.enabled")
             .and_then(|b| b.as_bool())

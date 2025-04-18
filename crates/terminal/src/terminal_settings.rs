@@ -256,7 +256,7 @@ impl settings::Settings for TerminalSettings {
         root_schema
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         let name = |s| format!("terminal.integrated.{s}");
 
         vscode.f32_setting(&name("fontSize"), &mut old.font_size);

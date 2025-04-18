@@ -1371,7 +1371,7 @@ impl settings::Settings for AllLanguageSettings {
         root_schema
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         let d = &mut old.defaults;
         if let Some(size) = vscode
             .read_value("editor.tabSize")

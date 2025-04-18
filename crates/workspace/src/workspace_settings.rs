@@ -278,7 +278,7 @@ impl Settings for WorkspaceSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         if vscode
             .read_bool("accessibility.dimUnfocused.enabled")
             .unwrap_or_default()
@@ -371,7 +371,7 @@ impl Settings for TabBarSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         vscode.enum_setting("workbench.editor.showTabs", &mut old.show, |s| match s {
             "multiple" => Some(true),
             "single" | "none" => Some(false),

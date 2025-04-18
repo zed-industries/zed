@@ -1774,7 +1774,7 @@ impl Settings for VimSettings {
         })
     }
 
-    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {
         // TODO: translate vim extension settings
     }
 }
