@@ -8,12 +8,12 @@ use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
-use language::{Buffer, DiagnosticSeverity, OffsetRangeExt};
+use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role, StopReason, TokenUsage,
 };
-use project::{Project, ProjectPath};
+use project::{LspStore, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -270,7 +270,7 @@ impl Example {
                 })?
                 .await;
 
-            let lsp = if this.base.require_lsp {
+            let lsp_open_handle_and_store = if this.base.require_lsp {
                 let language_extension = this.base.language_extension.as_deref().context(
                     "language_extension field is required in base.toml when `require_lsp == true`",
                 )?;
@@ -300,13 +300,39 @@ impl Example {
 
                 let language_file_buffer = open_language_file_buffer_task.await?;
 
-                let lsp_open_handle = project.update(cx, |project, cx| {
-                    project.register_buffer_with_language_servers(&language_file_buffer, cx)
+                let (lsp_open_handle, lsp_store) = project.update(cx, |project, cx| {
+                    (
+                        project.register_buffer_with_language_servers(&language_file_buffer, cx),
+                        project.lsp_store().clone(),
+                    )
                 })?;
 
-                wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
+                // TODO: remove this once the diagnostics tool waits for new diagnostics
+                cx.background_executor().timer(Duration::new(5, 0)).await;
+                wait_for_lang_server(&lsp_store, this.log_prefix.clone(), cx).await?;
 
-                Some((lsp_open_handle, language_file_buffer))
+                lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_open_handle.update(cx, |buffer, cx| {
+                        buffer.update(cx, |buffer, cx| {
+                            let has_language_server = lsp_store
+                                .language_servers_for_local_buffer(buffer, cx)
+                                .next()
+                                .is_some();
+                            if has_language_server {
+                                Ok(())
+                            } else {
+                                Err(anyhow!(
+                                    "`{:?}` was opened to cause the language server to start, \
+                                    but no language servers are registered for its buffer. \
+                                    Set `require_lsp = false` in `base.toml` to skip this.",
+                                    language_file
+                                ))
+                            }
+                        })
+                    })
+                })??;
+
+                Some((lsp_open_handle, lsp_store))
             } else {
                 None
             };
@@ -452,8 +478,8 @@ impl Example {
 
             println!("{}Stopped", this.log_prefix);
 
-            if let Some((_, language_file_buffer)) = lsp.as_ref() {
-                wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
+            if let Some((_, lsp_store)) = lsp_open_handle_and_store.as_ref() {
+                wait_for_lang_server(lsp_store, this.log_prefix.clone(), cx).await?;
             }
 
             println!("{}Getting repository diff", this.log_prefix);
@@ -477,7 +503,7 @@ impl Example {
             };
 
             drop(subscription);
-            drop(lsp);
+            drop(lsp_open_handle_and_store);
 
             if let Some(diagnostics_before) = &diagnostics_before {
                 fs::write(example_output_dir.join("diagnostics_before.txt"), diagnostics_before)?;
@@ -606,42 +632,27 @@ impl Example {
 }
 
 fn wait_for_lang_server(
-    project: &Entity<Project>,
-    buffer: &Entity<Buffer>,
+    lsp_store: &Entity<LspStore>,
     log_prefix: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
+    if cx
+        .update(|cx| !has_pending_lang_server_work(lsp_store, cx))
+        .unwrap()
+        || std::env::var("ZED_EVAL_SKIP_LS_WAIT").is_ok()
+    {
+        return Task::ready(anyhow::Ok(()));
+    }
+
     println!("{}⏵ Waiting for language server", log_prefix);
 
     let (mut tx, mut rx) = mpsc::channel(1);
 
-    let lsp_store = project
-        .update(cx, |project, _| project.lsp_store())
-        .unwrap();
-
-    let has_lang_server = buffer
-        .update(cx, |buffer, cx| {
-            lsp_store.update(cx, |lsp_store, cx| {
-                lsp_store
-                    .language_servers_for_local_buffer(&buffer, cx)
-                    .next()
-                    .is_some()
-            })
-        })
-        .unwrap_or(false);
-
-    if has_lang_server {
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .unwrap()
-            .detach();
-    }
-
-    let subscriptions =
-        [
-            cx.subscribe(&lsp_store, {
-                let log_prefix = log_prefix.clone();
-                move |_, event, _| match event {
+    let subscription =
+        cx.subscribe(&lsp_store, {
+            let log_prefix = log_prefix.clone();
+            move |lsp_store, event, cx| {
+                match event {
                     project::LspStoreEvent::LanguageServerUpdate {
                         message:
                             client::proto::update_language_server::Variant::WorkProgress(
@@ -654,23 +665,12 @@ fn wait_for_lang_server(
                     } => println!("{}⟲ {message}", log_prefix),
                     _ => {}
                 }
-            }),
-            cx.subscribe(&project, {
-                let buffer = buffer.clone();
-                move |project, event, cx| match event {
-                    project::Event::LanguageServerAdded(_, _, _) => {
-                        let buffer = buffer.clone();
-                        project
-                            .update(cx, |project, cx| project.save_buffer(buffer, cx))
-                            .detach();
-                    }
-                    project::Event::DiskBasedDiagnosticsFinished { .. } => {
-                        tx.try_send(()).ok();
-                    }
-                    _ => {}
+
+                if !has_pending_lang_server_work(&lsp_store, cx) {
+                    tx.try_send(()).ok();
                 }
-            }),
-        ];
+            }
+        });
 
     cx.spawn(async move |cx| {
         let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
@@ -683,9 +683,16 @@ fn wait_for_lang_server(
                 Err(anyhow!("LSP wait timed out after 5 minutes"))
             }
         };
-        drop(subscriptions);
+        drop(subscription);
         result
     })
+}
+
+fn has_pending_lang_server_work(lsp_store: &Entity<LspStore>, cx: &App) -> bool {
+    lsp_store
+        .read(cx)
+        .language_server_statuses()
+        .any(|(_, status)| !status.pending_work.is_empty())
 }
 
 async fn query_lsp_diagnostics(
@@ -987,13 +994,6 @@ mod test {
 
     #[test]
     fn test_judge_prompt_with_diagnostics() {
-        let judge_prompt = include_str!("judge_diff_prompt.hbs");
-        let judge_prompt_name = "judge_prompt";
-        let mut handlebars = Handlebars::new();
-        handlebars
-            .register_template_string(judge_prompt_name, judge_prompt)
-            .unwrap();
-
         // Case 1: Both diagnostics before and after are present
         let input = JudgeDiffInput {
             repository_diff: "diff content goes here".to_string(),
@@ -1003,7 +1003,7 @@ mod test {
             criteria: "Fix all bugs".to_string(),
         };
 
-        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+        let rendered = templates().render(JUDGE_PROMPT_NAME, &input).unwrap();
 
         let expected_diagnostics_section = r#"
             Take into account the diagnostics before and after applying the change:
@@ -1023,13 +1023,6 @@ mod test {
 
     #[test]
     fn test_judge_prompt_with_empty_diagnostics() {
-        let judge_prompt = include_str!("judge_diff_prompt.hbs");
-        let judge_prompt_name = "judge_prompt";
-        let mut handlebars = Handlebars::new();
-        handlebars
-            .register_template_string(judge_prompt_name, judge_prompt)
-            .unwrap();
-
         // Case 2: Diagnostics check run but no diagnostics found
         let input = JudgeDiffInput {
             repository_diff: "diff content goes here".to_string(),
@@ -1039,7 +1032,7 @@ mod test {
             criteria: "Fix all bugs".to_string(),
         };
 
-        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+        let rendered = templates().render(JUDGE_PROMPT_NAME, &input).unwrap();
 
         let expected_diagnostics_section = r#"
             Take into account the diagnostics before and after applying the change:
@@ -1059,12 +1052,7 @@ mod test {
 
     #[test]
     fn test_judge_prompt_with_mixed_diagnostics() {
-        let judge_prompt = include_str!("judge_diff_prompt.hbs");
-        let judge_prompt_name = "judge_prompt";
-        let mut handlebars = Handlebars::new();
-        handlebars
-            .register_template_string(judge_prompt_name, judge_prompt)
-            .unwrap();
+        let templates = templates();
 
         // Case 3: Before diagnostics present, after diagnostics absent
         let input = JudgeDiffInput {
@@ -1075,7 +1063,7 @@ mod test {
             criteria: "Fix all bugs".to_string(),
         };
 
-        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+        let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
 
         let expected_diagnostics_section = r#"
             Take into account the diagnostics before and after applying the change:
@@ -1101,7 +1089,7 @@ mod test {
             criteria: "Fix all bugs".to_string(),
         };
 
-        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+        let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
 
         let expected_diagnostics_section = r#"
             Take into account the diagnostics before and after applying the change:
@@ -1121,12 +1109,7 @@ mod test {
 
     #[test]
     fn test_judge_prompt_without_diagnostics() {
-        let judge_prompt = include_str!("judge_diff_prompt.hbs");
-        let judge_prompt_name = "judge_prompt";
-        let mut handlebars = Handlebars::new();
-        handlebars
-            .register_template_string(judge_prompt_name, judge_prompt)
-            .unwrap();
+        let templates = templates();
 
         // Case 5: No diagnostics check run
         let input = JudgeDiffInput {
@@ -1137,7 +1120,7 @@ mod test {
             criteria: "Fix all bugs".to_string(),
         };
 
-        let rendered = handlebars.render(judge_prompt_name, &input).unwrap();
+        let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
 
         // Check for the message when no diagnostics were performed
         let diagnostics_message = "No diagnostic checks were performed.";
@@ -1145,5 +1128,17 @@ mod test {
         assert!(rendered.contains(diagnostics_message));
         assert!(!rendered.contains("<diagnostics_before>"));
         assert!(!rendered.contains("<diagnostics_after>"));
+    }
+
+    const JUDGE_PROMPT_NAME: &str = "judge_prompt";
+
+    fn templates() -> Handlebars<'static> {
+        let mut judge_prompt = include_str!("judge_diff_prompt.hbs").to_string();
+        language::LineEnding::normalize(&mut judge_prompt);
+        let mut handlebars = Handlebars::new();
+        handlebars
+            .register_template_string(JUDGE_PROMPT_NAME, judge_prompt)
+            .unwrap();
+        handlebars
     }
 }
