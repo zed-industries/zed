@@ -211,7 +211,7 @@ impl AssistantConfiguration {
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
 
-        const HEADING: &str = "Allow running tools without asking for confirmation";
+        const HEADING: &str = "Allow running editing tools without asking for confirmation";
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
