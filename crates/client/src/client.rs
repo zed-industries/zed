@@ -105,7 +105,7 @@ impl Settings for ClientSettings {
         Ok(result)
     }
 
-    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {}
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -133,7 +133,7 @@ impl Settings for ProxySettings {
         })
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         vscode.string_setting("http.proxy", &mut old.proxy);
     }
 }
@@ -525,7 +525,7 @@ impl settings::Settings for TelemetrySettings {
         })
     }
 
-    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {
         // we could translate telemetry.telemetryLevel, but just because users didn't want
         // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
         // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".

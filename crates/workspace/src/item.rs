@@ -142,7 +142,7 @@ impl Settings for ItemSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         if let Some(b) = vscode.read_bool("workbench.editor.tabActionCloseVisibility") {
             old.show_close_button = Some(if b {
                 ShowCloseButton::Always
@@ -181,7 +181,7 @@ impl Settings for PreviewTabsSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         vscode.bool_setting("workbench.editor.enablePreview", &mut old.enabled);
         vscode.bool_setting(
             "workbench.editor.enablePreviewFromCodeNavigation",

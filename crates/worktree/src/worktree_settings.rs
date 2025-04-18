@@ -97,7 +97,7 @@ impl Settings for WorktreeSettings {
         })
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         if let Some(inclusions) = vscode
             .read_value("files.watcherInclude")
             .and_then(|v| v.as_array())

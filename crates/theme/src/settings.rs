@@ -951,7 +951,7 @@ impl settings::Settings for ThemeSettings {
         root_schema
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         vscode.f32_setting("editor.fontWeight", &mut old.buffer_font_weight);
         vscode.f32_setting("editor.fontSize", &mut old.buffer_font_size);
         vscode.string_setting("editor.font", &mut old.buffer_font_family);

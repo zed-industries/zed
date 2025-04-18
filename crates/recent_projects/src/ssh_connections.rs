@@ -126,7 +126,7 @@ impl Settings for SshSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {}
 }
 
 pub struct SshPrompt {

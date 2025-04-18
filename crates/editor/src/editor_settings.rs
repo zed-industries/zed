@@ -2,7 +2,7 @@ use gpui::App;
 use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, VSCodeSettings};
+use settings::{Settings, SettingsSources, VsCodeSettings};
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
@@ -476,7 +476,7 @@ impl Settings for EditorSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent) {
         vscode.enum_setting(
             "editor.cursorBlinking",
             &mut old.cursor_blink,

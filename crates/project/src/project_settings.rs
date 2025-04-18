@@ -331,7 +331,7 @@ impl Settings for ProjectSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
         // this just sets the binary name instead of a full path so it relies on path lookup
         // resolving to the one you want
         vscode.enum_setting("npm.packageManager", &mut old.node.npm_path, |s| match s {

@@ -4,11 +4,11 @@ use serde_json::{Map, Value};
 
 use std::sync::Arc;
 
-pub struct VSCodeSettings {
+pub struct VsCodeSettings {
     content: Map<String, Value>,
 }
 
-impl VSCodeSettings {
+impl VsCodeSettings {
     pub fn from_str(content: &str) -> Result<Self> {
         Ok(Self {
             content: serde_json::from_str(content)?,

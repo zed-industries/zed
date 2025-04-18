@@ -20,7 +20,7 @@ impl FeatureFlag for SettingsUiFeatureFlag {
     const NAME: &'static str = "settings-ui";
 }
 
-actions!(zed, [OpenSettingsEditor, ImportVSCodeSettings]);
+actions!(zed, [OpenSettingsEditor, ImportVsCodeSettings]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -43,7 +43,7 @@ pub fn init(cx: &mut App) {
             }
         });
 
-        workspace.register_action(|_workspace, _: &ImportVSCodeSettings, _window, cx| {
+        workspace.register_action(|_workspace, _: &ImportVsCodeSettings, _window, cx| {
             let fs = <dyn Fs>::global(cx);
             cx.global::<SettingsStore>().import_vscode_settings(fs);
             println!("imported settings, need to reload?");
