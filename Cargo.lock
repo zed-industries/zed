@@ -15835,7 +15835,6 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
- "libc",
  "log",
  "lsp",
  "multi_buffer",

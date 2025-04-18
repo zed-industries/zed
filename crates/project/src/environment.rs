@@ -273,23 +273,14 @@ async fn load_shell_environment(
     //
     // In certain shells we need to execute additional_command in order to
     // trigger the behavior of direnv, etc.
-    //
-    //
-    // The `exit 0` is the result of hours of debugging, trying to find out
-    // why running this command here, without `exit 0`, would mess
-    // up signal process for our process so that `ctrl-c` doesn't work
-    // anymore.
-    //
-    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-    // do that, but it does, and `exit 0` helps.
 
     let command = match shell_name {
         Some("fish") => format!(
-            "cd '{}'; emit fish_prompt; printf '%s' {MARKER}; /usr/bin/env; exit 0;",
+            "cd '{}'; emit fish_prompt; printf '%s' {MARKER}; /usr/bin/env;",
             dir.display()
         ),
         _ => format!(
-            "cd '{}'; printf '%s' {MARKER}; /usr/bin/env; exit 0;",
+            "cd '{}'; printf '%s' {MARKER}; /usr/bin/env;",
             dir.display()
         ),
     };
@@ -297,16 +288,21 @@ async fn load_shell_environment(
     // csh/tcsh only supports `-l` if it's the only flag. So this won't be a login shell.
     // Users must rely on vars from `~/.tcshrc` or `~/.cshrc` and not `.login` as a result.
     let args = match shell_name {
-        Some("tcsh") | Some("csh") => vec!["-i", "-c", &command],
-        _ => vec!["-l", "-i", "-c", &command],
+        Some("tcsh") | Some("csh") => vec!["-i".to_string(), "-c".to_string(), command],
+        _ => vec![
+            "-l".to_string(),
+            "-i".to_string(),
+            "-c".to_string(),
+            command,
+        ],
     };
 
-    let Some(output) = smol::process::Command::new(&shell)
-        .args(&args)
-        .output()
-        .await
-        .log_err()
-    else {
+    let Some(output) = smol::unblock(move || {
+        util::set_pre_exec_to_start_new_session(std::process::Command::new(&shell).args(&args))
+            .output()
+    })
+    .await
+    .log_err() else {
         return message(
             "Failed to spawn login shell to source login environment variables. See logs for details",
         );
