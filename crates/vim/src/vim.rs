@@ -1773,4 +1773,8 @@ impl Settings for VimSettings {
                 .ok_or_else(Self::missing_default)?,
         })
     }
+
+    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {
+        // TODO: translate vim extension settings
+    }
 }

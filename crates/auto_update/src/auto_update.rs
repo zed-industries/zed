@@ -118,6 +118,13 @@ impl Settings for AutoUpdateSetting {
 
         Ok(Self(auto_update.0))
     }
+
+    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+        vscode.enum_setting("update.mode", old, |s| match s {
+            "none" | "manual" => Some(AutoUpdateSettingContent(false)),
+            _ => Some(AutoUpdateSettingContent(true)),
+        });
+    }
 }
 
 #[derive(Default)]

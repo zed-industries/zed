@@ -58,4 +58,40 @@ impl Settings for ContextServerSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(vscode: &settings::VSCodeSettings, old: &mut Self::FileContent) {
+        // TODO: handle "inputs" replacement strings, see perplexity-key in this example:
+        // https://code.visualstudio.com/docs/copilot/chat/mcp-servers#_configuration-example
+        #[derive(Deserialize)]
+        struct VSCodeServerCommand {
+            command: String,
+            args: Option<Vec<String>>,
+            env: Option<HashMap<String, String>>,
+            // TODO: support envFile and type
+        }
+        impl From<VSCodeServerCommand> for ServerCommand {
+            fn from(cmd: VSCodeServerCommand) -> Self {
+                Self {
+                    path: cmd.command,
+                    args: cmd.args.unwrap_or_default(),
+                    env: cmd.env,
+                }
+            }
+        }
+        if let Some(mcp) = vscode.read_value("mcp").and_then(|v| v.as_object()) {
+            old.context_servers.extend(mcp.iter().filter_map(|(k, v)| {
+                Some((
+                    k.clone().into(),
+                    ServerConfig {
+                        command: Some(
+                            serde_json::from_value::<VSCodeServerCommand>(v.clone())
+                                .ok()?
+                                .into(),
+                        ),
+                        settings: None,
+                    },
+                ))
+            }));
+        }
+    }
 }

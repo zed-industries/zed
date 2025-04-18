@@ -29,6 +29,8 @@ impl Settings for FileFinderSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]

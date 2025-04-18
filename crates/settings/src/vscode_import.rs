@@ -35,6 +35,12 @@ impl VSCodeSettings {
         self.content.get(setting).and_then(|v| v.as_str())
     }
 
+    pub fn string_setting(&self, key: &str, setting: &mut Option<String>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_str) {
+            *setting = Some(s.to_owned())
+        }
+    }
+
     pub fn bool_setting(&self, key: &str, setting: &mut Option<bool>) {
         if let Some(s) = self.content.get(key).and_then(Value::as_bool) {
             *setting = Some(s)
@@ -62,6 +68,12 @@ impl VSCodeSettings {
     pub fn u64_setting(&self, key: &str, setting: &mut Option<u64>) {
         if let Some(s) = self.content.get(key).and_then(Value::as_u64) {
             *setting = Some(s)
+        }
+    }
+
+    pub fn usize_setting(&self, key: &str, setting: &mut Option<usize>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_u64) {
+            *setting = Some(s.try_into().unwrap())
         }
     }
 

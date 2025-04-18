@@ -280,10 +280,6 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-/// Whether or not to automatically check for updates.
-///
-/// Values: short, long
-/// Default: short
 #[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
@@ -301,4 +297,6 @@ impl Settings for LineIndicatorFormat {
 
         Ok(format.0)
     }
+
+    fn import_from_vscode(_vscode: &settings::VSCodeSettings, _old: &mut Self::FileContent) {}
 }

@@ -5,9 +5,10 @@ For other importers:
 Settings mapping:
 - chat.agent.enabled -> assistant.enabled
 - explorer.excludeGitIgnore -> project_panel.hide_gitignore
-- explorer.autoReveal -> project_panel.auto_reveal
+- explorer.autoReveal -> project_panel.auto_reveal_entries
 - explorer.compactFolders -> project_panel.auto_fold_dirs
 - explorer.decorations.badges -> project_panel.show_diagnostics
+- problems.decorations.enabled -> project_panel.show_diagnostics
 - extensions.autoUpdate -> Doesn't exist but should
 - files.autoSave -> autosave
 - files.autoSaveDelay -> autosave.after_delay
@@ -19,9 +20,8 @@ Settings mapping:
 - http.proxy -> proxy
 - mcp -> context_servers
 - npm.packageManager -> node.npm_path
-- npm.autoDetect -> node.ignore_system_version
+- ~npm.autoDetect -> node.ignore_system_version~ not the same
 - outline.icons -> outline_panel.file_icons && outline_panel.folder_icons
-- problems.decorations.enabled -> project_panel.show_diagnostics
 - telemetry.telemetryLevel -> telemetry.diagnostics && telemetry.metrics
 - terminal.integrated.copyOnSelection -> terminal.copy_on_select
 - terminal.integrated.cursorBlinking -> terminal.blinking
@@ -36,7 +36,7 @@ Settings mapping:
 - terminal.integrated.env.windows -> terminal.env (if you're on windows)
 - terminal.integrated.scrollback -> terminal.max_scroll_history_lines
 - terminal.integrated.fontFamily -> terminal.font_family
-- terminal.font_size -> terminal.integrated.fontSize
+- terminal.integrated.fontSize -> terminal.font_size
 - terminal.integrated.lineHeight -> terminal.line_height
 - terminal.integrated.macOptionIsMeta -> terminal.option_as_meta
 - update.mode -> auto_update
@@ -44,20 +44,21 @@ Settings mapping:
 - window.closeWhenEmpty -> when_closing_with_no_tabs
 - zenMode.showTabs && workbench.editor.showTabs -> tab_bar.show
 - zenMode.centerLayout -> ADD SETTING FOR THIS
-- zenMode.hideLineNumbers -> gutter.line_numbers
 - workbench.editor.limit.enabled && workbench.editor.limit.value && workbench.editor.limit.perEditorGroup - max_tabs
 - workbench.editor.openPositioning
-- workbench.editor.openSideBySideDirection -> pane_split_direction
+- ~workbench.editor.openSideBySideDirection -> pane_split_direction~ we have separate actions for h and v splits
 -> tabs.activate_on_close
 - editor.wordWrap -> soft_wrap
 - editor.wordWrapColumn -> preferred_line_length
 - editor.inlayHints.enabled -> `inlay_hints.enabled` + `inlay_hints.toggle_on_modifiers_press`
 - editor.guides.indentation -> indent_guides
+- editor.rulers -> wrap_guides
 - editor.tabSize -> tab_size
 - editor.cursorBlinking -> cursor_blink
-- editor.defaultFormatter -> formatter
+- editor.defaultFormatter -> formatter (can't easily translate extension names to our setting)
 - editor.showFoldingControls -> gutter.folds
 - editor.lineNumbers -> gutter.line_numbers
+- zenMode.hideLineNumbers -> gutter.line_numbers
 - editor.acceptSuggestionOnEnter -> update keymap
 - editor.autoSurround -> use_auto_surround
 - editor.linkedEditing -> linked_edits
@@ -69,28 +70,29 @@ Settings mapping:
 - editor.fontSize -> buffer_font_size
 - editor.fontFamily -> buffer_font_family
 - editor.fontLigatures -> buffer_font_features (calt)
-- editor.cursorSurroundingLines -> vertical_scroll_margin
 - editor.cursorStyle -> cursor_shape
 - editor.lineHeight -> buffer_line_height
 - editor.scrollbar.horizontal -> scrollbar.axes | scrollbar.show
 - editor.scrollbar.vertical -> scrollbar.axes | scrollbar.show
 - editor.find.seedSearchStringFromSelection -> seed_search_query_from_cursor
+- search.smartCase -> use_smartcase_search
 - editor.parameterHints.enabled -> auto_signature_help | show_signature_help_after_edits
 - editor.hover.delay -> hover_popover_delay
 - editor.hover.enabled -> hover_popover_enabled
 - editor.renderWhitespace -> show_whitespaces
-- editor.useTabStops -> hard_tabs
 - editor.insertSpaces -> hard_tabs
 - editor.selectionHighlight -> selection_highlight
 - editor.renderLineHighlight -> current_line_highlight
 - editor.multiCursorModifier -> multi_cursor_modifier
+- editor.cursorSurroundingLines -> vertical_scroll_margin
 - editor.mouseWheelScrollSensitivity -> scroll_sensitivity
 - editor.occurrencesHighlight -> selection_highlight
 - editor.occurrencesHighlightDelay -> selection_highlight_debounce | lsp_highlight_debounce
 - editor.wordBasedSuggestions -> completions.words
 - editor.trimAutoWhitespace -> remove_trailing_whitespace_on_save
 - editor.inlineSuggest.enabled -> show_edit_predictions
-- editor.tabCompletion -> show_completions_on_input
+- editor.suggestOnTriggerCharacters -> show_completions_on_input
+- editor.lineNumbers -> relative_line_numbers
 
 
 
