@@ -44,7 +44,6 @@ toml.workspace = true
 unindent.workspace = true
 util.workspace = true
 uuid = { version = "1.6", features = ["v4"] }
-workspace-hack.workspace = true
 
 [[bin]]
 name = "eval"

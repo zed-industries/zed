@@ -4924,7 +4924,6 @@ dependencies = [
  "unindent",
  "util",
  "uuid",
- "workspace-hack",
 ]
 
 [[package]]
