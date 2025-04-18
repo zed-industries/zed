@@ -84,13 +84,9 @@ impl HyperlinkFinder {
         {
             let matching_line = term.bounds_to_string(*python_match.start(), *python_match.end());
             python_extract_path_and_line(&matching_line).map(|(file_path, line_number)| {
-                // TODO(davewa): Do we really want the hyperlink under `File ` (included by `python_match`)?
                 (format!("{file_path}:{line_number}"), false, python_match)
             })
         } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
-            // TODO(davewa): This code does several full char() scans of the path, when one
-            // partial reverse bytes() scan would suffice. Replace with Regex.
-
             let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
             let (sanitized_match, sanitized_word) = 'sanitize: {
@@ -184,9 +180,6 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) 
 
 /// Copied from alacritty/src/display/hint.rs:
 /// Iterate over all visible regex matches.
-// TODO(davewa): Why do we include all visible matches when we only ever accept
-// matches on the line which contains point (see regex_match_at() above)? This
-// seems like a (performance) bug.
 fn visible_regex_match_iter<'a, T>(
     term: &'a Term<T>,
     regex: &'a mut RegexSearch,
@@ -327,19 +320,13 @@ mod tests {
         } };
     }
 
-    // TODO(davewa): More tests
-    // - [x] Resize the terminal down to a few columns, to test matches that span multiple lines
-    // - [x] MSBuild-style(line,column)
-    // - [x] IRIs
-    // - [ ] Windows paths
-
     mod iri {
         /// By default tests with terminal column counts of `[3, longest_line / 2, and longest_line + 1]`.
         /// Also accepts specific column count overrides as `test_iri!(3, 4, 5; "some stuff")`
         ///
         /// **`‹«aaaaa»›`** := **iri** match
         ///
-        /// **I, J, ..., K; ** := use terminal with [I, J, ..., K] **columns**
+        /// **I, J, ..., K; ** := use terminal widths of [I, J, ..., K] **columns**
         macro_rules! test_iri {
             ($iri:literal) => { { test_hyperlink!(concat!("‹«", $iri, "»›"); true) } };
             ($($columns:literal),+; $iri:literal) => { { test_hyperlink!($($columns),+; concat!("‹«", $iri, "»›"); true) } };
@@ -389,7 +376,7 @@ mod tests {
 
     mod path {
         /// By default tests with terminal column counts of `[3, longest_line / 2, and longest_line + 1]`.
-        /// Also accepts specific column count overrides as `test_path!(3, 4, 5; "some stuff"; true)`
+        /// Also accepts specific column count overrides as `test_path!(3, 4, 5; "some stuff")`
         ///
         /// 👉 := hovered on following char
         ///
@@ -401,7 +388,7 @@ mod tests {
         ///
         /// **`«NN»`** := **row** or **column** capture group
         ///
-        /// **I, J, ..., K; ** := use terminal with [I, J, ..., K] **columns**
+        /// **I, J, ..., K; ** := use terminal widths of [I, J, ..., K] **columns**
         macro_rules! test_path {
             ($($lines:literal),+) => { test_hyperlink!($($lines),+; false) };
             ($($columns:literal),+; $($lines:literal),+) => { test_hyperlink!($($columns),+; $($lines),+; false) };
@@ -483,7 +470,7 @@ mod tests {
                     expected = r#"Path = «\\UNC\\server\\share\\test\\cool.rs», at grid cells (1, 0)..=(10, 2)"#
                 )]
                 fn verbatim_unc() {
-                    // TODO: This isn't quite right, we want to say the path should be "\\server\share\👉test\cool.rs"
+                    // This isn't quite right, we want to say the path should be "\\server\share\test\cool.rs"
                     test_path!(r#"‹«\\?\UNC\server\share\👉test\cool.rs»›"#);
                     test_path!(r#"‹«\\?\UNC\server\share\test\cool👉.rs»›"#);
                 }
@@ -534,7 +521,6 @@ mod tests {
         #[test]
         fn non_word_wide_chars() {
             // Mojo diagnostic message
-            // TODO(davewa): I haven't ever run Mojo, this is assuming it uses the same format as Python.
             test_path!(4, 18, 38; "    ‹File \"«/awe👉some.🔥»\", line «42»›: Wat?");
             test_path!(4, 18, 38; "    ‹File \"«/awesome👉.🔥»\", line «42»›: Wat?");
             test_path!(4, 18, 38; "    ‹File \"«/awesome.👉🔥»\", line «42»›: Wat?");
@@ -549,7 +535,7 @@ mod tests {
             //
             // Any wide char at the end of a wrapped line is buggy in alacritty.
             //
-            // [davewa]: I feel like this is worth fixing, even if no one has reported it. It is most likely
+            // This seems worth fixing, even if no one has reported it. It is most likely
             // in the category of people experiencing failures, but somewhat randomly and not really
             // understanding what situation is causing it to work or not work, which isn't a great experience,
             // even though it might not have been reported as an actual issue with a clear repro case.
@@ -575,6 +561,7 @@ mod tests {
 
             #[test]
             #[should_panic(expected = "No hyperlink found")]
+            // <https://github.com/zed-industries/zed/issues/12338>
             fn issue_12338() {
                 // Issue #12338
                 test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test👉、2.txt»›");
@@ -605,6 +592,29 @@ mod tests {
                 test_path!("‹«/awesome.🔥👈»› is some good Mojo!");
                 test_path!("    ‹File \"«/👉🏃wesome.🔥»\", line «42»›: Wat?");
                 test_path!("    ‹File \"«/🏃👈wesome.🔥»\", line «42»›: Wat?");
+            }
+
+            #[test]
+            #[cfg_attr(
+                not(target_os = "windows"),
+                should_panic(
+                    expected = "Path = «test/controllers/template_items_controller_test.rb:20:in», at grid cells (0, 0)..=(18, 1)"
+                )
+            )]
+            #[cfg_attr(
+                target_os = "windows",
+                should_panic(
+                    expected = r#"Path = «test\\controllers\\template_items_controller_test.rb:20:in», at grid cells (0, 0)..=(18, 1)"#
+                )
+            )]
+            // <https://github.com/zed-industries/zed/issues/28194>
+            fn issue_28194() {
+                test_path!(
+                    "‹«test/controllers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
+                );
+                test_path!(
+                    "‹«test/controllers/template_items_controller_test.rb»:«19»›:in 'block in <class:TemplateItemsControllerTest>'"
+                );
             }
 
             #[test]
