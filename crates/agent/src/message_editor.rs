@@ -330,6 +330,7 @@ impl MessageEditor {
             // Send to model after summaries are done
             thread
                 .update(cx, |thread, cx| {
+                    thread.advance_prompt_id();
                     thread.send_to_model(model, request_kind, cx);
                 })
                 .log_err();

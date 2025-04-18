@@ -1277,6 +1277,7 @@ impl ActiveThread {
         }
 
         self.thread.update(cx, |thread, cx| {
+            thread.advance_prompt_id();
             thread.send_to_model(model.model, RequestKind::Chat, cx)
         });
         cx.notify();
