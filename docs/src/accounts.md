@@ -1,4 +1,13 @@
-# Signing In
+# Accounts
+
+Signing in to Zed is not a requirement. You can use most features you'd expect in a code editor without ever doing so. We'll outline the few features that do require signing in, and how to do so, here.
+
+## What Features Require Signing In?
+
+1. All real-time [collaboration](./collaboration.md).
+2. [LLM-powered features](./assistant/assistant.md), if you are using Zed as the provider of your LLM models. Alternatively, you can [bring and configure your own API keys](./assistant/configuration.md) if you'd prefer, and avoid having to sign in.
+
+## Signing In
 
 Zed uses GitHub's OAuth flow to authenticate users, requiring only the `read:user` GitHub scope, which grants read-only access to your GitHub profile information.
 
@@ -8,12 +17,6 @@ Zed uses GitHub's OAuth flow to authenticate users, requiring only the `read:use
 4. After successful authentication, your browser will display a confirmation, and you'll be automatically signed in to Zed.
 
 **Note**: If you're behind a corporate firewall, ensure that connections to `zed.dev` and `collab.zed.dev` are allowed.
-
-## Features That Require Authentication
-
-All real-time [collaboration](./collaboration.md) features require signing in.
-
-Sign in is also required for [LLM-powered features](./assistant/assistant.md) if you are using Zed as the provider of your LLM models. Alternatively, you can [bring and configure your own API keys](./assistant/configuration.md) if you'd prefer, and avoid having to sign in.
 
 ## Signing Out
 

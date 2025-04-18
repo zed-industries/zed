@@ -4,7 +4,7 @@
 
 - [Getting Started](./getting-started.md)
 - [System Requirements](./system-requirements.md)
-- [Signing In](./signing-in.md)
+- [Accounts](./accounts.md)
 - [Linux](./linux.md)
 - [Windows](./windows.md)
 - [Telemetry](./telemetry.md)
