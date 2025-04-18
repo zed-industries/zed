@@ -910,7 +910,7 @@ pub struct Editor {
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
     minimap_settings: MinimapSettings,
-    minimap_entity: Option<Entity<Self>>,
+    minimap: Option<Entity<Self>>,
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
 }
@@ -1660,9 +1660,10 @@ impl Editor {
             git_blame_inline_tooltip: None,
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
-            serialize_dirty_buffers: ProjectSettings::get_global(cx)
-                .session
-                .restore_unsaved_buffers,
+            serialize_dirty_buffers: !mode.is_minimap()
+                && ProjectSettings::get_global(cx)
+                    .session
+                    .restore_unsaved_buffers,
             blame: None,
             blame_subscription: None,
             tasks: Default::default(),
@@ -1705,7 +1706,7 @@ impl Editor {
             load_diff_task: load_uncommitted_diff,
             mouse_cursor_hidden: false,
             minimap_settings: EditorSettings::get_global(cx).minimap,
-            minimap_entity: None,
+            minimap: None,
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
                 .unwrap_or_default(),
@@ -1787,7 +1788,7 @@ impl Editor {
                 }
             }
 
-            this.minimap_entity = this.initialize_minimap(window, cx);
+            this.minimap = this.create_minimap(window, cx);
         }
 
         this.report_editor_event("Editor Opened", None, cx);
@@ -2570,7 +2571,9 @@ impl Editor {
         use text::ToOffset as _;
         use text::ToPoint as _;
 
-        if WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None {
+        if self.mode.is_minimap()
+            || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
+        {
             return;
         }
 
@@ -15919,16 +15922,12 @@ impl Editor {
             .text()
     }
 
-    fn initialize_minimap(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        (self.minimap_settings.requires_entity() && self.is_singleton(cx))
-            .then(|| self.new_minimap(window, cx))
+    fn create_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Self>> {
+        (self.minimap_settings.minimap_enabled() && self.is_singleton(cx))
+            .then(|| self.initialize_new_minimap(window, cx))
     }
 
-    fn new_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Self> {
+    fn initialize_new_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Self> {
         let mut minimap = self.clone_with_mode(EditorMode::Minimap, window, cx);
         minimap.update_minimap_configuration(&self.minimap_settings);
         cx.new(|_| minimap)
@@ -15943,11 +15942,11 @@ impl Editor {
     }
 
     pub fn minimap(&self) -> Option<Entity<Self>> {
-        self.minimap_entity.clone()
+        self.minimap.clone()
     }
 
     pub fn has_minimap(&self) -> bool {
-        self.minimap_entity.is_some()
+        self.minimap.is_some()
     }
 
     pub fn wrap_guides(&self, cx: &App) -> SmallVec<[(usize, bool); 2]> {
@@ -17494,7 +17493,8 @@ impl Editor {
         }
 
         let project_settings = ProjectSettings::get_global(cx);
-        self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
+        self.serialize_dirty_buffers =
+            !self.mode.is_minimap() && project_settings.session.restore_unsaved_buffers;
 
         if self.mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
@@ -17511,9 +17511,9 @@ impl Editor {
             let old_minimap_settings = self.minimap_settings;
             self.minimap_settings = EditorSettings::get_global(cx).minimap;
             if self.minimap_settings != old_minimap_settings {
-                if self.minimap_entity.is_some() != self.minimap_settings.requires_entity() {
-                    self.minimap_entity = self.initialize_minimap(window, cx);
-                } else if let Some(minimap_entity) = self.minimap_entity.as_ref().filter(|_| {
+                if self.has_minimap() != self.minimap_settings.minimap_enabled() {
+                    self.minimap = self.create_minimap(window, cx);
+                } else if let Some(minimap_entity) = self.minimap.as_ref().filter(|_| {
                     self.minimap_settings
                         .minimap_configuration_changed(&old_minimap_settings)
                 }) {
@@ -18255,6 +18255,7 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         if self.is_singleton(cx)
+            && !self.mode.is_minimap()
             && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
         {
             let buffer_snapshot = OnceCell::new();

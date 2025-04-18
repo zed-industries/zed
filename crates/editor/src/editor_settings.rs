@@ -125,7 +125,7 @@ pub struct Minimap {
 }
 
 impl Minimap {
-    pub fn requires_entity(&self) -> bool {
+    pub fn minimap_enabled(&self) -> bool {
         self.show != ShowMinimap::Never
     }
 
