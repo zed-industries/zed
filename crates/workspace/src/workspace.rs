@@ -5439,7 +5439,7 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
-        context.set("keyboard_layout", cx.keyboard_layout().clone());
+        context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
