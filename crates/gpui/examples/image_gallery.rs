@@ -1,7 +1,7 @@
 use gpui::{
-    App, AppContext, Application, Bounds, ClickEvent, Context, Entity, KeyBinding, LruImageCache,
-    Menu, MenuItem, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions,
-    div, image_cache, img, prelude::*, px, rgb, size,
+    App, AppContext, Application, Bounds, ClickEvent, Context, Entity, HashMapImageCache,
+    KeyBinding, Menu, MenuItem, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    actions, div, image_cache, img, prelude::*, px, rgb, size,
 };
 use reqwest_client::ReqwestClient;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ struct ImageGallery {
     image_key: String,
     items_count: usize,
     total_count: usize,
-    image_cache: Entity<LruImageCache>,
+    image_cache: Entity<HashMapImageCache>,
 }
 
 impl ImageGallery {
@@ -126,7 +126,7 @@ fn main() {
                 image_key: "".into(),
                 items_count: 99,
                 total_count: 0,
-                image_cache: LruImageCache::new(ctx),
+                image_cache: HashMapImageCache::new(ctx),
             })
         })
         .unwrap();
