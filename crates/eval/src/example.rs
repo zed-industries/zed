@@ -29,6 +29,7 @@ use std::{
 use unindent::Unindent as _;
 use util::ResultExt as _;
 use util::command::new_smol_command;
+use util::markdown::MarkdownString;
 use util::serde::default_true;
 
 use crate::AgentAppState;
@@ -879,6 +880,7 @@ impl RequestMarkdown {
     fn new(request: &LanguageModelRequest) -> Self {
         let mut tools = String::new();
         let mut messages = String::new();
+        let mut assistant_message_number: u32 = 1;
 
         // Print the tools
         if !request.tools.is_empty() {
@@ -887,8 +889,8 @@ impl RequestMarkdown {
                 write!(&mut tools, "{}\n\n", tool.description).unwrap();
                 write!(
                     &mut tools,
-                    "```json\n{}\n```\n\n",
-                    serde_json::to_string_pretty(&tool.input_schema).unwrap_or_default()
+                    "{}\n",
+                    MarkdownString::code_block("json", &format!("{:#}", tool.input_schema))
                 )
                 .unwrap();
             }
@@ -896,13 +898,14 @@ impl RequestMarkdown {
 
         // Print the messages
         for message in &request.messages {
-            let role_str = match message.role {
-                Role::User => "👤 USER",
-                Role::Assistant => "🤖 ASSISTANT",
-                Role::System => "⚙️ SYSTEM",
+            match message.role {
+                Role::System => messages.push_str("# ⚙️ SYSTEM\n\n"),
+                Role::User => messages.push_str("# 👤 USER\n\n"),
+                Role::Assistant => {
+                    messages.push_str(&format!("# 🤖 ASSISTANT {assistant_message_number}\n\n"));
+                    assistant_message_number += 1;
+                }
             };
-
-            messages.push_str(&format!("# {}\n\n", role_str));
 
             for content in &message.content {
                 match content {
@@ -918,7 +921,10 @@ impl RequestMarkdown {
                             "**Tool Use**: {} (ID: {})\n",
                             tool_use.name, tool_use.id
                         ));
-                        messages.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
+                        messages.push_str(&format!(
+                            "{}\n",
+                            MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                        ));
                     }
                     MessageContent::ToolResult(tool_result) => {
                         messages.push_str(&format!(
@@ -977,7 +983,10 @@ fn response_events_to_markdown(
                     "**Tool Use**: {} (ID: {})\n",
                     tool_use.name, tool_use.id
                 ));
-                response.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
+                response.push_str(&format!(
+                    "{}\n",
+                    MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                ));
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)
