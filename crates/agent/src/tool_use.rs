@@ -314,8 +314,6 @@ impl ToolUseState {
             )
             .into();
 
-        // dbg!(&tool_use.name, &tool_use.is_input_complete, &ui_text);
-
         match self.pending_tool_uses_by_id.entry(tool_use.id.clone()) {
             Entry::Occupied(entry) => {
                 let existing = entry.into_mut();
