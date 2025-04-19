@@ -910,6 +910,20 @@ impl RequestMarkdown {
                     MessageContent::Image(_) => {
                         messages.push_str("[IMAGE DATA]\n\n");
                     }
+                    MessageContent::Thinking { text, signature } => {
+                        messages.push_str("**Thinking**:\n\n");
+                        if let Some(sig) = signature {
+                            messages.push_str(&format!("Signature: {}\n\n", sig));
+                        }
+                        messages.push_str(text);
+                        messages.push_str("\n");
+                    }
+                    MessageContent::RedactedThinking(items) => {
+                        messages.push_str(&format!(
+                            "**Redacted Thinking**: {} item(s)\n\n",
+                            items.len()
+                        ));
+                    }
                     MessageContent::ToolUse(tool_use) => {
                         messages.push_str(&format!(
                             "**Tool Use**: {} (ID: {})\n",
@@ -961,7 +975,7 @@ fn response_events_to_markdown(
             Ok(LanguageModelCompletionEvent::Text(text)) => {
                 text_buffer.push_str(text);
             }
-            Ok(LanguageModelCompletionEvent::Thinking(text)) => {
+            Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
                 thinking_buffer.push_str(text);
             }
             Ok(LanguageModelCompletionEvent::Stop(reason)) => {
