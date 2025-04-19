@@ -86,7 +86,7 @@ impl ProfileSelector {
 
                             thread_store
                                 .update(cx, |this, cx| {
-                                    this.load_profile_by_id(&profile_id, cx);
+                                    this.load_profile_by_id(profile_id.clone(), cx);
                                 })
                                 .log_err();
                         }

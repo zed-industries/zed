@@ -18,6 +18,7 @@ mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
+mod tool_compatibility;
 mod tool_use;
 mod ui;
 
@@ -46,10 +47,11 @@ pub use agent_diff::{AgentDiff, AgentDiffToolbar};
 actions!(
     agent,
     [
-        NewPromptEditor,
+        NewTextThread,
         ToggleContextPicker,
         ToggleProfileSelector,
         RemoveAllContext,
+        ExpandMessageEditor,
         OpenHistory,
         AddContextServer,
         RemoveSelectedThread,

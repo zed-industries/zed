@@ -195,7 +195,8 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        let key_equivalents = crate::key_equivalents::get_key_equivalents(&cx.keyboard_layout());
+        let key_equivalents =
+            crate::key_equivalents::get_key_equivalents(cx.keyboard_layout().id());
 
         if content.is_empty() {
             return KeymapFileLoadResult::Success {

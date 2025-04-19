@@ -84,6 +84,11 @@ impl FeatureFlag for ZedPro {
     const NAME: &'static str = "zed-pro";
 }
 
+pub struct ZedProWebSearchTool {}
+impl FeatureFlag for ZedProWebSearchTool {
+    const NAME: &'static str = "zed-pro-web-search-tool";
+}
+
 pub struct NotebookFeatureFlag;
 
 impl FeatureFlag for NotebookFeatureFlag {
@@ -93,6 +98,15 @@ impl FeatureFlag for NotebookFeatureFlag {
 pub struct Debugger {}
 impl FeatureFlag for Debugger {
     const NAME: &'static str = "debugger";
+}
+
+pub struct ThreadAutoCapture {}
+impl FeatureFlag for ThreadAutoCapture {
+    const NAME: &'static str = "thread-auto-capture";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {

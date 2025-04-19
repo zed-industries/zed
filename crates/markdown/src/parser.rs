@@ -65,11 +65,33 @@ pub fn parse_markdown(
                         within_metadata = true;
                         MarkdownTag::MetadataBlock(kind)
                     }
+                    pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Indented) => {
+                        MarkdownTag::CodeBlock {
+                            kind: CodeBlockKind::Indented,
+                            metadata: CodeBlockMetadata {
+                                content_range: range.start + 1..range.end + 1,
+                                line_count: 1,
+                            },
+                        }
+                    }
                     pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
                         ref info,
                     )) => {
+                        let content_range = extract_code_block_content_range(&text[range.clone()]);
+                        let content_range =
+                            content_range.start + range.start..content_range.end + range.start;
+
+                        let line_count = text[content_range.clone()]
+                            .bytes()
+                            .filter(|c| *c == b'\n')
+                            .count();
+                        let metadata = CodeBlockMetadata {
+                            content_range,
+                            line_count,
+                        };
+
                         let info = info.trim();
-                        MarkdownTag::CodeBlock(if info.is_empty() {
+                        let kind = if info.is_empty() {
                             CodeBlockKind::Fenced
                             // Languages should never contain a slash, and PathRanges always should.
                             // (Models are told to specify them relative to a workspace root.)
@@ -81,9 +103,68 @@ pub fn parse_markdown(
                             let language = SharedString::from(info.to_string());
                             language_names.insert(language.clone());
                             CodeBlockKind::FencedLang(language)
-                        })
+                        };
+
+                        MarkdownTag::CodeBlock { kind, metadata }
                     }
-                    tag => tag.into(),
+                    pulldown_cmark::Tag::Paragraph => MarkdownTag::Paragraph,
+                    pulldown_cmark::Tag::Heading {
+                        level,
+                        id,
+                        classes,
+                        attrs,
+                    } => {
+                        let id = id.map(|id| SharedString::from(id.into_string()));
+                        let classes = classes
+                            .into_iter()
+                            .map(|c| SharedString::from(c.into_string()))
+                            .collect();
+                        let attrs = attrs
+                            .into_iter()
+                            .map(|(key, value)| {
+                                (
+                                    SharedString::from(key.into_string()),
+                                    value.map(|v| SharedString::from(v.into_string())),
+                                )
+                            })
+                            .collect();
+                        MarkdownTag::Heading {
+                            level,
+                            id,
+                            classes,
+                            attrs,
+                        }
+                    }
+                    pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
+                    pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
+                    pulldown_cmark::Tag::Item => MarkdownTag::Item,
+                    pulldown_cmark::Tag::FootnoteDefinition(label) => {
+                        MarkdownTag::FootnoteDefinition(SharedString::from(label.to_string()))
+                    }
+                    pulldown_cmark::Tag::Table(alignments) => MarkdownTag::Table(alignments),
+                    pulldown_cmark::Tag::TableHead => MarkdownTag::TableHead,
+                    pulldown_cmark::Tag::TableRow => MarkdownTag::TableRow,
+                    pulldown_cmark::Tag::TableCell => MarkdownTag::TableCell,
+                    pulldown_cmark::Tag::Emphasis => MarkdownTag::Emphasis,
+                    pulldown_cmark::Tag::Strong => MarkdownTag::Strong,
+                    pulldown_cmark::Tag::Strikethrough => MarkdownTag::Strikethrough,
+                    pulldown_cmark::Tag::Image {
+                        link_type,
+                        dest_url,
+                        title,
+                        id,
+                    } => MarkdownTag::Image {
+                        link_type,
+                        dest_url: SharedString::from(dest_url.into_string()),
+                        title: SharedString::from(title.into_string()),
+                        id: SharedString::from(id.into_string()),
+                    },
+                    pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
+                    pulldown_cmark::Tag::DefinitionList => MarkdownTag::DefinitionList,
+                    pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
+                    pulldown_cmark::Tag::DefinitionListDefinition => {
+                        MarkdownTag::DefinitionListDefinition
+                    }
                 };
                 events.push((range, MarkdownEvent::Start(tag)))
             }
@@ -252,7 +333,10 @@ pub enum MarkdownTag {
     BlockQuote,
 
     /// A code block.
-    CodeBlock(CodeBlockKind),
+    CodeBlock {
+        kind: CodeBlockKind,
+        metadata: CodeBlockMetadata,
+    },
 
     /// A HTML block.
     HtmlBlock,
@@ -323,96 +407,26 @@ pub enum CodeBlockKind {
     FencedSrc(PathWithRange),
 }
 
-impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
-    fn from(tag: pulldown_cmark::Tag) -> Self {
-        match tag {
-            pulldown_cmark::Tag::Paragraph => MarkdownTag::Paragraph,
-            pulldown_cmark::Tag::Heading {
-                level,
-                id,
-                classes,
-                attrs,
-            } => {
-                let id = id.map(|id| SharedString::from(id.into_string()));
-                let classes = classes
-                    .into_iter()
-                    .map(|c| SharedString::from(c.into_string()))
-                    .collect();
-                let attrs = attrs
-                    .into_iter()
-                    .map(|(key, value)| {
-                        (
-                            SharedString::from(key.into_string()),
-                            value.map(|v| SharedString::from(v.into_string())),
-                        )
-                    })
-                    .collect();
-                MarkdownTag::Heading {
-                    level,
-                    id,
-                    classes,
-                    attrs,
-                }
-            }
-            pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
-            pulldown_cmark::Tag::CodeBlock(kind) => match kind {
-                pulldown_cmark::CodeBlockKind::Indented => {
-                    MarkdownTag::CodeBlock(CodeBlockKind::Indented)
-                }
-                pulldown_cmark::CodeBlockKind::Fenced(info) => {
-                    let info = info.trim();
-                    MarkdownTag::CodeBlock(if info.is_empty() {
-                        CodeBlockKind::Fenced
-                    } else if info.contains('/') {
-                        // Languages should never contain a slash, and PathRanges always should.
-                        // (Models are told to specify them relative to a workspace root.)
-                        CodeBlockKind::FencedSrc(PathWithRange::new(info))
-                    } else {
-                        CodeBlockKind::FencedLang(SharedString::from(info.to_string()))
-                    })
-                }
-            },
-            pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
-            pulldown_cmark::Tag::Item => MarkdownTag::Item,
-            pulldown_cmark::Tag::FootnoteDefinition(label) => {
-                MarkdownTag::FootnoteDefinition(SharedString::from(label.to_string()))
-            }
-            pulldown_cmark::Tag::Table(alignments) => MarkdownTag::Table(alignments),
-            pulldown_cmark::Tag::TableHead => MarkdownTag::TableHead,
-            pulldown_cmark::Tag::TableRow => MarkdownTag::TableRow,
-            pulldown_cmark::Tag::TableCell => MarkdownTag::TableCell,
-            pulldown_cmark::Tag::Emphasis => MarkdownTag::Emphasis,
-            pulldown_cmark::Tag::Strong => MarkdownTag::Strong,
-            pulldown_cmark::Tag::Strikethrough => MarkdownTag::Strikethrough,
-            pulldown_cmark::Tag::Link {
-                link_type,
-                dest_url,
-                title,
-                id,
-            } => MarkdownTag::Link {
-                link_type,
-                dest_url: SharedString::from(dest_url.into_string()),
-                title: SharedString::from(title.into_string()),
-                id: SharedString::from(id.into_string()),
-            },
-            pulldown_cmark::Tag::Image {
-                link_type,
-                dest_url,
-                title,
-                id,
-            } => MarkdownTag::Image {
-                link_type,
-                dest_url: SharedString::from(dest_url.into_string()),
-                title: SharedString::from(title.into_string()),
-                id: SharedString::from(id.into_string()),
-            },
-            pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
-            pulldown_cmark::Tag::MetadataBlock(kind) => MarkdownTag::MetadataBlock(kind),
-            pulldown_cmark::Tag::DefinitionList => MarkdownTag::DefinitionList,
-            pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
-            pulldown_cmark::Tag::DefinitionListDefinition => MarkdownTag::DefinitionListDefinition,
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct CodeBlockMetadata {
+    pub content_range: Range<usize>,
+    pub line_count: usize,
+}
+
+pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
+    let mut range = 0..text.len();
+    if text.starts_with("```") {
+        range.start += 3;
+
+        if let Some(newline_ix) = text[range.clone()].find('\n') {
+            range.start += newline_ix + 1;
         }
     }
+
+    if !range.is_empty() && text.ends_with("```") {
+        range.end -= 3;
+    }
+    range
 }
 
 /// Represents either an owned or inline string. Motivation for this is to make `SubstitutedText`
@@ -569,5 +583,42 @@ mod tests {
                 HashSet::new()
             )
         )
+    }
+
+    #[test]
+    fn test_code_block_metadata() {
+        assert_eq!(
+            parse_markdown("```rust\nfn main() {\n let a = 1;\n}\n```"),
+            (
+                vec![
+                    (
+                        0..37,
+                        Start(CodeBlock {
+                            kind: CodeBlockKind::FencedLang("rust".into()),
+                            metadata: CodeBlockMetadata {
+                                content_range: 8..34,
+                                line_count: 3
+                            }
+                        })
+                    ),
+                    (8..34, Text),
+                    (0..37, End(MarkdownTagEnd::CodeBlock)),
+                ],
+                HashSet::from(["rust".into()]),
+                HashSet::new()
+            )
+        )
+    }
+
+    #[test]
+    fn test_extract_code_block_content_range() {
+        let input = "```rust\nlet x = 5;\n```";
+        assert_eq!(extract_code_block_content_range(input), 8..19);
+
+        let input = "plain text";
+        assert_eq!(extract_code_block_content_range(input), 0..10);
+
+        let input = "```python\nprint('hello')\nprint('world')\n```";
+        assert_eq!(extract_code_block_content_range(input), 10..40);
     }
 }

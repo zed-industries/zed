@@ -175,6 +175,11 @@ pub struct LanguageModelToolResult {
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum MessageContent {
     Text(String),
+    Thinking {
+        text: String,
+        signature: Option<String>,
+    },
+    RedactedThinking(Vec<u8>),
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
@@ -204,6 +209,8 @@ impl LanguageModelRequestMessage {
         let mut buffer = String::new();
         for string in self.content.iter().filter_map(|content| match content {
             MessageContent::Text(text) => Some(text.as_str()),
+            MessageContent::Thinking { text, .. } => Some(text.as_str()),
+            MessageContent::RedactedThinking(_) => None,
             MessageContent::ToolResult(tool_result) => Some(tool_result.content.as_ref()),
             MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
         }) {
@@ -220,10 +227,15 @@ impl LanguageModelRequestMessage {
                 .first()
                 .map(|content| match content {
                     MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
+                    MessageContent::Thinking { text, .. } => {
+                        text.chars().all(|c| c.is_whitespace())
+                    }
                     MessageContent::ToolResult(tool_result) => {
                         tool_result.content.chars().all(|c| c.is_whitespace())
                     }
-                    MessageContent::ToolUse(_) | MessageContent::Image(_) => true,
+                    MessageContent::RedactedThinking(_)
+                    | MessageContent::ToolUse(_)
+                    | MessageContent::Image(_) => true,
                 })
                 .unwrap_or(false)
     }
@@ -238,6 +250,8 @@ pub struct LanguageModelRequestTool {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
+    pub thread_id: Option<String>,
+    pub prompt_id: Option<String>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,
     pub stop: Vec<String>,

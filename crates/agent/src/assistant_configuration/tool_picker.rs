@@ -60,7 +60,7 @@ pub struct ToolPickerDelegate {
 impl ToolPickerDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
-        tool_set: Arc<ToolWorkingSet>,
+        tool_set: Entity<ToolWorkingSet>,
         thread_store: WeakEntity<ThreadStore>,
         profile_id: AgentProfileId,
         profile: AgentProfile,
@@ -68,7 +68,7 @@ impl ToolPickerDelegate {
     ) -> Self {
         let mut tool_entries = Vec::new();
 
-        for (source, tools) in tool_set.tools_by_source(cx) {
+        for (source, tools) in tool_set.read(cx).tools_by_source(cx) {
             tool_entries.extend(tools.into_iter().map(|tool| ToolEntry {
                 name: tool.name().into(),
                 source: source.clone(),
@@ -192,7 +192,7 @@ impl PickerDelegate for ToolPickerDelegate {
         if active_profile_id == &self.profile_id {
             self.thread_store
                 .update(cx, |this, cx| {
-                    this.load_profile(&self.profile, cx);
+                    this.load_profile(self.profile.clone(), cx);
                 })
                 .log_err();
         }

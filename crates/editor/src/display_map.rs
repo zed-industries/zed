@@ -49,8 +49,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
 use serde::Deserialize;
 use std::{
@@ -572,6 +572,21 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
+    }
+
+    pub fn remove_inlays_for_excerpts(&mut self, excerpts_removed: &[ExcerptId]) {
+        let to_remove = self
+            .inlay_map
+            .current_inlays()
+            .filter_map(|inlay| {
+                if excerpts_removed.contains(&inlay.position.excerpt_id) {
+                    Some(inlay.id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        self.inlay_map.splice(&to_remove, Vec::new());
     }
 
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
@@ -1742,7 +1757,6 @@ pub mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
     #[gpui::test(retries = 5)]
     async fn test_soft_wraps(cx: &mut gpui::TestAppContext) {
         cx.background_executor
@@ -1760,7 +1774,7 @@ pub mod tests {
                 editor.update(cx, |editor, _cx| editor.text_layout_details(window));
 
             let font_size = px(12.0);
-            let wrap_width = Some(px(64.));
+            let wrap_width = Some(px(96.));
 
             let text = "one two three four five\nsix seven eight";
             let buffer = MultiBuffer::build_simple(text, cx);
@@ -2411,8 +2425,6 @@ pub mod tests {
         }
     }
 
-    // todo(linux) fails due to pixel differences in text rendering
-    #[cfg(target_os = "macos")]
     #[gpui::test]
     async fn test_chunks_with_soft_wrapping(cx: &mut gpui::TestAppContext) {
         cx.background_executor
