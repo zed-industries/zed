@@ -349,6 +349,7 @@ mod tests {
                     weight: FontWeight::default(),
                     style: FontStyle::Normal,
                 },
+                letter_spacing: LetterSpacing::default(),
                 color: Hsla::default(),
                 background_color: None,
                 underline: None,
@@ -695,6 +696,7 @@ mod tests {
             let normal = TextRun {
                 len: 0,
                 font: font("Helvetica"),
+                letter_spacing: LetterSpacing::default(),
                 color: Default::default(),
                 underline: Default::default(),
                 strikethrough: None,
@@ -703,6 +705,7 @@ mod tests {
             let bold = TextRun {
                 len: 0,
                 font: font("Helvetica").bold(),
+                letter_spacing: LetterSpacing::default(),
                 color: Default::default(),
                 underline: Default::default(),
                 strikethrough: None,

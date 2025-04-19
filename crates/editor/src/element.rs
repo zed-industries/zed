@@ -1302,6 +1302,9 @@ impl EditorElement {
                                     })
                                     .unwrap_or(self.style.text.font());
 
+                                // TODO: get for index (from runs)
+                                let letter_spacing = self.style.text.letter_spacing;
+
                                 // Invert the text color for the block cursor. Ensure that the text
                                 // color is opaque enough to be visible against the background color.
                                 //
@@ -1326,6 +1329,7 @@ impl EditorElement {
                                         &[TextRun {
                                             len,
                                             font,
+                                            letter_spacing,
                                             color,
                                             background_color: None,
                                             strikethrough: None,
@@ -2557,6 +2561,7 @@ impl EditorElement {
                     let run = TextRun {
                         len: line.len(),
                         font: style.text.font(),
+                        letter_spacing: style.text.letter_spacing,
                         color: placeholder_color,
                         background_color: None,
                         underline: Default::default(),
@@ -5657,6 +5662,7 @@ impl EditorElement {
                 &[TextRun {
                     len: column,
                     font: style.text.font(),
+                    letter_spacing: style.text.letter_spacing,
                     color: Hsla::default(),
                     background_color: None,
                     underline: None,
@@ -5687,6 +5693,7 @@ impl EditorElement {
         let run = TextRun {
             len: text.len(),
             font: self.style.text.font(),
+            letter_spacing: self.style.text.letter_spacing,
             color,
             background_color: None,
             underline: None,
@@ -6016,6 +6023,7 @@ impl LineWithInvisibles {
                         let run = TextRun {
                             len: x.len(),
                             font: text_style.font(),
+                            letter_spacing: text_style.letter_spacing,
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
@@ -6079,6 +6087,7 @@ impl LineWithInvisibles {
                         styles.push(TextRun {
                             len: line_chunk.len(),
                             font: text_style.font(),
+                            letter_spacing: text_style.letter_spacing,
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
@@ -7493,6 +7502,7 @@ impl Element for EditorElement {
                             &[TextRun {
                                 len: "→".len(),
                                 font: self.style.text.font(),
+                                letter_spacing: self.style.text.letter_spacing,
                                 color: cx.theme().colors().editor_invisible,
                                 background_color: None,
                                 underline: None,
@@ -7508,6 +7518,7 @@ impl Element for EditorElement {
                             &[TextRun {
                                 len: "•".len(),
                                 font: self.style.text.font(),
+                                letter_spacing: self.style.text.letter_spacing,
                                 color: cx.theme().colors().editor_invisible,
                                 background_color: None,
                                 underline: None,
