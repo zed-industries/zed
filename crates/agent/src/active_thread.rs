@@ -749,6 +749,7 @@ impl ActiveThread {
             this.push_message(&message.id, &message.segments, window, cx);
 
             for tool_use in thread.read(cx).tool_uses_for_message(message.id, cx) {
+                // dbg!(&tool_use.input, &tool_use.ui_text, &tool_use.status.text());
                 this.render_tool_use_markdown(
                     tool_use.id.clone(),
                     tool_use.ui_text.clone(),
@@ -856,8 +857,14 @@ impl ActiveThread {
         tool_output: SharedString,
         cx: &mut Context<Self>,
     ) {
+        // dbg!(&tool_input);
         let rendered = RenderedToolUse {
-            label: render_tool_use_markdown(tool_label.into(), self.language_registry.clone(), cx),
+            label: render_tool_use_markdown(
+                // dbg!(tool_label.into()),
+                tool_label.into(),
+                self.language_registry.clone(),
+                cx,
+            ),
             input: render_tool_use_markdown(
                 format!(
                     "```json\n{}\n```",
@@ -954,6 +961,7 @@ impl ActiveThread {
             }
             ThreadEvent::UsePendingTools { tool_uses } => {
                 for tool_use in tool_uses {
+                    // dbg!(&tool_use.input, &tool_use.ui_text);
                     self.render_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
@@ -963,10 +971,25 @@ impl ActiveThread {
                     );
                 }
             }
+            ThreadEvent::StreamedToolUse {
+                tool_use_id,
+                ui_text,
+                input,
+            } => {
+                // dbg!(&input, &ui_text);
+                self.render_tool_use_markdown(
+                    tool_use_id.clone(),
+                    ui_text.clone(),
+                    input,
+                    "".into(),
+                    cx,
+                );
+            }
             ThreadEvent::ToolFinished {
                 pending_tool_use, ..
             } => {
                 if let Some(tool_use) = pending_tool_use {
+                    // dbg!(&tool_use.input, &tool_use.ui_text);
                     self.render_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
@@ -2467,13 +2490,15 @@ impl ActiveThread {
         let edit_tools = tool_use.needs_confirmation;
 
         let status_icons = div().child(match &tool_use.status {
-            ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
+            ToolUseStatus::NeedsConfirmation => {
                 let icon = Icon::new(IconName::Warning)
                     .color(Color::Warning)
                     .size(IconSize::Small);
                 icon.into_any_element()
             }
-            ToolUseStatus::Running => {
+            ToolUseStatus::Pending
+            | ToolUseStatus::InputStillStreaming
+            | ToolUseStatus::Running => {
                 let icon = Icon::new(IconName::ArrowCircle)
                     .color(Color::Accent)
                     .size(IconSize::Small);
@@ -2559,7 +2584,7 @@ impl ActiveThread {
                             }),
                         )),
                 ),
-                ToolUseStatus::Running => container.child(
+                ToolUseStatus::InputStillStreaming | ToolUseStatus::Running => container.child(
                     results_content_container().child(
                         h_flex()
                             .gap_1()
@@ -2651,6 +2676,9 @@ impl ActiveThread {
         };
 
         v_flex().gap_1().mb_3().map(|element| {
+            if rendered_tool_use.is_none() {
+              dbg!("it was none");
+            }
             if !edit_tools {
                 element.child(
                     v_flex()
@@ -2676,9 +2704,12 @@ impl ActiveThread {
                                         )
                                         .child(
                                             h_flex().pr_8().text_size(rems(0.8125)).children(
-                                                rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_url_click({let workspace = self.workspace.clone(); move |text, window, cx| {
-                                                    open_markdown_link(text, workspace.clone(), window, cx);
-                                                }}))
+                                                rendered_tool_use.map(|rendered| {
+                                                    Label::new(&rendered.label.read(cx).source)
+                                                    // MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_url_click({let workspace = self.workspace.clone(); move |text, window, cx| {
+                                                    //     open_markdown_link(text, workspace.clone(), window, cx);
+                                                    // }})
+                                                })
                                             ),
                                         ),
                                 )
