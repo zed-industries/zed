@@ -132,6 +132,18 @@ pub struct FindReplaceFileToolInput {
     pub replace: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct PartialInput {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    display_description: String,
+    #[serde(default)]
+    find: String,
+    #[serde(default)]
+    replace: String,
+}
+
 pub struct FindReplaceFileTool;
 
 impl Tool for FindReplaceFileTool {
@@ -159,6 +171,20 @@ impl Tool for FindReplaceFileTool {
         match serde_json::from_value::<FindReplaceFileToolInput>(input.clone()) {
             Ok(input) => input.display_description,
             Err(_) => "Edit file".to_string(),
+        }
+    }
+
+    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<PartialInput>(input.clone()).ok() {
+            // match serde_json::from_value::<PartialInput>(input.clone()).ok() {
+            Some(input) if !input.path.is_empty() || !input.display_description.is_empty() => {
+                [input.path, input.display_description]
+                    .into_iter()
+                    .flat_map(|str| if str.is_empty() { None } else { Some(str) })
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            }
+            _ => "Edit File".to_string(),
         }
     }
 

@@ -30,6 +30,7 @@ pub fn init(cx: &mut App) {
 
 #[derive(Debug, Clone)]
 pub enum ToolUseStatus {
+    InputStillStreaming,
     NeedsConfirmation,
     Pending,
     Running,
@@ -41,6 +42,7 @@ impl ToolUseStatus {
     pub fn text(&self) -> SharedString {
         match self {
             ToolUseStatus::NeedsConfirmation => "".into(),
+            ToolUseStatus::InputStillStreaming => "".into(),
             ToolUseStatus::Pending => "".into(),
             ToolUseStatus::Running => "".into(),
             ToolUseStatus::Finished(out) => out.clone(),
@@ -147,6 +149,12 @@ pub trait Tool: 'static + Send + Sync {
 
     /// Returns markdown to be displayed in the UI for this tool.
     fn ui_text(&self, input: &serde_json::Value) -> String;
+
+    /// Returns markdown to be displayed in the UI for this tool, while the input JSON is still streaming
+    /// (so information may be missing).
+    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
+        self.ui_text(input)
+    }
 
     /// Runs the tool with the provided input.
     fn run(

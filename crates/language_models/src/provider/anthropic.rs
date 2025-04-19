@@ -646,6 +646,7 @@ pub fn map_to_language_model_completion_events(
                                 // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
                             }
                             ResponseContent::ToolUse { id, name, .. } => {
+                                // dbg!(&name, &input);
                                 state.tool_uses_by_index.insert(
                                     index,
                                     RawToolUse {
@@ -671,8 +672,38 @@ pub fn map_to_language_model_completion_events(
                             }
                             ContentDelta::SignatureDelta { .. } => {}
                             ContentDelta::InputJsonDelta { partial_json } => {
+                                // dbg!(&partial_json, state.tool_uses_by_index.get(&index));
                                 if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
                                     tool_use.input_json.push_str(&partial_json);
+
+                                    return Some((
+                                        vec![maybe!({
+                                            Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_use.id.clone().into(),
+                                                    name: tool_use.name.clone().into(),
+                                                    is_input_complete: false,
+                                                    input: if tool_use.input_json.is_empty() {
+                                                        serde_json::Value::Object(
+                                                            serde_json::Map::default(),
+                                                        )
+                                                    } else {
+                                                        serde_json::Value::from_str(
+                                                            // Convert invalid (incomplete) JSON into
+                                                            // JSON that serde will accept, e.g. by closing
+                                                            // unclosed delimiters. This way, we can update
+                                                            // the UI with whatever has been streamed back so far.
+                                                            &partial_json_fixer::fix_json(
+                                                                &tool_use.input_json,
+                                                            ),
+                                                        )
+                                                        .map_err(|err| anyhow!(err))?
+                                                    },
+                                                },
+                                            ))
+                                        })],
+                                        state,
+                                    ));
                                 }
                             }
                         },
@@ -684,6 +715,7 @@ pub fn map_to_language_model_completion_events(
                                             LanguageModelToolUse {
                                                 id: tool_use.id.into(),
                                                 name: tool_use.name.into(),
+                                                is_input_complete: true,
                                                 input: if tool_use.input_json.is_empty() {
                                                     serde_json::Value::Object(
                                                         serde_json::Map::default(),
