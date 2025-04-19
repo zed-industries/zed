@@ -224,6 +224,28 @@ impl Render for QuickActionBar {
                                         }
                                     },
                                 );
+
+                                menu = menu.toggleable_entry(
+                                    "Inline Values",
+                                    inlay_hints_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleInlineValues.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_inline_values(
+                                                        &editor::actions::ToggleInlineValues,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    }
+                                );
+
                             }
 
                             if supports_inline_diagnostics {

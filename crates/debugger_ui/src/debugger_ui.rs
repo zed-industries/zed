@@ -247,7 +247,7 @@ pub fn init(cx: &mut App) {
                                     let stack_id = state.selected_stack_frame_id(cx);
 
                                     state.session().update(cx, |session, cx| {
-                                        session.evaluate(text, None, stack_id, None, cx);
+                                        session.evaluate(text, None, stack_id, None, cx).detach();
                                     });
                                 });
                             Some(())

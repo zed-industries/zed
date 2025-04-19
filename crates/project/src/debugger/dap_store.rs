@@ -3,7 +3,7 @@ use super::{
     locator_store::LocatorStore,
     session::{self, Session, SessionStateEvent},
 };
-use crate::{ProjectEnvironment, debugger};
+use crate::{InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState, debugger};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -26,7 +26,10 @@ use gpui::{
     Task, WeakEntity,
 };
 use http_client::HttpClient;
-use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
+use language::{
+    BinaryStatus, Buffer, LanguageRegistry, LanguageToolchainStore,
+    language_settings::InlayHintKind, range_from_lsp,
+};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
@@ -663,6 +666,103 @@ impl DapStore {
                 })
                 .await?
                 .targets)
+        })
+    }
+
+    pub fn resolve_inline_values(
+        &self,
+        session: Entity<Session>,
+        stack_frame_id: u64,
+        buffer_handle: Entity<Buffer>,
+        inline_values: Vec<lsp::InlineValue>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<InlayHint>>> {
+        let snapshot = buffer_handle.read(cx).snapshot();
+        let all_variables = session.read(cx).all_variables();
+
+        cx.spawn(async move |_, cx| {
+            let mut inlay_hints = Vec::with_capacity(inline_values.len());
+            for inline_value in inline_values.iter() {
+                match inline_value {
+                    lsp::InlineValue::Text(text) => {
+                        inlay_hints.push(InlayHint {
+                            position: snapshot.anchor_after(range_from_lsp(text.range).end),
+                            label: InlayHintLabel::String(format!(": {}", text.text)),
+                            kind: Some(InlayHintKind::Type),
+                            padding_left: false,
+                            padding_right: false,
+                            tooltip: None,
+                            resolve_state: ResolveState::Resolved,
+                        });
+                    }
+                    lsp::InlineValue::VariableLookup(variable_lookup) => {
+                        let range = range_from_lsp(variable_lookup.range);
+
+                        let mut variable_name = variable_lookup
+                            .variable_name
+                            .clone()
+                            .unwrap_or_else(|| snapshot.text_for_range(range.clone()).collect());
+
+                        if !variable_lookup.case_sensitive_lookup {
+                            variable_name = variable_name.to_ascii_lowercase();
+                        }
+
+                        let Some(variable) = all_variables.iter().find(|variable| {
+                            if variable_lookup.case_sensitive_lookup {
+                                variable.name == variable_name
+                            } else {
+                                variable.name.to_ascii_lowercase() == variable_name
+                            }
+                        }) else {
+                            continue;
+                        };
+
+                        inlay_hints.push(InlayHint {
+                            position: snapshot.anchor_after(range.end),
+                            label: InlayHintLabel::String(format!(": {}", variable.value)),
+                            kind: Some(InlayHintKind::Type),
+                            padding_left: false,
+                            padding_right: false,
+                            tooltip: None,
+                            resolve_state: ResolveState::Resolved,
+                        });
+                    }
+                    lsp::InlineValue::EvaluatableExpression(expression) => {
+                        let range = range_from_lsp(expression.range);
+
+                        let expression = expression
+                            .expression
+                            .clone()
+                            .unwrap_or_else(|| snapshot.text_for_range(range.clone()).collect());
+
+                        let Ok(eval_task) = session.update(cx, |session, cx| {
+                            session.evaluate(
+                                expression,
+                                Some(EvaluateArgumentsContext::Variables),
+                                Some(stack_frame_id),
+                                None,
+                                cx,
+                            )
+                        }) else {
+                            continue;
+                        };
+
+                        if let Some(response) = eval_task.await {
+                            inlay_hints.push(InlayHint {
+                                position: snapshot.anchor_after(range.end),
+                                label: InlayHintLabel::String(format!(": {}", response.result)),
+                                kind: Some(InlayHintKind::Type),
+                                padding_left: false,
+                                padding_right: false,
+                                tooltip: None,
+                                resolve_state: ResolveState::Resolved,
+                            });
+                        };
+                    }
+                };
+            }
+
+            Ok(inlay_hints)
         })
     }
 

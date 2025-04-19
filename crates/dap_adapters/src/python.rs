@@ -1,5 +1,5 @@
 use crate::*;
-use dap::{DebugRequestType, StartDebuggingRequestArguments};
+use dap::{DebugRequestType, StartDebuggingRequestArguments, adapters::InlineValueProvider};
 use gpui::AsyncApp;
 use std::{ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
@@ -157,5 +157,35 @@ impl DebugAdapter for PythonDebugAdapter {
             envs: None,
             request_args: self.request_args(config),
         })
+    }
+
+    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
+        Some(Box::new(PythonInlineValueProvider))
+    }
+}
+
+struct PythonInlineValueProvider;
+
+impl InlineValueProvider for PythonInlineValueProvider {
+    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue> {
+        variables
+            .into_iter()
+            .map(|(variable, range)| {
+                if variable.contains(".") || variable.contains("[") {
+                    lsp_types::InlineValue::EvaluatableExpression(
+                        lsp_types::InlineValueEvaluatableExpression {
+                            range,
+                            expression: Some(variable),
+                        },
+                    )
+                } else {
+                    lsp_types::InlineValue::VariableLookup(lsp_types::InlineValueVariableLookup {
+                        range,
+                        variable_name: Some(variable),
+                        case_sensitive_lookup: true,
+                    })
+                }
+            })
+            .collect()
     }
 }
