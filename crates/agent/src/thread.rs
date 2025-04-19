@@ -1106,7 +1106,8 @@ impl Thread {
                     MessageSegment::Text(text) => request_message
                         .content
                         .push(MessageContent::Text(text.clone())),
-                    MessageSegment::Thinking(_) => {}
+                    MessageSegment::Thinking { .. } => {}
+                    MessageSegment::RedactedThinking(_) => {}
                 }
             }
 
