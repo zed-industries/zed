@@ -1859,10 +1859,10 @@ impl Terminal {
     }
 
     fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<Terminal>) {
-        let e: Option<ExitStatus> = error_code.map(|e| {
+        let e: Option<ExitStatus> = error_code.map(|code| {
             #[cfg(unix)]
             {
-                return std::os::unix::process::ExitStatusExt::from_raw(e);
+                return std::os::unix::process::ExitStatusExt::from_raw(code);
             }
             #[cfg(windows)]
             {
