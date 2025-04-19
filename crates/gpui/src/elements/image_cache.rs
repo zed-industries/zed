@@ -5,10 +5,9 @@ use crate::{
 };
 
 use futures::{FutureExt, future::Shared};
-use lru::LruCache;
 use refineable::Refineable;
 use smallvec::SmallVec;
-use std::{fmt, sync::Arc};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 /// An image cache element, all its child img elements will use the cache specified by this element.
 pub fn image_cache<I: ImageCache>(image_cache: &Entity<I>) -> ImageCacheElement {
@@ -185,46 +184,30 @@ pub trait ImageCache: 'static {
 }
 
 /// An implementation of ImageCache, that uses an LRU caching strategy to unload images when the cache is full
-pub struct LruImageCache {
-    images: LruCache<u64, CacheItem>,
-    max_items: Option<usize>,
-}
+pub struct HashMapImageCache(HashMap<u64, CacheItem>);
 
-impl fmt::Debug for LruImageCache {
+impl fmt::Debug for HashMapImageCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ImageCache")
-            .field("num_images", &self.images.len())
+        f.debug_struct("HashMapImageCache")
+            .field("num_images", &self.0.len())
             .finish()
     }
 }
 
-impl LruImageCache {
-    fn internal_new(max_items: Option<usize>, cx: &mut App) -> Entity<Self> {
-        let e = cx.new(|_cx| LruImageCache {
-            images: LruCache::unbounded(),
-            max_items,
-        });
+impl HashMapImageCache {
+    /// Create a new image cache.
+    #[inline]
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        let e = cx.new(|_cx| HashMapImageCache(HashMap::new()));
         cx.observe_release(&e, |image_cache, cx| {
-            for (_, mut item) in std::mem::replace(&mut image_cache.images, LruCache::unbounded()) {
+            for (_, mut item) in std::mem::replace(&mut image_cache.0, HashMap::new()) {
                 if let Some(Ok(image)) = item.get() {
-                    remove_image_from_windows(image, None, cx);
+                    cx.drop_image(image, None);
                 }
             }
         })
         .detach();
         e
-    }
-
-    /// Create a new image cache.
-    #[inline]
-    pub fn new(cx: &mut App) -> Entity<Self> {
-        Self::internal_new(None, cx)
-    }
-
-    /// Create a new image cache with a maximum number of items.
-    #[inline]
-    pub fn lru(max_items: usize, cx: &mut App) -> Entity<Self> {
-        Self::internal_new(Some(max_items), cx)
     }
 
     /// Load an image from the given source.
@@ -236,28 +219,15 @@ impl LruImageCache {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
-        if let Some(max_items) = self.max_items {
-            // remove least recently used images
-            while self.images.len() >= max_items {
-                if let Some((_, mut item)) = self.images.pop_lru() {
-                    if let Some(Ok(image)) = item.get() {
-                        remove_image_from_windows(image, Some(window), cx);
-                    }
-                }
-            }
-        }
-
         let hash = hash(source);
 
-        if let Some(item) = self.images.get_mut(&hash) {
+        if let Some(item) = self.0.get_mut(&hash) {
             return item.get();
         }
 
-        self.images.len();
-
         let fut = AssetLogger::<ImageAssetLoader>::load(source.clone(), cx);
         let task = cx.background_executor().spawn(fut).shared();
-        self.images.push(hash, CacheItem::Loading(task.clone()));
+        self.0.insert(hash, CacheItem::Loading(task.clone()));
 
         let entity = window.current_view();
         window
@@ -276,9 +246,9 @@ impl LruImageCache {
 
     /// Clear the image cache.
     pub fn clear(&mut self, window: &mut Window, cx: &mut App) {
-        for (_, mut item) in std::mem::replace(&mut self.images, LruCache::unbounded()) {
+        for (_, mut item) in std::mem::replace(&mut self.0, HashMap::new()) {
             if let Some(Ok(image)) = item.get() {
-                remove_image_from_windows(image, Some(window), cx);
+                cx.drop_image(image, Some(window));
             }
         }
     }
@@ -286,38 +256,31 @@ impl LruImageCache {
     /// Remove the image from the cache by the given source.
     pub fn remove(&mut self, source: &Resource, window: &mut Window, cx: &mut App) {
         let hash = hash(source);
-        if let Some(mut item) = self.images.pop(&hash) {
+        if let Some(mut item) = self.0.remove(&hash) {
             if let Some(Ok(image)) = item.get() {
-                remove_image_from_windows(image, Some(window), cx);
+                cx.drop_image(image, Some(window));
             }
         }
     }
 
     /// Returns the number of images in the cache.
     pub fn len(&self) -> usize {
-        self.images.len()
+        self.0.len()
+    }
+
+    /// Returns true if the cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
-impl ImageCache for LruImageCache {
+impl ImageCache for HashMapImageCache {
     fn load(
         &mut self,
         resource: &Resource,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
-        self.load(resource, window, cx)
-    }
-}
-
-fn remove_image_from_windows(image: Arc<RenderImage>, window: Option<&mut Window>, cx: &mut App) {
-    // remove the texture from all other windows
-    for window in cx.windows.values_mut().flatten() {
-        _ = window.drop_image(image.clone());
-    }
-
-    // remove the texture from the current window
-    if let Some(window) = window {
-        _ = window.drop_image(image);
+        HashMapImageCache::load(self, resource, window, cx)
     }
 }
