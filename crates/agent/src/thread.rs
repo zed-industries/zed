@@ -1,6 +1,7 @@
 use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -1070,30 +1071,91 @@ impl Thread {
     fn attached_tracked_files_state(
         &self,
         messages: &mut Vec<LanguageModelRequestMessage>,
-        cx: &App,
+        cx: &mut App,
     ) {
-        const STALE_FILES_HEADER: &str = "These files changed since last read:";
+        let mut message = String::new();
 
-        let mut stale_message = String::new();
-
-        let action_log = self.action_log.read(cx);
-
-        for stale_file in action_log.stale_buffers(cx) {
-            let Some(file) = stale_file.read(cx).file() else {
-                continue;
-            };
-
-            if stale_message.is_empty() {
-                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER).ok();
+        self.action_log.update(cx, |action_log, cx| {
+            let stale_files = action_log
+                .stale_buffers(cx)
+                .filter_map(|buffer| buffer.read(cx).file());
+            for (i, file) in stale_files.enumerate() {
+                if i == 0 {
+                    writeln!(&mut message, "These files changed since last read:").ok();
+                }
+                writeln!(&mut message, "- {}", file.full_path(cx).display()).ok();
             }
 
-            writeln!(&mut stale_message, "- {}", file.path().display()).ok();
-        }
+            if let Some(diagnostic_changes) = action_log.flush_diagnostic_changes(cx) {
+                let project = self.project.read(cx);
+                writeln!(
+                    &mut message,
+                    "Diagnostics have changed in the following files:",
+                )
+                .ok();
+                for change in diagnostic_changes {
+                    let path = change.project_path;
+                    let Some(worktree) = project.worktree_for_id(path.worktree_id, cx) else {
+                        continue;
+                    };
+                    let path = PathBuf::from(worktree.read(cx).root_name()).join(path.path);
+
+                    write!(&mut message, "- {} (", path.display()).ok();
+                    if change.fixed_diagnostic_count > 0 {
+                        write!(&mut message, "{} fixed", change.fixed_diagnostic_count).ok();
+                        if change.introduced_diagnostic_count > 0 {
+                            write!(
+                                &mut message,
+                                ", {} introduced",
+                                change.introduced_diagnostic_count
+                            )
+                            .ok();
+                        }
+                    } else if change.introduced_diagnostic_count > 0 {
+                        write!(
+                            &mut message,
+                            "{} introduced",
+                            change.introduced_diagnostic_count
+                        )
+                        .ok();
+                    }
+                    write!(&mut message, ") ").ok();
+
+                    if change.diagnostics.is_empty() {
+                        writeln!(&mut message, "No diagnostics remaining.").ok();
+                    } else {
+                        writeln!(&mut message, "Remaining diagnostics:").ok();
+                    }
+
+                    for entry in change.diagnostics {
+                        let mut lines = entry.diagnostic.message.split('\n');
+                        writeln!(
+                            &mut message,
+                            "    - line {}: {}",
+                            entry.range.start.0.row + 1,
+                            lines.next().unwrap()
+                        )
+                        .ok();
+                        for line in lines {
+                            writeln!(&mut message, "      {}", line).ok();
+                        }
+                    }
+
+                    if action_log
+                        .last_edited_buffer()
+                        .map_or(false, |last_edited| last_edited.consecutive_edit_count > 2)
+                    {
+                        writeln!(&mut message, "Because you've failed repeatedly, give up. Don't attempt to fix the diagnostics. Wait user input or continue with the next task.").ok();
+                        writeln!(&mut message, "Don't keep trying to fix the diagnostics. Stop and wait for the user to help you fix them.").ok();
+                    }
+                }
+            }
+        });
 
         let mut content = Vec::with_capacity(2);
 
-        if !stale_message.is_empty() {
-            content.push(stale_message.into());
+        if !message.is_empty() {
+            content.push(message.into());
         }
 
         if !content.is_empty() {
