@@ -307,6 +307,12 @@ impl SignatureHelpState {
     pub fn is_shown(&self) -> bool {
         self.popover.is_some()
     }
+
+    pub fn has_multiple_signatures(&self) -> bool {
+        self.popover
+            .as_ref()
+            .map_or(false, |popover| popover.signature.len() > 1)
+    }
 }
 
 #[cfg(test)]
