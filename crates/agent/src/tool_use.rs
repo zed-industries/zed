@@ -1,4 +1,3 @@
-use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -280,10 +279,7 @@ impl ToolUseState {
 
         for existing_tool_use in tool_uses.iter_mut() {
             if existing_tool_use.id == tool_use.id {
-                existing_tool_use.name = tool_use.name.clone();
-                existing_tool_use.input = tool_use.input.clone();
-                existing_tool_use.is_input_complete = tool_use.is_input_complete;
-
+                *existing_tool_use = tool_use.clone();
                 existing_tool_use_found = true;
             }
         }
@@ -305,6 +301,7 @@ impl ToolUseState {
         } else {
             PendingToolUseStatus::InputStillStreaming
         };
+
         let ui_text: Arc<str> = self
             .tool_ui_label(
                 &tool_use.name,
@@ -314,26 +311,17 @@ impl ToolUseState {
             )
             .into();
 
-        match self.pending_tool_uses_by_id.entry(tool_use.id.clone()) {
-            Entry::Occupied(entry) => {
-                let existing = entry.into_mut();
-                existing.assistant_message_id = assistant_message_id;
-                existing.name = tool_use.name.clone();
-                existing.ui_text = ui_text.clone();
-                existing.input = tool_use.input.clone();
-                existing.status = status.clone();
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(PendingToolUse {
-                    assistant_message_id,
-                    id: tool_use.id,
-                    name: tool_use.name.clone(),
-                    ui_text: ui_text.clone(),
-                    input: tool_use.input,
-                    status,
-                });
-            }
-        }
+        self.pending_tool_uses_by_id.insert(
+            tool_use.id.clone(),
+            PendingToolUse {
+                assistant_message_id,
+                id: tool_use.id,
+                name: tool_use.name.clone(),
+                ui_text: ui_text.clone(),
+                input: tool_use.input,
+                status,
+            },
+        );
 
         ui_text
     }

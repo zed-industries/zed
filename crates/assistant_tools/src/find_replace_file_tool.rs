@@ -176,7 +176,6 @@ impl Tool for FindReplaceFileTool {
 
     fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<PartialInput>(input.clone()).ok() {
-            // match serde_json::from_value::<PartialInput>(input.clone()).ok() {
             Some(input) if !input.path.is_empty() || !input.display_description.is_empty() => {
                 [input.path, input.display_description]
                     .into_iter()
@@ -184,7 +183,7 @@ impl Tool for FindReplaceFileTool {
                     .collect::<Vec<String>>()
                     .join(" ")
             }
-            _ => "Edit File".to_string(),
+            _ => "Edit".to_string(),
         }
     }
 
