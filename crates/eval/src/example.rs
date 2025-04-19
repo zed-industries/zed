@@ -880,6 +880,7 @@ impl RequestMarkdown {
     fn new(request: &LanguageModelRequest) -> Self {
         let mut tools = String::new();
         let mut messages = String::new();
+        let mut assistant_message_number: u32 = 1;
 
         // Print the tools
         if !request.tools.is_empty() {
@@ -897,13 +898,14 @@ impl RequestMarkdown {
 
         // Print the messages
         for message in &request.messages {
-            let role_str = match message.role {
-                Role::User => "👤 USER",
-                Role::Assistant => "🤖 ASSISTANT",
-                Role::System => "⚙️ SYSTEM",
+            match message.role {
+                Role::System => messages.push_str("# ⚙️ SYSTEM\n\n"),
+                Role::User => messages.push_str("# 👤 USER\n\n"),
+                Role::Assistant => {
+                    messages.push_str(&format!("# 🤖 ASSISTANT {assistant_message_number}\n\n"));
+                    assistant_message_number += 1;
+                }
             };
-
-            messages.push_str(&format!("# {}\n\n", role_str));
 
             for content in &message.content {
                 match content {
