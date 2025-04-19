@@ -348,7 +348,10 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             );
         }
 
-        models.into_values().map(|model| self.create_language_model(model)).collect()
+        models
+            .into_values()
+            .map(|model| self.create_language_model(model))
+            .collect()
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
