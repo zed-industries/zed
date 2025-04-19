@@ -15,3 +15,8 @@ brackets = [
     { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
 ]
 collapsed_placeholder = " /* ... */ "
+scope_opt_in_language_servers = ["tailwindcss-language-server"]
+
+[overrides.string]
+completion_query_characters = ["-", "."]
+opt_into_language_servers = ["tailwindcss-language-server"]
