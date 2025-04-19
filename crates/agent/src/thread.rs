@@ -1383,7 +1383,6 @@ impl Thread {
                 let stream = model.model.stream_completion_text_with_usage(request, &cx);
                 let (mut messages, usage) = stream.await?;
 
-                // todo! remove this?
                 if let Some(usage) = usage {
                     this.update(cx, |_thread, cx| {
                         cx.emit(ThreadEvent::UsageUpdated(usage));
