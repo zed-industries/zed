@@ -7633,6 +7633,7 @@ impl Element for EditorElement {
 
         let text_style = TextStyleRefinement {
             font_size: Some(self.style.text.font_size),
+            letter_spacing: Some(self.style.text.letter_spacing),
             line_height: Some(self.style.text.line_height),
             ..Default::default()
         };

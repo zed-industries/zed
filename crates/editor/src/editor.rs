@@ -19759,6 +19759,7 @@ impl Render for Editor {
                 font_fallbacks: settings.buffer_font.fallbacks.clone(),
                 font_size: settings.buffer_font_size(cx).into(),
                 font_weight: settings.buffer_font.weight,
+                letter_spacing: settings.buffer_letter_spacing,
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()
             },
