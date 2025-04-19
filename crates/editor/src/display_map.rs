@@ -946,16 +946,17 @@ impl DisplaySnapshot {
                 diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
             }
 
-            if let Some(severity) = chunk.diagnostic_severity {
-                // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-                if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-                    let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
-                    diagnostic_highlight.underline = Some(UnderlineStyle {
-                        color: Some(diagnostic_color),
-                        thickness: 1.0.into(),
-                        wavy: true,
-                    });
-                }
+            // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
+            if let Some(severity) = chunk.diagnostic_severity.filter(|severity| {
+                editor_style.show_underlines
+                    && (!chunk.is_unnecessary || *severity <= DiagnosticSeverity::WARNING)
+            }) {
+                let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
+                diagnostic_highlight.underline = Some(UnderlineStyle {
+                    color: Some(diagnostic_color),
+                    thickness: 1.0.into(),
+                    wavy: true,
+                });
             }
 
             if let Some(highlight_style) = highlight_style.as_mut() {

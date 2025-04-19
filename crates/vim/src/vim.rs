@@ -1139,10 +1139,10 @@ impl Vim {
         let editor_mode = editor.mode();
 
         if editor_mode.is_full()
-                && !newest_selection_empty
-                && self.mode == Mode::Normal
-                // When following someone, don't switch vim mode.
-                && editor.leader_peer_id().is_none()
+            && !newest_selection_empty
+            && self.mode == Mode::Normal
+            // When following someone, don't switch vim mode.
+            && editor.leader_peer_id().is_none()
         {
             if preserve_selection {
                 self.switch_mode(Mode::Visual, true, window, cx);
