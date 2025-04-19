@@ -6174,6 +6174,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
         fn fn_1(param1: bool, param2: &str) {
             let var1 = "text";
         }
+
+        fn fn_2(param1: bool, param2: &str) {
+            let var1 = "text";
+        }
     "#
     .unindent();
 
@@ -6191,8 +6195,25 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(0), 25)..DisplayPoint::new(DisplayRow(0), 25),
                 DisplayPoint::new(DisplayRow(2), 24)..DisplayPoint::new(DisplayRow(2), 12),
                 DisplayPoint::new(DisplayRow(3), 18)..DisplayPoint::new(DisplayRow(3), 18),
+                DisplayPoint::new(DisplayRow(6), 7)..DisplayPoint::new(DisplayRow(6), 7),
+                DisplayPoint::new(DisplayRow(7), 12)..DisplayPoint::new(DisplayRow(7), 12),
             ]);
         });
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mo«ˇ»d4};
+
+                fn fn_1(para«ˇm1: bool, pa»ram2: &str) {
+                    let var1 = "te«ˇ»xt";
+                }
+
+                fn fn_2«ˇ»(param1: bool, param2: &str) {
+                    let var1«ˇ» = "text";
+                }
+            "#},
+            cx,
+        );
         editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
     });
     editor.update(cx, |editor, cx| {
@@ -6202,7 +6223,11 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::{mod3, «mod4ˇ»};
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    let var1 = "«ˇtext»";
+                    let var1 = "«textˇ»";
+                }
+
+                fn «fn_2ˇ»(param1: bool, param2: &str) {
+                    let «ˇvar1» = "text";
                 }
             "#},
             cx,
@@ -6221,6 +6246,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 «ˇfn fn_1(param1: bool, param2: &str) {
                     let var1 = "text";
                 }»
+
+                «fn fn_2(param1: bool, param2: &str) {
+                    let var1 = "text";
+                }ˇ»
             "#},
             cx,
         );
@@ -6231,7 +6260,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
     });
     assert_eq!(
         editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-        &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        &[DisplayPoint::new(DisplayRow(9), 0)..DisplayPoint::new(DisplayRow(0), 0)]
     );
 
     // Trying to expand the selected syntax node one more time has no effect.
@@ -6240,7 +6269,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
     });
     assert_eq!(
         editor.update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-        &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        &[DisplayPoint::new(DisplayRow(9), 0)..DisplayPoint::new(DisplayRow(0), 0)]
     );
 
     editor.update_in(cx, |editor, window, cx| {
@@ -6253,6 +6282,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::«{mod3, mod4}ˇ»;
 
                 «ˇfn fn_1(param1: bool, param2: &str) {
+                    let var1 = "text";
+                }»
+
+                «ˇfn fn_2(param1: bool, param2: &str) {
                     let var1 = "text";
                 }»
             "#},
@@ -6270,7 +6303,11 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::{mod3, «mod4ˇ»};
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    let var1 = "«ˇtext»";
+                    let var1 = "«textˇ»";
+                }
+
+                fn «fn_2ˇ»(param1: bool, param2: &str) {
+                    let «ˇvar1» = "text";
                 }
             "#},
             cx,
@@ -6288,6 +6325,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
 
                 fn fn_1(para«ˇm1: bool, pa»ram2: &str) {
                     let var1 = "te«ˇ»xt";
+                }
+
+                fn fn_2«ˇ»(param1: bool, param2: &str) {
+                    let var1«ˇ» = "text";
                 }
             "#},
             cx,
@@ -6306,6 +6347,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
 
                 fn fn_1(para«ˇm1: bool, pa»ram2: &str) {
                     let var1 = "te«ˇ»xt";
+                }
+
+                fn fn_2«ˇ»(param1: bool, param2: &str) {
+                    let var1«ˇ» = "text";
                 }
             "#},
             cx,
@@ -6339,7 +6384,11 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::«{mod3, mod4}ˇ»;
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    let var1 = "«ˇtext»";
+                    let var1 = "«textˇ»";
+                }
+
+                fn «fn_2ˇ»(param1: bool, param2: &str) {
+                    let «ˇvar1» = "text";
                 }
             "#},
             cx,

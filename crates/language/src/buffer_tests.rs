@@ -1152,6 +1152,20 @@ fn test_range_for_syntax_ancestor(cx: &mut App) {
                 .byte_range(),
             range_of(text, "(|c| {})")
         );
+        assert_eq!(
+            snapshot
+                .syntax_ancestor(empty_range_at(text, "()"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "a")
+        );
+        assert_eq!(
+            snapshot
+                .syntax_ancestor(empty_range_at(text, " a()"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "fn")
+        );
 
         buffer
     });
