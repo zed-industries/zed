@@ -660,9 +660,18 @@ pub struct SerializedMessage {
 #[serde(tag = "type")]
 pub enum SerializedMessageSegment {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+    },
     #[serde(rename = "thinking")]
-    Thinking { text: String },
+    Thinking {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    RedactedThinking {
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

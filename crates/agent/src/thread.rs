@@ -106,12 +106,21 @@ impl Message {
         self.segments.iter().all(|segment| segment.should_display())
     }
 
-    pub fn push_thinking(&mut self, text: &str) {
-        if let Some(MessageSegment::Thinking(segment)) = self.segments.last_mut() {
+    pub fn push_thinking(&mut self, text: &str, signature: Option<String>) {
+        if let Some(MessageSegment::Thinking {
+            text: segment,
+            signature: current_signature,
+        }) = self.segments.last_mut()
+        {
+            if let Some(signature) = signature {
+                *current_signature = Some(signature);
+            }
             segment.push_str(text);
         } else {
-            self.segments
-                .push(MessageSegment::Thinking(text.to_string()));
+            self.segments.push(MessageSegment::Thinking {
+                text: text.to_string(),
+                signature,
+            });
         }
     }
 
@@ -133,11 +142,12 @@ impl Message {
         for segment in &self.segments {
             match segment {
                 MessageSegment::Text(text) => result.push_str(text),
-                MessageSegment::Thinking(text) => {
-                    result.push_str("<think>");
+                MessageSegment::Thinking { text, .. } => {
+                    result.push_str("<think>\n");
                     result.push_str(text);
-                    result.push_str("</think>");
+                    result.push_str("\n</think>");
                 }
+                MessageSegment::RedactedThinking(_) => {}
             }
         }
 
@@ -148,24 +158,22 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageSegment {
     Text(String),
-    Thinking(String),
+    Thinking {
+        text: String,
+        signature: Option<String>,
+    },
+    RedactedThinking(Vec<u8>),
 }
 
 impl MessageSegment {
-    pub fn text_mut(&mut self) -> &mut String {
-        match self {
-            Self::Text(text) => text,
-            Self::Thinking(text) => text,
-        }
-    }
-
     pub fn should_display(&self) -> bool {
         // We add USING_TOOL_MARKER when making a request that includes tool uses
         // without non-whitespace text around them, and this can cause the model
         // to mimic the pattern, so we consider those segments not displayable.
         match self {
             Self::Text(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
-            Self::Thinking(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
+            Self::Thinking { text, .. } => text.is_empty() || text.trim() == USING_TOOL_MARKER,
+            Self::RedactedThinking(_) => false,
         }
     }
 }
@@ -401,8 +409,11 @@ impl Thread {
                         .into_iter()
                         .map(|segment| match segment {
                             SerializedMessageSegment::Text { text } => MessageSegment::Text(text),
-                            SerializedMessageSegment::Thinking { text } => {
-                                MessageSegment::Thinking(text)
+                            SerializedMessageSegment::Thinking { text, signature } => {
+                                MessageSegment::Thinking { text, signature }
+                            }
+                            SerializedMessageSegment::RedactedThinking { data } => {
+                                MessageSegment::RedactedThinking(data)
                             }
                         })
                         .collect(),
@@ -855,9 +866,10 @@ impl Thread {
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(content) => text.push_str(content),
-                    MessageSegment::Thinking(content) => {
+                    MessageSegment::Thinking { text: content, .. } => {
                         text.push_str(&format!("<think>{}</think>", content))
                     }
+                    MessageSegment::RedactedThinking(_) => {}
                 }
             }
             text.push('\n');
@@ -887,8 +899,16 @@ impl Thread {
                                 MessageSegment::Text(text) => {
                                     SerializedMessageSegment::Text { text: text.clone() }
                                 }
-                                MessageSegment::Thinking(text) => {
-                                    SerializedMessageSegment::Thinking { text: text.clone() }
+                                MessageSegment::Thinking { text, signature } => {
+                                    SerializedMessageSegment::Thinking {
+                                        text: text.clone(),
+                                        signature: signature.clone(),
+                                    }
+                                }
+                                MessageSegment::RedactedThinking(data) => {
+                                    SerializedMessageSegment::RedactedThinking {
+                                        data: data.clone(),
+                                    }
                                 }
                             })
                             .collect(),
@@ -1012,10 +1032,35 @@ impl Thread {
             self.tool_use
                 .attach_tool_results(message.id, &mut request_message);
 
-            if !message.segments.is_empty() {
+            if !message.context.is_empty() {
                 request_message
                     .content
-                    .push(MessageContent::Text(message.to_string()));
+                    .push(MessageContent::Text(message.context.to_string()));
+            }
+
+            for segment in &message.segments {
+                match segment {
+                    MessageSegment::Text(text) => {
+                        if !text.is_empty() {
+                            request_message
+                                .content
+                                .push(MessageContent::Text(text.into()));
+                        }
+                    }
+                    MessageSegment::Thinking { text, signature } => {
+                        if !text.is_empty() {
+                            request_message.content.push(MessageContent::Thinking {
+                                text: text.into(),
+                                signature: signature.clone(),
+                            });
+                        }
+                    }
+                    MessageSegment::RedactedThinking(data) => {
+                        request_message
+                            .content
+                            .push(MessageContent::RedactedThinking(data.clone()));
+                    }
+                };
             }
 
             self.tool_use
@@ -1201,10 +1246,13 @@ impl Thread {
                                     };
                                 }
                             }
-                            LanguageModelCompletionEvent::Thinking(chunk) => {
+                            LanguageModelCompletionEvent::Thinking {
+                                text: chunk,
+                                signature,
+                            } => {
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
-                                        last_message.push_thinking(&chunk);
+                                        last_message.push_thinking(&chunk, signature);
                                         cx.emit(ThreadEvent::StreamedAssistantThinking(
                                             last_message.id,
                                             chunk,
@@ -1217,7 +1265,10 @@ impl Thread {
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
                                         thread.insert_message(
                                             Role::Assistant,
-                                            vec![MessageSegment::Thinking(chunk.to_string())],
+                                            vec![MessageSegment::Thinking {
+                                                text: chunk.to_string(),
+                                                signature,
+                                            }],
                                             cx,
                                         );
                                     };
@@ -1618,9 +1669,10 @@ impl Thread {
 
     /// Insert an empty message to be populated with tool results upon send.
     pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
-        // TODO: Don't insert a dummy user message here. Ensure this works with the thinking model.
-        // Insert a user message to contain the tool results.
-        self.insert_user_message("Here are the tool results.", Vec::new(), None, cx);
+        // Tool results are assumed to be waiting on the next message id, so they will populate
+        // this empty message before sending to model. Would prefer this to be more straightforward.
+        self.insert_message(Role::User, vec![], cx);
+        self.auto_capture_telemetry(cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.
@@ -1899,9 +1951,10 @@ impl Thread {
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(text) => writeln!(markdown, "{}\n", text)?,
-                    MessageSegment::Thinking(text) => {
-                        writeln!(markdown, "<think>{}</think>\n", text)?
+                    MessageSegment::Thinking { text, .. } => {
+                        writeln!(markdown, "<think>\n{}\n</think>\n", text)?
                     }
+                    MessageSegment::RedactedThinking(_) => {}
                 }
             }
 
