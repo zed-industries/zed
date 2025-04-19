@@ -424,8 +424,11 @@ impl CopilotChatLanguageModel {
             let text_content = {
                 let mut buffer = String::new();
                 for string in message.content.iter().filter_map(|content| match content {
-                    MessageContent::Text(text) => Some(text.as_str()),
+                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                        Some(text.as_str())
+                    }
                     MessageContent::ToolUse(_)
+                    | MessageContent::RedactedThinking(_)
                     | MessageContent::ToolResult(_)
                     | MessageContent::Image(_) => None,
                 }) {

@@ -133,18 +133,23 @@ impl RenderedMessage {
     }
 
     fn push_segment(&mut self, segment: &MessageSegment, cx: &mut App) {
-        let rendered_segment = match segment {
-            MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
-                content: parse_markdown(text.into(), self.language_registry.clone(), cx),
-                scroll_handle: ScrollHandle::default(),
-            },
-            MessageSegment::Text(text) => RenderedMessageSegment::Text(parse_markdown(
-                text.into(),
-                self.language_registry.clone(),
-                cx,
-            )),
+        match segment {
+            MessageSegment::Thinking { text, .. } => {
+                self.segments.push(RenderedMessageSegment::Thinking {
+                    content: parse_markdown(text.into(), self.language_registry.clone(), cx),
+                    scroll_handle: ScrollHandle::default(),
+                })
+            }
+            MessageSegment::Text(text) => {
+                self.segments
+                    .push(RenderedMessageSegment::Text(parse_markdown(
+                        text.into(),
+                        self.language_registry.clone(),
+                        cx,
+                    )))
+            }
+            MessageSegment::RedactedThinking(_) => {}
         };
-        self.segments.push(rendered_segment);
     }
 }
 

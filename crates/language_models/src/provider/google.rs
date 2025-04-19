@@ -368,13 +368,15 @@ pub fn into_google(
         content
             .into_iter()
             .filter_map(|content| match content {
-                language_model::MessageContent::Text(text) => {
+                language_model::MessageContent::Text(text)
+                | language_model::MessageContent::Thinking { text, .. } => {
                     if !text.is_empty() {
                         Some(Part::TextPart(google_ai::TextPart { text }))
                     } else {
                         None
                     }
                 }
+                language_model::MessageContent::RedactedThinking(_) => None,
                 language_model::MessageContent::Image(_) => None,
                 language_model::MessageContent::ToolUse(tool_use) => {
                     Some(Part::FunctionCallPart(google_ai::FunctionCallPart {

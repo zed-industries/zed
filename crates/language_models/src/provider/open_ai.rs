@@ -342,14 +342,16 @@ pub fn into_open_ai(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) => messages.push(match message.role {
-                    Role::User => open_ai::RequestMessage::User { content: text },
-                    Role::Assistant => open_ai::RequestMessage::Assistant {
-                        content: Some(text),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => open_ai::RequestMessage::System { content: text },
-                }),
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
+                    .push(match message.role {
+                        Role::User => open_ai::RequestMessage::User { content: text },
+                        Role::Assistant => open_ai::RequestMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => open_ai::RequestMessage::System { content: text },
+                    }),
+                MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_ai::ToolCall {
