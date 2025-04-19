@@ -10,7 +10,6 @@ pub struct EditorSettings {
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
-    pub selection_highlight_debounce: u64,
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
@@ -263,10 +262,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub selection_highlight: Option<bool>,
-    /// The debounce delay before querying highlights based on the selected text.
-    ///
-    /// Default: 75
-    pub selection_highlight_debounce: Option<u64>,
     /// The debounce delay before querying highlights from the language
     /// server based on the current cursor location.
     ///
