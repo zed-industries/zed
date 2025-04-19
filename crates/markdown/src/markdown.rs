@@ -86,7 +86,7 @@ impl Default for MarkdownStyle {
 }
 
 pub struct Markdown {
-    pub source: SharedString,
+    source: SharedString,
     selection: Selection,
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
