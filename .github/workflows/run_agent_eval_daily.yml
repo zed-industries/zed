@@ -11,8 +11,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  run_eval:
-    name: Run Eval
+  build_binary:
+    name: Build Eval Binary
     if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
@@ -26,6 +26,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev libxcb-render0-dev libxcb-randr0-dev libxcb-xtest0-dev libxcb-keysyms1-dev libxext-dev libxrender-dev libxrandr-dev libxtst-dev libxfixes-dev pkg-config libasound2-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev
           ./script/headless && ./script/install-mold 2.34.0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build entire Zed application
+        run: cargo build --release
+
+      - name: Build eval binary separately to ensure it's available
+        run: cargo build --release -p eval
+
+      - name: Upload eval binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-binary
+          path: target/release/eval
+
+  run_eval:
+    name: Run Eval - ${{ matrix.exercise }}
+    needs: build_binary
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        exercise:
+          - find_and_replace_diff_card
+          - metal_i64_support
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev libxcb-render0-dev libxcb-randr0-dev libxcb-xtest0-dev libxcb-keysyms1-dev libxext-dev libxrender-dev libxrandr-dev libxtst-dev libxfixes-dev pkg-config libasound2-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev
+          ./script/headless && ./script/install-mold 2.34.0
+
       - name: Create required directories
         run: |
           mkdir -p /home/runner/.config/zed
@@ -33,11 +73,18 @@ jobs:
           mkdir -p ./crates/eval/repos
           mkdir -p ./crates/eval/worktrees
           mkdir -p ./crates/eval/runs
+
       - name: Set up Anthropic API key
         run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Download eval binary
+        uses: actions/download-artifact@v4
+        with:
+          name: eval-binary
+          path: ./target/release/
 
-      - name: Run cargo eval
-        run: cargo run -p eval -- --cohort_id daily-run-${{ github.run_id }}
+      - name: Make eval binary executable
+        run: chmod +x ./target/release/eval
+
+      - name: Run eval for ${{ matrix.exercise }}
+        run: ./target/release/eval --cohort-id dailyrun${{ github.run_id }} ${{ matrix.exercise }}
