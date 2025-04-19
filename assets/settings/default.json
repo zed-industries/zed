@@ -181,8 +181,6 @@
   "current_line_highlight": "all",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
-  // The debounce delay before querying highlights based on the selected text.
-  "selection_highlight_debounce": 50,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
