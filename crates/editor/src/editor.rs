@@ -5522,6 +5522,7 @@ impl Editor {
                     .timer(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT)
                     .await;
             }
+            let query_range_for_highlight = query_range.clone();
             let match_task = cx.background_spawn(async move {
                 let buffer_ranges = multi_buffer_snapshot
                     .range_to_buffer_ranges(multi_buffer_range_to_query)
@@ -5553,7 +5554,8 @@ impl Editor {
                                 buffer_snapshot.remote_id(),
                                 match_start..match_end,
                             );
-                            (match_anchor_range != query_range).then_some(match_anchor_range)
+                            (match_anchor_range != query_range_for_highlight)
+                                .then_some(match_anchor_range)
                         }),
                     );
                 }
@@ -5562,6 +5564,20 @@ impl Editor {
             let match_ranges = match_task.await;
             editor
                 .update_in(cx, |editor, _, cx| {
+                    #[cfg(debug_assertions)]
+                    {
+                        let selection = editor.selections.newest::<Point>(cx);
+                        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let selection_anchor_range =
+                            selection.range().to_anchors(&multi_buffer_snapshot);
+                        // It will always be true because:
+                        // 1. When new valid selection is made, we overwrite the previous task.
+                        // 2. When new invalid selection changes, we cancel the previous task.
+                        debug_assert_eq!(
+                            selection_anchor_range, query_range,
+                            "Selection range should match query range"
+                        );
+                    }
                     editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                     if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
