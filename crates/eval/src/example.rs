@@ -918,13 +918,13 @@ impl RequestMarkdown {
                     }
                     MessageContent::ToolResult(tool_result) => {
                         messages.push_str(&format!(
-                            "**Tool Result**: {} (ID: {})\n",
+                            "**Tool Result**: {} (ID: {})\n\n",
                             tool_result.tool_name, tool_result.tool_use_id
                         ));
                         if tool_result.is_error {
                             messages.push_str("**ERROR:**\n");
                         }
-                        messages.push_str(&format!("```\n{}\n```\n\n", tool_result.content));
+                        messages.push_str(&format!("{}\n", tool_result.content));
                     }
                 }
             }
