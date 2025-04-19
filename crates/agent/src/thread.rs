@@ -1256,7 +1256,12 @@ impl Thread {
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
 
-                    if thread.summary.is_none() && thread.messages.len() >= 2 {
+                    // If there is a response without tool use, summarize the message. Otherwise,
+                    // allow two tool uses before summarizing.
+                    if thread.summary.is_none()
+                        && thread.messages.len() >= 2
+                        && (!thread.has_pending_tool_uses() || thread.messages.len() >= 6)
+                    {
                         thread.summarize(cx);
                     }
                 })?;
