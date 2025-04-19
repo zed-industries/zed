@@ -1252,6 +1252,7 @@ impl BufferSearchBar {
                                 .contains(SearchOptions::ONE_MATCH_PER_LINE),
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -1270,6 +1271,7 @@ impl BufferSearchBar {
                             false,
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),

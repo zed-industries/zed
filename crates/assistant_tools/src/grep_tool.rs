@@ -114,7 +114,7 @@ impl Tool for GrepTool {
                 .into_iter()
                 .collect::<Vec<_>>(),
         ) {
-            Ok(include) => include,
+            Ok(matcher) => matcher,
             Err(error) => {
                 return Task::ready(Err(anyhow!("invalid include glob pattern: {}", error))).into();
             }
@@ -128,6 +128,7 @@ impl Tool for GrepTool {
             false,
             include_matcher,
             PathMatcher::default(), // For now, keep it simple and don't enable an exclude pattern.
+            true, // Always match file include pattern against *full project paths* that start with a project root.
             None,
         ) {
             Ok(query) => query,
@@ -256,10 +257,10 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
-        // Test with include pattern for Rust files
+        // Test with include pattern for Rust files inside the root of the project
         let input = serde_json::to_value(GrepToolInput {
             regex: "println".to_string(),
-            include_pattern: Some("**/*.rs".to_string()),
+            include_pattern: Some("root/**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
         })
@@ -279,7 +280,7 @@ mod tests {
         // Test with include pattern for src directory only
         let input = serde_json::to_value(GrepToolInput {
             regex: "fn".to_string(),
-            include_pattern: Some("**/src/**".to_string()),
+            include_pattern: Some("root/**/src/**".to_string()),
             offset: 0,
             case_sensitive: false,
         })

@@ -1057,6 +1057,7 @@ impl ProjectSearchView {
                     .contains(SearchOptions::ONE_MATCH_PER_LINE),
                 included_files,
                 excluded_files,
+                false,
                 open_buffers,
             ) {
                 Ok(query) => {
@@ -1084,6 +1085,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
+                false,
                 open_buffers,
             ) {
                 Ok(query) => {

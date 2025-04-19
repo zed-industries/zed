@@ -14,6 +14,7 @@ pub async fn replace_exact(old: &str, new: &str, snapshot: &BufferSnapshot) -> O
         true,
         PathMatcher::new(iter::empty::<&str>()).ok()?,
         PathMatcher::new(iter::empty::<&str>()).ok()?,
+        false,
         None,
     )
     .log_err()?;
