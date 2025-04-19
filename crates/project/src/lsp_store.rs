@@ -50,8 +50,8 @@ use lsp::{
     DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
     FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LanguageServer,
     LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName,
-    LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
-    TextEdit, WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
+    LspRequestFuture, MessageActionItem, MessageType, OneOf, ProgressToken, RenameFilesParams,
+    SymbolKind, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
     notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
@@ -563,9 +563,7 @@ impl LocalLspStore {
                         this.update(&mut cx, |this, _| {
                             if let Some(status) = this.language_server_statuses.get_mut(&server_id)
                             {
-                                if let lsp::NumberOrString::String(token) = params.token {
-                                    status.progress_tokens.insert(token);
-                                }
+                                status.progress_tokens.insert(params.token.into());
                             }
                         })?;
 
@@ -3386,12 +3384,23 @@ pub enum LspStoreEvent {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
+pub struct StringifiedProgressToken(pub String);
+impl From<ProgressToken> for StringifiedProgressToken {
+    fn from(token: ProgressToken) -> Self {
+        match token {
+            ProgressToken::Number(id) => Self(format!("numericToken{}", id)),
+            ProgressToken::String(s) => Self(s),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    progress_tokens: HashSet<String>,
+    progress_tokens: HashSet<StringifiedProgressToken>,
 }
 
 #[derive(Clone, Debug)]
@@ -7520,13 +7529,7 @@ impl LspStore {
         disk_based_diagnostics_progress_token: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let token = match progress.token {
-            lsp::NumberOrString::String(token) => token,
-            lsp::NumberOrString::Number(token) => {
-                log::info!("skipping numeric progress token {}", token);
-                return;
-            }
-        };
+        let token = progress.token.into();
 
         let lsp::ProgressParamsValue::WorkDone(progress) = progress.value;
         let language_server_status =
@@ -7543,7 +7546,7 @@ impl LspStore {
         let is_disk_based_diagnostics_progress = disk_based_diagnostics_progress_token
             .as_ref()
             .map_or(false, |disk_based_token| {
-                token.starts_with(disk_based_token)
+                token.0.starts_with(disk_based_token)
             });
 
         match progress {
@@ -7553,7 +7556,7 @@ impl LspStore {
                 }
                 self.on_lsp_work_start(
                     language_server_id,
-                    token.clone(),
+                    token.0.clone(),
                     LanguageServerProgress {
                         title: Some(report.title),
                         is_disk_based_diagnostics_progress,
@@ -7567,7 +7570,7 @@ impl LspStore {
             }
             lsp::WorkDoneProgress::Report(report) => self.on_lsp_work_progress(
                 language_server_id,
-                token,
+                token.0,
                 LanguageServerProgress {
                     title: None,
                     is_disk_based_diagnostics_progress,
@@ -7580,7 +7583,7 @@ impl LspStore {
             ),
             lsp::WorkDoneProgress::End(_) => {
                 language_server_status.progress_tokens.remove(&token);
-                self.on_lsp_work_end(language_server_id, token.clone(), cx);
+                self.on_lsp_work_end(language_server_id, token.0.clone(), cx);
                 if is_disk_based_diagnostics_progress {
                     self.disk_based_diagnostics_finished(language_server_id, cx);
                 }
