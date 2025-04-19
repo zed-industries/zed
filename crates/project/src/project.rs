@@ -1496,7 +1496,6 @@ impl Project {
                 if let Some(c) = binary.connection {
                     let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
                     let port = dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
-                    std::thread::sleep(Duration::from_millis(100));
 
                     ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
                     connection = Some(TcpArguments {
