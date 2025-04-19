@@ -53,6 +53,10 @@ impl log::Log for Zlog {
             None => private::scope_new(&["*unknown*"]),
         };
         let level = record.metadata().level();
+
+        if record.level() == log::Level::Error {
+            filter::is_scope_enabled(&scope, level);
+        }
         if !filter::is_scope_enabled(&scope, level) {
             return;
         }

@@ -3,7 +3,7 @@ use crate::headless_project::HeadlessAppState;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::Utc;
 use client::{ProxySettings, telemetry};
-use dap::DapRegistry;
+
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
@@ -441,6 +441,7 @@ pub fn execute_run(
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
+        dap_adapters::init(cx);
 
         extension::init(cx);
         let extension_host_proxy = ExtensionHostProxy::global(cx);
@@ -472,7 +473,6 @@ pub fn execute_run(
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
             let languages = Arc::new(languages);
-            let debug_adapters = DapRegistry::default().into();
 
             HeadlessProject::new(
                 HeadlessAppState {
@@ -481,7 +481,6 @@ pub fn execute_run(
                     http_client,
                     node_runtime,
                     languages,
-                    debug_adapters,
                     extension_host_proxy,
                 },
                 cx,

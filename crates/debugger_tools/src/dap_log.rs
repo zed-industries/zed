@@ -566,11 +566,13 @@ impl DapLogView {
             .dap_store()
             .read(cx)
             .sessions()
-            .filter_map(|client| {
-                let client = client.read(cx).adapter_client()?;
+            .filter_map(|session| {
+                let session = session.read(cx);
+                session.adapter_name();
+                let client = session.adapter_client()?;
                 Some(DapMenuItem {
                     client_id: client.id(),
-                    client_name: client.name().0.as_ref().into(),
+                    client_name: session.adapter_name().to_string(),
                     has_adapter_logs: client.has_adapter_logs(),
                     selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
                 })

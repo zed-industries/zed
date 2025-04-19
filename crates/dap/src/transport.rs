@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::TCPHost;
+use task::TcpArgumentsTemplate;
 use util::ResultExt as _;
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
@@ -74,16 +74,14 @@ pub enum Transport {
 }
 
 impl Transport {
-    #[cfg(any(test, feature = "test-support"))]
-    async fn start(_: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
-        #[cfg(any(test, feature = "test-support"))]
-        return FakeTransport::start(cx)
-            .await
-            .map(|(transports, fake)| (transports, Self::Fake(fake)));
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
+        #[cfg(any(test, feature = "test-support"))]
+        if cfg!(any(test, feature = "test-support")) {
+            return FakeTransport::start(cx)
+                .await
+                .map(|(transports, fake)| (transports, Self::Fake(fake)));
+        }
+
         if binary.connection.is_some() {
             TcpTransport::start(binary, cx)
                 .await
@@ -520,18 +518,21 @@ pub struct TcpTransport {
 
 impl TcpTransport {
     /// Get an open port to use with the tcp client when not supplied by debug config
-    pub async fn port(host: &TCPHost) -> Result<u16> {
+    pub async fn port(host: &TcpArgumentsTemplate) -> Result<u16> {
         if let Some(port) = host.port {
             Ok(port)
         } else {
-            Ok(TcpListener::bind(SocketAddrV4::new(host.host(), 0))
-                .await?
-                .local_addr()?
-                .port())
+            Self::unused_port(host.host()).await
         }
     }
 
-    #[allow(dead_code, reason = "This is used in non test builds of Zed")]
+    pub async fn unused_port(host: Ipv4Addr) -> Result<u16> {
+        Ok(TcpListener::bind(SocketAddrV4::new(host, 0))
+            .await?
+            .local_addr()?
+            .port())
+    }
+
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let Some(connection_args) = binary.connection.as_ref() else {
             return Err(anyhow!("No connection arguments provided"));
@@ -546,13 +547,8 @@ impl TcpTransport {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::null())
@@ -635,13 +631,8 @@ impl StdioTransport {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::piped())

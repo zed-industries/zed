@@ -1,5 +1,5 @@
 use crate::{
-    adapters::{DebugAdapterBinary, DebugAdapterName},
+    adapters::DebugAdapterBinary,
     transport::{IoKind, LogKind, TransportDelegate},
 };
 use anyhow::{Result, anyhow};
@@ -88,7 +88,6 @@ impl DebugAdapterClient {
     ) -> Result<Self> {
         let binary = match self.transport_delegate.transport() {
             crate::transport::Transport::Tcp(tcp_transport) => DebugAdapterBinary {
-                adapter_name: binary.adapter_name,
                 command: binary.command,
                 arguments: binary.arguments,
                 envs: binary.envs,
@@ -219,9 +218,6 @@ impl DebugAdapterClient {
         self.id
     }
 
-    pub fn name(&self) -> DebugAdapterName {
-        self.binary.adapter_name.clone()
-    }
     pub fn binary(&self) -> &DebugAdapterBinary {
         &self.binary
     }
@@ -322,7 +318,6 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                adapter_name: "adapter".into(),
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
@@ -393,7 +388,6 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                adapter_name: "adapter".into(),
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
@@ -447,7 +441,6 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                adapter_name: "test-adapter".into(),
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),

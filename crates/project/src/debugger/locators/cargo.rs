@@ -8,7 +8,7 @@ use smol::{
 };
 use task::DebugTaskDefinition;
 
-pub(super) struct CargoLocator;
+pub(crate) struct CargoLocator;
 
 async fn find_best_executable(executables: &[String], test_name: &str) -> Option<String> {
     if executables.len() == 1 {
@@ -37,9 +37,12 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
 }
 #[async_trait]
 impl DapLocator for CargoLocator {
-    async fn run_locator(&self, debug_config: &mut DebugTaskDefinition) -> Result<()> {
+    async fn run_locator(
+        &self,
+        mut debug_config: DebugTaskDefinition,
+    ) -> Result<DebugTaskDefinition> {
         let Some(launch_config) = (match &mut debug_config.request {
-            task::DebugRequestType::Launch(launch_config) => Some(launch_config),
+            task::DebugRequest::Launch(launch_config) => Some(launch_config),
             _ => None,
         }) else {
             return Err(anyhow!("Couldn't get launch config in locator"));
@@ -119,6 +122,6 @@ impl DapLocator for CargoLocator {
         if let Some(test_name) = test_name {
             launch_config.args.push(test_name);
         }
-        Ok(())
+        Ok(debug_config)
     }
 }
