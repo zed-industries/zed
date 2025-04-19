@@ -29,6 +29,7 @@ use std::{
 use unindent::Unindent as _;
 use util::ResultExt as _;
 use util::command::new_smol_command;
+use util::markdown::MarkdownString;
 use util::serde::default_true;
 
 use crate::AgentAppState;
@@ -887,8 +888,8 @@ impl RequestMarkdown {
                 write!(&mut tools, "{}\n\n", tool.description).unwrap();
                 write!(
                     &mut tools,
-                    "```json\n{}\n```\n\n",
-                    serde_json::to_string_pretty(&tool.input_schema).unwrap_or_default()
+                    "{}\n",
+                    MarkdownString::code_block("json", &format!("{:#}", tool.input_schema))
                 )
                 .unwrap();
             }
@@ -918,7 +919,10 @@ impl RequestMarkdown {
                             "**Tool Use**: {} (ID: {})\n",
                             tool_use.name, tool_use.id
                         ));
-                        messages.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
+                        messages.push_str(&format!(
+                            "{}\n",
+                            MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                        ));
                     }
                     MessageContent::ToolResult(tool_result) => {
                         messages.push_str(&format!(
@@ -977,7 +981,10 @@ fn response_events_to_markdown(
                     "**Tool Use**: {} (ID: {})\n",
                     tool_use.name, tool_use.id
                 ));
-                response.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
+                response.push_str(&format!(
+                    "{}\n",
+                    MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                ));
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)
