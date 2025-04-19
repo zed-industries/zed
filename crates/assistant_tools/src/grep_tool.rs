@@ -22,6 +22,9 @@ pub struct GrepToolInput {
     /// will be parsed by the Rust `regex` crate.
     pub regex: String,
 
+    /// A glob pattern for the paths of files to include in the search.
+    pub include_pattern: String,
+
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
@@ -95,19 +98,28 @@ impl Tool for GrepTool {
     ) -> ToolResult {
         const CONTEXT_LINES: u32 = 2;
 
-        let (offset, regex, case_sensitive) = match serde_json::from_value::<GrepToolInput>(input) {
-            Ok(input) => (input.offset, input.regex, input.case_sensitive),
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
+        let input = match serde_json::from_value::<GrepToolInput>(input) {
+            Ok(input) => input,
+            Err(error) => {
+                return Task::ready(Err(anyhow!("Failed to parse input: {}", error))).into();
+            }
+        };
+
+        let include_matcher = match PathMatcher::new([input.include_pattern]) {
+            Ok(include) => include,
+            Err(error) => {
+                return Task::ready(Err(anyhow!("invalid include glob pattern: {}", error))).into();
+            }
         };
 
         let query = match SearchQuery::regex(
-            &regex,
+            &input.regex,
             false,
-            case_sensitive,
+            input.case_sensitive,
             false,
             false,
-            PathMatcher::default(),
-            PathMatcher::default(),
+            include_matcher,
+            PathMatcher::default(), // For now, keep it simple and don't enable an exclude pattern.
             None,
         ) {
             Ok(query) => query,
@@ -120,7 +132,7 @@ impl Tool for GrepTool {
             futures::pin_mut!(results);
 
             let mut output = String::new();
-            let mut skips_remaining = offset;
+            let mut skips_remaining = input.offset;
             let mut matches_found = 0;
             let mut has_more_matches = false;
 
@@ -193,9 +205,9 @@ impl Tool for GrepTool {
             } else if has_more_matches {
                 Ok(format!(
                     "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
-                    offset + 1,
-                    offset + matches_found,
-                    offset + RESULTS_PER_PAGE,
+                    input.offset + 1,
+                    input.offset + matches_found,
+                    input.offset + RESULTS_PER_PAGE,
                 ))
             } else {
                 Ok(format!("Found {matches_found} matches:\n{output}"))
