@@ -503,7 +503,6 @@ fn render_markdown_code_block(
         .blend(cx.theme().colors().editor_foreground.opacity(0.01));
 
     let codeblock_header = h_flex()
-        .group("codeblock_header")
         .py_1()
         .pl_1p5()
         .pr_1()
@@ -518,7 +517,7 @@ fn render_markdown_code_block(
             h_flex()
                 .gap_1()
                 .child(
-                    div().visible_on_hover("codeblock_header").child(
+                    div().visible_on_hover("codeblock_container").child(
                         IconButton::new(
                             ("copy-markdown-code", ix),
                             if codeblock_was_copied {
@@ -600,6 +599,7 @@ fn render_markdown_code_block(
         );
 
     v_flex()
+        .group("codeblock_container")
         .my_2()
         .overflow_hidden()
         .rounded_lg()
