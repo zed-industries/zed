@@ -148,6 +148,16 @@ impl OpenAiLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: open_ai::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(OpenAiLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for OpenAiLanguageModelProvider {
@@ -172,14 +182,11 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = open_ai::Model::default();
-        Some(Arc::new(OpenAiLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(open_ai::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(open_ai::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -211,15 +218,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(OpenAiLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    state: self.state.clone(),
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 

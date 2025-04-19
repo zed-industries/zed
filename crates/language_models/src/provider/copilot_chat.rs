@@ -70,6 +70,13 @@ impl CopilotChatLanguageModelProvider {
 
         Self { state }
     }
+
+    fn create_language_model(&self, model: CopilotChatModel) -> Arc<dyn LanguageModel> {
+        Arc::new(CopilotChatLanguageModel {
+            model,
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for CopilotChatLanguageModelProvider {
@@ -94,21 +101,16 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = CopilotChatModel::default();
-        Some(Arc::new(CopilotChatLanguageModel {
-            model,
-            request_limiter: RateLimiter::new(4),
-        }) as Arc<dyn LanguageModel>)
+        Some(self.create_language_model(CopilotChatModel::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(CopilotChatModel::default_fast()))
     }
 
     fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
-            .map(|model| {
-                Arc::new(CopilotChatLanguageModel {
-                    model,
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 

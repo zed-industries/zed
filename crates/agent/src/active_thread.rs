@@ -1,8 +1,8 @@
 use crate::context::{AssistantContext, ContextId, format_context_as_string};
 use crate::context_picker::MentionLink;
 use crate::thread::{
-    LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
-    ThreadEvent, ThreadFeedback,
+    LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
+    ThreadFeedback,
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
@@ -1285,7 +1285,7 @@ impl ActiveThread {
 
         self.thread.update(cx, |thread, cx| {
             thread.advance_prompt_id();
-            thread.send_to_model(model.model, RequestKind::Chat, cx)
+            thread.send_to_model(model.model, cx)
         });
         cx.notify();
     }

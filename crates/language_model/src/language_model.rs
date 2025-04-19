@@ -370,6 +370,7 @@ pub trait LanguageModelProvider: 'static {
         IconName::ZedAssistant
     }
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         Vec::new()
