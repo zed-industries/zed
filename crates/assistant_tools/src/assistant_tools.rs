@@ -7,8 +7,8 @@ mod create_directory_tool;
 mod create_file_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
+mod edit_file_tool;
 mod fetch_tool;
-mod find_replace_file_tool;
 mod list_directory_tool;
 mod move_path_tool;
 mod now_tool;
@@ -42,8 +42,8 @@ use crate::create_directory_tool::CreateDirectoryTool;
 use crate::create_file_tool::CreateFileTool;
 use crate::delete_path_tool::DeletePathTool;
 use crate::diagnostics_tool::DiagnosticsTool;
+use crate::edit_file_tool::EditFileTool;
 use crate::fetch_tool::FetchTool;
-use crate::find_replace_file_tool::FindReplaceFileTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
 use crate::open_tool::OpenTool;
@@ -59,28 +59,28 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
 
     let registry = ToolRegistry::global(cx);
+    registry.register_tool(TerminalTool);
     registry.register_tool(BatchTool);
-    registry.register_tool(CodeActionTool);
-    registry.register_tool(CodeSymbolsTool);
-    registry.register_tool(ContentsTool);
-    registry.register_tool(CopyPathTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CreateFileTool);
+    registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
-    registry.register_tool(DiagnosticsTool);
-    registry.register_tool(FetchTool::new(http_client));
-    registry.register_tool(FindReplaceFileTool);
-    registry.register_tool(ListDirectoryTool);
+    registry.register_tool(EditFileTool);
+    registry.register_tool(SymbolInfoTool);
+    registry.register_tool(CodeActionTool);
     registry.register_tool(MovePathTool);
+    registry.register_tool(DiagnosticsTool);
+    registry.register_tool(ListDirectoryTool);
     registry.register_tool(NowTool);
     registry.register_tool(OpenTool);
+    registry.register_tool(CodeSymbolsTool);
+    registry.register_tool(ContentsTool);
     registry.register_tool(PathSearchTool);
     registry.register_tool(ReadFileTool);
     registry.register_tool(RegexSearchTool);
     registry.register_tool(RenameTool);
-    registry.register_tool(SymbolInfoTool);
-    registry.register_tool(TerminalTool);
     registry.register_tool(ThinkingTool);
+    registry.register_tool(FetchTool::new(http_client));
 
     cx.observe_flag::<feature_flags::ZedProWebSearchTool, _>({
         move |is_enabled, cx| {

@@ -806,6 +806,23 @@ impl Worktree {
         }
     }
 
+    pub fn file_exists(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<bool>> {
+        match self {
+            Worktree::Local(this) => {
+                let fs = this.fs.clone();
+                let path = this.absolutize(path);
+                cx.background_spawn(async move {
+                    let path = path?;
+                    let metadata = fs.metadata(&path).await?;
+                    Ok(metadata.map_or(false, |metadata| !metadata.is_dir))
+                })
+            }
+            Worktree::Remote(_) => Task::ready(Err(anyhow!(
+                "remote worktrees can't yet check file existence"
+            ))),
+        }
+    }
+
     pub fn load_file(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
         match self {
             Worktree::Local(this) => this.load_file(path, cx),

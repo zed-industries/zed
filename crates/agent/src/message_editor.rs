@@ -330,6 +330,7 @@ impl MessageEditor {
             // Send to model after summaries are done
             thread
                 .update(cx, |thread, cx| {
+                    thread.advance_prompt_id();
                     thread.send_to_model(model, request_kind, cx);
                 })
                 .log_err();
@@ -1013,6 +1014,8 @@ impl MessageEditor {
                 }
 
                 let request = language_model::LanguageModelRequest {
+                    thread_id: None,
+                    prompt_id: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: language_model::Role::User,
                         content: vec![content.into()],

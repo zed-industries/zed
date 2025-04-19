@@ -9,7 +9,8 @@ use util::ResultExt;
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
-    AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, ScreenCaptureSource, WindowParams,
+    AnyWindowHandle, CursorStyle, DisplayId, LinuxKeyboardLayout, PlatformDisplay,
+    PlatformKeyboardLayout, ScreenCaptureSource, WindowParams,
 };
 
 pub struct HeadlessClientState {
@@ -50,8 +51,8 @@ impl LinuxClient for HeadlessClient {
         f(&mut self.0.borrow_mut().common)
     }
 
-    fn keyboard_layout(&self) -> String {
-        "unknown".to_string()
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+        Box::new(LinuxKeyboardLayout::new("unknown".to_string()))
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

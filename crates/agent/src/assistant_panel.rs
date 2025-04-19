@@ -25,7 +25,7 @@ use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::PromptBuilder;
+use prompt_store::{PromptBuilder, PromptId};
 use proto::Plan;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
@@ -47,7 +47,7 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::UsageBanner;
 use crate::{
-    AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
+    AddContextServer, AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
@@ -83,7 +83,7 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
+                            panel.deploy_prompt_library(&OpenPromptLibrary::default(), window, cx)
                         });
                     }
                 })
@@ -213,7 +213,7 @@ impl AssistantPanel {
                     let project = workspace.project().clone();
                     ThreadStore::load(project, tools.clone(), prompt_builder.clone(), cx)
                 })?
-                .await;
+                .await?;
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace
@@ -488,7 +488,7 @@ impl AssistantPanel {
 
     fn deploy_prompt_library(
         &mut self,
-        _: &OpenPromptLibrary,
+        action: &OpenPromptLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -502,6 +502,7 @@ impl AssistantPanel {
                     None,
                 ))
             }),
+            action.prompt_to_focus.map(|uuid| PromptId::User { uuid }),
             cx,
         )
         .detach_and_log_err(cx);
@@ -1119,17 +1120,19 @@ impl AssistantPanel {
                                                     "New Text Thread",
                                                     NewTextThread.boxed_clone(),
                                                 )
-                                                .action("Prompt Library", Box::new(OpenPromptLibrary))
+                                                .action("Prompt Library", Box::new(OpenPromptLibrary::default()))
                                                 .action("Settings", Box::new(OpenConfiguration))
                                                 .separator()
+                                                .header("MCPs")
                                                 .action(
-                                                    "Install MCPs",
+                                                    "View Server Extensions",
                                                     Box::new(zed_actions::Extensions {
                                                         category_filter: Some(
                                                             zed_actions::ExtensionCategoryFilter::ContextServers,
                                                         ),
                                                         }),
                                                 )
+                                                .action("Add Custom Server", Box::new(AddContextServer))
                                             },
                                         ))
                                     }),
