@@ -3026,7 +3026,7 @@ impl ActiveThread {
                                     .on_click(move |_event, window, cx| {
                                         window.dispatch_action(
                                             Box::new(OpenPromptLibrary {
-                                                prompt_to_focus: first_default_user_rules_id,
+                                                prompt_to_select: first_default_user_rules_id,
                                             }),
                                             cx,
                                         )
@@ -3313,7 +3313,7 @@ pub(crate) fn open_context(
         }
         AssistantContext::Rules(user_rules_context) => window.dispatch_action(
             Box::new(OpenPromptLibrary {
-                prompt_to_focus: Some(user_rules_context.prompt_id),
+                prompt_to_select: Some(user_rules_context.prompt_id),
             }),
             cx,
         ),

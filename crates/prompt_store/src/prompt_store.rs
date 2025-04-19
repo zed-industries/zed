@@ -257,6 +257,10 @@ impl PromptStore {
         })
     }
 
+    pub fn all_prompt_metadata(&self) -> Vec<PromptMetadata> {
+        self.metadata_cache.read().metadata.clone()
+    }
+
     pub fn default_prompt_metadata(&self) -> Vec<PromptMetadata> {
         return self
             .metadata_cache

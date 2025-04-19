@@ -58,11 +58,11 @@ pub fn init(cx: &mut App) {
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context)
                 .register_action(AssistantPanel::restart_context_servers)
-                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                .register_action(|workspace, action: &OpenPromptLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(&OpenPromptLibrary::default(), window, cx)
+                            panel.deploy_prompt_library(action, window, cx)
                         });
                     }
                 });
@@ -1060,7 +1060,7 @@ impl AssistantPanel {
                     None,
                 ))
             }),
-            action.prompt_to_focus.map(|uuid| PromptId::User { uuid }),
+            action.prompt_to_select.map(|uuid| PromptId::User { uuid }),
             cx,
         )
         .detach_and_log_err(cx);

@@ -76,7 +76,7 @@ pub fn open_prompt_library(
     language_registry: Arc<LanguageRegistry>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
     make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
-    prompt_to_focus: Option<PromptId>,
+    prompt_to_select: Option<PromptId>,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<PromptLibrary>>> {
     let store = PromptStore::global(cx);
@@ -91,8 +91,8 @@ pub fn open_prompt_library(
                 if let Some(existing_window) = existing_window {
                     existing_window
                         .update(cx, |prompt_library, window, cx| {
-                            if let Some(prompt_to_focus) = prompt_to_focus {
-                                prompt_library.load_prompt(prompt_to_focus, true, window, cx);
+                            if let Some(prompt_to_select) = prompt_to_select {
+                                prompt_library.load_prompt(prompt_to_select, true, window, cx);
                             }
                             window.activate_window()
                         })
@@ -127,18 +127,15 @@ pub fn open_prompt_library(
                 },
                 |window, cx| {
                     cx.new(|cx| {
-                        let mut prompt_library = PromptLibrary::new(
+                        PromptLibrary::new(
                             store,
                             language_registry,
                             inline_assist_delegate,
                             make_completion_provider,
+                            prompt_to_select,
                             window,
                             cx,
-                        );
-                        if let Some(prompt_to_focus) = prompt_to_focus {
-                            prompt_library.load_prompt(prompt_to_focus, true, window, cx);
-                        }
-                        prompt_library
+                        )
                     })
                 },
             )
@@ -355,13 +352,26 @@ impl PromptLibrary {
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
         make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
+        prompt_to_select: Option<PromptId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (selected_index, matches) = if let Some(prompt_to_select) = prompt_to_select {
+            let matches = store.read(cx).all_prompt_metadata();
+            let selected_index = matches
+                .iter()
+                .enumerate()
+                .find(|(_, metadata)| metadata.id == prompt_to_select)
+                .map_or(0, |(ix, _)| ix);
+            (selected_index, matches)
+        } else {
+            (0, vec![])
+        };
+
         let delegate = PromptPickerDelegate {
             store: store.clone(),
-            selected_index: 0,
-            matches: Vec::new(),
+            selected_index,
+            matches,
         };
 
         let picker = cx.new(|cx| {
