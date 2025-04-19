@@ -843,6 +843,42 @@ async fn handle_customer_subscription_event(
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
         .await?
     {
+        let llm_db = app
+            .llm_db
+            .clone()
+            .ok_or_else(|| anyhow!("LLM DB not initialized"))?;
+
+        match existing_subscription.kind {
+            Some(SubscriptionKind::ZedProTrial) => {
+                let period_start_at = existing_subscription
+                    .current_period_start_at()
+                    .ok_or_else(|| anyhow!("No subscription period start"))?;
+                let period_end_at = existing_subscription
+                    .current_period_start_at()
+                    .ok_or_else(|| anyhow!("No subscription period end"))?;
+
+                let existing_usage = llm_db
+                    .get_subscription_usage_for_period(
+                        billing_customer.user_id,
+                        period_start_at,
+                        period_end_at,
+                    )
+                    .await?;
+                if let Some(existing_usage) = existing_usage {
+                    llm_db
+                        .create_subscription_usage(
+                            billing_customer.user_id,
+                            period_start_at,
+                            period_end_at,
+                            existing_usage.model_requests,
+                            existing_usage.edit_predictions,
+                        )
+                        .await?;
+                }
+            }
+            _ => {}
+        };
+
         app.db
             .update_billing_subscription(
                 existing_subscription.id,
