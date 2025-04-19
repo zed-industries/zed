@@ -8,14 +8,21 @@ Check out the [Anthropic news post](https://www.anthropic.com/news/model-context
 
 ## Try it out
 
-Want to try it for yourself?
+Want to try it for yourself? Here are some MCP servers available as Zed extensions:
 
-The following context servers are available today as Zed extensions:
+- [Postgres](https://github.com/zed-extensions/postgres-context-server)
+- [GitHub](https://github.com/LoamStudios/zed-mcp-server-github)
+- [Puppeteer](https://github.com/zed-extensions/mcp-server-puppeteer)
+- [BrowserTools](https://github.com/mirageN1349/browser-tools-context-server)
+- [Brave Search](https://github.com/zed-extensions/mcp-server-brave-search)
+- [Prisma](https://github.com/aqrln/prisma-mcp-zed)
+- [Framelink Figma](https://github.com/LoamStudios/zed-mcp-server-figma)
+- [Linear](https://github.com/LoamStudios/zed-mcp-server-linear)
 
-- [Postgres Context Server](https://github.com/zed-extensions/postgres-context-server)
+Browse all available MCP extensions either on [Zed's website](https://zed.dev/extensions?filter=context-servers) or directly in Zed via the `zed: extensions` action in the Command Palette.
 
 ## Bring your own context server
 
-If there's an existing context server you'd like to bring to Zed, check out the [context server extension docs](../extensions/context-servers.md) for how to make it available as an extension.
+If there's an existing MCP server you'd like to bring to Zed, check out the [context server extension docs](../extensions/context-servers.md) for how to make it available as an extension.
 
-If you are interested in building your own context server, check out the [Model Context Protocol docs](https://modelcontextprotocol.io/introduction#get-started-with-mcp) to get started.
+If you are interested in building your own MCP server, check out the [Model Context Protocol docs](https://modelcontextprotocol.io/introduction#get-started-with-mcp) to get started.
