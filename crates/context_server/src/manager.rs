@@ -39,6 +39,7 @@ pub struct ContextServer {
     pub id: Arc<str>,
     pub config: Arc<ServerConfig>,
     pub client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
+    pub is_starting: RwLock<bool>,
 }
 
 impl ContextServer {
@@ -47,6 +48,7 @@ impl ContextServer {
             id,
             config,
             client: RwLock::new(None),
+            is_starting: RwLock::new(false),
         }
     }
 
@@ -63,10 +65,50 @@ impl ContextServer {
     }
 
     pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
+        // Use a guard to manage starting state with proper cleanup
+        struct StartingGuard<'a> {
+            flag: &'a RwLock<bool>,
+        }
+
+        impl<'a> StartingGuard<'a> {
+            fn new(flag: &'a RwLock<bool>) -> Option<Self> {
+                let mut lock = flag.write();
+                if *lock {
+                    None
+                } else {
+                    *lock = true;
+                    Some(Self { flag })
+                }
+            }
+        }
+
+        impl Drop for StartingGuard<'_> {
+            fn drop(&mut self) {
+                *self.flag.write() = false;
+            }
+        }
+
+        // Check if already running
+        if self.client.read().is_some() {
+            log::debug!("context server {} is already running", self.id);
+            return Ok(());
+        }
+
+        // Try to set starting flag
+        let _guard = match StartingGuard::new(&self.is_starting) {
+            Some(guard) => guard,
+            None => {
+                log::debug!("context server {} is already starting", self.id);
+                return Ok(());
+            }
+        };
+
         log::info!("starting context server {}", self.id);
+
         let Some(command) = &self.config.command else {
             bail!("no command specified for server {}", self.id);
         };
+
         let client = Client::new(
             client::ContextServerId(self.id.clone()),
             client::ModelContextServerBinary {
