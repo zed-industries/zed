@@ -1612,7 +1612,7 @@ impl Thread {
 
     /// Insert an empty message to be populated with tool results upon send.
     pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
-        // todo!(Before merging, figure out it's necessary to do this as a user message - fails with "thinking" model)
+        // TODO: Don't insert a dummy user message here. Ensure this works with the thinking model.
         // Insert a user message to contain the tool results.
         self.insert_user_message("Here are the tool results.", Vec::new(), None, cx);
     }
