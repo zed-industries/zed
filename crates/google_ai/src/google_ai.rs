@@ -412,6 +412,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Model {
+        Model::Gemini15Flash
+    }
+
     pub fn id(&self) -> &str {
         match self {
             Model::Gemini15Pro => "gemini-1.5-pro",

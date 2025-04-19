@@ -286,6 +286,18 @@ impl BedrockLanguageModelProvider {
             state,
         }
     }
+
+    fn create_language_model(&self, model: bedrock::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(BedrockModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            http_client: self.http_client.clone(),
+            handler: self.handler.clone(),
+            state: self.state.clone(),
+            client: OnceCell::new(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProvider for BedrockLanguageModelProvider {
@@ -302,16 +314,11 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = bedrock::Model::default();
-        Some(Arc::new(BedrockModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            http_client: self.http_client.clone(),
-            handler: self.handler.clone(),
-            state: self.state.clone(),
-            client: OnceCell::new(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(bedrock::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(bedrock::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -343,17 +350,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(BedrockModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    http_client: self.http_client.clone(),
-                    handler: self.handler.clone(),
-                    state: self.state.clone(),
-                    client: OnceCell::new(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 

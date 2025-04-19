@@ -40,13 +40,6 @@ use crate::thread_store::{
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState, USING_TOOL_MARKER};
 
-#[derive(Debug, Clone, Copy)]
-pub enum RequestKind {
-    Chat,
-    /// Used when summarizing a thread.
-    Summarize,
-}
-
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
 )]
@@ -949,13 +942,8 @@ impl Thread {
         })
     }
 
-    pub fn send_to_model(
-        &mut self,
-        model: Arc<dyn LanguageModel>,
-        request_kind: RequestKind,
-        cx: &mut Context<Self>,
-    ) {
-        let mut request = self.to_completion_request(request_kind, cx);
+    pub fn send_to_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+        let mut request = self.to_completion_request(cx);
         if model.supports_tools() {
             request.tools = {
                 let mut tools = Vec::new();
@@ -994,11 +982,7 @@ impl Thread {
         false
     }
 
-    pub fn to_completion_request(
-        &self,
-        request_kind: RequestKind,
-        cx: &mut Context<Self>,
-    ) -> LanguageModelRequest {
+    pub fn to_completion_request(&self, cx: &mut Context<Self>) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.last_prompt_id.to_string()),
@@ -1045,18 +1029,8 @@ impl Thread {
                 cache: false,
             };
 
-            match request_kind {
-                RequestKind::Chat => {
-                    self.tool_use
-                        .attach_tool_results(message.id, &mut request_message);
-                }
-                RequestKind::Summarize => {
-                    // We don't care about tool use during summarization.
-                    if self.tool_use.message_has_tool_results(message.id) {
-                        continue;
-                    }
-                }
-            }
+            self.tool_use
+                .attach_tool_results(message.id, &mut request_message);
 
             if !message.context.is_empty() {
                 request_message
@@ -1089,15 +1063,8 @@ impl Thread {
                 };
             }
 
-            match request_kind {
-                RequestKind::Chat => {
-                    self.tool_use
-                        .attach_tool_uses(message.id, &mut request_message);
-                }
-                RequestKind::Summarize => {
-                    // We don't care about tool use during summarization.
-                }
-            };
+            self.tool_use
+                .attach_tool_uses(message.id, &mut request_message);
 
             request.messages.push(request_message);
         }
@@ -1108,6 +1075,54 @@ impl Thread {
         }
 
         self.attached_tracked_files_state(&mut request.messages, cx);
+
+        request
+    }
+
+    fn to_summarize_request(&self, added_user_message: String) -> LanguageModelRequest {
+        let mut request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            messages: vec![],
+            tools: Vec::new(),
+            stop: Vec::new(),
+            temperature: None,
+        };
+
+        for message in &self.messages {
+            let mut request_message = LanguageModelRequestMessage {
+                role: message.role,
+                content: Vec::new(),
+                cache: false,
+            };
+
+            // Skip tool results during summarization.
+            if self.tool_use.message_has_tool_results(message.id) {
+                continue;
+            }
+
+            for segment in &message.segments {
+                match segment {
+                    MessageSegment::Text(text) => request_message
+                        .content
+                        .push(MessageContent::Text(text.clone())),
+                    MessageSegment::Thinking { .. } => {}
+                    MessageSegment::RedactedThinking(_) => {}
+                }
+            }
+
+            if request_message.content.is_empty() {
+                continue;
+            }
+
+            request.messages.push(request_message);
+        }
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text(added_user_message)],
+            cache: false,
+        });
 
         request
     }
@@ -1293,7 +1308,12 @@ impl Thread {
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
 
-                    if thread.summary.is_none() && thread.messages.len() >= 2 {
+                    // If there is a response without tool use, summarize the message. Otherwise,
+                    // allow two tool uses before summarizing.
+                    if thread.summary.is_none()
+                        && thread.messages.len() >= 2
+                        && (!thread.has_pending_tool_uses() || thread.messages.len() >= 6)
+                    {
                         thread.summarize(cx);
                     }
                 })?;
@@ -1403,18 +1423,12 @@ impl Thread {
             return;
         }
 
-        let mut request = self.to_completion_request(RequestKind::Summarize, cx);
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![
-                "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
-                 Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
-                 If the conversation is about a specific subject, include it in the title. \
-                 Be descriptive. DO NOT speak in the first person."
-                    .into(),
-            ],
-            cache: false,
-        });
+        let added_user_message = "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
+            Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
+            If the conversation is about a specific subject, include it in the title. \
+            Be descriptive. DO NOT speak in the first person.";
+
+        let request = self.to_summarize_request(added_user_message.into());
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
@@ -1476,21 +1490,14 @@ impl Thread {
             return None;
         }
 
-        let mut request = self.to_completion_request(RequestKind::Summarize, cx);
+        let added_user_message = "Generate a detailed summary of this conversation. Include:\n\
+             1. A brief overview of what was discussed\n\
+             2. Key facts or information discovered\n\
+             3. Outcomes or conclusions reached\n\
+             4. Any action items or next steps if any\n\
+             Format it in Markdown with headings and bullet points.";
 
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![
-                "Generate a detailed summary of this conversation. Include:\n\
-                1. A brief overview of what was discussed\n\
-                2. Key facts or information discovered\n\
-                3. Outcomes or conclusions reached\n\
-                4. Any action items or next steps if any\n\
-                Format it in Markdown with headings and bullet points."
-                    .into(),
-            ],
-            cache: false,
-        });
+        let request = self.to_summarize_request(added_user_message.into());
 
         let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion_text(request, &cx);
@@ -1538,7 +1545,7 @@ impl Thread {
 
     pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request = self.to_completion_request(RequestKind::Chat, cx);
+        let request = self.to_completion_request(cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self
             .tool_use
@@ -1650,7 +1657,7 @@ impl Thread {
             if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
                 self.attach_tool_results(cx);
                 if !canceled {
-                    self.send_to_model(model, RequestKind::Chat, cx);
+                    self.send_to_model(model, cx);
                 }
             }
         }
@@ -2275,9 +2282,7 @@ fn main() {{
         assert_eq!(message.context, expected_context);
 
         // Check message in request
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
         assert_eq!(request.messages.len(), 2);
         let expected_full_message = format!("{}Please explain this code", expected_context);
@@ -2367,9 +2372,7 @@ fn main() {{
         assert!(message3.context.contains("file3.rs"));
 
         // Check entire request to make sure all contexts are properly included
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
         // The request should contain all 3 messages
         assert_eq!(request.messages.len(), 4);
@@ -2419,9 +2422,7 @@ fn main() {{
         assert_eq!(message.context, "");
 
         // Check message in request
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
         assert_eq!(request.messages.len(), 2);
         assert_eq!(
@@ -2439,9 +2440,7 @@ fn main() {{
         assert_eq!(message2.context, "");
 
         // Check that both messages appear in the request
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
         assert_eq!(request.messages.len(), 3);
         assert_eq!(
@@ -2481,9 +2480,7 @@ fn main() {{
         });
 
         // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let initial_request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
         // Make sure we don't have a stale file warning yet
         let has_stale_warning = initial_request.messages.iter().any(|msg| {
@@ -2511,9 +2508,7 @@ fn main() {{
         });
 
         // Create a new request and check for the stale buffer warning
-        let new_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let new_request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
         // We should have a stale file warning as the last message
         let last_message = new_request
