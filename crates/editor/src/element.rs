@@ -1470,7 +1470,6 @@ impl EditorElement {
         &self,
         snapshot: &EditorSnapshot,
         minimap_width: Pixels,
-        editor_font_size: Pixels,
         scroll_position: gpui::Point<f32>,
         scrollbar_layout_information: &ScrollbarLayoutInformation,
         scrollbar_layout: Option<&EditorScrollbars>,
@@ -1488,7 +1487,6 @@ impl EditorElement {
         }
 
         const MINIMAP_AXIS: ScrollbarAxis = ScrollbarAxis::Vertical;
-        let minimap_font_size = px(minimap_settings.font_size);
 
         let ScrollbarLayoutInformation {
             editor_bounds,
@@ -1510,13 +1508,6 @@ impl EditorElement {
                 editor.scroll_manager.minimap_thumb_visible()
             }),
         };
-
-        let minimap_wrap_width = self
-            .editor
-            .read_with(cx, |editor, cx| editor.wrap_width(cx))
-            .map(|editor_wrap_width| {
-                (editor_wrap_width * (minimap_font_size / editor_font_size)).floor()
-            });
 
         let minimap_bounds =
             Self::get_minimap_bounds(minimap_width, top_right_anchor, &editor_bounds);
@@ -1545,7 +1536,6 @@ impl EditorElement {
         );
 
         minimap_editor.update(cx, |editor, cx| {
-            editor.set_wrap_width(minimap_wrap_width, cx);
             editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
         });
 
@@ -7793,7 +7783,6 @@ impl Element for EditorElement {
                         self.layout_minimap(
                             &snapshot,
                             minimap_width,
-                            font_size,
                             scroll_position,
                             &scrollbar_layout_information,
                             scrollbars_layout.as_ref(),
