@@ -770,7 +770,7 @@ mod tests {
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
-    use gpui::{AppContext as _, font, px};
+    use gpui::{AppContext as _, LetterSpacing, font, px};
     use language::Capability;
     use project::Project;
     use settings::SettingsStore;
@@ -892,6 +892,7 @@ mod tests {
                 buffer,
                 font,
                 font_size,
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -1101,6 +1102,7 @@ mod tests {
                     multibuffer,
                     font,
                     px(14.0),
+                    LetterSpacing::default(),
                     None,
                     0,
                     1,

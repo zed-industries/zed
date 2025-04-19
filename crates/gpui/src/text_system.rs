@@ -265,14 +265,28 @@ impl TextSystem {
     }
 
     /// Returns a handle to a line wrapper, for the given font and font size.
-    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
+    pub fn line_wrapper(
+        self: &Arc<Self>,
+        font: Font,
+        font_size: Pixels,
+        letter_spacing: LetterSpacing,
+    ) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
         let font_id = self.resolve_font(&font);
         let wrappers = lock
-            .entry(FontIdWithSize { font_id, font_size })
+            .entry(FontIdWithSize {
+                font_id,
+                font_size,
+                letter_spacing,
+            })
             .or_default();
         let wrapper = wrappers.pop().unwrap_or_else(|| {
-            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
+            LineWrapper::new(
+                font_id,
+                font_size,
+                letter_spacing,
+                self.platform_text_system.clone(),
+            )
         });
 
         LineWrapperHandle {
@@ -547,6 +561,7 @@ impl WindowTextSystem {
 struct FontIdWithSize {
     font_id: FontId,
     font_size: Pixels,
+    letter_spacing: LetterSpacing,
 }
 
 /// A handle into the text system, which can be used to compute the wrapped layout of text
@@ -563,6 +578,7 @@ impl Drop for LineWrapperHandle {
             .get_mut(&FontIdWithSize {
                 font_id: wrapper.font_id,
                 font_size: wrapper.font_size,
+                letter_spacing: wrapper.letter_spacing,
             })
             .unwrap()
             .push(wrapper);

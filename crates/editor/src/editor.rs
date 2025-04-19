@@ -87,10 +87,11 @@ use gpui::{
     AsyncWindowContext, AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry,
     ClipboardItem, Context, DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter,
     FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
-    KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render,
-    SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
-    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size,
+    KeyContext, LetterSpacing, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement,
+    Pixels, Render, SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    WeakFocusHandle, Window, div, impl_actions, point, prelude::*, pulsating_between, px, relative,
+    size,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
@@ -1406,6 +1407,7 @@ impl Editor {
                 buffer.clone(),
                 style.font(),
                 font_size,
+                LetterSpacing::default(),
                 None,
                 FILE_HEADER_HEIGHT,
                 MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
@@ -15981,6 +15983,7 @@ impl Editor {
             map.set_font(
                 style.text.font(),
                 style.text.font_size.to_pixels(rem_size),
+                style.text.letter_spacing,
                 cx,
             )
         });

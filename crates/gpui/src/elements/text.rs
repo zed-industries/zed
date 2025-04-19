@@ -295,6 +295,7 @@ impl TextLayout {
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let letter_spacing = text_style.letter_spacing;
         let line_height = text_style
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
@@ -343,7 +344,9 @@ impl TextLayout {
                     }
                 }
 
-                let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
+                let mut line_wrapper =
+                    cx.text_system()
+                        .line_wrapper(text_style.font(), font_size, letter_spacing);
                 let text = if let Some(truncate_width) = truncate_width {
                     line_wrapper.truncate_line(text.clone(), truncate_width, ellipsis, &mut runs)
                 } else {
