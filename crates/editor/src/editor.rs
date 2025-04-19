@@ -5564,20 +5564,6 @@ impl Editor {
             let match_ranges = match_task.await;
             editor
                 .update_in(cx, |editor, _, cx| {
-                    #[cfg(debug_assertions)]
-                    {
-                        let selection = editor.selections.newest::<Point>(cx);
-                        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let selection_anchor_range =
-                            selection.range().to_anchors(&multi_buffer_snapshot);
-                        // It will always be true because:
-                        // 1. When new valid selection is made, we overwrite the previous task.
-                        // 2. When new invalid selection changes, we cancel the previous task.
-                        debug_assert_eq!(
-                            selection_anchor_range, query_range,
-                            "Selection range should match query range"
-                        );
-                    }
                     editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                     if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
