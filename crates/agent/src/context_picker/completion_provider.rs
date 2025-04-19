@@ -28,7 +28,7 @@ use crate::thread_store::ThreadStore;
 
 use super::fetch_context_picker::fetch_url_content;
 use super::file_context_picker::FileMatch;
-use super::rules_context_picker::{RulesContextEntry, RulesMatch, search_user_rules};
+use super::rules_context_picker::{RulesContextEntry, RulesMatch, search_rules};
 use super::symbol_context_picker::SymbolMatch;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
@@ -120,10 +120,10 @@ fn search(
         }
         Some(ContextPickerMode::Rules) => {
             if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
-                let search_user_rules_task =
-                    search_user_rules(query.clone(), cancellation_flag.clone(), thread_store, cx);
+                let search_rules_task =
+                    search_rules(query.clone(), cancellation_flag.clone(), thread_store, cx);
                 cx.background_spawn(async move {
-                    search_user_rules_task
+                    search_rules_task
                         .await
                         .into_iter()
                         .map(Match::Rules)
@@ -308,8 +308,8 @@ impl ContextPickerCompletionProvider {
         }
     }
 
-    fn completion_for_user_rules(
-        user_rules: RulesContextEntry,
+    fn completion_for_rules(
+        rules: RulesContextEntry,
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
         recent: bool,
@@ -330,20 +330,20 @@ impl ContextPickerCompletionProvider {
         Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: CodeLabel::plain(user_rules.title.to_string(), None),
+            label: CodeLabel::plain(rules.title.to_string(), None),
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
                 RULES_ICON.path().into(),
-                user_rules.title.clone(),
+                rules.title.clone(),
                 excerpt_id,
                 source_range.start,
                 new_text_len,
                 editor.clone(),
                 move |cx| {
-                    let prompt_uuid = user_rules.prompt_id;
+                    let prompt_uuid = rules.prompt_id;
                     let prompt_id = PromptId::User { uuid: prompt_uuid };
                     let context_store = context_store.clone();
                     let Some(prompt_store) = thread_store.read(cx).prompt_store() else {
@@ -362,7 +362,7 @@ impl ContextPickerCompletionProvider {
                     cx.spawn(async move |cx| {
                         let text = text_task.await?;
                         context_store.update(cx, |context_store, cx| {
-                            context_store.add_user_rules(prompt_uuid, title, text, false, cx)
+                            context_store.add_rules(prompt_uuid, title, text, false, cx)
                         })
                     })
                     .detach_and_log_err(cx);
@@ -678,12 +678,12 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             ))
                         }
                         Match::Rules(RulesMatch {
-                            user_rules,
+                            rules: user_rules,
                             is_recent,
                             ..
                         }) => {
                             let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
-                            Some(Self::completion_for_user_rules(
+                            Some(Self::completion_for_rules(
                                 user_rules,
                                 excerpt_id,
                                 source_range.clone(),

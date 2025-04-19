@@ -2952,7 +2952,7 @@ impl ActiveThread {
             return div().into_any();
         };
 
-        let default_user_rules_text = if project_context.user_rules.is_empty() {
+        let user_rules_text = if project_context.user_rules.is_empty() {
             None
         } else if project_context.user_rules.len() == 1 {
             let user_rules = &project_context.user_rules[0];
@@ -2968,7 +2968,7 @@ impl ActiveThread {
             ))
         };
 
-        let first_default_user_rules_id = project_context
+        let first_user_rules_id = project_context
             .user_rules
             .first()
             .map(|user_rules| user_rules.uuid);
@@ -2988,7 +2988,7 @@ impl ActiveThread {
             rules_files => Some(format!("Using {} project rules files", rules_files.len())),
         };
 
-        if default_user_rules_text.is_none() && rules_file_text.is_none() {
+        if user_rules_text.is_none() && rules_file_text.is_none() {
             return div().into_any();
         }
 
@@ -2996,45 +2996,42 @@ impl ActiveThread {
             .pt_2()
             .px_2p5()
             .gap_1()
-            .when_some(
-                default_user_rules_text,
-                |parent, default_user_rules_text| {
-                    parent.child(
-                        h_flex()
-                            .w_full()
-                            .child(
-                                Icon::new(RULES_ICON)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
-                            .child(
-                                Label::new(default_user_rules_text)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted)
-                                    .truncate()
-                                    .buffer_font(cx)
-                                    .ml_1p5()
-                                    .mr_0p5(),
-                            )
-                            .child(
-                                IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Ignored)
-                                    // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
-                                    .tooltip(Tooltip::text("View User Rules"))
-                                    .on_click(move |_event, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(OpenPromptLibrary {
-                                                prompt_to_select: first_default_user_rules_id,
-                                            }),
-                                            cx,
-                                        )
-                                    }),
-                            ),
-                    )
-                },
-            )
+            .when_some(user_rules_text, |parent, user_rules_text| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .child(
+                            Icon::new(RULES_ICON)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                        .child(
+                            Label::new(user_rules_text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .truncate()
+                                .buffer_font(cx)
+                                .ml_1p5()
+                                .mr_0p5(),
+                        )
+                        .child(
+                            IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
+                                .tooltip(Tooltip::text("View User Rules"))
+                                .on_click(move |_event, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(OpenPromptLibrary {
+                                            prompt_to_select: first_user_rules_id,
+                                        }),
+                                        cx,
+                                    )
+                                }),
+                        ),
+                )
+            })
             .when_some(rules_file_text, |parent, rules_file_text| {
                 parent.child(
                     h_flex()
@@ -3311,9 +3308,9 @@ pub(crate) fn open_context(
                 }
             })
         }
-        AssistantContext::Rules(user_rules_context) => window.dispatch_action(
+        AssistantContext::Rules(rules_context) => window.dispatch_action(
             Box::new(OpenPromptLibrary {
-                prompt_to_select: Some(user_rules_context.prompt_id),
+                prompt_to_select: Some(rules_context.prompt_id),
             }),
             cx,
         ),

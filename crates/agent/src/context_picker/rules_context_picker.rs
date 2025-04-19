@@ -108,12 +108,11 @@ impl PickerDelegate for RulesContextPickerDelegate {
             return Task::ready(());
         };
 
-        let search_task =
-            search_user_rules(query, Arc::new(AtomicBool::default()), thread_store, cx);
+        let search_task = search_rules(query, Arc::new(AtomicBool::default()), thread_store, cx);
         cx.spawn_in(window, async move |this, cx| {
             let matches = search_task.await;
             this.update(cx, |this, cx| {
-                this.delegate.matches = matches.into_iter().map(|mat| mat.user_rules).collect();
+                this.delegate.matches = matches.into_iter().map(|mat| mat.rules).collect();
                 this.delegate.selected_index = 0;
                 cx.notify();
             })
@@ -132,12 +131,12 @@ impl PickerDelegate for RulesContextPickerDelegate {
 
         let prompt_id = entry.prompt_id;
 
-        let load_user_rules_task = thread_store.update(cx, |thread_store, cx| {
-            thread_store.load_user_rules(prompt_id, cx)
+        let load_rules_task = thread_store.update(cx, |thread_store, cx| {
+            thread_store.load_rules(prompt_id, cx)
         });
 
         cx.spawn(async move |this, cx| {
-            let (metadata, text) = load_user_rules_task.await?;
+            let (metadata, text) = load_rules_task.await?;
             let Some(title) = metadata.title else {
                 return Err(anyhow!("Encountered user rule with no title when attempting to add it to agent context."));
             };
@@ -145,7 +144,7 @@ impl PickerDelegate for RulesContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, cx| {
-                        context_store.add_user_rules(prompt_id, title, text, true, cx)
+                        context_store.add_rules(prompt_id, title, text, true, cx)
                     })
                     .ok();
             })
@@ -219,11 +218,11 @@ pub fn render_thread_context_entry(
 
 #[derive(Clone)]
 pub struct RulesMatch {
-    pub user_rules: RulesContextEntry,
+    pub rules: RulesContextEntry,
     pub is_recent: bool,
 }
 
-pub(crate) fn search_user_rules(
+pub(crate) fn search_rules(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     thread_store: Entity<ThreadStore>,
@@ -245,7 +244,7 @@ pub(crate) fn search_user_rules(
                     match metadata.id {
                         PromptId::EditWorkflow => None,
                         PromptId::User { uuid } => Some(RulesMatch {
-                            user_rules: RulesContextEntry {
+                            rules: RulesContextEntry {
                                 prompt_id: uuid,
                                 title: metadata.title?,
                             },

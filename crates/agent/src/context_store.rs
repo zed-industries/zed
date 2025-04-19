@@ -393,7 +393,7 @@ impl ContextStore {
         cx.notify();
     }
 
-    pub fn add_user_rules(
+    pub fn add_rules(
         &mut self,
         prompt_id: Uuid,
         title: impl Into<SharedString>,
@@ -1088,7 +1088,7 @@ fn refresh_user_rules(
         return Task::ready(());
     };
     let Ok(load_task) = thread_store.read_with(cx, |thread_store, cx| {
-        thread_store.load_user_rules(prompt_id, cx)
+        thread_store.load_rules(prompt_id, cx)
     }) else {
         return Task::ready(());
     };
