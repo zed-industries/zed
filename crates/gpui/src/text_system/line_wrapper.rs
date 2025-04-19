@@ -1,4 +1,6 @@
-use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, px};
+use crate::{
+    FontId, FontRun, LetterSpacing, Pixels, PlatformTextSystem, SharedString, TextRun, px,
+};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -220,6 +222,7 @@ impl LineWrapper {
                 &[FontRun {
                     len: buffer.len(),
                     font_id: self.font_id,
+                    letter_spacing: LetterSpacing::default(),
                 }],
             )
             .width

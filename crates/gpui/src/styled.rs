@@ -1,8 +1,8 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignItems, BorderStyle, CursorStyle, DefiniteLength, Fill,
     FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, UnderlineStyle, WhiteSpace,
-    px, relative, rems,
+    LetterSpacing, SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, UnderlineStyle,
+    WhiteSpace, px, relative, rems,
 };
 use crate::{TextAlign, TextStyleRefinement};
 pub use gpui_macros::{
@@ -114,6 +114,13 @@ pub trait Styled: Sized {
         let mut text_style = self.text_style().get_or_insert_with(Default::default);
         text_style.line_clamp = Some(lines);
         self.overflow_hidden()
+    }
+
+    /// Sets the letter spacing of the text.
+    fn letter_spacing(mut self, spacing: f32) -> Self {
+        let mut text_style = self.text_style().get_or_insert_with(Default::default);
+        text_style.letter_spacing = Some(LetterSpacing(spacing));
+        self
     }
 
     /// Sets the flex direction of the element to `column`.

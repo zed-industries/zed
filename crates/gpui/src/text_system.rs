@@ -401,7 +401,7 @@ impl WindowTextSystem {
         let mut process_line = |line_text: SharedString| {
             let line_end = line_start + line_text.len();
 
-            let mut last_font: Option<Font> = None;
+            let mut last_font: Option<(Font, LetterSpacing)> = None;
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
@@ -411,13 +411,14 @@ impl WindowTextSystem {
 
                 let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
 
-                if last_font == Some(run.font.clone()) {
+                if last_font == Some((run.font.clone(), run.letter_spacing)) {
                     font_runs.last_mut().unwrap().len += run_len_within_line;
                 } else {
-                    last_font = Some(run.font.clone());
+                    last_font = Some((run.font.clone(), run.letter_spacing));
                     font_runs.push(FontRun {
                         len: run_len_within_line,
                         font_id: self.resolve_font(&run.font),
+                        letter_spacing: run.letter_spacing,
                     });
                 }
 
@@ -519,7 +520,7 @@ impl WindowTextSystem {
         for run in runs.iter() {
             let font_id = self.resolve_font(&run.font);
             if let Some(last_run) = font_runs.last_mut() {
-                if last_run.font_id == font_id {
+                if last_run.font_id == font_id && last_run.letter_spacing == run.letter_spacing {
                     last_run.len += run.len;
                     continue;
                 }
@@ -527,6 +528,7 @@ impl WindowTextSystem {
             font_runs.push(FontRun {
                 len: run.len,
                 font_id,
+                letter_spacing: run.letter_spacing,
             });
         }
 
@@ -687,6 +689,8 @@ pub struct TextRun {
     pub len: usize,
     /// The font to use for this run.
     pub font: Font,
+    /// The letter spacing to use for this run.
+    pub letter_spacing: LetterSpacing,
     /// The color
     pub color: Hsla,
     /// The background color (if any)

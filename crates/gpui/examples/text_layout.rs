@@ -71,6 +71,21 @@ impl Render for HelloWorld {
                             .child("100%"),
                     ),
             )
+            .child(
+                div()
+                    .letter_spacing(0.00)
+                    .child("I have default letter_spacing"),
+            )
+            .child(
+                div()
+                    .letter_spacing(0.05)
+                    .child("I have positive letter_spacing"),
+            )
+            .child(
+                div()
+                    .letter_spacing(-0.05)
+                    .child("I have negative letter_spacing"),
+            )
     }
 }
 
