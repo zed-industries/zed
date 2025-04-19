@@ -313,6 +313,9 @@ pub struct Thread {
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
+    request_callback: Option<
+        Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
+    >,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +368,7 @@ impl Thread {
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            request_callback: None,
         }
     }
 
@@ -434,7 +438,16 @@ impl Thread {
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            request_callback: None,
         }
+    }
+
+    pub fn set_request_callback(
+        &mut self,
+        callback: impl 'static
+        + FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>]),
+    ) {
+        self.request_callback = Some(Box::new(callback));
     }
 
     pub fn id(&self) -> &ThreadId {
@@ -1083,15 +1096,6 @@ impl Thread {
             content.push(stale_message.into());
         }
 
-        if action_log.has_edited_files_since_project_diagnostics_check() {
-            content.push(
-                "\n\nWhen you're done making changes, make sure to check project diagnostics \
-                and fix all errors AND warnings you introduced! \
-                DO NOT mention you're going to do this until you're done."
-                    .into(),
-            );
-        }
-
         if !content.is_empty() {
             let context_message = LanguageModelRequestMessage {
                 role: Role::User,
@@ -1110,6 +1114,11 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
+        let mut request_callback_parameters = if self.request_callback.is_some() {
+            Some((request.clone(), Vec::new()))
+        } else {
+            None
+        };
         let prompt_id = self.last_prompt_id.clone();
         let task = cx.spawn(async move |thread, cx| {
             let stream_completion_future = model.stream_completion_with_usage(request, &cx);
@@ -1117,6 +1126,7 @@ impl Thread {
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
                 let (mut events, usage) = stream_completion_future.await?;
+
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
 
@@ -1129,6 +1139,11 @@ impl Thread {
                 }
 
                 while let Some(event) = events.next().await {
+                    if let Some((_, response_events)) = request_callback_parameters.as_mut() {
+                        response_events
+                            .push(event.as_ref().map_err(|error| error.to_string()).cloned());
+                    }
+
                     let event = event?;
 
                     thread.update(cx, |thread, cx| {
@@ -1292,6 +1307,14 @@ impl Thread {
                         }
                     }
                     cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
+
+                    if let Some((request_callback, (request, response_events))) = thread
+                        .request_callback
+                        .as_mut()
+                        .zip(request_callback_parameters.as_ref())
+                    {
+                        request_callback(request, response_events);
+                    }
 
                     thread.auto_capture_telemetry(cx);
 
@@ -1587,17 +1610,11 @@ impl Thread {
         });
     }
 
+    /// Insert an empty message to be populated with tool results upon send.
     pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
+        // TODO: Don't insert a dummy user message here. Ensure this works with the thinking model.
         // Insert a user message to contain the tool results.
-        self.insert_user_message(
-            // TODO: Sending up a user message without any content results in the model sending back
-            // responses that also don't have any content. We currently don't handle this case well,
-            // so for now we provide some text to keep the model on track.
-            "Here are the tool results.",
-            Vec::new(),
-            None,
-            cx,
-        );
+        self.insert_user_message("Here are the tool results.", Vec::new(), None, cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.

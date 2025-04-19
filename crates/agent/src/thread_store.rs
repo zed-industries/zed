@@ -279,14 +279,12 @@ impl ThreadStore {
         cx: &App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let root_name = worktree.root_name().into();
-        let abs_path = worktree.abs_path();
 
         let rules_task = Self::load_worktree_rules_file(fs, worktree, cx);
         let Some(rules_task) = rules_task else {
             return Task::ready((
                 WorktreeContext {
                     root_name,
-                    abs_path,
                     rules_file: None,
                 },
                 None,
@@ -305,7 +303,6 @@ impl ThreadStore {
             };
             let worktree_info = WorktreeContext {
                 root_name,
-                abs_path,
                 rules_file,
             };
             (worktree_info, rules_file_error)

@@ -1,3 +1,4 @@
 url = "https://github.com/firecracker-microvm/firecracker.git"
 revision = "5eaa6e08e350cd38c8102848913a096312e59097"
 language_extension = "rs"
+allow_preexisting_diagnostics = true
