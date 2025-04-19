@@ -5,7 +5,9 @@ use std::any::TypeId;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
+use fs::Fs;
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, actions};
+use settings::SettingsStore;
 use ui::prelude::*;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
@@ -18,7 +20,7 @@ impl FeatureFlag for SettingsUiFeatureFlag {
     const NAME: &'static str = "settings-ui";
 }
 
-actions!(zed, [OpenSettingsEditor]);
+actions!(zed, [OpenSettingsEditor, ImportVsCodeSettings]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -39,6 +41,12 @@ pub fn init(cx: &mut App) {
                 let settings_page = SettingsPage::new(workspace, cx);
                 workspace.add_item_to_active_pane(Box::new(settings_page), None, true, window, cx)
             }
+        });
+
+        workspace.register_action(|_workspace, _: &ImportVsCodeSettings, _window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            cx.global::<SettingsStore>().import_vscode_settings(fs);
+            log::info!("Imported settings from VsCode");
         });
 
         let settings_ui_actions = [TypeId::of::<OpenSettingsEditor>()];

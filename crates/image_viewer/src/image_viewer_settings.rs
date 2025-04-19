@@ -39,4 +39,6 @@ impl Settings for ImageViewerSettings {
                 .chain(sources.server),
         )
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {}
 }

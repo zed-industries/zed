@@ -2,7 +2,7 @@ use gpui::App;
 use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, VsCodeSettings};
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
@@ -474,5 +474,129 @@ impl Settings for EditorSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
+    }
+
+    fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent) {
+        vscode.enum_setting(
+            "editor.cursorBlinking",
+            &mut old.cursor_blink,
+            |s| match s {
+                "blink" | "phase" | "expand" | "smooth" => Some(true),
+                "solid" => Some(false),
+                _ => None,
+            },
+        );
+        vscode.enum_setting("editor.cursorStyle", &mut old.cursor_shape, |s| match s {
+            "block" => Some(CursorShape::Block),
+            "block-outline" => Some(CursorShape::Hollow),
+            "line" | "line-thin" => Some(CursorShape::Bar),
+            "underline" | "underline-thin" => Some(CursorShape::Underline),
+            _ => None,
+        });
+
+        vscode.enum_setting(
+            "editor.renderLineHighlight",
+            &mut old.current_line_highlight,
+            |s| match s {
+                "gutter" => Some(CurrentLineHighlight::Gutter),
+                "line" => Some(CurrentLineHighlight::Line),
+                "all" => Some(CurrentLineHighlight::All),
+                _ => None,
+            },
+        );
+
+        vscode.bool_setting("editor.selectionHighlight", &mut old.selection_highlight);
+        vscode.u64_setting(
+            "editor.occurrencesHighlightDelay",
+            &mut old.selection_highlight_debounce,
+        );
+
+        vscode.bool_setting("editor.hover.enabled", &mut old.hover_popover_enabled);
+        vscode.u64_setting("editor.hover.delay", &mut old.hover_popover_delay);
+
+        let mut gutter = GutterContent::default();
+        vscode.enum_setting(
+            "editor.showFoldingControls",
+            &mut gutter.folds,
+            |s| match s {
+                "always" | "mouseover" => Some(true),
+                "never" => Some(false),
+                _ => None,
+            },
+        );
+        vscode.enum_setting(
+            "editor.lineNumbers",
+            &mut gutter.line_numbers,
+            |s| match s {
+                "on" | "relative" => Some(true),
+                "off" => Some(false),
+                _ => None,
+            },
+        );
+        if let Some(old_gutter) = old.gutter.as_mut() {
+            if gutter.folds.is_some() {
+                old_gutter.folds = gutter.folds
+            }
+            if gutter.line_numbers.is_some() {
+                old_gutter.line_numbers = gutter.line_numbers
+            }
+        } else {
+            old.gutter = Some(gutter)
+        }
+
+        // TODO: map editor.scrollbar.horizontal/vertical to our scrollbar.axes and scrollbar.show
+        if let Some(b) = vscode.read_bool("editor.scrollBeyondLastLine") {
+            old.scroll_beyond_last_line = Some(if b {
+                ScrollBeyondLastLine::OnePage
+            } else {
+                ScrollBeyondLastLine::Off
+            })
+        }
+
+        // TODO: check if this does the int->float conversion?
+        vscode.f32_setting(
+            "editor.cursorSurroundingLines",
+            &mut old.vertical_scroll_margin,
+        );
+        vscode.f32_setting(
+            "editor.mouseWheelScrollSensitivity",
+            &mut old.scroll_sensitivity,
+        );
+        if Some("relative") == vscode.read_string("editor.lineNumbers") {
+            old.relative_line_numbers = Some(true);
+        }
+
+        vscode.enum_setting(
+            "editor.find.seedSearchStringFromSelection",
+            &mut old.seed_search_query_from_cursor,
+            |s| match s {
+                "always" => Some(SeedQuerySetting::Always),
+                "selection" => Some(SeedQuerySetting::Selection),
+                "never" => Some(SeedQuerySetting::Never),
+                _ => None,
+            },
+        );
+        vscode.bool_setting("search.smartCase", &mut old.use_smartcase_search);
+        vscode.enum_setting(
+            "editor.multiCursorModifier",
+            &mut old.multi_cursor_modifier,
+            |s| match s {
+                "ctrlCmd" => Some(MultiCursorModifier::CmdOrCtrl),
+                "alt" => Some(MultiCursorModifier::Alt),
+                _ => None,
+            },
+        );
+
+        vscode.bool_setting(
+            "editor.parameterHints.enabled",
+            &mut old.auto_signature_help,
+        );
+        vscode.bool_setting(
+            "editor.parameterHints.enabled",
+            &mut old.show_signature_help_after_edits,
+        );
+
+        // some combination of search.useGlobalIgnoreFiles/useParentIgnoreFiles/useIgnoreFiles
+        // can probably be translated to our search.include_ignored
     }
 }

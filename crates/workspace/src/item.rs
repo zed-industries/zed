@@ -141,6 +141,35 @@ impl Settings for ItemSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
+        if let Some(b) = vscode.read_bool("workbench.editor.tabActionCloseVisibility") {
+            old.show_close_button = Some(if b {
+                ShowCloseButton::Always
+            } else {
+                ShowCloseButton::Hidden
+            })
+        }
+        vscode.enum_setting(
+            "workbench.editor.tabActionLocation",
+            &mut old.close_position,
+            |s| match s {
+                "right" => Some(ClosePosition::Right),
+                "left" => Some(ClosePosition::Left),
+                _ => None,
+            },
+        );
+        if let Some(b) = vscode.read_bool("workbench.editor.focusRecentEditorAfterClose") {
+            old.activate_on_close = Some(if b {
+                ActivateOnClose::History
+            } else {
+                ActivateOnClose::LeftNeighbour
+            })
+        }
+
+        vscode.bool_setting("workbench.editor.showIcons", &mut old.file_icons);
+        vscode.bool_setting("git.decorations.enabled", &mut old.git_status);
+    }
 }
 
 impl Settings for PreviewTabsSettings {
@@ -150,6 +179,18 @@ impl Settings for PreviewTabsSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
+        vscode.bool_setting("workbench.editor.enablePreview", &mut old.enabled);
+        vscode.bool_setting(
+            "workbench.editor.enablePreviewFromCodeNavigation",
+            &mut old.enable_preview_from_code_navigation,
+        );
+        vscode.bool_setting(
+            "workbench.editor.enablePreviewFromQuickOpen",
+            &mut old.enable_preview_from_file_finder,
+        );
     }
 }
 
