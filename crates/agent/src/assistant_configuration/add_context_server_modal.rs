@@ -46,7 +46,7 @@ impl AddContextServerModal {
         }
     }
 
-    fn confirm(&mut self, cx: &mut Context<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut Context<Self>) {
         let name = self
             .name_editor
             .read(cx)
@@ -125,7 +125,11 @@ impl Render for AddContextServerModal {
             .on_action(
                 cx.listener(|this, _: &menu::Cancel, _window, cx| this.cancel(&menu::Cancel, cx)),
             )
-            .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| this.confirm(cx)))
+            .on_action(
+                cx.listener(|this, _: &menu::Confirm, _window, cx| {
+                    this.confirm(&menu::Confirm, cx)
+                }),
+            )
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
                 this.focus_handle(cx).focus(window);
             }))
@@ -161,6 +165,15 @@ impl Render for AddContextServerModal {
                             .end_slot(
                                 Button::new("add-server", "Add Server")
                                     .disabled(is_name_empty || is_command_empty)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &menu::Confirm,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                    )
                                     .map(|button| {
                                         if is_name_empty {
                                             button.tooltip(Tooltip::text("Name is required"))
@@ -170,9 +183,9 @@ impl Render for AddContextServerModal {
                                             button
                                         }
                                     })
-                                    .on_click(
-                                        cx.listener(|this, _event, _window, cx| this.confirm(cx)),
-                                    ),
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.confirm(&menu::Confirm, cx)
+                                    })),
                             ),
                     ),
             )
