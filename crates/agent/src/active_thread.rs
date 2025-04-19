@@ -749,7 +749,6 @@ impl ActiveThread {
             this.push_message(&message.id, &message.segments, window, cx);
 
             for tool_use in thread.read(cx).tool_uses_for_message(message.id, cx) {
-                // dbg!(&tool_use.input, &tool_use.ui_text, &tool_use.status.text());
                 this.render_tool_use_markdown(
                     tool_use.id.clone(),
                     tool_use.ui_text.clone(),
@@ -857,14 +856,8 @@ impl ActiveThread {
         tool_output: SharedString,
         cx: &mut Context<Self>,
     ) {
-        // dbg!(&tool_input);
         let rendered = RenderedToolUse {
-            label: render_tool_use_markdown(
-                // dbg!(tool_label.into()),
-                tool_label.into(),
-                self.language_registry.clone(),
-                cx,
-            ),
+            label: render_tool_use_markdown(tool_label.into(), self.language_registry.clone(), cx),
             input: render_tool_use_markdown(
                 format!(
                     "```json\n{}\n```",
@@ -961,7 +954,6 @@ impl ActiveThread {
             }
             ThreadEvent::UsePendingTools { tool_uses } => {
                 for tool_use in tool_uses {
-                    // dbg!(&tool_use.input, &tool_use.ui_text);
                     self.render_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
@@ -976,7 +968,6 @@ impl ActiveThread {
                 ui_text,
                 input,
             } => {
-                // dbg!(&input, &ui_text);
                 self.render_tool_use_markdown(
                     tool_use_id.clone(),
                     ui_text.clone(),
@@ -989,7 +980,6 @@ impl ActiveThread {
                 pending_tool_use, ..
             } => {
                 if let Some(tool_use) = pending_tool_use {
-                    // dbg!(&tool_use.input, &tool_use.ui_text);
                     self.render_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
@@ -2676,9 +2666,6 @@ impl ActiveThread {
         };
 
         v_flex().gap_1().mb_3().map(|element| {
-            if rendered_tool_use.is_none() {
-              dbg!("it was none");
-            }
             if !edit_tools {
                 element.child(
                     v_flex()

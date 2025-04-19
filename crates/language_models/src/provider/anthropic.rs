@@ -646,7 +646,6 @@ pub fn map_to_language_model_completion_events(
                                 // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
                             }
                             ResponseContent::ToolUse { id, name, .. } => {
-                                // dbg!(&name, &input);
                                 state.tool_uses_by_index.insert(
                                     index,
                                     RawToolUse {
@@ -672,7 +671,6 @@ pub fn map_to_language_model_completion_events(
                             }
                             ContentDelta::SignatureDelta { .. } => {}
                             ContentDelta::InputJsonDelta { partial_json } => {
-                                // dbg!(&partial_json, state.tool_uses_by_index.get(&index));
                                 if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
                                     tool_use.input_json.push_str(&partial_json);
 

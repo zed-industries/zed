@@ -1235,7 +1235,6 @@ impl Thread {
                                 if let Some(input) = streamed_input {
                                     cx.emit(ThreadEvent::StreamedToolUse {
                                         tool_use_id,
-                                        // ui_text: dbg!(ui_text),
                                         ui_text,
                                         input,
                                     });
