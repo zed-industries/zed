@@ -404,7 +404,7 @@ impl AssistantConfiguration {
                     .gap_2()
                     .child(
                         h_flex().w_full().child(
-                            Button::new("add-context-server", "Add MCPs Directly")
+                            Button::new("add-context-server", "Add Custom Server")
                                 .style(ButtonStyle::Filled)
                                 .layer(ElevationIndex::ModalSurface)
                                 .full_width()
