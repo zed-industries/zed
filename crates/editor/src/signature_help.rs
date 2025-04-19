@@ -1,18 +1,22 @@
 use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
 use gpui::{
-    App, Context, HighlightStyle, MouseButton, Size, StyledText, Task, TextStyle, Window,
-    combine_highlights,
+    App, AppContext, Context, Entity, HighlightStyle, MouseButton, Size, StyledText, Task,
+    TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::Rc;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, InteractiveElement, IntoElement, ParentElement, Pixels, SharedString,
-    StatefulInteractiveElement, Styled, StyledExt, div, relative,
+    ActiveTheme, AnyElement, Button, ButtonCommon, ButtonSize, Clickable, FluentBuilder,
+    InteractiveElement, IntoElement, Label, ParentElement, Pixels, SharedString, Styled, StyledExt,
+    div, px, relative,
 };
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
@@ -177,6 +181,7 @@ impl Editor {
             lsp_store.signature_help(&buffer, buffer_position, cx)
         });
         let language = self.language_at(position, cx);
+        let languages = lsp_store.read(cx).languages.clone();
 
         self.signature_help_state
             .set_task(cx.spawn_in(window, async move |editor, cx| {
@@ -191,15 +196,18 @@ impl Editor {
                         };
 
                         if let Some(language) = language {
-                            let text = Rope::from(signature_help.label.clone());
-                            let highlights = language
-                                .highlight_text(&text, 0..signature_help.label.len())
-                                .into_iter()
-                                .flat_map(|(range, highlight_id)| {
-                                    Some((range, highlight_id.style(&cx.theme().syntax())?))
-                                });
-                            signature_help.highlights =
-                                combine_highlights(signature_help.highlights, highlights).collect()
+                            for signature in &mut signature_help.signatures {
+                                let text = Rope::from(signature.label.clone());
+                                let highlights = language
+                                    .highlight_text(&text, 0..signature.label.len())
+                                    .into_iter()
+                                    .flat_map(|(range, highlight_id)| {
+                                        Some((range, highlight_id.style(&cx.theme().syntax())?))
+                                    });
+                                signature.highlights =
+                                    combine_highlights(signature.highlights.clone(), highlights)
+                                        .collect();
+                            }
                         }
                         let settings = ThemeSettings::get_global(cx);
                         let text_style = TextStyle {
@@ -211,11 +219,29 @@ impl Editor {
                             line_height: relative(settings.buffer_line_height.value()),
                             ..Default::default()
                         };
-
                         let signature_help_popover = SignatureHelpPopover {
-                            label: signature_help.label.into(),
-                            highlights: signature_help.highlights,
                             style: text_style,
+                            signature: signature_help
+                                .signatures
+                                .into_iter()
+                                .map(|s| SignatureHelpData {
+                                    label: s.label.into(),
+                                    documentation: s.documentation.map(|documentation| {
+                                        cx.new(|cx| {
+                                            Markdown::new(
+                                                documentation.into(),
+                                                Some(languages.clone()),
+                                                None,
+                                                cx,
+                                            )
+                                        })
+                                    }),
+                                    highlights: s.highlights,
+                                })
+                                .collect::<Vec<_>>(),
+                            current_signature: Rc::new(RefCell::new(
+                                signature_help.active_signature,
+                            )),
                         };
                         editor
                             .signature_help_state
@@ -291,28 +317,148 @@ impl SignatureHelpState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct SignatureHelpData {
+    pub(crate) label: SharedString,
+    documentation: Option<Entity<Markdown>>,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct SignatureHelpPopover {
-    pub label: SharedString,
     pub style: TextStyle,
-    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+    pub signature: Vec<SignatureHelpData>,
+    pub current_signature: Rc<RefCell<usize>>,
 }
 
 impl SignatureHelpPopover {
     pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut Context<Editor>) -> AnyElement {
-        div()
-            .id("signature_help_popover")
-            .elevation_2(cx)
-            .overflow_y_scroll()
+        let Some(signature) = self.signature.get(*self.current_signature.borrow()) else {
+            return div().into_any_element();
+        };
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
+            ..Default::default()
+        };
+        let markdown_style = MarkdownStyle {
+            base_text_style: text_style.clone(),
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: cx.theme().players().local().selection,
+            code_block_overflow_x_scroll: true,
+            link: gpui::TextStyleRefinement {
+                underline: Some(gpui::UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    wavy: false,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let label = signature
+            .label
+            .clone()
+            .when(signature.label.is_empty(), |_| "<No Parameters>".into());
+        let signature_count = self.signature.len();
+        let signature_label = div()
             .max_w(max_size.width)
-            .max_h(max_size.height)
-            .on_mouse_move(|_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .id("signature_help_popover")
+            .px_2()
+            .py_0p5()
             .child(
-                div().px_2().py_0p5().child(
-                    StyledText::new(self.label.clone())
-                        .with_default_highlights(&self.style, self.highlights.iter().cloned()),
-                ),
+                StyledText::new(label)
+                    .with_default_highlights(&self.style, signature.highlights.iter().cloned()),
             )
+            .into_any_element();
+        let signature_description = signature.documentation.clone().map(|description| {
+            return div()
+                .max_w(max_size.width)
+                .id("signature_help_description")
+                .px_2()
+                .py_0p5()
+                .child(MarkdownElement::new(description, markdown_style))
+                .into_any_element();
+        });
+        let signature = div()
+            .flex()
+            .flex_col()
+            .max_h(max_size.height)
+            .child(signature_label)
+            .when_some(signature_description, |this, description| {
+                this.children(vec![
+                    div().border_primary(cx).border_1().into_any_element(),
+                    description,
+                ])
+            })
+            .into_any_element();
+        let controls = if self.signature.len() > 1 {
+            let prev_button = div().flex().flex_row().justify_center().child({
+                let current_signature = self.current_signature.clone();
+                Button::new("signature_help_prev_button", "▴")
+                    .size(ButtonSize::None)
+                    .on_click(move |_, _, _| {
+                        let mut current_signature = current_signature.borrow_mut();
+                        if *current_signature == 0 {
+                            *current_signature = signature_count - 1;
+                        } else {
+                            *current_signature -= 1;
+                        }
+                    })
+                    .into_any_element()
+            });
+            let next_button = div().flex().flex_row().justify_center().child({
+                let current_signature = self.current_signature.clone();
+                Button::new("signature_help_next_button", "▾")
+                    .size(ButtonSize::None)
+                    .on_click(move |_, _, _| {
+                        let mut current_signature = current_signature.borrow_mut();
+                        if *current_signature + 1 == signature_count {
+                            *current_signature = 0;
+                        } else {
+                            *current_signature += 1;
+                        }
+                    })
+                    .into_any_element()
+            });
+            let page = div()
+                .flex()
+                .flex_row()
+                .justify_center()
+                .child(Label::new(format!(
+                    "{} / {}",
+                    *self.current_signature.borrow() + 1,
+                    signature_count
+                )));
+
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .children([prev_button, page, next_button])
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+        div()
+            .max_h(max_size.height)
+            .elevation_2(cx)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_move(|_, _, cx| cx.stop_propagation())
+            .flex()
+            .flex_row()
+            .when_some(controls, |this, controls| {
+                this.children(vec![
+                    div().flex().items_end().child(controls).into_any_element(),
+                    div().border_primary(cx).border_1().into_any_element(),
+                ])
+            })
+            .child(signature)
             .into_any_element()
     }
 }
