@@ -1498,7 +1498,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         state.enter_token = None;
                     }
                     if let Some(style) = state.cursor_style {
-                        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                        if let CursorStyle::None = style {
+                            let wl_pointer = state
+                                .wl_pointer
+                                .clone()
+                                .expect("window is focused by pointer");
+                            wl_pointer.set_cursor(serial, None, 0, 0);
+                        } else if let Some(cursor_shape_device) = &state.cursor_shape_device {
                             cursor_shape_device.set_shape(serial, style.to_shape());
                         } else {
                             let scale = window.primary_output_scale();

@@ -409,17 +409,6 @@ impl<T: 'static> Entity<T> {
         }
     }
 
-    /// Upgrade the given weak pointer to a retaining pointer, if it still exists
-    pub fn upgrade_from(weak: &WeakEntity<T>) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        Some(Entity {
-            any_entity: weak.any_entity.upgrade()?,
-            entity_type: weak.entity_type,
-        })
-    }
-
     /// Convert this into a dynamically typed entity.
     pub fn into_any(self) -> AnyEntity {
         self.any_entity
@@ -440,32 +429,22 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Updates the entity referenced by this handle with the given function.
-    ///
-    /// The update function receives a context appropriate for its environment.
-    /// When updating in an `App`, it receives a `Context`.
-    /// When updating in a `Window`, it receives a `Window` and a `Context`.
-    pub fn update<C, R>(
+    pub fn update<R, C: AppContext>(
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> C::Result<R>
-    where
-        C: AppContext,
-    {
+    ) -> C::Result<R> {
         cx.update_entity(self, update)
     }
 
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the entity has been released.
-    pub fn update_in<C, R>(
+    pub fn update_in<R, C: VisualContext>(
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
-    ) -> C::Result<R>
-    where
-        C: VisualContext,
-    {
+    ) -> C::Result<R> {
         cx.update_window_entity(self, update)
     }
 }
@@ -669,8 +648,10 @@ impl<T> Clone for WeakEntity<T> {
 impl<T: 'static> WeakEntity<T> {
     /// Upgrade this weak entity reference into a strong entity reference
     pub fn upgrade(&self) -> Option<Entity<T>> {
-        // Delegate to the trait implementation to keep behavior in one place.
-        Entity::upgrade_from(self)
+        Some(Entity {
+            any_entity: self.any_entity.upgrade()?,
+            entity_type: self.entity_type,
+        })
     }
 
     /// Updates the entity referenced by this handle with the given function if

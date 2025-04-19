@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::format_context_as_string;
+use crate::context::{AssistantContext, format_context_as_string};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -293,6 +293,21 @@ impl MessageEditor {
                 })
                 .log_err();
 
+            context_store
+                .update(cx, |context_store, cx| {
+                    let excerpt_ids = context_store
+                        .context()
+                        .iter()
+                        .filter(|ctx| matches!(ctx, AssistantContext::Excerpt(_)))
+                        .map(|ctx| ctx.id())
+                        .collect::<Vec<_>>();
+
+                    for id in excerpt_ids {
+                        context_store.remove_context(id, cx);
+                    }
+                })
+                .log_err();
+
             if let Some(wait_for_summaries) = context_store
                 .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
                 .log_err()
@@ -315,6 +330,7 @@ impl MessageEditor {
             // Send to model after summaries are done
             thread
                 .update(cx, |thread, cx| {
+                    thread.advance_prompt_id();
                     thread.send_to_model(model, request_kind, cx);
                 })
                 .log_err();
@@ -998,6 +1014,8 @@ impl MessageEditor {
                 }
 
                 let request = language_model::LanguageModelRequest {
+                    thread_id: None,
+                    prompt_id: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: language_model::Role::User,
                         content: vec![content.into()],

@@ -190,13 +190,21 @@ pub mod agent {
 }
 
 pub mod assistant {
-    use gpui::{action_with_deprecated_aliases, actions, impl_actions};
+    use gpui::{actions, impl_action_with_deprecated_aliases, impl_actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
+    use uuid::Uuid;
 
     actions!(assistant, [ToggleFocus, ShowConfiguration]);
 
-    action_with_deprecated_aliases!(
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct OpenPromptLibrary {
+        #[serde(skip)]
+        pub prompt_to_focus: Option<Uuid>,
+    }
+
+    impl_action_with_deprecated_aliases!(
         assistant,
         OpenPromptLibrary,
         ["assistant::DeployPromptLibrary"]

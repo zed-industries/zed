@@ -56,13 +56,13 @@ The user has opened a project that contains the following root directories/files
 - `{{root_name}}`
 {{/each}}
 
-{{#if has_rules}}
-
+{{#if (or has_rules has_default_user_rules)}}
 ## User's Custom Instructions
 
 The following additional instructions are provided by the user, and should be followed to the best of your ability without interfering with the tool use guidelines.
 
-There are rules that apply to these root directories:
+{{#if has_rules}}
+There are project rules that apply to these root directories:
 {{#each worktrees}}
 {{#if rules_file}}
 `{{root_name}}/{{rules_file.path_in_worktree}}`:
@@ -71,4 +71,18 @@ There are rules that apply to these root directories:
 ``````
 {{/if}}
 {{/each}}
+{{/if}}
+
+{{#if has_default_user_rules}}
+The user has specified the following rules that should be applied:
+{{#each default_user_rules}}
+
+{{#if title}}
+Rules title: {{title}}
+{{/if}}
+``````
+{{contents}}}
+``````
+{{/each}}
+{{/if}}
 {{/if}}

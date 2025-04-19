@@ -5013,15 +5013,15 @@ impl Editor {
                             None => None,
                         };
                         let resolved_tasks =
-                            tasks.zip(task_context).map(|(tasks, task_context)| {
-                                Rc::new(ResolvedTasks {
+                            tasks
+                                .zip(task_context)
+                                .map(|(tasks, task_context)| ResolvedTasks {
                                     templates: tasks.resolve(&task_context).collect(),
                                     position: snapshot.buffer_snapshot.anchor_before(Point::new(
                                         multibuffer_point.row,
                                         tasks.column,
                                     )),
-                                })
-                            });
+                                });
                         let spawn_straight_away = resolved_tasks.as_ref().map_or(false, |tasks| {
                             tasks
                                 .templates
@@ -5042,10 +5042,11 @@ impl Editor {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
-                                    actions: CodeActionContents {
-                                        tasks: resolved_tasks,
-                                        actions: code_actions,
-                                    },
+                                    actions: CodeActionContents::new(
+                                        resolved_tasks,
+                                        code_actions,
+                                        cx,
+                                    ),
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
                                     deployed_from_indicator,
@@ -10155,11 +10156,19 @@ impl Editor {
                                 ..Point::new(row.0, buffer.line_len(row)),
                         );
                         for row in start.row + 1..=end.row {
+                            let mut line_len = buffer.line_len(MultiBufferRow(row));
+                            if row == end.row {
+                                line_len = end.column;
+                            }
+                            if line_len == 0 {
+                                trimmed_selections
+                                    .push(Point::new(row, 0)..Point::new(row, line_len));
+                                continue;
+                            }
                             let row_indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
                             if row_indent_size.len >= first_indent.len {
                                 trimmed_selections.push(
-                                    Point::new(row, first_indent.len)
-                                        ..Point::new(row, buffer.line_len(MultiBufferRow(row))),
+                                    Point::new(row, first_indent.len)..Point::new(row, line_len),
                                 );
                             } else {
                                 trimmed_selections.clear();

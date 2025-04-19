@@ -74,7 +74,7 @@ In there, you can reach for the "Uncommit" button, which performs the `git reset
 Zed currently supports LLM-powered commit message generation.
 You can ask AI to generate a commit message by focusing on the message editor within the Git Panel and either clicking on the pencil icon in the bottom left, or reaching for the {#action git::GenerateCommitMessage} ({#kb git::GenerateCommitMessage}) keybinding.
 
-> Note that you need to have an LLM provider configured. Visit [the Assistant configuration page](/assistant/configuration.md) to learn how to do so.
+> Note that you need to have an LLM provider configured. Visit [the Assistant configuration page](./assistant/configuration.md) to learn how to do so.
 
 <!-- Add media -->
 
@@ -123,4 +123,4 @@ or by simply right clicking and selecting `Copy Permalink` with line(s) selected
 | {#action editor::ToggleGitBlame}       | {#kb editor::ToggleGitBlame}       |
 | {#action editor::ToggleGitBlameInline} | {#kb editor::ToggleGitBlameInline} |
 
-> Not all actions have default keybindings, but can be bound by [customizing your keymap](/key-bindings.md#user-keymaps).
+> Not all actions have default keybindings, but can be bound by [customizing your keymap](./key-bindings.md#user-keymaps).

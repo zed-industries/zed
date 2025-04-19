@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -67,6 +67,24 @@ impl std::fmt::Display for ThreadId {
 impl From<&str> for ThreadId {
     fn from(value: &str) -> Self {
         Self(value.into())
+    }
+}
+
+/// The ID of the user prompt that initiated a request.
+///
+/// This equates to the user physically submitting a message to the model (e.g., by pressing the Enter key).
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct PromptId(Arc<str>);
+
+impl PromptId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl std::fmt::Display for PromptId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -274,6 +292,7 @@ pub struct Thread {
     detailed_summary_state: DetailedSummaryState,
     messages: Vec<Message>,
     next_message_id: MessageId,
+    last_prompt_id: PromptId,
     context: BTreeMap<ContextId, AssistantContext>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     project_context: SharedProjectContext,
@@ -323,6 +342,7 @@ impl Thread {
             detailed_summary_state: DetailedSummaryState::NotGenerated,
             messages: Vec::new(),
             next_message_id: MessageId(0),
+            last_prompt_id: PromptId::new(),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
             project_context: system_prompt,
@@ -397,6 +417,7 @@ impl Thread {
                 })
                 .collect(),
             next_message_id,
+            last_prompt_id: PromptId::new(),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
             project_context,
@@ -443,6 +464,10 @@ impl Thread {
 
     pub fn touch_updated_at(&mut self) {
         self.updated_at = Utc::now();
+    }
+
+    pub fn advance_prompt_id(&mut self) {
+        self.last_prompt_id = PromptId::new();
     }
 
     pub fn summary(&self) -> Option<SharedString> {
@@ -952,9 +977,11 @@ impl Thread {
     pub fn to_completion_request(
         &self,
         request_kind: RequestKind,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(self.last_prompt_id.to_string()),
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
@@ -962,20 +989,33 @@ impl Thread {
         };
 
         if let Some(project_context) = self.project_context.borrow().as_ref() {
-            if let Some(system_prompt) = self
+            match self
                 .prompt_builder
                 .generate_assistant_system_prompt(project_context)
-                .context("failed to generate assistant system prompt")
-                .log_err()
             {
-                request.messages.push(LanguageModelRequestMessage {
-                    role: Role::System,
-                    content: vec![MessageContent::Text(system_prompt)],
-                    cache: true,
-                });
+                Err(err) => {
+                    let message = format!("{err:?}").into();
+                    log::error!("{message}");
+                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                        header: "Error generating system prompt".into(),
+                        message,
+                    }));
+                }
+                Ok(system_prompt) => {
+                    request.messages.push(LanguageModelRequestMessage {
+                        role: Role::System,
+                        content: vec![MessageContent::Text(system_prompt)],
+                        cache: true,
+                    });
+                }
             }
         } else {
-            log::error!("project_context not set.")
+            let message = "Context for system prompt unexpectedly not ready.".into();
+            log::error!("{message}");
+            cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                header: "Error generating system prompt".into(),
+                message,
+            }));
         }
 
         for message in &self.messages {
@@ -1079,7 +1119,7 @@ impl Thread {
         } else {
             None
         };
-
+        let prompt_id = self.last_prompt_id.clone();
         let task = cx.spawn(async move |thread, cx| {
             let stream_completion_future = model.stream_completion_with_usage(request, &cx);
             let initial_token_usage =
@@ -1284,6 +1324,7 @@ impl Thread {
                         telemetry::event!(
                             "Assistant Thread Completion",
                             thread_id = thread.id().to_string(),
+                            prompt_id = prompt_id,
                             model = model.telemetry_id(),
                             model_provider = model.provider_id().to_string(),
                             input_tokens = usage.input_tokens,
@@ -2180,7 +2221,7 @@ fn main() {{
         assert_eq!(message.context, expected_context);
 
         // Check message in request
-        let request = thread.read_with(cx, |thread, cx| {
+        let request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2272,7 +2313,7 @@ fn main() {{
         assert!(message3.context.contains("file3.rs"));
 
         // Check entire request to make sure all contexts are properly included
-        let request = thread.read_with(cx, |thread, cx| {
+        let request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2324,7 +2365,7 @@ fn main() {{
         assert_eq!(message.context, "");
 
         // Check message in request
-        let request = thread.read_with(cx, |thread, cx| {
+        let request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2344,7 +2385,7 @@ fn main() {{
         assert_eq!(message2.context, "");
 
         // Check that both messages appear in the request
-        let request = thread.read_with(cx, |thread, cx| {
+        let request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2386,7 +2427,7 @@ fn main() {{
         });
 
         // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.read_with(cx, |thread, cx| {
+        let initial_request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2416,7 +2457,7 @@ fn main() {{
         });
 
         // Create a new request and check for the stale buffer warning
-        let new_request = thread.read_with(cx, |thread, cx| {
+        let new_request = thread.update(cx, |thread, cx| {
             thread.to_completion_request(RequestKind::Chat, cx)
         });
 
@@ -2445,6 +2486,7 @@ fn main() {{
             language::init(cx);
             Project::init_settings(cx);
             AssistantSettings::register(cx);
+            prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
@@ -2484,7 +2526,8 @@ fn main() {{
                     cx,
                 )
             })
-            .await;
+            .await
+            .unwrap();
 
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
