@@ -35,7 +35,6 @@ client.workspace = true
 clock.workspace = true
 collections.workspace = true
 component.workspace = true
-dap.workspace = true
 db.workspace = true
 derive_more.workspace = true
 fs.workspace = true
