@@ -653,6 +653,33 @@ impl Display for FontStyle {
     }
 }
 
+/// Letter spacing (in ems).
+#[derive(
+    Clone, Copy, Default, Debug, PartialEq, PartialOrd, Deserialize, Serialize, JsonSchema,
+)]
+pub struct LetterSpacing(pub f32);
+
+impl Hash for LetterSpacing {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u32(u32::from_be_bytes(self.0.to_be_bytes()));
+    }
+}
+
+impl Eq for LetterSpacing {}
+
+impl Display for LetterSpacing {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        Debug::fmt(self, f)
+    }
+}
+
+impl LetterSpacing {
+    /// Converts the letter spacing (in ems) to pixels.
+    pub fn to_px(&self, font_size: Pixels) -> Pixels {
+        self.0 * font_size
+    }
+}
+
 /// A styled run of text, for use in [`TextLayout`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextRun {
