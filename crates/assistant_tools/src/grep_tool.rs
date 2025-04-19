@@ -17,7 +17,7 @@ use util::markdown::MarkdownString;
 use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct RegexSearchToolInput {
+pub struct GrepToolInput {
     /// A regex pattern to search for in the entire project. Note that the regex
     /// will be parsed by the Rust `regex` crate.
     pub regex: String,
@@ -32,7 +32,7 @@ pub struct RegexSearchToolInput {
     pub case_sensitive: bool,
 }
 
-impl RegexSearchToolInput {
+impl GrepToolInput {
     /// Which page of search results this is.
     pub fn page(&self) -> u32 {
         1 + (self.offset / RESULTS_PER_PAGE)
@@ -41,11 +41,11 @@ impl RegexSearchToolInput {
 
 const RESULTS_PER_PAGE: u32 = 20;
 
-pub struct RegexSearchTool;
+pub struct GrepTool;
 
-impl Tool for RegexSearchTool {
+impl Tool for GrepTool {
     fn name(&self) -> String {
-        "regex_search".into()
+        "grep".into()
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
@@ -53,7 +53,7 @@ impl Tool for RegexSearchTool {
     }
 
     fn description(&self) -> String {
-        include_str!("./regex_search_tool/description.md").into()
+        include_str!("./grep_tool/description.md").into()
     }
 
     fn icon(&self) -> IconName {
@@ -61,11 +61,11 @@ impl Tool for RegexSearchTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        json_schema_for::<RegexSearchToolInput>(format)
+        json_schema_for::<GrepToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
+        match serde_json::from_value::<GrepToolInput>(input.clone()) {
             Ok(input) => {
                 let page = input.page();
                 let regex_str = MarkdownString::inline_code(&input.regex);
@@ -95,11 +95,10 @@ impl Tool for RegexSearchTool {
     ) -> ToolResult {
         const CONTEXT_LINES: u32 = 2;
 
-        let (offset, regex, case_sensitive) =
-            match serde_json::from_value::<RegexSearchToolInput>(input) {
-                Ok(input) => (input.offset, input.regex, input.case_sensitive),
-                Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-            };
+        let (offset, regex, case_sensitive) = match serde_json::from_value::<GrepToolInput>(input) {
+            Ok(input) => (input.offset, input.regex, input.case_sensitive),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
+        };
 
         let query = match SearchQuery::regex(
             &regex,

@@ -1,4 +1,4 @@
-Searches the entire project for the given regular expression.
+Searches every file in the project with a regular expression
 
 - Prefer this tool when searching for files containing symbols in the project.
 - Supports full regex syntax (eg. "log.*Error", "function\\s+\\w+", etc.)
