@@ -373,7 +373,7 @@ impl SignatureHelpPopover {
         let signature_count = self.signature.len();
         let signature_label = div()
             .max_w(max_size.width)
-            .id("signature_help_popover")
+            .id("signature_help_label")
             .px_2()
             .py_0p5()
             .child(
@@ -381,24 +381,21 @@ impl SignatureHelpPopover {
                     .with_default_highlights(&self.style, signature.highlights.iter().cloned()),
             )
             .into_any_element();
-        let signature_description = signature.documentation.clone().map(|description| {
-            return div()
-                .max_w(max_size.width)
-                .id("signature_help_description")
-                .px_2()
-                .py_0p5()
-                .child(MarkdownElement::new(description, markdown_style))
-                .into_any_element();
-        });
         let signature = div()
             .flex()
             .flex_col()
             .max_h(max_size.height)
             .child(signature_label)
-            .when_some(signature_description, |this, description| {
+            .when_some(signature.documentation.clone(), |this, description| {
                 this.children(vec![
                     div().border_primary(cx).border_1().into_any_element(),
-                    description,
+                    div()
+                        .max_w(max_size.width)
+                        .id("signature_help_description")
+                        .px_2()
+                        .py_0p5()
+                        .child(MarkdownElement::new(description, markdown_style))
+                        .into_any_element(),
                 ])
             })
             .into_any_element();
