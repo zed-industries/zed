@@ -984,8 +984,10 @@ mod tests {
                     )
                     .unwrap()
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
 
         // When opening the assistant diff, the cursor is positioned on the first hunk.

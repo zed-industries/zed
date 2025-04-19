@@ -3125,6 +3125,12 @@ impl FromAnchor for usize {
     }
 }
 
+impl<T: FromAnchor> FromAnchor for Unclipped<T> {
+    fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
+        Unclipped(T::from_anchor(anchor, snapshot))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LineEnding {
     Unix,

@@ -2169,19 +2169,11 @@ impl LocalLspStore {
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<LspStore>,
     ) -> Result<()> {
-        fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
-            Ordering::Equal
-                .then_with(|| b.is_primary.cmp(&a.is_primary))
-                .then_with(|| a.is_disk_based.cmp(&b.is_disk_based))
-                .then_with(|| a.severity.cmp(&b.severity))
-                .then_with(|| a.message.cmp(&b.message))
-        }
-
         diagnostics.sort_unstable_by(|a, b| {
             Ordering::Equal
                 .then_with(|| a.range.start.cmp(&b.range.start))
                 .then_with(|| b.range.end.cmp(&a.range.end))
-                .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
+                .then_with(|| a.diagnostic.cmp(&b.diagnostic))
         });
 
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
@@ -5936,6 +5928,29 @@ impl LspStore {
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))
         }
+    }
+
+    pub fn all_diagnostics(
+        &self,
+    ) -> HashMap<ProjectPath, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>> {
+        let mut result = HashMap::default();
+        if let Some(this) = self.as_local() {
+            for (worktree_id, diagnostics_by_path) in &this.diagnostics {
+                for (path, diagnostics_by_server_id) in diagnostics_by_path {
+                    let project_path = ProjectPath {
+                        worktree_id: *worktree_id,
+                        path: path.clone(),
+                    };
+                    let mut all_diagnostics = Vec::new();
+                    for (_, diagnostics) in diagnostics_by_server_id {
+                        all_diagnostics.extend_from_slice(&diagnostics);
+                    }
+                    all_diagnostics.sort_unstable_by_key(|entry| entry.range.start);
+                    result.insert(project_path, all_diagnostics);
+                }
+            }
+        }
+        result
     }
 
     pub fn diagnostic_summary(&self, include_ignored: bool, cx: &App) -> DiagnosticSummary {

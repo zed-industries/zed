@@ -81,7 +81,7 @@ impl Tool for DiagnosticsTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
-        action_log: Entity<ActionLog>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> ToolResult {
         match serde_json::from_value::<DiagnosticsToolInput>(input)
@@ -151,10 +151,6 @@ impl Tool for DiagnosticsTool {
                         ));
                     }
                 }
-
-                action_log.update(cx, |action_log, _cx| {
-                    action_log.checked_project_diagnostics();
-                });
 
                 if has_diagnostics {
                     Task::ready(Ok(output)).into()

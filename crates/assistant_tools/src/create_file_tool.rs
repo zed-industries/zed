@@ -97,14 +97,11 @@ impl Tool for CreateFileTool {
             cx.update(|cx| {
                 buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
                 action_log.update(cx, |action_log, cx| {
-                    action_log.will_create_buffer(buffer.clone(), cx)
-                });
-            })?;
-
-            project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
-                .await
-                .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
+                    action_log.save_new_buffer(buffer.clone(), cx)
+                })
+            })?
+            .await
+            .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
 
             Ok(format!("Created file {destination_path}"))
         })
