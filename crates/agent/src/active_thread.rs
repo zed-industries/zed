@@ -2691,12 +2691,9 @@ impl ActiveThread {
                                         )
                                         .child(
                                             h_flex().pr_8().text_size(rems(0.8125)).children(
-                                                rendered_tool_use.map(|rendered| {
-                                                    Label::new(&rendered.label.read(cx).source)
-                                                    // MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_url_click({let workspace = self.workspace.clone(); move |text, window, cx| {
-                                                    //     open_markdown_link(text, workspace.clone(), window, cx);
-                                                    // }})
-                                                })
+                                                rendered_tool_use.map(|rendered| MarkdownElement::new(rendered.label, tool_use_markdown_style(window, cx)).on_url_click({let workspace = self.workspace.clone(); move |text, window, cx| {
+                                                    open_markdown_link(text, workspace.clone(), window, cx);
+                                                }}))
                                             ),
                                         ),
                                 )
