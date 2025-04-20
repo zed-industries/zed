@@ -36,7 +36,7 @@ pub struct SearchInputs {
     query: Arc<str>,
     files_to_include: PathMatcher,
     files_to_exclude: PathMatcher,
-    match_full_paths_only: bool,
+    match_full_paths: bool,
     buffers: Option<Vec<Entity<Buffer>>>,
 }
 
@@ -86,8 +86,8 @@ static WORD_MATCH_TEST: LazyLock<Regex> = LazyLock::new(|| {
 impl SearchQuery {
     /// Create a text query
     ///
-    /// If `match_full_paths_only` is true, include/exclude patterns will always be matched against fully qualified project paths beginning with a project root.
-    /// If `match_full_paths_only` is false, patterns will be matched against full paths only when the project has multiple roots.
+    /// If `match_full_paths` is true, include/exclude patterns will always be matched against fully qualified project paths beginning with a project root.
+    /// If `match_full_paths` is false, patterns will be matched against full paths only when the project has multiple roots.
     pub fn text(
         query: impl ToString,
         whole_word: bool,
@@ -95,7 +95,7 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
-        match_full_paths_only: bool,
+        match_full_paths: bool,
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let query = query.to_string();
@@ -122,7 +122,7 @@ impl SearchQuery {
             query: query.into(),
             files_to_exclude,
             files_to_include,
-            match_full_paths_only,
+            match_full_paths,
             buffers,
         };
         Ok(Self::Text {
@@ -137,8 +137,9 @@ impl SearchQuery {
 
     /// Create a regex query
     ///
-    /// If `match_full_paths_only` is true, include/exclude patterns will always be matched against fully qualified project paths beginning with a project root.
-    /// If `match_full_paths_only` is false, patterns will be matched against full paths only when the project has multiple roots.
+    /// If `match_full_paths` is true, include/exclude patterns will be matched against fully qualified project paths
+    /// beginning with a project root name. If false, they will be matched against project-relative paths (which don't start
+    /// with their respective project root).
     pub fn regex(
         query: impl ToString,
         whole_word: bool,
@@ -147,7 +148,7 @@ impl SearchQuery {
         one_match_per_line: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
-        match_full_paths_only: bool,
+        match_full_paths: bool,
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let mut query = query.to_string();
@@ -176,7 +177,7 @@ impl SearchQuery {
             query: initial_query,
             files_to_exclude,
             files_to_include,
-            match_full_paths_only,
+            match_full_paths,
             buffers,
         };
         Ok(Self::Regex {
@@ -201,7 +202,7 @@ impl SearchQuery {
                 false,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
-                false,
+                message.match_full_paths,
                 None, // search opened only don't need search remote
             )
         } else {
@@ -243,6 +244,7 @@ impl SearchQuery {
             include_ignored: self.include_ignored(),
             files_to_include: self.files_to_include().sources().join(","),
             files_to_exclude: self.files_to_exclude().sources().join(","),
+            match_full_paths: self.match_full_paths(),
         }
     }
 
@@ -475,8 +477,8 @@ impl SearchQuery {
             && self.files_to_include().sources().is_empty())
     }
 
-    pub fn match_full_paths_only(&self) -> bool {
-        self.as_inner().match_full_paths_only
+    pub fn match_full_paths(&self) -> bool {
+        self.as_inner().match_full_paths
     }
 
     /// Check match full paths to determine whether you're required to pass a fully qualified
