@@ -323,6 +323,7 @@ impl Keystroke {
                 | "super"
                 | "win"
                 | "fn"
+                | "menu"
         )
     }
 }
