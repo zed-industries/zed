@@ -1812,8 +1812,18 @@ impl Session {
             .unwrap_or_default()
     }
 
-    pub fn all_variables(&self) -> Vec<dap::Variable> {
-        self.variables.values().flatten().cloned().collect()
+    pub fn variables_by_stack_frame_id(&self, stack_frame_id: StackFrameId) -> Vec<dap::Variable> {
+        let Some(stack_frame) = self.stack_frames.get(&stack_frame_id) else {
+            return Vec::new();
+        };
+
+        stack_frame
+            .scopes
+            .iter()
+            .filter_map(|scope| self.variables.get(&scope.variables_reference))
+            .flatten()
+            .cloned()
+            .collect()
     }
 
     pub fn variables(

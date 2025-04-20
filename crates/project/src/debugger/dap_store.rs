@@ -10,7 +10,7 @@ use collections::HashMap;
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, ErrorResponse, EvaluateArguments,
     EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments, Source,
-    StartDebuggingRequestArguments,
+    StackFrameId, StartDebuggingRequestArguments,
     adapters::{DapStatus, DebugAdapterBinary, DebugAdapterName},
     client::SessionId,
     messages::Message,
@@ -672,13 +672,13 @@ impl DapStore {
     pub fn resolve_inline_values(
         &self,
         session: Entity<Session>,
-        stack_frame_id: u64,
+        stack_frame_id: StackFrameId,
         buffer_handle: Entity<Buffer>,
         inline_values: Vec<lsp::InlineValue>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
-        let all_variables = session.read(cx).all_variables();
+        let all_variables = session.read(cx).variables_by_stack_frame_id(stack_frame_id);
 
         cx.spawn(async move |_, cx| {
             let mut inlay_hints = Vec::with_capacity(inline_values.len());
