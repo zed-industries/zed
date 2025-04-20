@@ -180,7 +180,7 @@ fn main() {
                 return cx.update(|cx| cx.quit());
             }
 
-            let mut repo_urls = HashSet::new();
+            let mut repo_urls = HashSet::default();
             let mut clone_tasks = Vec::new();
 
             for (i, example) in examples.iter_mut().enumerate() {
