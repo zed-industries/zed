@@ -2720,15 +2720,10 @@ fn comment_motion(
                     return None;
                 }
 
-                let relevant = if direction == Direction::Prev {
-                    range.start
-                } else {
-                    range.end
-                };
-                if direction == Direction::Prev && relevant < offset {
-                    Some(relevant)
-                } else if direction == Direction::Next && relevant > offset + 1 {
-                    Some(relevant)
+                if direction == Direction::Prev && range.start < offset {
+                    Some(range.start)
+                } else if direction == Direction::Next && range.start > offset + 1 {
+                    Some(range.start)
                 } else {
                     None
                 }
