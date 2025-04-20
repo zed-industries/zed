@@ -2720,9 +2720,9 @@ fn comment_motion(
                     return None;
                 }
 
-                if direction == Direction::Prev && range.start < offset {
-                    Some(range.start)
-                } else if direction == Direction::Next && range.start > offset + 1 {
+                if (direction == Direction::Prev && range.start < offset)
+                    || (direction == Direction::Next && range.start > offset + 1)
+                {
                     Some(range.start)
                 } else {
                     None
