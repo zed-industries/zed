@@ -8,12 +8,12 @@ use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
-use language::{DiagnosticSeverity, OffsetRangeExt};
+use language::{Buffer, DiagnosticSeverity, OffsetRangeExt};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role, StopReason, TokenUsage,
 };
-use project::{LspStore, Project, ProjectPath};
+use project::{Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -271,7 +271,7 @@ impl Example {
                 })?
                 .await;
 
-            let lsp_open_handle_and_store = if this.base.require_lsp {
+            let lsp = if this.base.require_lsp {
                 let language_extension = this.base.language_extension.as_deref().context(
                     "language_extension field is required in base.toml when `require_lsp == true`",
                 )?;
@@ -301,39 +301,13 @@ impl Example {
 
                 let language_file_buffer = open_language_file_buffer_task.await?;
 
-                let (lsp_open_handle, lsp_store) = project.update(cx, |project, cx| {
-                    (
-                        project.register_buffer_with_language_servers(&language_file_buffer, cx),
-                        project.lsp_store().clone(),
-                    )
+                let lsp_open_handle = project.update(cx, |project, cx| {
+                    project.register_buffer_with_language_servers(&language_file_buffer, cx)
                 })?;
 
-                // TODO: remove this once the diagnostics tool waits for new diagnostics
-                cx.background_executor().timer(Duration::new(5, 0)).await;
-                wait_for_lang_server(&lsp_store, this.log_prefix.clone(), cx).await?;
+                wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
 
-                lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_open_handle.update(cx, |buffer, cx| {
-                        buffer.update(cx, |buffer, cx| {
-                            let has_language_server = lsp_store
-                                .language_servers_for_local_buffer(buffer, cx)
-                                .next()
-                                .is_some();
-                            if has_language_server {
-                                Ok(())
-                            } else {
-                                Err(anyhow!(
-                                    "`{:?}` was opened to cause the language server to start, \
-                                    but no language servers are registered for its buffer. \
-                                    Set `require_lsp = false` in `base.toml` to skip this.",
-                                    language_file
-                                ))
-                            }
-                        })
-                    })
-                })??;
-
-                Some((lsp_open_handle, lsp_store))
+                Some((lsp_open_handle, language_file_buffer))
             } else {
                 None
             };
@@ -479,8 +453,8 @@ impl Example {
 
             println!("{}Stopped", this.log_prefix);
 
-            if let Some((_, lsp_store)) = lsp_open_handle_and_store.as_ref() {
-                wait_for_lang_server(lsp_store, this.log_prefix.clone(), cx).await?;
+            if let Some((_, language_file_buffer)) = lsp.as_ref() {
+                wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
             }
 
             println!("{}Getting repository diff", this.log_prefix);
@@ -504,7 +478,7 @@ impl Example {
             };
 
             drop(subscription);
-            drop(lsp_open_handle_and_store);
+            drop(lsp);
 
             if let Some(diagnostics_before) = &diagnostics_before {
                 fs::write(example_output_dir.join("diagnostics_before.txt"), diagnostics_before)?;
@@ -674,27 +648,42 @@ impl Example {
 }
 
 fn wait_for_lang_server(
-    lsp_store: &Entity<LspStore>,
+    project: &Entity<Project>,
+    buffer: &Entity<Buffer>,
     log_prefix: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
-    if cx
-        .update(|cx| !has_pending_lang_server_work(lsp_store, cx))
-        .unwrap()
-        || std::env::var("ZED_EVAL_SKIP_LS_WAIT").is_ok()
-    {
-        return Task::ready(anyhow::Ok(()));
-    }
-
     println!("{}⏵ Waiting for language server", log_prefix);
 
     let (mut tx, mut rx) = mpsc::channel(1);
 
-    let subscription =
-        cx.subscribe(&lsp_store, {
-            let log_prefix = log_prefix.clone();
-            move |lsp_store, event, cx| {
-                match event {
+    let lsp_store = project
+        .update(cx, |project, _| project.lsp_store())
+        .unwrap();
+
+    let has_lang_server = buffer
+        .update(cx, |buffer, cx| {
+            lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store
+                    .language_servers_for_local_buffer(&buffer, cx)
+                    .next()
+                    .is_some()
+            })
+        })
+        .unwrap_or(false);
+
+    if has_lang_server {
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .unwrap()
+            .detach();
+    }
+
+    let subscriptions =
+        [
+            cx.subscribe(&lsp_store, {
+                let log_prefix = log_prefix.clone();
+                move |_, event, _| match event {
                     project::LspStoreEvent::LanguageServerUpdate {
                         message:
                             client::proto::update_language_server::Variant::WorkProgress(
@@ -707,12 +696,23 @@ fn wait_for_lang_server(
                     } => println!("{}⟲ {message}", log_prefix),
                     _ => {}
                 }
-
-                if !has_pending_lang_server_work(&lsp_store, cx) {
-                    tx.try_send(()).ok();
+            }),
+            cx.subscribe(&project, {
+                let buffer = buffer.clone();
+                move |project, event, cx| match event {
+                    project::Event::LanguageServerAdded(_, _, _) => {
+                        let buffer = buffer.clone();
+                        project
+                            .update(cx, |project, cx| project.save_buffer(buffer, cx))
+                            .detach();
+                    }
+                    project::Event::DiskBasedDiagnosticsFinished { .. } => {
+                        tx.try_send(()).ok();
+                    }
+                    _ => {}
                 }
-            }
-        });
+            }),
+        ];
 
     cx.spawn(async move |cx| {
         let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
@@ -725,16 +725,9 @@ fn wait_for_lang_server(
                 Err(anyhow!("LSP wait timed out after 5 minutes"))
             }
         };
-        drop(subscription);
+        drop(subscriptions);
         result
     })
-}
-
-fn has_pending_lang_server_work(lsp_store: &Entity<LspStore>, cx: &App) -> bool {
-    lsp_store
-        .read(cx)
-        .language_server_statuses()
-        .any(|(_, status)| !status.pending_work.is_empty())
 }
 
 async fn query_lsp_diagnostics(
