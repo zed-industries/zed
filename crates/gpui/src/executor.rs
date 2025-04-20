@@ -95,6 +95,13 @@ where
             .spawn(self.log_tracked_err(*location))
             .detach();
     }
+
+    /// Convert a Task<Result<T, E>> to a Task<()> that logs all errors.
+    pub fn log_err_in_task(self, cx: &App) -> Task<Option<T>> {
+        let location = core::panic::Location::caller();
+        cx.foreground_executor()
+            .spawn(async move { self.log_tracked_err(*location).await })
+    }
 }
 
 impl<T> Future for Task<T> {

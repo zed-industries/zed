@@ -178,7 +178,14 @@ impl TestAppContext {
         &self.foreground_executor
     }
 
-    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
+    /// Builds an entity that is owned by the application.
+    ///
+    /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
+    /// [`Entity`] handle will be returned, which can be used to access the entity in a context.
+    pub fn new<T: 'static>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
+    ) -> Entity<T> {
         let mut cx = self.app.borrow_mut();
         cx.new(build_entity)
     }
