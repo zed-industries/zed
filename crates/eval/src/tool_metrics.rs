@@ -41,26 +41,61 @@ impl Display for ToolMetrics {
         // Sort by failure rate descending
         failure_rates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Write out the failure rates
+        // Table dimensions
+        let tool_width = 30;
+        let count_width = 10;
+        let rate_width = 10;
+
+        // Write table top border
         writeln!(
             f,
-            "{:<30} {:<10} {:<10} {:<10}",
+            "┌{}┬{}┬{}┬{}┐",
+            "─".repeat(tool_width),
+            "─".repeat(count_width),
+            "─".repeat(count_width),
+            "─".repeat(rate_width)
+        )?;
+
+        // Write header row
+        writeln!(
+            f,
+            "│{:^30}│{:^10}│{:^10}│{:^10}│",
             "Tool", "Uses", "Failures", "Rate"
         )?;
-        writeln!(f, "{}", "-".repeat(65))?;
 
+        // Write header-data separator
+        writeln!(
+            f,
+            "├{}┼{}┼{}┼{}┤",
+            "─".repeat(tool_width),
+            "─".repeat(count_width),
+            "─".repeat(count_width),
+            "─".repeat(rate_width)
+        )?;
+
+        // Write data rows
         for (tool_name, failure_rate) in failure_rates {
             let use_count = self.use_counts.get(&tool_name).cloned().unwrap_or(0);
             let failure_count = self.failure_counts.get(&tool_name).cloned().unwrap_or(0);
             writeln!(
                 f,
-                "{:<30} {:<10} {:<10} {:.2}%",
+                "│{:^30}│{:^10}│{:^10}│{:^10}│",
                 tool_name,
                 use_count,
                 failure_count,
-                failure_rate * 100.0
+                format!("{}%", (failure_rate * 100.0).round())
             )?;
         }
+
+        // Write table bottom border
+        writeln!(
+            f,
+            "└{}┴{}┴{}┴{}┘",
+            "─".repeat(tool_width),
+            "─".repeat(count_width),
+            "─".repeat(count_width),
+            "─".repeat(rate_width)
+        )?;
 
         Ok(())
     }

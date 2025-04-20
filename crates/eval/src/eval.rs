@@ -291,36 +291,39 @@ fn main() {
                     Ok((run_output, judge_results)) => {
                         cumulative_tool_metrics.merge(&run_output.tool_metrics);
 
-                        for judge_result in judge_results {
+                        println!("┌───────┬──────┬────────┐");
+                        println!("│ Judge │ Diff │ Thread │");
+                        println!("├───────┼──────┼────────┤");
+
+                        for (i, judge_result) in judge_results.iter().enumerate() {
                             match judge_result {
                                 Ok(judge_output) => {
-                                    const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
-                                    let diff_score: u32 = judge_output.diff.score;
-                                    let score_index = (diff_score.min(5)) as usize;
+                                    let diff_score = judge_output.diff.score;
+                                    diff_scores.push(diff_score);
+
+                                    let thread_display = if let Some(thread) = &judge_output.thread
+                                    {
+                                        let thread_score = thread.score;
+                                        thread_scores.push(thread_score);
+                                        format!("{}", thread_score)
+                                    } else {
+                                        "N/A".to_string()
+                                    };
 
                                     println!(
-                                        "{} {}{} (Diff)",
-                                        SCORES[score_index],
-                                        example.log_prefix,
-                                        judge_output.diff.score,
+                                        "|{:^7}│{:^6}│{:^8}│",
+                                        i + 1,
+                                        diff_score,
+                                        thread_display
                                     );
-                                    diff_scores.push(judge_output.diff.score);
-
-                                    if let Some(thread) = judge_output.thread {
-                                        let process_score: u32 = thread.score;
-                                        let score_index = (process_score.min(5)) as usize;
-                                        println!(
-                                            "{} {}{} (Thread)",
-                                            SCORES[score_index], example.log_prefix, thread.score,
-                                        );
-                                        thread_scores.push(thread.score);
-                                    }
                                 }
                                 Err(err) => {
-                                    println!("💥 {}{:?}", example.log_prefix, err);
+                                    println!("|{:^7}│{:^6}│{:^8}│{:?}", i + 1, "N/A", "N/A", err);
                                 }
                             }
                         }
+
+                        println!("└───────┴──────┴────────┘");
 
                         println!("{}", run_output.tool_metrics);
                     }
