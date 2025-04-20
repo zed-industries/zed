@@ -72,6 +72,7 @@ pub enum LanguageModelCompletionEvent {
     ToolUse(LanguageModelToolUse),
     StartMessage {
         message_id: String,
+        role: Role,
     },
     UsageUpdate(TokenUsage),
 }
@@ -288,7 +289,7 @@ pub trait LanguageModel: Send + Sync {
 
             if let Some(first_event) = events.next().await {
                 match first_event {
-                    Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
+                    Ok(LanguageModelCompletionEvent::StartMessage { message_id: id, .. }) => {
                         message_id = Some(id.clone());
                     }
                     Ok(LanguageModelCompletionEvent::Text(text)) => {

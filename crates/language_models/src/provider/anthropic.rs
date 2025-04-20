@@ -750,6 +750,10 @@ pub fn map_to_language_model_completion_events(
                                     ))),
                                     Ok(LanguageModelCompletionEvent::StartMessage {
                                         message_id: message.id,
+                                        role: match message.role {
+                                            anthropic::Role::User => Role::User,
+                                            anthropic::Role::Assistant => Role::Assistant,
+                                        },
                                     }),
                                 ],
                                 state,
