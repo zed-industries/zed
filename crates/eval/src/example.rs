@@ -232,10 +232,7 @@ impl Example {
         }
 
         if self.base.url == ZED_REPO_URL {
-            std::fs::write(
-                worktree_path.join(".rules"),
-                include_str!("../../../.rules"),
-            );
+            std::fs::write(worktree_path.join(".rules"), std::fs::read(".rules")?)?;
         }
 
         std::fs::create_dir_all(self.example_output_directory())?;
