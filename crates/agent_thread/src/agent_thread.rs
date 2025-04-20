@@ -67,6 +67,10 @@ impl AgentThread {
         self.tools.insert(name, tool);
     }
 
+    pub fn remove_tool(&mut self, name: &str) -> bool {
+        self.tools.remove(name).is_some()
+    }
+
     /// Cancels in-flight streaming, aborting any pending tool calls.
     pub fn cancel_turn(&mut self, cx: &mut Context<Self>) -> bool {
         cx.notify();
