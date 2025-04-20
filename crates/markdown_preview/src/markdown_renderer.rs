@@ -491,7 +491,9 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                         _ = workspace.update(cx, |workspace, cx| {
                                             workspace
                                                 .open_abs_path(
-                                                    path.clone(),
+                                                    path.clone()
+                                                        .canonicalize()
+                                                        .unwrap_or(path.clone()),
                                                     OpenOptions {
                                                         visible: Some(OpenVisible::None),
                                                         ..Default::default()
