@@ -16,6 +16,9 @@ pub(crate) struct KeyboardLayout {
 
 impl KeyboardMapper for WindowsKeyboardMapper {
     fn map_keystroke(&self, keystroke: Keystroke, use_key_equivalents: bool) -> Keystroke {
+        if is_immutable_key(keystroke.key.as_str()) {
+            return keystroke;
+        }
         let Keystroke {
             mut modifiers,
             mut key,
@@ -44,7 +47,7 @@ impl KeyboardMapper for WindowsKeyboardMapper {
     }
 
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
-        if keystroke.is_immutable_key() {
+        if is_immutable_key(keystroke.key.as_str()) {
             return Cow::Borrowed(keystroke);
         }
         let mut modifiers = keystroke.modifiers;
@@ -276,6 +279,61 @@ impl WindowsKeyboardMapper {
         }
         Ok(VIRTUAL_KEY(low as u16))
     }
+}
+
+fn is_immutable_key(key: &str) -> bool {
+    matches!(
+        key,
+        "f1" | "f2"
+            | "f3"
+            | "f4"
+            | "f5"
+            | "f6"
+            | "f7"
+            | "f8"
+            | "f9"
+            | "f10"
+            | "f11"
+            | "f12"
+            | "f13"
+            | "f14"
+            | "f15"
+            | "f16"
+            | "f17"
+            | "f18"
+            | "f19"
+            | "f20"
+            | "f21"
+            | "f22"
+            | "f23"
+            | "f24"
+            | "backspace"
+            | "delete"
+            | "left"
+            | "right"
+            | "up"
+            | "down"
+            | "pageup"
+            | "pagedown"
+            | "insert"
+            | "home"
+            | "end"
+            | "back"
+            | "forward"
+            | "escape"
+            | "space"
+            | "tab"
+            | "enter"
+            | "shift"
+            | "control"
+            | "alt"
+            | "platform"
+            | "cmd"
+            | "super"
+            | "win"
+            | "fn"
+            | "menu"
+    )
 }
 
 fn get_modifiers(high: i8) -> (bool, bool, bool) {

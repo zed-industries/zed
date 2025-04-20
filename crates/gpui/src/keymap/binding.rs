@@ -53,13 +53,8 @@ impl KeyBinding {
         let keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
             .map(|source| {
-                Keystroke::parse(source).map(|keystroke| {
-                    if keystroke.is_immutable_key() {
-                        keystroke
-                    } else {
-                        keyboard_mapper.map_keystroke(keystroke, use_key_equivalents)
-                    }
-                })
+                Keystroke::parse(source)
+                    .map(|keystroke| keyboard_mapper.map_keystroke(keystroke, use_key_equivalents))
             })
             .collect::<std::result::Result<_, _>>()?;
 
