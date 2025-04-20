@@ -37,6 +37,7 @@ static MENTIONS_SEARCH: LazyLock<SearchQuery> = LazyLock::new(|| {
         false,
         Default::default(),
         Default::default(),
+        false,
         None,
     )
     .unwrap()

@@ -1,4 +1,4 @@
-use crate::{AgentAppState, ToolMetrics};
+use crate::{AgentAppState, ThreadEvent, ThreadStore, ToolMetrics};
 use agent::{RequestKind, ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
@@ -468,7 +468,7 @@ impl Example {
             thread.update(cx, |thread, cx| {
                 let context = vec![];
                 thread.insert_user_message(this.prompt.clone(), context, None, cx);
-                thread.send_to_model(model, RequestKind::Chat, cx);
+                thread.send_to_model(model, cx);
             })?;
 
             event_handler_task.await?;
@@ -912,6 +912,20 @@ impl RequestMarkdown {
                     MessageContent::Image(_) => {
                         messages.push_str("[IMAGE DATA]\n\n");
                     }
+                    MessageContent::Thinking { text, signature } => {
+                        messages.push_str("**Thinking**:\n\n");
+                        if let Some(sig) = signature {
+                            messages.push_str(&format!("Signature: {}\n\n", sig));
+                        }
+                        messages.push_str(text);
+                        messages.push_str("\n");
+                    }
+                    MessageContent::RedactedThinking(items) => {
+                        messages.push_str(&format!(
+                            "**Redacted Thinking**: {} item(s)\n\n",
+                            items.len()
+                        ));
+                    }
                     MessageContent::ToolUse(tool_use) => {
                         messages.push_str(&format!(
                             "**Tool Use**: {} (ID: {})\n",
@@ -930,7 +944,7 @@ impl RequestMarkdown {
                         if tool_result.is_error {
                             messages.push_str("**ERROR:**\n");
                         }
-                        messages.push_str(&format!("{}\n", tool_result.content));
+                        messages.push_str(&format!("{}\n\n", tool_result.content));
                     }
                 }
             }
@@ -966,7 +980,7 @@ fn response_events_to_markdown(
             Ok(LanguageModelCompletionEvent::Text(text)) => {
                 text_buffer.push_str(text);
             }
-            Ok(LanguageModelCompletionEvent::Thinking(text)) => {
+            Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
                 thinking_buffer.push_str(text);
             }
             Ok(LanguageModelCompletionEvent::Stop(reason)) => {

@@ -5,6 +5,7 @@ use crate::{
 use collections::BTreeMap;
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
 use std::sync::Arc;
+use util::maybe;
 
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| LanguageModelRegistry::default());
@@ -18,6 +19,7 @@ impl Global for GlobalLanguageModelRegistry {}
 #[derive(Default)]
 pub struct LanguageModelRegistry {
     default_model: Option<ConfiguredModel>,
+    default_fast_model: Option<ConfiguredModel>,
     inline_assistant_model: Option<ConfiguredModel>,
     commit_message_model: Option<ConfiguredModel>,
     thread_summary_model: Option<ConfiguredModel>,
@@ -202,6 +204,14 @@ impl LanguageModelRegistry {
             (None, None) => {}
             _ => cx.emit(Event::DefaultModelChanged),
         }
+        self.default_fast_model = maybe!({
+            let provider = &model.as_ref()?.provider;
+            let fast_model = provider.default_fast_model(cx)?;
+            Some(ConfiguredModel {
+                provider: provider.clone(),
+                model: fast_model,
+            })
+        });
         self.default_model = model;
     }
 
@@ -254,21 +264,37 @@ impl LanguageModelRegistry {
     }
 
     pub fn inline_assistant_model(&self) -> Option<ConfiguredModel> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
+        }
+
         self.inline_assistant_model
             .clone()
-            .or_else(|| self.default_model())
+            .or_else(|| self.default_model.clone())
     }
 
     pub fn commit_message_model(&self) -> Option<ConfiguredModel> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
+        }
+
         self.commit_message_model
             .clone()
-            .or_else(|| self.default_model())
+            .or_else(|| self.default_model.clone())
     }
 
     pub fn thread_summary_model(&self) -> Option<ConfiguredModel> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
+        }
+
         self.thread_summary_model
             .clone()
-            .or_else(|| self.default_model())
+            .or_else(|| self.default_fast_model.clone())
+            .or_else(|| self.default_model.clone())
     }
 
     /// The models to use for inline assists. Returns the union of the active
