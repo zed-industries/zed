@@ -366,7 +366,7 @@ fn main() {
 
             print_header("TOOL METRICS BY EXAMPLE");
             for (example_name, metrics) in metrics_by_example_name {
-                println!("Example: {}\n{}\n", example_name, metrics);
+                println!("Example: {}\n\n{}", example_name, metrics);
             }
 
             print_header("CUMULATIVE TOOL METRICS");
