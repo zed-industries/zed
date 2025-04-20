@@ -13,15 +13,18 @@ use templates::{ActionTemplate, KeybindingTemplate, Template};
 pub struct PreprocessorContext {
     macos_keymap: Arc<KeymapFile>,
     linux_keymap: Arc<KeymapFile>,
+    windows_keymap: Arc<KeymapFile>,
 }
 
 impl PreprocessorContext {
     pub fn new() -> Result<Self> {
         let macos_keymap = Arc::new(load_keymap("keymaps/default-macos.json")?);
         let linux_keymap = Arc::new(load_keymap("keymaps/default-linux.json")?);
+        let windows_keymap = Arc::new(load_keymap("keymaps/default-windows.json")?);
         Ok(Self {
             macos_keymap,
             linux_keymap,
+            windows_keymap,
         })
     }
 
@@ -29,6 +32,7 @@ impl PreprocessorContext {
         let keymap = match os {
             "macos" => &self.macos_keymap,
             "linux" => &self.linux_keymap,
+            "windows" => &self.windows_keymap,
             _ => return None,
         };
 
