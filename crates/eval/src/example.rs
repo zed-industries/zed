@@ -1,5 +1,5 @@
-use crate::{AgentAppState, ThreadEvent, ThreadStore, ToolMetrics};
-use agent::{RequestKind, ThreadEvent, ThreadStore};
+use crate::{AgentAppState, ToolMetrics};
+use agent::{ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;

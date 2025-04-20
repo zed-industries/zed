@@ -9,7 +9,7 @@ use ::fs::RealFs;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use client::{Client, ProxySettings, UserStore};
-use collections::{HashMap, HashSet};
+use collections::HashSet;
 use extension::ExtensionHostProxy;
 use futures::{StreamExt, future};
 use gpui::http_client::{Uri, read_proxy_from_env};
@@ -94,7 +94,6 @@ fn main() {
             .start(system_id, installation_id, session_id, cx);
 
         let mut cumulative_tool_metrics = ToolMetrics::default();
-        let mut metrics_by_example_name = HashMap::<String, ToolMetrics>::default();
 
         let model_registry = LanguageModelRegistry::read_global(cx);
         let model = find_model("claude-3-7-sonnet-latest", model_registry, cx).unwrap();
@@ -282,17 +281,14 @@ fn main() {
             let mut error_count = 0;
 
             for (example, result) in results {
+                print_header(&example.name);
+
                 match result {
                     Err(err) => {
                         println!("💥 {}{:?}", example.log_prefix, err);
                         error_count += 1;
                     }
                     Ok((run_output, judge_results)) => {
-                        // Update metrics for this example
-                        let example_metrics = metrics_by_example_name
-                            .entry(example.name.clone())
-                            .or_insert_with(ToolMetrics::default);
-                        example_metrics.merge(&run_output.tool_metrics);
                         cumulative_tool_metrics.merge(&run_output.tool_metrics);
 
                         for judge_result in judge_results {
@@ -325,6 +321,8 @@ fn main() {
                                 }
                             }
                         }
+
+                        println!("{}", run_output.tool_metrics);
                     }
                 }
                 println!(
@@ -362,11 +360,6 @@ fn main() {
                 if diff_score_count > 0 {
                     println!("\nAverage thread score: {average_thread_score}");
                 }
-            }
-
-            print_header("TOOL METRICS BY EXAMPLE");
-            for (example_name, metrics) in metrics_by_example_name {
-                println!("Example: {}\n\n{}", example_name, metrics);
             }
 
             print_header("CUMULATIVE TOOL METRICS");
