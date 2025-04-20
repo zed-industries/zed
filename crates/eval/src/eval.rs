@@ -93,7 +93,7 @@ fn main() {
             .telemetry()
             .start(system_id, installation_id, session_id, cx);
 
-        let mut global_tool_metrics = ToolMetrics::default();
+        let mut cumulative_tool_metrics = ToolMetrics::default();
         let mut metrics_by_example_name = HashMap::<String, ToolMetrics>::default();
 
         let model_registry = LanguageModelRegistry::read_global(cx);
@@ -293,7 +293,7 @@ fn main() {
                             .entry(example.name.clone())
                             .or_insert_with(ToolMetrics::default);
                         example_metrics.merge(&run_output.tool_metrics);
-                        global_tool_metrics.merge(&run_output.tool_metrics);
+                        cumulative_tool_metrics.merge(&run_output.tool_metrics);
 
                         for judge_result in judge_results {
                             match judge_result {
@@ -364,13 +364,13 @@ fn main() {
                 }
             }
 
-            print_header("FAILURE RATES BY EXAMPLE");
+            print_header("TOOL METRICS BY EXAMPLE");
             for (example_name, metrics) in metrics_by_example_name {
                 println!("Example: {}\n{}\n", example_name, metrics);
             }
 
-            print_header("CUMULATIVE FAILURE RATES");
-            println!("{}", global_tool_metrics);
+            print_header("CUMULATIVE TOOL METRICS");
+            println!("{}", cumulative_tool_metrics);
 
             std::thread::sleep(std::time::Duration::from_secs(2));
 
