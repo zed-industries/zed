@@ -5263,7 +5263,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["worktree-a/*.rs".to_owned()]).unwrap(),
                 Default::default(),
-                false,
+                true,
                 None,
             )
             .unwrap(),
@@ -5284,7 +5284,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["worktree-b/*.rs".to_owned()]).unwrap(),
                 Default::default(),
-                false,
+                true,
                 None,
             )
             .unwrap(),
