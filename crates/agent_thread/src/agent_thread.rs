@@ -36,7 +36,14 @@ pub type AgentResponseEvent = LanguageModelCompletionEvent;
 pub struct AgentThread {
     sent: Vec<AgentMessage>,
     unsent: Vec<AgentMessage>,
-    streaming: Option<Task<Option<()>>>,
+    /// Holds the task that handles agent interaction until the end of the turn.
+    /// Survives across multiple requests as the model performs tool calls and
+    /// we run tools, report their results.
+    in_progress_turn: Option<Task<Option<()>>>,
+    /// True when we're actively streaming data from a model completion request.
+    /// Within the same turn, this could be true, then false while we run a
+    /// tool, then true again as we relay the tool result and continue the turn.
+    streaming: bool,
     tools: BTreeMap<Arc<str>, Arc<dyn Tool>>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
@@ -47,7 +54,8 @@ impl AgentThread {
         Self {
             sent: Vec::new(),
             unsent: Vec::new(),
-            streaming: None,
+            in_progress_turn: None,
+            streaming: false,
             tools: BTreeMap::default(),
             project,
             action_log,
@@ -60,9 +68,10 @@ impl AgentThread {
     }
 
     /// Cancels in-flight streaming, aborting any pending tool calls.
-    pub fn cancel_streaming(&mut self, cx: &mut Context<Self>) -> bool {
-        self.unsent.clear();
-        self.streaming.take().is_some()
+    pub fn cancel_turn(&mut self, cx: &mut Context<Self>) -> bool {
+        cx.notify();
+        self.streaming = false;
+        self.in_progress_turn.take().is_some()
     }
 
     /// Sending a message results in the model streaming a response, which could include tool calls.
@@ -74,7 +83,7 @@ impl AgentThread {
         content: impl Into<MessageContent>,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent>> {
-        self.cancel_streaming(cx);
+        self.cancel_turn(cx);
         let events = mpsc::unbounded();
         self.enqueue_unsent(model, content, events.0, cx);
         events.1
@@ -95,19 +104,19 @@ impl AgentThread {
             role: Role::User,
             content: vec![content.into()],
         });
-        if !dbg!(self.streaming.is_some()) {
-            self.flush_unsent_messages(model, events_tx, cx)
+        if !dbg!(self.streaming) {
+            self.resume_turn(model, events_tx, cx)
         }
     }
 
-    fn flush_unsent_messages(
+    fn resume_turn(
         &mut self,
         model: Arc<dyn LanguageModel>,
         events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent>>,
         cx: &mut Context<Self>,
     ) {
         cx.notify();
-        self.streaming = Some(
+        self.in_progress_turn = Some(
             cx.spawn(async move |thread, cx| {
                 let mut subtasks = FuturesUnordered::new();
 
@@ -117,12 +126,12 @@ impl AgentThread {
                         thread.update(cx, |thread, _cx| std::mem::take(&mut thread.unsent))?;
 
                     if unsent.is_empty() {
-                        thread.update(cx, |thread, _cx| thread.streaming.take())?;
                         break;
                     }
 
                     let completion_request = thread.update(cx, |thread, _cx| {
                         thread.sent.extend(unsent);
+                        thread.streaming = true;
                         thread.build_completion_request()
                     })?;
 
@@ -149,6 +158,12 @@ impl AgentThread {
                         }
                     }
 
+                    thread
+                        .update(cx, |thread, cx| {
+                            thread.streaming = false;
+                        })
+                        .ok();
+
                     // Wait for any tasks we spawned to enqueue tool results before looping again.
                     subtasks.next().await;
                 }
@@ -159,7 +174,7 @@ impl AgentThread {
         );
     }
 
-    fn handle_stream_event(
+    fn handle_response_event(
         &mut self,
         model: &Arc<dyn LanguageModel>,
         event: LanguageModelCompletionEvent,
@@ -184,10 +199,28 @@ impl AgentThread {
                 });
             }
             UsageUpdate(token_usage) => {}
-            Stop(stop_reason) => {}
+            Stop(stop_reason) => self.handle_stop_event(stop_reason),
         }
 
         None
+    }
+
+    fn handle_stop_event(&mut self, stop_reason: StopReason) {
+        match stop_reason {
+            StopReason::EndTurn | StopReason::ToolUse => {}
+            StopReason::MaxTokens => todo!(),
+            StopReason::ToolUse => todo!(),
+        }
+    }
+
+    fn handle_stream_event(
+        &mut self,
+        model: &Arc<dyn LanguageModel>,
+        event: LanguageModelCompletionEvent,
+        events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent>>,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<()>> {
+        self.handle_response_event(model, event, events_tx, cx)
     }
 
     fn handle_text_event(&mut self, new_text: String, cx: &mut Context<Self>) {
