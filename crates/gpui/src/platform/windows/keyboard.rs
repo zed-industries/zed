@@ -5,9 +5,14 @@ use util::ResultExt;
 use windows::Win32::UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::KL_NAMELENGTH};
 use windows_core::HSTRING;
 
-use crate::{KeyboardMapper, Keystroke, Modifiers};
+use crate::{KeyboardMapper, Keystroke, Modifiers, PlatformKeyboardLayout};
 
 pub(crate) struct WindowsKeyboardMapper;
+
+pub(crate) struct KeyboardLayout {
+    id: String,
+    name: String,
+}
 
 impl KeyboardMapper for WindowsKeyboardMapper {
     fn map_keystroke(&self, keystroke: Keystroke, use_key_equivalents: bool) -> Keystroke {
@@ -19,21 +24,17 @@ impl KeyboardMapper for WindowsKeyboardMapper {
         if use_key_equivalents {
             key = self
                 .map_virtual_key(&key, &mut modifiers)
+                .or_else(|_| self.map_for_char(&key, &mut modifiers))
+                .context("Failed to map keystroke with use_key_equivalents = true")
                 .log_err()
-                .unwrap_or_else(|| {
-                    self.map_for_char(&key, &mut modifiers)
-                        .log_err()
-                        .unwrap_or(key)
-                });
+                .unwrap_or(key);
         } else {
             key = self
                 .map_for_char(&key, &mut modifiers)
+                .or_else(|_| self.map_virtual_key(&key, &mut modifiers))
+                .context("Failed to map keystroke with use_key_equivalents = false")
                 .log_err()
-                .unwrap_or_else(|| {
-                    self.map_virtual_key(&key, &mut modifiers)
-                        .log_err()
-                        .unwrap_or(key)
-                });
+                .unwrap_or(key);
         }
         Keystroke {
             modifiers,
@@ -305,6 +306,31 @@ pub(crate) fn get_key_from_vkey(vkey: VIRTUAL_KEY) -> Option<(String, bool)> {
     let key = char::from_u32(key_data & 0xFFFF)?;
 
     Some((key.to_ascii_lowercase().to_string(), is_dead_key))
+}
+
+impl PlatformKeyboardLayout for KeyboardLayout {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl KeyboardLayout {
+    pub(crate) fn new() -> Result<Self> {
+        let id = get_keyboard_layout_id()?;
+        let name = get_keyboard_layout_name(&id).unwrap_or("unknown".to_string());
+        Ok(Self { id, name })
+    }
+
+    pub(crate) fn unknown() -> Self {
+        Self {
+            id: "unknown".to_string(),
+            name: "unknown".to_string(),
+        }
+    }
 }
 
 pub(crate) fn get_keyboard_layout_id() -> Result<String> {

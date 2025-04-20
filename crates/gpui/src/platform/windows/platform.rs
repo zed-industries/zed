@@ -868,42 +868,6 @@ fn should_auto_hide_scrollbars() -> Result<bool> {
     Ok(ui_settings.AutoHideScrollBars()?)
 }
 
-struct KeyboardLayout {
-    id: String,
-    name: String,
-}
-
-impl PlatformKeyboardLayout for KeyboardLayout {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl KeyboardLayout {
-    fn new() -> Result<Self> {
-        let mut buffer = [0u16; KL_NAMELENGTH as usize];
-        unsafe { GetKeyboardLayoutNameW(&mut buffer)? };
-        let id = HSTRING::from_wide(&buffer).to_string();
-        let entry = windows_registry::LOCAL_MACHINE.open(format!(
-            "System\\CurrentControlSet\\Control\\Keyboard Layouts\\{}",
-            id
-        ))?;
-        let name = entry.get_hstring("Layout Text")?.to_string();
-        Ok(Self { id, name })
-    }
-
-    fn unknown() -> Self {
-        Self {
-            id: "unknown".to_string(),
-            name: "unknown".to_string(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{ClipboardItem, read_from_clipboard, write_to_clipboard};
