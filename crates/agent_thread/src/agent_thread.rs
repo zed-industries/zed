@@ -1,11 +1,12 @@
+use futures::channel::oneshot;
 use gpui::{Context, Task};
-use std::{future::Future, sync::Arc};
-use util::ResultExt;
-
 use language_model::{
-    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
+    MessageContent, Role,
 };
 use smol::stream::StreamExt;
+use std::{future::Future, sync::Arc};
+use util::ResultExt;
 
 pub struct ThreadMessage {
     pub role: Role,
@@ -39,7 +40,7 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = ()> {
-        let request = self.build_completion_request();
+        let request = self.to_completion_request();
         let (done_tx, done_rx) = futures::channel::oneshot::channel();
         let mut done_tx = Some(done_tx);
         self.streaming_completion = Some(
@@ -48,47 +49,11 @@ impl Thread {
 
                 while let Some(event) = events.next().await {
                     if let Some(event) = event.log_err() {
-                        dbg!(&event);
-                        match event {
-                            language_model::LanguageModelCompletionEvent::Stop(stop_reason) => {
-                                dbg!(stop_reason);
-                                done_tx.take().map(|tx| tx.send(()));
-                            }
-                            language_model::LanguageModelCompletionEvent::Text(txt) => {
-                                dbg!(txt);
-                            }
-                            language_model::LanguageModelCompletionEvent::Thinking {
-                                text,
-                                signature,
-                            } => {
-                                dbg!(text, signature);
-                            }
-                            language_model::LanguageModelCompletionEvent::ToolUse(
-                                language_model_tool_use,
-                            ) => {
-                                dbg!(language_model_tool_use);
-                            }
-                            language_model::LanguageModelCompletionEvent::StartMessage {
-                                message_id,
-                                role,
-                            } => {
-                                dbg!(message_id, role);
-
-                                thread
-                                    .update(cx, |thread, cx| {
-                                        thread.messages.push(ThreadMessage {
-                                            role,
-                                            content: Vec::new(),
-                                        });
-                                    })
-                                    .ok();
-                            }
-                            language_model::LanguageModelCompletionEvent::UsageUpdate(
-                                token_usage,
-                            ) => {
-                                dbg!(token_usage);
-                            }
-                        }
+                        thread
+                            .update(cx, |thread, cx| {
+                                thread.handle_streamed_event(event, &mut done_tx, cx)
+                            })
+                            .ok();
                     }
                 }
 
@@ -103,7 +68,7 @@ impl Thread {
         }
     }
 
-    fn build_completion_request(&self) -> LanguageModelRequest {
+    fn to_completion_request(&self) -> LanguageModelRequest {
         LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
@@ -121,6 +86,52 @@ impl Thread {
             temperature: None,
         }
     }
+
+    fn handle_streamed_event(
+        &mut self,
+        event: LanguageModelCompletionEvent,
+        done_tx: &mut Option<oneshot::Sender<()>>,
+        cx: &mut Context<Self>,
+    ) {
+        use LanguageModelCompletionEvent::*;
+
+        match event {
+            Stop(stop_reason) => {
+                done_tx.take().map(|tx| tx.send(()));
+            }
+            Text(new_text) => {
+                if let Some(last_message) = self.messages.last_mut() {
+                    debug_assert!(last_message.role == Role::Assistant);
+                    if let Some(MessageContent::Text(text)) = last_message.content.last_mut() {
+                        text.push_str(&new_text);
+                    } else {
+                        last_message.content.push(MessageContent::Text(new_text));
+                    }
+
+                    cx.notify();
+                } else {
+                    todo!("does this happen in practice?")
+                }
+            }
+            Thinking { text, signature } => {
+                dbg!(text, signature);
+            }
+            ToolUse(language_model_tool_use) => {
+                dbg!(language_model_tool_use);
+            }
+            StartMessage { message_id, role } => {
+                dbg!(message_id, role);
+
+                self.messages.push(ThreadMessage {
+                    role,
+                    content: Vec::new(),
+                });
+            }
+            UsageUpdate(token_usage) => {
+                dbg!(token_usage);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -130,52 +141,56 @@ mod tests {
     use fs::FakeFs;
     use gpui::{App, AppContext, TestAppContext};
     use language_model::LanguageModelRegistry;
-    use language_models::AllLanguageModelSettings;
     use reqwest_client::ReqwestClient;
-    use settings::Settings;
 
     #[gpui::test]
     async fn test_basic_threads(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
+        let model = init_test(cx).await;
+        let thread = cx.new(|_cx| Thread::new());
 
-        let model = cx.update(init_test).await;
-        let thread = cx.new(|cx| Thread::new());
-
-        let result = thread
+        thread
             .update(cx, |thread, cx| {
                 thread.push_user_message("Testing: Reply with 'Hello'", cx);
                 thread.stream_completion(model, cx)
             })
             .await;
 
-        dbg!(result);
+        thread.update(cx, |thread, _cx| {
+            assert_eq!(
+                thread.messages.last().unwrap().content,
+                vec![MessageContent::Text("Hello".to_string())]
+            );
+        });
     }
 
-    fn init_test(cx: &mut App) -> Task<Arc<dyn LanguageModel>> {
-        gpui_tokio::init(cx);
-        let http_client = ReqwestClient::user_agent("agent thread tests").unwrap();
-        cx.set_http_client(Arc::new(http_client));
+    fn init_test(cx: &mut TestAppContext) -> Task<Arc<dyn LanguageModel>> {
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            gpui_tokio::init(cx);
+            let http_client = ReqwestClient::user_agent("agent thread tests").unwrap();
+            cx.set_http_client(Arc::new(http_client));
 
-        settings::init(cx);
-        client::init_settings(cx);
-        let client = Client::production(cx);
-        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let fs = FakeFs::new(cx.background_executor().clone());
-        language_model::init(client.clone(), cx);
-        language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+            settings::init(cx);
+            client::init_settings(cx);
+            let client = Client::production(cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            let fs = FakeFs::new(cx.background_executor().clone());
+            language_model::init(client.clone(), cx);
+            language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
 
-        let registry = LanguageModelRegistry::read_global(cx);
-        let model = registry
-            .available_models(cx)
-            .find(|model| model.id().0 == "claude-3-7-sonnet-latest")
-            .unwrap();
+            let registry = LanguageModelRegistry::read_global(cx);
+            let model = registry
+                .available_models(cx)
+                .find(|model| model.id().0 == "claude-3-7-sonnet-latest")
+                .unwrap();
 
-        let provider = registry.provider(&model.provider_id()).unwrap();
-        let authenticated = provider.authenticate(cx);
+            let provider = registry.provider(&model.provider_id()).unwrap();
+            let authenticated = provider.authenticate(cx);
 
-        cx.spawn(async move |_cx| {
-            authenticated.await.unwrap();
-            model
+            cx.spawn(async move |_cx| {
+                authenticated.await.unwrap();
+                model
+            })
         })
     }
 }
