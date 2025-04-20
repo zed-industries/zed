@@ -145,13 +145,16 @@ fn handle_get_min_max_info_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
+    let lock = state_ptr.state.borrow();
 
     if let Some(min_size) = lock.min_size {
+        let scale_factor = lock.scale_factor;
+        drop(lock);
+
         unsafe {
-            let mut minmax_info: &mut MINMAXINFO = &mut *(lparam.0 as *mut MINMAXINFO);
-            minmax_info.ptMinTrackSize.x = min_size.width.0 as i32;
-            minmax_info.ptMinTrackSize.y = min_size.height.0 as i32;
+            let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
+            minmax_info.ptMinTrackSize.x = (min_size.width.0 * scale_factor) as i32;
+            minmax_info.ptMinTrackSize.y = (min_size.height.0 * scale_factor) as i32;
         }
     }
 
