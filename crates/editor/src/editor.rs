@@ -5500,6 +5500,7 @@ impl Editor {
                             false,
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         )
                         .unwrap()

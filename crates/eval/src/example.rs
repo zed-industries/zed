@@ -939,7 +939,7 @@ impl RequestMarkdown {
                         if tool_result.is_error {
                             messages.push_str("**ERROR:**\n");
                         }
-                        messages.push_str(&format!("{}\n", tool_result.content));
+                        messages.push_str(&format!("{}\n\n", tool_result.content));
                     }
                 }
             }
