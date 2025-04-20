@@ -197,6 +197,24 @@ impl From<&str> for MessageContent {
     }
 }
 
+impl From<LanguageModelToolUse> for MessageContent {
+    fn from(value: LanguageModelToolUse) -> Self {
+        MessageContent::ToolUse(value)
+    }
+}
+
+impl From<LanguageModelImage> for MessageContent {
+    fn from(value: LanguageModelImage) -> Self {
+        MessageContent::Image(value)
+    }
+}
+
+impl From<LanguageModelToolResult> for MessageContent {
+    fn from(value: LanguageModelToolResult) -> Self {
+        MessageContent::ToolResult(value)
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Hash)]
 pub struct LanguageModelRequestMessage {
     pub role: Role,

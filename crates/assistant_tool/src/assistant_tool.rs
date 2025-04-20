@@ -14,10 +14,10 @@ use gpui::Context;
 use gpui::IntoElement;
 use gpui::Window;
 use gpui::{App, Entity, SharedString, Task};
-use icons::IconName;
+pub use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
-use project::Project;
+pub use project::Project;
 
 pub use crate::action_log::*;
 pub use crate::tool_registry::*;

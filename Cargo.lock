@@ -133,9 +133,12 @@ name = "agent_thread"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_tool",
+ "assistant_tools",
  "chrono",
  "client",
  "collections",
+ "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -143,6 +146,7 @@ dependencies = [
  "language_model",
  "language_models",
  "parking_lot",
+ "project",
  "reqwest_client",
  "schemars",
  "serde",
