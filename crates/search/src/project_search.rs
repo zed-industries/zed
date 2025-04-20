@@ -1052,11 +1052,13 @@ impl ProjectSearchView {
         // disambiguated. For single worktree projects we use worktree relative
         // paths for convenience.
         let match_full_paths = self
-            .workspace
-            .read_with(cx, |workspace, cx| {
-                workspace.project().read(cx).visible_worktrees(cx).count() > 1
-            })
-            .unwrap_or(false);
+            .entity
+            .read(cx)
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .count()
+            > 1;
 
         let query = if self.search_options.contains(SearchOptions::REGEX) {
             match SearchQuery::regex(
