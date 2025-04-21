@@ -507,6 +507,7 @@ impl Item for MarkdownPreviewView {
 impl Render for MarkdownPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
+        dbg!(("frame", buffer_size));
         v_flex()
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")

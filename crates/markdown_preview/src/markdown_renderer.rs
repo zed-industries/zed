@@ -19,9 +19,9 @@ use std::{
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
     ButtonCommon, Checkbox, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, StatefulInteractiveElement,
-    StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover, h_flex, relative,
-    tooltip_container, v_flex,
+    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels,
+    StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
+    h_flex, relative, tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
@@ -36,6 +36,7 @@ pub struct RenderContext {
     text_style: TextStyle,
     border_color: Hsla,
     text_color: Hsla,
+    window_rem_size: Pixels,
     text_muted_color: Hsla,
     code_block_background_color: Hsla,
     code_span_background_color: Hsla,
@@ -56,6 +57,8 @@ impl RenderContext {
         let buffer_font_family = settings.buffer_font.family.clone();
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
+        buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
+        dbg!(("ctx_new", settings.buffer_font_size(cx)));
 
         RenderContext {
             workspace,
@@ -67,6 +70,7 @@ impl RenderContext {
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
             text_color: theme.colors().text,
+            window_rem_size: window.rem_size(),
             text_muted_color: theme.colors().text_muted,
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
@@ -149,32 +153,76 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         HeadingLevel::H6 => 0.85,
     };
 
+    let buffer_text_size = cx.buffer_text_style.font_size;
+
+    let text_size = buffer_text_size.to_rems(cx.window_rem_size).mul(size);
+    let line_height = DefiniteLength::from(text_size.mul(1.25));
+
     let color = match parsed.level {
         HeadingLevel::H6 => cx.text_muted_color,
         _ => cx.text_color,
     };
+    div()
+        .line_height(line_height)
+        .text_size(text_size)
+        .text_color(color)
+        .pt(rems(0.15).mul(size)) // fixme: This helps spacing, but it still seems to bunched when zoomed in, and too spread when zoomed out
+        .pb_1()
+        .children(render_markdown_text(&parsed.contents, cx))
+        .whitespace_normal()
+        .into_any()
+}
 
-    let line_height = DefiniteLength::from(size.mul(1.25));
+fn render_markdown_heading_2(parsed: &ParsedMarkdownHeading, cx: &mut RenderContext) -> AnyElement {
+    let size = match parsed.level {
+        HeadingLevel::H1 => 2.,
+        HeadingLevel::H2 => 1.5,
+        HeadingLevel::H3 => 1.25,
+        HeadingLevel::H4 => 1., //ui_font_size -> window::set_rem_size() -> Causes this to change
+        HeadingLevel::H5 => 0.875,
+        HeadingLevel::H6 => 0.85,
+    };
 
+    let color = match parsed.level {
+        HeadingLevel::H6 => cx.text_muted_color,
+        _ => cx.text_color,
+    };
+    let line_height = DefiniteLength::from(rems(size).mul(1.25));
+    let children = render_markdown_text(&parsed.contents, cx);
     canvas(
-        |bounds, window, app| {
+        move |bounds, window, cx| {
             let text_style = window.text_style(); // We're in the paint phase, the upper elements have added things to the stack
             // A fake em unit
             let font_size = text_style.font_size.to_pixels(window.rem_size()) * size;
+            // let line_height = text_style
+            //     .line_height
+            //     .to_pixels(AbsoluteLength::from(font_size * 1.25), window.rem_size())
+            //     * size;
 
-            let element = div()
+            let mut element = div()
                 .line_height(line_height)
                 .text_size(font_size) // Setting up the size to be added to the TextStyleRefinement stack in the window
                 .text_color(color) // But because we haven't started painting, the size isn't yet in the window
                 .pt(rems(0.15))
                 .pb_1()
-                .children(render_markdown_text(&parsed.contents, cx))
-                .whitespace_normal()
-                .into_any();
-            element
+                .children(children)
+                .whitespace_normal();
+            let (layout_id, mut request_layout_state) = element.request_layout(None, window, cx);
+            let hitbox = element.prepaint(None, bounds, &mut request_layout_state, window, cx);
+            (element, request_layout_state, hitbox)
         },
-        |bounds, element, window, cx| element.paint(window, cx),
-    );
+        |bounds, (mut element, mut request_layout_state, mut hitbox), window, cx| {
+            element.paint(
+                None,
+                bounds,
+                &mut request_layout_state,
+                &mut hitbox,
+                window,
+                cx,
+            )
+        },
+    )
+    .into_any()
 }
 
 fn render_markdown_list_item(
