@@ -1,3 +1,0 @@
-I need to improve our logout feature. When users sign out, they should be able to specify a return URL to redirect to afterward. Right now, signing out just takes them to a default page, but we want to support custom redirects (like back to the homepage or a login screen). The URL should be safely included in the logout request. Make sure existing logouts still work normally when no redirect is specified.
-
-Also, note that we updated how the client initializes its session. It should now check for either a `workos-has-session` cookie or a valid refresh token (even in devMode). This ensures that sessions are refreshed appropriately even without a code in the URL. Be sure this logic is covered by the minimum tests.
