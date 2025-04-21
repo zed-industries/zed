@@ -833,16 +833,6 @@ impl TerminalView {
         )
     }
 
-    fn expand_selection_around_cursor(
-        &mut self,
-        e: &MouseDownEvent,
-        cx: &mut Context<Self>,
-    ) {
-        self.terminal.update(cx, |terminal, _| {
-            terminal.select_word_at_event_position(e);
-        });
-        cx.notify();
-    }
 }
 
 fn subscribe_for_terminal_events(
