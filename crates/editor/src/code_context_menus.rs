@@ -700,6 +700,8 @@ impl CompletionsMenu {
             }
         }
 
+        // checking write access
+
         let completions = self.completions.borrow_mut();
         if self.sort_completions {
             matches.sort_unstable_by_key(|mat| {
