@@ -39,7 +39,7 @@ impl LanguageModelImage {
         }
     }
 
-    pub fn from_image(data: Image, cx: &mut App) -> Task<Option<Self>> {
+    pub fn from_image(data: Arc<Image>, cx: &mut App) -> Task<Option<Self>> {
         cx.background_spawn(async move {
             match data.format() {
                 gpui::ImageFormat::Png

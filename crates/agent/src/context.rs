@@ -128,6 +128,7 @@ impl ThreadContext {
 #[derive(Debug, Clone)]
 pub struct ImageContext {
     pub id: ContextId,
+    pub original_image: Arc<gpui::Image>,
     pub image_task: Shared<Task<Option<LanguageModelImage>>>,
 }
 

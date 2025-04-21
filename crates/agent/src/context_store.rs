@@ -420,11 +420,14 @@ impl ContextStore {
         cx.notify();
     }
 
-    pub fn add_image(&mut self, image: Image, cx: &mut Context<ContextStore>) {
-        let image_task = LanguageModelImage::from_image(image, cx).shared();
+    pub fn add_image(&mut self, image: Arc<Image>, cx: &mut Context<ContextStore>) {
+        let image_task = LanguageModelImage::from_image(image.clone(), cx).shared();
         let id = self.next_context_id.post_inc();
-        self.context
-            .push(AssistantContext::Image(ImageContext { id, image_task }));
+        self.context.push(AssistantContext::Image(ImageContext {
+            id,
+            original_image: image,
+            image_task,
+        }));
         cx.notify();
     }
 
