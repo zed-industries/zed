@@ -8,7 +8,7 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
     Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, canvas, div, img, px, rems,
+    StyledText, TextStyle, WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -18,7 +18,7 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    ButtonCommon, Checkbox, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
+    ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
     InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
     StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
     h_flex, relative, tooltip_container, v_flex,
@@ -100,15 +100,6 @@ impl RenderContext {
             .font_size
             .to_rems(self.window_rem_size)
             .mul(rems);
-    }
-
-    pub fn scaled_px(&self, px: f32) -> Pixels {
-        return (self
-            .buffer_text_style
-            .font_size
-            .to_pixels(self.window_rem_size)
-            / self.window_rem_size.0)
-            .mul(px);
     }
 
     /// This ensures that children inside of block quotes
@@ -214,15 +205,16 @@ fn render_markdown_list_item(
         Unordered => "•".into_any_element(),
         Task(checked, range) => div()
             .id(cx.next_id(range))
-            .mt(cx.scaled_px(3.))
+            .mt(cx.scaled_rems(3.0 / 16.0))
             .child(
-                Checkbox::new(
+                MarkdownCheckbox::new(
                     "checkbox",
                     if *checked {
                         ToggleState::Selected
                     } else {
                         ToggleState::Unselected
                     },
+                    cx.clone(),
                 )
                 .when_some(
                     cx.checkbox_clicked_callback.clone(),
@@ -267,6 +259,167 @@ fn render_markdown_list_item(
         ]);
 
     cx.with_common_p(item).into_any()
+}
+
+/// # MarkdownCheckbox ///
+/// HACK: Copied from `ui/src/components/toggle.rs` to deal with scaling issues in markdown preview
+/// changes should be integrated into `Checkbox` in `toggle.rs` while making sure checkboxes elsewhere in the
+/// app are not visually affected
+#[derive(gpui::IntoElement)]
+struct MarkdownCheckbox {
+    id: ElementId,
+    toggle_state: ToggleState,
+    disabled: bool,
+    placeholder: bool,
+    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>>,
+    filled: bool,
+    style: ui::ToggleStyle,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> gpui::AnyView>>,
+    label: Option<SharedString>,
+    render_cx: RenderContext,
+}
+
+impl MarkdownCheckbox {
+    /// Creates a new [`Checkbox`].
+    fn new(id: impl Into<ElementId>, checked: ToggleState, render_cx: RenderContext) -> Self {
+        Self {
+            id: id.into(),
+            toggle_state: checked,
+            disabled: false,
+            on_click: None,
+            filled: false,
+            style: ui::ToggleStyle::default(),
+            tooltip: None,
+            label: None,
+            placeholder: false,
+            render_cx,
+        }
+    }
+
+    /// Binds a handler to the [`Checkbox`] that will be called when clicked.
+    fn on_click(mut self, handler: impl Fn(&ToggleState, &mut Window, &mut App) + 'static) -> Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    fn bg_color(&self, cx: &App) -> Hsla {
+        let style = self.style.clone();
+        match (style, self.filled) {
+            (ui::ToggleStyle::Ghost, false) => cx.theme().colors().ghost_element_background,
+            (ui::ToggleStyle::Ghost, true) => cx.theme().colors().element_background,
+            (ui::ToggleStyle::ElevationBased(_), false) => gpui::transparent_black(),
+            (ui::ToggleStyle::ElevationBased(elevation), true) => elevation.darker_bg(cx),
+            (ui::ToggleStyle::Custom(_), false) => gpui::transparent_black(),
+            (ui::ToggleStyle::Custom(color), true) => color.opacity(0.2),
+        }
+    }
+
+    fn border_color(&self, cx: &App) -> Hsla {
+        if self.disabled {
+            return cx.theme().colors().border_variant;
+        }
+
+        match self.style.clone() {
+            ui::ToggleStyle::Ghost => cx.theme().colors().border,
+            ui::ToggleStyle::ElevationBased(_) => cx.theme().colors().border,
+            ui::ToggleStyle::Custom(color) => color.opacity(0.3),
+        }
+    }
+}
+
+impl gpui::RenderOnce for MarkdownCheckbox {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let group_id = format!("checkbox_group_{:?}", self.id);
+        let color = if self.disabled {
+            Color::Disabled
+        } else {
+            Color::Selected
+        };
+        let icon_size_small = IconSize::Custom(self.render_cx.scaled_rems(14. / 16.)); // was IconSize::Small
+        let icon = match self.toggle_state {
+            ToggleState::Selected => {
+                if self.placeholder {
+                    None
+                } else {
+                    Some(
+                        ui::Icon::new(IconName::Check)
+                            .size(icon_size_small)
+                            .color(color),
+                    )
+                }
+            }
+            ToggleState::Indeterminate => Some(
+                ui::Icon::new(IconName::Dash)
+                    .size(icon_size_small)
+                    .color(color),
+            ),
+            ToggleState::Unselected => None,
+        };
+
+        let bg_color = self.bg_color(cx);
+        let border_color = self.border_color(cx);
+        let hover_border_color = border_color.alpha(0.7);
+
+        let size = self.render_cx.scaled_rems(1.25); // was Self::container_size(); (20px)
+
+        let checkbox = h_flex()
+            .id(self.id.clone())
+            .justify_center()
+            .items_center()
+            .size(size)
+            .group(group_id.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .justify_center()
+                    .items_center()
+                    .m(self.render_cx.scaled_rems(0.25)) // was .m_1
+                    .size(self.render_cx.scaled_rems(1.0)) // was .size_4
+                    .rounded(self.render_cx.scaled_rems(0.125)) // was .rounded_xs
+                    .border_1()
+                    .bg(bg_color)
+                    .border_color(border_color)
+                    .when(self.disabled, |this| this.cursor_not_allowed())
+                    .when(self.disabled, |this| {
+                        this.bg(cx.theme().colors().element_disabled.opacity(0.6))
+                    })
+                    .when(!self.disabled, |this| {
+                        this.group_hover(group_id.clone(), |el| el.border_color(hover_border_color))
+                    })
+                    .when(self.placeholder, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .rounded_full()
+                                .bg(color.color(cx).alpha(0.5))
+                                .size(self.render_cx.scaled_rems(0.25)), // was .size_1
+                        )
+                    })
+                    .children(icon),
+            );
+
+        h_flex()
+            .id(self.id)
+            .gap(ui::DynamicSpacing::Base06.rems(cx))
+            .child(checkbox)
+            .when_some(
+                self.on_click.filter(|_| !self.disabled),
+                |this, on_click| {
+                    this.on_click(move |_, window, cx| {
+                        on_click(&self.toggle_state.inverse(), window, cx)
+                    })
+                },
+            )
+            // TODO: Allow label size to be different from default.
+            // TODO: Allow label color to be different from muted.
+            .when_some(self.label, |this, label| {
+                this.child(Label::new(label).color(Color::Muted))
+            })
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |window, cx| tooltip(window, cx))
+            })
+    }
 }
 
 fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {

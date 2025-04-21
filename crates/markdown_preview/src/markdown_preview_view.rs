@@ -238,11 +238,10 @@ impl MarkdownPreviewView {
 
                                     container.child(
                                         div()
-                                            .debug_below()
                                             .relative()
                                             .child(
                                                 div()
-                                                    .p(render_cx.scaled_rems(1.0))
+                                                    .pl(render_cx.scaled_rems(1.0))
                                                     .child(rendered_block),
                                             )
                                             .child(indicator.absolute().left_0().top_0()),
