@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/activity_indicator",
     "crates/agent",
-    "crates/agent_thread",
+    "crates/agent2",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
