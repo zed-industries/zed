@@ -448,6 +448,10 @@ pub(crate) fn get_keyboard_layout_name(id: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        KLF_ACTIVATE, LoadKeyboardLayoutW, UnloadKeyboardLayout,
+    };
+
     use crate::{KeyboardMapper, Keystroke, Modifiers, WindowsKeyboardMapper};
 
     use super::is_already_vim_style;
@@ -611,6 +615,58 @@ mod tests {
                     }
                 );
             }
+        }
+        // Test AltGr on German layout
+        {
+            let keyboard = unsafe {
+                LoadKeyboardLayoutW(windows::core::w!("00000407"), KLF_ACTIVATE).unwrap()
+            };
+            // `AltGr + 8` should produce `[` on German layout
+            let keystroke = Keystroke {
+                modifiers: Modifiers {
+                    shift: false,
+                    control: true,
+                    alt: true,
+                    ..Default::default()
+                },
+                key: "8".to_string(),
+                key_char: Some("[".to_string()),
+            };
+            let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(
+                *vim_keystroke,
+                Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: "[".to_string(),
+                    key_char: Some("[".to_string())
+                }
+            );
+
+            // `AltGr + Shift + 8` should output nothing, so `ctrl-shift-alt-8` -> `ctrl-alt-(`
+            let keystroke = Keystroke {
+                modifiers: Modifiers {
+                    shift: true,
+                    control: true,
+                    alt: true,
+                    ..Default::default()
+                },
+                key: "8".to_string(),
+                key_char: None,
+            };
+            let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(
+                *vim_keystroke,
+                Keystroke {
+                    modifiers: Modifiers {
+                        control: true,
+                        alt: true,
+                        ..Default::default()
+                    },
+                    key: "(".to_string(),
+                    key_char: None
+                }
+            );
+            unsafe { UnloadKeyboardLayout(keyboard).unwrap() };
         }
     }
 }
