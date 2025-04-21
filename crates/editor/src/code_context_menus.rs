@@ -27,8 +27,8 @@ use util::ResultExt;
 
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
-    CodeActionProvider, CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle,
-    ResolvedTasks,
+    CodeActionProvider, CompletionId, CompletionItemKind, CompletionProvider, DisplayRow, Editor,
+    EditorStyle, ResolvedTasks,
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
@@ -681,85 +681,116 @@ impl CompletionsMenu {
                 .collect()
         };
 
-        let mut additional_matches = Vec::new();
-        // Deprioritize all candidates where the query's start does not match the start of any word in the candidate
-        if let Some(query) = query {
-            if let Some(query_start) = query.chars().next() {
-                let (primary, secondary) = matches.into_iter().partition(|string_match| {
-                    split_words(&string_match.string).any(|word| {
-                        // Check that the first codepoint of the word as lowercase matches the first
-                        // codepoint of the query as lowercase
-                        word.chars()
-                            .flat_map(|codepoint| codepoint.to_lowercase())
-                            .zip(query_start.to_lowercase())
-                            .all(|(word_cp, query_cp)| word_cp == query_cp)
-                    })
-                });
-                matches = primary;
-                additional_matches = secondary;
-            }
-        }
-
-        let completions = self.completions.borrow_mut();
         if self.sort_completions {
+            let completions = self.completions.borrow_mut();
+
+            #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+            enum MatchTier<'a> {
+                WordStartMatch {
+                    sort_score_int: Reverse<i32>,
+                    sort_snippet: Reverse<i32>,
+                    sort_text: Option<String>,
+                    sort_label: Option<String>,
+                    sort_key: (usize, &'a str),
+                },
+                OtherMatch {
+                    sort_score: Reverse<OrderedFloat<f64>>,
+                },
+            }
+
+            // Maximum value for the quantized score.
+            const MAX_INT_SCORE: i32 = 10;
+
+            // Converts a float score (0.0 to 1.0) into an integer bucket.
+            let map_score_to_int = |score: f64, max_int_score: i32| -> i32 {
+                ((score * max_int_score as f64).round() as i32).clamp(0, max_int_score)
+            };
+
+            let query_start_lower = query
+                .and_then(|q| q.chars().next())
+                .and_then(|c| c.to_lowercase().next());
+
             matches.sort_unstable_by_key(|mat| {
-                // We do want to strike a balance here between what the language server tells us
-                // to sort by (the sort_text) and what are "obvious" good matches (i.e. when you type
-                // `Creat` and there is a local variable called `CreateComponent`).
-                // So what we do is: we bucket all matches into two buckets
-                // - Strong matches
-                // - Weak matches
-                // Strong matches are the ones with a high fuzzy-matcher score (the "obvious" matches)
-                // and the Weak matches are the rest.
+                // Our goal here is to intelligently sort completion suggestions. We want to
+                // balance the raw fuzzy match score with hints from the language server
+                // (like `sort_text`) and simple heuristics (like preferring matches where
+                // the query starts at the beginning of a word within the suggestion).
                 //
-                // For the strong matches, we sort by our fuzzy-finder score first and for the weak
-                // matches, we prefer language-server sort_text first.
+                // To do this, we first divide matches into two tiers: `WordStartMatch`,
+                // where the query's first character matches the start of any word within the
+                // suggestion string, and `OtherMatch`, where it doesn't. We prioritize
+                // `WordStartMatch` items, sorting them first. `OtherMatch` items come
+                // after, sorted simply by their raw fuzzy score.
                 //
-                // The thinking behind that: we want to show strong matches first in order of relevance(fuzzy score).
-                // Rest of the matches(weak) can be sorted as language-server expects.
+                // For the prioritized `WordStartMatch` items, we don't sort directly by the
+                // float fuzzy score. Why? Because float scores are often unique, meaning tiny,
+                // almost meaningless differences in score would dominate the sorting, making
+                // LSP hints not important. Instead, we quantize the score: we map the
+                // 0.0-1.0 float score to a small integer range (0 to `MAX_INT_SCORE`).
+                // This creates score "brackets", matches with similar fuzzy relevance fall
+                // into the same bracket.
+                //
+                // This quantization allows other factors to break ties within a bracket.
+                // The `MAX_INT_SCORE` sets the number of brackets. Too few (like 0)
+                // ignores the fuzzy score entirely for primary sorting. Too many (a large number)
+                // makes it behave like sorting by the raw float again. Some what low number offers a balance,
+                // grouping similar scores while still distinguishing clearly better ones.
 
-                #[derive(PartialEq, Eq, PartialOrd, Ord)]
-                enum MatchScore<'a> {
-                    Strong {
-                        score: Reverse<OrderedFloat<f64>>,
-                        sort_text: Option<&'a str>,
-                        sort_key: (usize, &'a str),
-                    },
-                    Weak {
-                        sort_text: Option<&'a str>,
-                        score: Reverse<OrderedFloat<f64>>,
-                        sort_key: (usize, &'a str),
-                    },
-                }
+                let sort_score = Reverse(OrderedFloat(mat.score));
 
-                let completion = &completions[mat.candidate_id];
-                let sort_key = completion.sort_key();
-                let sort_text =
-                    if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
-                        lsp_completion.sort_text.as_deref()
-                    } else {
-                        None
-                    };
-                let score = Reverse(OrderedFloat(mat.score));
+                let is_other_match = query_start_lower
+                    .map(|query_char| {
+                        !split_words(&mat.string).any(|word| {
+                            word.chars()
+                                .next()
+                                .and_then(|c| c.to_lowercase().next())
+                                .map_or(false, |word_char| word_char == query_char)
+                        })
+                    })
+                    .unwrap_or(false);
 
-                if mat.score >= 0.2 {
-                    MatchScore::Strong {
-                        score,
-                        sort_text,
-                        sort_key,
-                    }
+                if is_other_match {
+                    MatchTier::OtherMatch { sort_score }
                 } else {
-                    MatchScore::Weak {
+                    let sort_score_int = Reverse(map_score_to_int(mat.score, MAX_INT_SCORE));
+
+                    let completion = &completions[mat.candidate_id];
+                    let sort_snippet = Reverse(match &completion.source {
+                        CompletionSource::Lsp { lsp_completion, .. }
+                            if lsp_completion.kind == Some(CompletionItemKind::SNIPPET) =>
+                        {
+                            1
+                        }
+                        _ => 0,
+                    });
+                    let sort_text =
+                        if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
+                            lsp_completion
+                                .sort_text
+                                .as_deref()
+                                .map(|s| s.to_lowercase())
+                        } else {
+                            None
+                        };
+                    let sort_label =
+                        if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
+                            Some(lsp_completion.label.to_lowercase())
+                        } else {
+                            None
+                        };
+                    let sort_key = completion.sort_key();
+
+                    MatchTier::WordStartMatch {
+                        sort_score_int,
+                        sort_snippet,
                         sort_text,
-                        score,
+                        sort_label,
                         sort_key,
                     }
                 }
             });
+            drop(completions);
         }
-        drop(completions);
-
-        matches.extend(additional_matches);
 
         *self.entries.borrow_mut() = matches;
         self.selected_item = 0;
