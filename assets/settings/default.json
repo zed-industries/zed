@@ -80,6 +80,8 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0
   },
+  // Layout mode of the bottom dock. Defaults to "contained"
+  "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -179,8 +181,6 @@
   "current_line_highlight": "all",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
-  // The debounce delay before querying highlights based on the selected text.
-  "selection_highlight_debounce": 50,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
@@ -585,7 +585,6 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -624,15 +623,17 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
     // The model to use when applying edits from the assistant.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
+    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    "always_allow_tool_actions": false,
     "default_profile": "write",
     "profiles": {
       "ask": {
@@ -640,38 +641,43 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
+          "contents": true,
           "diagnostics": true,
           "fetch": true,
-          "list-directory": true,
+          "list_directory": false,
           "now": true,
-          "path-search": true,
-          "read-file": true,
-          "regex-search": true,
-          "thinking": true
+          "path_search": true,
+          "read_file": true,
+          "grep": true,
+          "thinking": true,
+          "web_search": true
         }
       },
       "write": {
         "name": "Write",
         "enable_all_context_servers": true,
         "tools": {
-          "bash": true,
-          "batch-tool": true,
-          "code-symbols": true,
-          "copy-path": true,
-          "create-file": true,
-          "delete-path": true,
+          "batch_tool": false,
+          "code_actions": false,
+          "code_symbols": false,
+          "contents": false,
+          "copy_path": false,
+          "create_file": true,
+          "delete_path": false,
           "diagnostics": true,
-          "find-replace-file": true,
-          "edit-files": false,
+          "edit_file": true,
           "fetch": true,
-          "list-directory": true,
-          "move-path": true,
-          "now": true,
-          "path-search": true,
-          "read-file": true,
-          "regex-search": true,
-          "symbol-info": true,
-          "thinking": true
+          "list_directory": true,
+          "move_path": false,
+          "now": false,
+          "path_search": true,
+          "read_file": true,
+          "grep": true,
+          "rename": false,
+          "symbol_info": false,
+          "terminal": true,
+          "thinking": true,
+          "web_search": true
         }
       }
     },
@@ -1135,7 +1141,8 @@
   "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
-    "variables": {}
+    "variables": {},
+    "enabled": true
   },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -1199,7 +1206,27 @@
     // When set to 0, waits indefinitely.
     //
     // Default: 0
-    "lsp_fetch_timeout_ms": 0
+    "lsp_fetch_timeout_ms": 0,
+    // Controls what range to replace when accepting LSP completions.
+    //
+    // When LSP servers give an `InsertReplaceEdit` completion, they provides two ranges: `insert` and `replace`. Usually, `insert`
+    // contains the word prefix before your cursor and `replace` contains the whole word.
+    //
+    // Effectively, this setting just changes whether Zed will use the received range for `insert` or `replace`, so the results may
+    // differ depending on the underlying LSP server.
+    //
+    // Possible values:
+    // 1. "insert"
+    //   Replaces text before the cursor, using the `insert` range described in the LSP specification.
+    // 2. "replace"
+    //   Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
+    // 3. "replace_subsequence"
+    //   Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text,
+    //   and like `"insert"` otherwise.
+    // 4. "replace_suffix"
+    //   Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
+    //   `"insert"` otherwise.
+    "lsp_insert_mode": "replace_suffix"
   },
   // Different settings for specific languages.
   "languages": {
@@ -1435,6 +1462,8 @@
   "lsp": {
     // Specify the LSP name as a key here.
     // "rust-analyzer": {
+    //     // A special flag for rust-analyzer integration, to use server-provided tasks
+    //     enable_lsp_tasks": true,
     //     // These initialization options are merged into Zed's defaults
     //     "initialization_options": {
     //         "check": {
@@ -1530,7 +1559,6 @@
   //   }
   // ]
   "ssh_connections": [],
-
   // Configures context servers for use in the Assistant.
   "context_servers": {},
   "debugger": {

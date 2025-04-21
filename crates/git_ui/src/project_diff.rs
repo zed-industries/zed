@@ -24,7 +24,7 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
-    git_store::{GitEvent, GitStore},
+    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
 use std::any::{Any, TypeId};
 use theme::ActiveTheme;
@@ -61,9 +61,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: &'static str = "0";
-const TRACKED_NAMESPACE: &'static str = "1";
-const NEW_NAMESPACE: &'static str = "2";
+const CONFLICT_NAMESPACE: u32 = 0;
+const TRACKED_NAMESPACE: u32 = 1;
+const NEW_NAMESPACE: u32 = 2;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -153,9 +153,8 @@ impl ProjectDiff {
             &git_store,
             window,
             move |this, _git_store, event, _window, _cx| match event {
-                GitEvent::ActiveRepositoryChanged
-                | GitEvent::FileSystemUpdated
-                | GitEvent::GitStateUpdated => {
+                GitStoreEvent::ActiveRepositoryChanged(_)
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true) => {
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
@@ -405,7 +404,7 @@ impl ProjectDiff {
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
-            let is_newly_added = multibuffer.set_excerpts_for_path(
+            let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
                 diff_hunk_ranges,
@@ -452,13 +451,11 @@ impl ProjectDiff {
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
             this.update(cx, |this, cx| {
-                let new_branch =
-                    this.git_store
-                        .read(cx)
-                        .active_repository()
-                        .and_then(|active_repository| {
-                            active_repository.read(cx).current_branch().cloned()
-                        });
+                let new_branch = this
+                    .git_store
+                    .read(cx)
+                    .active_repository()
+                    .and_then(|active_repository| active_repository.read(cx).branch.clone());
                 if new_branch != this.current_branch {
                     this.current_branch = new_branch;
                     cx.notify();
@@ -1008,8 +1005,7 @@ impl Render for ProjectDiffToolbar {
     }
 }
 
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Version Control")]
+#[derive(IntoElement, RegisterComponent)]
 pub struct ProjectDiffEmptyState {
     pub no_repo: bool,
     pub can_push_and_pull: bool,
@@ -1181,8 +1177,12 @@ mod preview {
     use super::ProjectDiffEmptyState;
 
     // View this component preview using `workspace: open component-preview`
-    impl ComponentPreview for ProjectDiffEmptyState {
-        fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+    impl Component for ProjectDiffEmptyState {
+        fn scope() -> ComponentScope {
+            ComponentScope::VersionControl
+        }
+
+        fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
             let unknown_upstream: Option<UpstreamTracking> = None;
             let ahead_of_upstream: Option<UpstreamTracking> = Some(
                 UpstreamTrackingStatus {
@@ -1247,46 +1247,48 @@ mod preview {
 
             let (width, height) = (px(480.), px(320.));
 
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group(vec![
-                        single_example(
-                            "No Repo",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_repo_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "No Changes",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_changes_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Unknown Upstream",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(unknown_upstream_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Ahead of Remote",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(ahead_of_upstream_state)
-                                .into_any_element(),
-                        ),
+            Some(
+                v_flex()
+                    .gap_6()
+                    .children(vec![
+                        example_group(vec![
+                            single_example(
+                                "No Repo",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_repo_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "No Changes",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_changes_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Unknown Upstream",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(unknown_upstream_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Ahead of Remote",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(ahead_of_upstream_state)
+                                    .into_any_element(),
+                            ),
+                        ])
+                        .vertical(),
                     ])
-                    .vertical(),
-                ])
-                .into_any_element()
+                    .into_any_element(),
+            )
         }
     }
 }
@@ -1516,11 +1518,9 @@ mod tests {
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
                 let snapshot = &snapshot.buffer_snapshot;
-                let new_buffer_hunks = buffer_editor
+                buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
-                    .collect::<Vec<_>>();
-                buffer_editor.git_restore(&Default::default(), window, cx);
-                new_buffer_hunks
+                    .collect::<Vec<_>>()
             });
         assert_eq!(new_buffer_hunks.as_slice(), &[]);
 
@@ -1533,13 +1533,27 @@ mod tests {
 
         cx.run_until_parked();
 
+        cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
+            buffer_editor.expand_all_diff_hunks(&Default::default(), window, cx);
+        });
+
+        assert_state_with_diff(
+            &buffer_editor,
+            cx,
+            &"
+                - original
+                + different
+                  ˇ"
+            .unindent(),
+        );
+
         assert_state_with_diff(
             &diff_editor,
             cx,
             &"
                 - original
-                + ˇdifferent
-            "
+                + different
+                  ˇ"
             .unindent(),
         );
     }

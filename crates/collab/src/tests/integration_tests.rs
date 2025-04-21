@@ -2898,8 +2898,8 @@ async fn test_git_branch_name(
         assert_eq!(
             repository
                 .read(cx)
-                .repository_entry
-                .branch()
+                .branch
+                .as_ref()
                 .map(|branch| branch.name.to_string()),
             branch_name
         )
@@ -3033,7 +3033,6 @@ async fn test_git_status_sync(
         let repo = repos.into_iter().next().unwrap();
         assert_eq!(
             repo.read(cx)
-                .repository_entry
                 .status_for_path(&file.into())
                 .map(|entry| entry.status),
             status
@@ -5092,6 +5091,7 @@ async fn test_project_search(
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -6867,10 +6867,14 @@ async fn test_remote_git_branches(
 
     assert_eq!(branches_b, branches_set);
 
-    cx_b.update(|cx| repo_b.read(cx).change_branch(new_branch.to_string()))
-        .await
-        .unwrap()
-        .unwrap();
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, _cx| {
+            repository.change_branch(new_branch.to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
     executor.run_until_parked();
 
@@ -6882,7 +6886,8 @@ async fn test_remote_git_branches(
                 .next()
                 .unwrap()
                 .read(cx)
-                .current_branch()
+                .branch
+                .as_ref()
                 .unwrap()
                 .clone()
         })
@@ -6892,18 +6897,18 @@ async fn test_remote_git_branches(
 
     // Also try creating a new branch
     cx_b.update(|cx| {
-        repo_b
-            .read(cx)
-            .create_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repository, _cx| {
+            repository.create_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
     .unwrap();
 
     cx_b.update(|cx| {
-        repo_b
-            .read(cx)
-            .change_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repository, _cx| {
+            repository.change_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
@@ -6919,7 +6924,8 @@ async fn test_remote_git_branches(
                 .next()
                 .unwrap()
                 .read(cx)
-                .current_branch()
+                .branch
+                .as_ref()
                 .unwrap()
                 .clone()
         })

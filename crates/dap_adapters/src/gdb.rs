@@ -2,8 +2,9 @@ use std::ffi::OsStr;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
+use dap::StartDebuggingRequestArguments;
 use gpui::AsyncApp;
-use task::{DebugAdapterConfig, DebugTaskDefinition};
+use task::{DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
@@ -12,6 +13,44 @@ pub(crate) struct GdbDebugAdapter;
 
 impl GdbDebugAdapter {
     const ADAPTER_NAME: &'static str = "GDB";
+
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+        let mut args = json!({
+            "request": match config.request {
+                DebugRequestType::Launch(_) => "launch",
+                DebugRequestType::Attach(_) => "attach",
+            },
+        });
+
+        let map = args.as_object_mut().unwrap();
+        match &config.request {
+            DebugRequestType::Attach(attach) => {
+                map.insert("pid".into(), attach.process_id.into());
+            }
+
+            DebugRequestType::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
+
+                if let Some(stop_on_entry) = config.stop_on_entry {
+                    map.insert(
+                        "stopAtBeginningOfMainSubprogram".into(),
+                        stop_on_entry.into(),
+                    );
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        }
+        StartDebuggingRequestArguments {
+            configuration: args,
+            request: config.request.to_dap(),
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -23,7 +62,7 @@ impl DebugAdapter for GdbDebugAdapter {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<std::path::PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -43,11 +82,13 @@ impl DebugAdapter for GdbDebugAdapter {
         let gdb_path = user_setting_path.unwrap_or(gdb_path?);
 
         Ok(DebugAdapterBinary {
+            adapter_name: Self::ADAPTER_NAME.into(),
             command: gdb_path,
             arguments: Some(vec!["-i=dap".into()]),
             envs: None,
             cwd: None,
             connection: None,
+            request_args: self.request_args(config),
         })
     }
 
@@ -66,21 +107,10 @@ impl DebugAdapter for GdbDebugAdapter {
     async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        _: &DebugTaskDefinition,
         _: Option<std::path::PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         unimplemented!("GDB cannot be installed by Zed (yet)")
-    }
-
-    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
-        match &config.request {
-            dap::DebugRequestType::Attach(attach_config) => {
-                json!({"pid": attach_config.process_id})
-            }
-            dap::DebugRequestType::Launch(launch_config) => {
-                json!({"program": launch_config.program, "cwd": launch_config.cwd})
-            }
-        }
     }
 }

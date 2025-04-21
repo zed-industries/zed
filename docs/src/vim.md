@@ -166,6 +166,7 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can add key bindings to your keymap to navigate "camelCase" names. [Head down to the Optional key bindings](#optional-key-bindings) section to learn how.
 - You can use `gr` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
 - You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
+- You can navigate to indent depths relative to your cursor with the [indent wise](https://github.com/jeetsukumaran/vim-indentwise) plugin `[-`, `]-`, `[+`, `]+`, `[=`, `]=`.
 
 ## Command palette
 
@@ -199,6 +200,7 @@ This table shows commands for managing windows, tabs, and panes. As commands don
 | `:tabn[ext]`   | Go to the next tab                                   |
 | `:tabp[rev]`   | Go to previous tab                                   |
 | `:tabc[lose]`  | Close the current tab                                |
+| `:ls`          | Show all buffers                                     |
 
 > **Note:** The `!` character is used to force the command to execute without saving changes or prompting before overwriting a file.
 
@@ -212,6 +214,7 @@ These ex commands open Zed's various panels and windows.
 | Open the collaboration panel | `:C[ollab]`      |
 | Open the chat panel          | `:Ch[at]`        |
 | Open the AI panel            | `:A[I]`          |
+| Open the git panel           | `:G[it]`         |
 | Open the notifications panel | `:No[tif]`       |
 | Open the feedback window     | `:fe[edback]`    |
 | Open the diagnostics window  | `:cl[ist]`       |
@@ -265,6 +268,16 @@ These commands help you edit text.
 | `:d[elete][l][p]` | Delete the current line                                 |
 | `:s[ort] [i]`     | Sort the current selection (with i, case-insensitively) |
 | `:y[ank]`         | Yank (copy) the current selection or line               |
+
+### Set
+
+These commands modify editor options locally for the current buffer.
+
+| Command                         | Description                                                                                   |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `:se[t] [no]wrap`               | Lines longer than the width of the window will wrap and displaying continues on the next line |
+| `:se[t] [no]nu[mber]`           | Print the line number in front of each line                                                   |
+| `:se[t] [no]r[elative]nu[mber]` | Changes the displayed number to be relative to the cursor                                     |
 
 ### Command mnemonics
 
@@ -497,6 +510,7 @@ Here's an example of these settings changed:
 ```json
 {
   "vim": {
+    "default_mode": "insert",
     "use_system_clipboard": "never",
     "use_multiline_find": true,
     "use_smartcase_find": true,

@@ -34,10 +34,10 @@ use gpui::{
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId, line_diff};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role, report_assistant_event,
+    ConfiguredModel, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role, report_assistant_event,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu, ModelType};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, LspAction, ProjectTransaction};
@@ -57,7 +57,7 @@ use std::{
     time::{Duration, Instant},
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
@@ -312,8 +312,10 @@ impl InlineAssistant {
                 start..end,
             ));
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                self.telemetry.report_assistant_event(AssistantEvent {
+            if let Some(ConfiguredModel { model, .. }) =
+                LanguageModelRegistry::read_global(cx).default_model()
+            {
+                self.telemetry.report_assistant_event(AssistantEventData {
                     conversation_id: None,
                     kind: AssistantKind::Inline,
                     phase: AssistantPhase::Invoked,
@@ -525,14 +527,14 @@ impl InlineAssistant {
             BlockProperties {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Above(range.start),
-                height: prompt_editor_height,
+                height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Below(range.end),
-                height: 0,
+                height: None,
                 render: Arc::new(|cx| {
                     v_flex()
                         .h_full()
@@ -877,7 +879,9 @@ impl InlineAssistant {
             let active_alternative = assist.codegen.read(cx).active_alternative().clone();
             let message_id = active_alternative.read(cx).message_id.clone();
 
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+            if let Some(ConfiguredModel { model, .. }) =
+                LanguageModelRegistry::read_global(cx).default_model()
+            {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
                     let multibuffer_snapshot = multibuffer.snapshot(cx);
@@ -888,7 +892,7 @@ impl InlineAssistant {
                         .map(|language| language.name())
                 });
                 report_assistant_event(
-                    AssistantEvent {
+                    AssistantEventData {
                         conversation_id: None,
                         kind: AssistantKind::Inline,
                         message_id,
@@ -1270,10 +1274,7 @@ impl InlineAssistant {
                     multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.push_excerpts(
                             old_buffer.clone(),
-                            Some(ExcerptRange {
-                                context: buffer_start..buffer_end,
-                                primary: None,
-                            }),
+                            Some(ExcerptRange::new(buffer_start..buffer_end)),
                             cx,
                         );
                     });
@@ -1300,7 +1301,7 @@ impl InlineAssistant {
                     deleted_lines_editor.update(cx, |editor, cx| editor.max_point(cx).row().0 + 1);
                 new_blocks.push(BlockProperties {
                     placement: BlockPlacement::Above(new_row),
-                    height,
+                    height: Some(height),
                     style: BlockStyle::Flex,
                     render: Arc::new(move |cx| {
                         div()
@@ -1632,8 +1633,8 @@ impl Render for PromptEditor {
                                 format!(
                                     "Using {}",
                                     LanguageModelRegistry::read_global(cx)
-                                        .active_model()
-                                        .map(|model| model.name().0)
+                                        .default_model()
+                                        .map(|default| default.model.name().0)
                                         .unwrap_or_else(|| "No model selected".into()),
                                 ),
                                 None,
@@ -1765,6 +1766,7 @@ impl PromptEditor {
                             move |settings, _| settings.set_model(model.clone()),
                         );
                     },
+                    ModelType::Default,
                     window,
                     cx,
                 )
@@ -2080,7 +2082,7 @@ impl PromptEditor {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let default_model = model_registry.active_model();
+        let default_model = model_registry.default_model().map(|default| default.model);
         let alternative_models = model_registry.inline_alternative_models();
 
         let get_model_name = |index: usize| -> String {
@@ -2186,7 +2188,9 @@ impl PromptEditor {
     }
 
     fn render_token_count(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let model = LanguageModelRegistry::read_global(cx)
+            .default_model()?
+            .model;
         let token_counts = self.token_counts?;
         let max_token_count = model.max_token_count();
 
@@ -2641,8 +2645,9 @@ impl Codegen {
         }
 
         let primary_model = LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .context("no active model")?;
+            .default_model()
+            .context("no active model")?
+            .model;
 
         for (model, alternative) in iter::once(primary_model)
             .chain(alternative_models)
@@ -2866,7 +2871,9 @@ impl CodegenAlternative {
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &App,
     ) -> BoxFuture<'static, Result<TokenCounts>> {
-        if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+        if let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        {
             let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
             match request {
                 Ok(request) => {
@@ -2972,6 +2979,8 @@ impl CodegenAlternative {
         });
 
         Ok(LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
@@ -3142,7 +3151,7 @@ impl CodegenAlternative {
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
                         report_assistant_event(
-                            AssistantEvent {
+                            AssistantEventData {
                                 conversation_id: None,
                                 message_id,
                                 kind: AssistantKind::Inline,

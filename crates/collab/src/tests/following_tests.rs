@@ -295,22 +295,8 @@ async fn test_basic_following(
                 .unwrap()
         });
         let mut result = MultiBuffer::new(Capability::ReadWrite);
-        result.push_excerpts(
-            buffer_a1,
-            [ExcerptRange {
-                context: 0..3,
-                primary: None,
-            }],
-            cx,
-        );
-        result.push_excerpts(
-            buffer_a2,
-            [ExcerptRange {
-                context: 4..7,
-                primary: None,
-            }],
-            cx,
-        );
+        result.push_excerpts(buffer_a1, [ExcerptRange::new(0..3)], cx);
+        result.push_excerpts(buffer_a2, [ExcerptRange::new(4..7)], cx);
         result
     });
     let multibuffer_editor_a = workspace_a.update_in(cx_a, |workspace, window, cx| {
@@ -688,7 +674,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "1.txt": "one",
                 "2.txt": "two",
@@ -697,7 +683,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await

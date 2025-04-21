@@ -154,3 +154,33 @@ If you are seeing "too many open files" then first try `sysctl fs.inotify`.
 - You should see that `max_user_watches` is 8000 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_watches=64000`). Zed needs one watch per directory in all your open projects + one per git repository + a handful more for settings, themes, keymaps, extensions.
 
 It is also possible that you are running out of file descriptors. You can check the limits with `ulimit` and update them by editing `/etc/security/limits.conf`.
+
+### No sound or wrong output device
+
+If you're not hearing any sound in Zed or the audio is routed to the wrong device, it could be due to a mismatch between audio systems. Zed relies on ALSA, while your system may be using PipeWire or PulseAudio. To resolve this, you need to configure ALSA to route audio through PipeWire/PulseAudio.
+
+If your system uses PipeWire:
+
+1. **Install the PipeWire ALSA plugin**
+
+   On Debian-based systems, run:
+
+   ```bash
+   sudo apt install pipewire-alsa
+   ```
+
+2. **Configure ALSA to use PipeWire**
+
+   Add the following configuration to your ALSA settings file. You can use either `~/.asoundrc` (user-level) or `/etc/asound.conf` (system-wide):
+
+   ```bash
+   pcm.!default {
+       type pipewire
+   }
+
+   ctl.!default {
+       type pipewire
+   }
+   ```
+
+3. **Restart your system**

@@ -15,27 +15,34 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+component.workspace = true
 ctor.workspace = true
 editor.workspace = true
 env_logger.workspace = true
 gpui.workspace = true
+indoc.workspace = true
 language.workspace = true
+linkme.workspace = true
 log.workspace = true
 lsp.workspace = true
+markdown.workspace = true
 project.workspace = true
 rand.workspace = true
 serde.workspace = true
 settings.workspace = true
+text.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+markdown = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }

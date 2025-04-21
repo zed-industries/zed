@@ -1,0 +1,3 @@
+url = "https://github.com/django-cms/django-cms.git"
+revision = "0b775f27300c4347be18a5bb7b1b172d6a943ccf"
+language_extension = "py"

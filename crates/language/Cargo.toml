@@ -63,6 +63,7 @@ tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter.workspace = true
 unicase = "2.6"
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

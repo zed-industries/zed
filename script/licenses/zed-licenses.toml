@@ -9,6 +9,7 @@ accepted = [
     "BSD-2-Clause",
     "ISC",
     "CC0-1.0",
+    "NCSA",
     "Unicode-3.0",
     "OpenSSL",
     "Zlib",

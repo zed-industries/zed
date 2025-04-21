@@ -34,8 +34,10 @@ static MENTIONS_SEARCH: LazyLock<SearchQuery> = LazyLock::new(|| {
         false,
         false,
         false,
+        false,
         Default::default(),
         Default::default(),
+        false,
         None,
     )
     .unwrap()
@@ -309,12 +311,13 @@ impl MessageEditor {
             .map(|mat| {
                 let (new_text, label) = completion_fn(&mat);
                 Completion {
-                    old_range: range.clone(),
+                    replace_range: range.clone(),
                     new_text,
                     label,
                     icon_path: None,
                     confirm: None,
                     documentation: None,
+                    insert_text_mode: None,
                     source: CompletionSource::Custom,
                 }
             })

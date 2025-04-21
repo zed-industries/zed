@@ -1,0 +1,283 @@
+syntax = "proto3";
+package zed.messages;
+
+import "core.proto";
+import "buffer.proto";
+
+message Channel {
+    uint64 id = 1;
+    string name = 2;
+    ChannelVisibility visibility = 3;
+    repeated uint64 parent_path = 5;
+}
+
+enum ChannelVisibility {
+    Public = 0;
+    Members = 1;
+}
+
+message UpdateChannels {
+    repeated Channel channels = 1;
+    repeated uint64 delete_channels = 4;
+    repeated Channel channel_invitations = 5;
+    repeated uint64 remove_channel_invitations = 6;
+    repeated ChannelParticipants channel_participants = 7;
+    repeated ChannelMessageId latest_channel_message_ids = 8;
+    repeated ChannelBufferVersion latest_channel_buffer_versions = 9;
+
+    reserved 10 to 15;
+}
+
+message UpdateUserChannels {
+    repeated ChannelMessageId observed_channel_message_id = 1;
+    repeated ChannelBufferVersion observed_channel_buffer_version = 2;
+    repeated ChannelMembership channel_memberships = 3;
+}
+
+message ChannelMembership {
+    uint64 channel_id = 1;
+    ChannelRole role = 2;
+}
+
+message ChannelMessageId {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
+}
+
+message ChannelPermission {
+    uint64 channel_id = 1;
+    ChannelRole role = 3;
+}
+
+message ChannelParticipants {
+    uint64 channel_id = 1;
+    repeated uint64 participant_user_ids = 2;
+}
+
+message JoinChannel {
+    uint64 channel_id = 1;
+}
+
+message DeleteChannel {
+    uint64 channel_id = 1;
+}
+
+message GetChannelMembers {
+    uint64 channel_id = 1;
+    string query = 2;
+    uint64 limit = 3;
+}
+
+message GetChannelMembersResponse {
+    repeated ChannelMember members = 1;
+    repeated User users = 2;
+}
+
+message ChannelMember {
+    uint64 user_id = 1;
+    Kind kind = 3;
+    ChannelRole role = 4;
+
+    enum Kind {
+        Member = 0;
+        Invitee = 1;
+    }
+}
+
+message SubscribeToChannels {}
+
+message CreateChannel {
+    string name = 1;
+    optional uint64 parent_id = 2;
+}
+
+message CreateChannelResponse {
+    Channel channel = 1;
+    optional uint64 parent_id = 2;
+}
+
+message InviteChannelMember {
+    uint64 channel_id = 1;
+    uint64 user_id = 2;
+    ChannelRole role = 4;
+}
+
+message RemoveChannelMember {
+    uint64 channel_id = 1;
+    uint64 user_id = 2;
+}
+
+enum ChannelRole {
+    Admin = 0;
+    Member = 1;
+    Guest = 2;
+    Banned = 3;
+    Talker = 4;
+}
+
+message SetChannelMemberRole {
+    uint64 channel_id = 1;
+    uint64 user_id = 2;
+    ChannelRole role = 3;
+}
+
+message SetChannelVisibility {
+    uint64 channel_id = 1;
+    ChannelVisibility visibility = 2;
+}
+
+message RenameChannel {
+    uint64 channel_id = 1;
+    string name = 2;
+}
+
+message RenameChannelResponse {
+    Channel channel = 1;
+}
+
+message JoinChannelChat {
+    uint64 channel_id = 1;
+}
+
+message JoinChannelChatResponse {
+    repeated ChannelMessage messages = 1;
+    bool done = 2;
+}
+
+message LeaveChannelChat {
+    uint64 channel_id = 1;
+}
+
+message SendChannelMessage {
+    uint64 channel_id = 1;
+    string body = 2;
+    Nonce nonce = 3;
+    repeated ChatMention mentions = 4;
+    optional uint64 reply_to_message_id = 5;
+}
+
+message RemoveChannelMessage {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
+}
+
+message UpdateChannelMessage {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
+    Nonce nonce = 4;
+    string body = 5;
+    repeated ChatMention mentions = 6;
+}
+
+message AckChannelMessage {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
+}
+
+message SendChannelMessageResponse {
+    ChannelMessage message = 1;
+}
+
+message ChannelMessageSent {
+    uint64 channel_id = 1;
+    ChannelMessage message = 2;
+}
+
+message ChannelMessageUpdate {
+    uint64 channel_id = 1;
+    ChannelMessage message = 2;
+}
+
+message GetChannelMessages {
+    uint64 channel_id = 1;
+    uint64 before_message_id = 2;
+}
+
+message GetChannelMessagesResponse {
+    repeated ChannelMessage messages = 1;
+    bool done = 2;
+}
+
+message GetChannelMessagesById {
+    repeated uint64 message_ids = 1;
+}
+
+message MoveChannel {
+    uint64 channel_id = 1;
+    uint64 to = 2;
+}
+
+message JoinChannelBuffer {
+    uint64 channel_id = 1;
+}
+
+message ChannelBufferVersion {
+    uint64 channel_id = 1;
+    repeated VectorClockEntry version = 2;
+    uint64 epoch = 3;
+}
+
+message UpdateChannelBufferCollaborators {
+    uint64 channel_id = 1;
+    repeated Collaborator collaborators = 2;
+}
+
+message UpdateChannelBuffer {
+    uint64 channel_id = 1;
+    repeated Operation operations = 2;
+}
+
+message ChannelMessage {
+    uint64 id = 1;
+    string body = 2;
+    uint64 timestamp = 3;
+    uint64 sender_id = 4;
+    Nonce nonce = 5;
+    repeated ChatMention mentions = 6;
+    optional uint64 reply_to_message_id = 7;
+    optional uint64 edited_at = 8;
+}
+
+message ChatMention {
+    Range range = 1;
+    uint64 user_id = 2;
+}
+
+message RejoinChannelBuffers {
+    repeated ChannelBufferVersion buffers = 1;
+}
+
+message RejoinChannelBuffersResponse {
+    repeated RejoinedChannelBuffer buffers = 1;
+}
+
+message AckBufferOperation {
+    uint64 buffer_id = 1;
+    uint64 epoch = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message JoinChannelBufferResponse {
+    uint64 buffer_id = 1;
+    uint32 replica_id = 2;
+    string base_text = 3;
+    repeated Operation operations = 4;
+    repeated Collaborator collaborators = 5;
+    uint64 epoch = 6;
+}
+
+message RejoinedChannelBuffer {
+    uint64 channel_id = 1;
+    repeated VectorClockEntry version = 2;
+    repeated Operation operations = 3;
+    repeated Collaborator collaborators = 4;
+}
+
+message LeaveChannelBuffer {
+    uint64 channel_id = 1;
+}
+
+message RespondToChannelInvite {
+    uint64 channel_id = 1;
+    bool accept = 2;
+}

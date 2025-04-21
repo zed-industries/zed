@@ -26,18 +26,30 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Attach(AttachConfig {
+    let session = debugger::test::start_debug_session_with(
+        &project,
+        cx,
+        DebugTaskDefinition {
+            adapter: "fake-adapter".to_string(),
+            request: dap::DebugRequestType::Attach(AttachConfig {
                 process_id: Some(10),
             }),
-            None,
-            false,
-            cx,
-        )
-    });
+            label: "label".to_string(),
+            initialize_args: None,
+            tcp_connection: None,
+            locator: None,
+            stop_on_entry: None,
+        },
+        |client| {
+            client.on_request::<dap::requests::Attach, _>(move |_, args| {
+                assert_eq!(json!({"request": "attach", "process_id": 10}), args.raw);
 
-    let session = task.await.unwrap();
+                Ok(())
+            });
+        },
+    )
+    .await
+    .unwrap();
 
     cx.run_until_parked();
 
@@ -77,7 +89,15 @@ async fn test_show_attach_modal_and_select_process(
     let project = Project::test(fs, ["/project".as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    // Set up handlers for sessions spawned via modal.
+    let _initialize_subscription =
+        project::debugger::test::intercept_debug_sessions(cx, |client| {
+            client.on_request::<dap::requests::Attach, _>(move |_, args| {
+                assert_eq!(json!({"request": "attach", "process_id": 1}), args.raw);
 
+                Ok(())
+            });
+        });
     let attach_modal = workspace
         .update(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
@@ -90,7 +110,7 @@ async fn test_show_attach_modal_and_select_process(
                         initialize_args: None,
                         tcp_connection: Some(TCPHost::default()),
                         locator: None,
-                        args: Default::default(),
+                        stop_on_entry: None,
                     },
                     vec![
                         Candidate {
@@ -100,7 +120,7 @@ async fn test_show_attach_modal_and_select_process(
                         },
                         Candidate {
                             pid: 3,
-                            name: "non-fake-binary-1".into(),
+                            name: "real-binary-1".into(),
                             command: vec![],
                         },
                         Candidate {
@@ -108,7 +128,10 @@ async fn test_show_attach_modal_and_select_process(
                             name: "fake-binary-2".into(),
                             command: vec![],
                         },
-                    ],
+                    ]
+                    .into_iter()
+                    .collect(),
+                    true,
                     window,
                     cx,
                 )
@@ -122,15 +145,28 @@ async fn test_show_attach_modal_and_select_process(
 
     // assert we got the expected processes
     workspace
+        .update(cx, |_, window, cx| {
+            let names =
+                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
+            // Initially all processes are visible.
+            assert_eq!(3, names.len());
+            attach_modal.update(cx, |this, cx| {
+                this.picker.update(cx, |this, cx| {
+                    this.set_query("fakb", window, cx);
+                })
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+    // assert we got the expected processes
+    workspace
         .update(cx, |_, _, cx| {
             let names =
                 attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
-
-            // we filtered out all processes that are not starting with `fake-binary`
+            // Initially all processes are visible.
             assert_eq!(2, names.len());
         })
         .unwrap();
-
     // select the only existing process
     cx.dispatch_action(Confirm);
 

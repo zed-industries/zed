@@ -23,3 +23,4 @@ simplelog.workspace= true
 strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 vscode_theme = "0.2.0"
+workspace-hack.workspace = true

@@ -18,3 +18,4 @@ test-support = []
 [dependencies]
 indexmap.workspace = true
 rustc-hash.workspace = true
+workspace-hack.workspace = true

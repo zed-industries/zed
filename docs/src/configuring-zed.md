@@ -75,6 +75,46 @@ Non-negative `float` values
 
 `float` values
 
+## Bottom Dock Layout
+
+- Description: Control the layout of the bottom dock, relative to the left and right docks
+- Setting: `bottom_dock_layout`
+- Default: `"contained"`
+
+**Options**
+
+1. Contain the bottom dock, giving the full height of the window to the left and right docks
+
+```json
+{
+  "bottom_dock_layout": "contained"
+}
+```
+
+2. Give the bottom dock the full width of the window, truncating the left and right docks
+
+```json
+{
+  "bottom_dock_layout": "full"
+}
+```
+
+3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window
+
+```json
+{
+  "bottom_dock_layout": "left_aligned"
+}
+```
+
+3. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
+
+```json
+{
+  "bottom_dock_layout": "right_aligned"
+}
+```
+
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
@@ -495,13 +535,6 @@ List of `string` values
 - Description: Whether to highlight all occurrences of the selected text in an editor.
 - Setting: `selection_highlight`
 - Default: `true`
-
-## Selection Highlight Debounce
-
-- Description: The debounce delay before querying highlights based on the selected text.
-
-- Setting: `selection_highlight_debounce`
-- Default: `50`
 
 ## LSP Highlight Debounce
 
@@ -1311,10 +1344,10 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "include_warnings": true,
     "inline": {
       "enabled": false
-    }
+    },
     "update_with_cursor": false,
     "primary_only": false,
-    "use_rendered": false,
+    "use_rendered": false
   }
 }
 ```
@@ -2050,6 +2083,68 @@ Examples:
 **Options**
 
 `boolean` values
+
+## Completions
+
+- Description: Controls how completions are processed for this language.
+- Setting: `completions`
+- Default:
+
+```json
+{
+  "completions": {
+    "words": "fallback",
+    "lsp": true,
+    "lsp_fetch_timeout_ms": 0,
+    "lsp_insert_mode": "replace_suffix"
+  }
+}
+```
+
+### Words
+
+- Description: Controls how words are completed. For large documents, not all words may be fetched for completion.
+- Setting: `words`
+- Default: `fallback`
+
+**Options**
+
+1. `enabled` - Always fetch document's words for completions along with LSP completions
+2. `fallback` - Only if LSP response errors or times out, use document's words to show completions
+3. `disabled` - Never fetch or complete document's words for completions (word-based completions can still be queried via a separate action)
+
+### LSP
+
+- Description: Whether to fetch LSP completions or not.
+- Setting: `lsp`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### LSP Fetch Timeout (ms)
+
+- Description: When fetching LSP completions, determines how long to wait for a response of a particular server. When set to 0, waits indefinitely.
+- Setting: `lsp_fetch_timeout_ms`
+- Default: `0`
+
+**Options**
+
+`integer` values representing milliseconds
+
+### LSP Insert Mode
+
+- Description: Controls what range to replace when accepting LSP completions.
+- Setting: `lsp_insert_mode`
+- Default: `replace_suffix`
+
+**Options**
+
+1. `insert` - Replaces text before the cursor, using the `insert` range described in the LSP specification
+2. `replace` - Replaces text before and after the cursor, using the `replace` range described in the LSP specification
+3. `replace_subsequence` - Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text, and like `"insert"` otherwise
+4. `replace_suffix` - Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like `"insert"` otherwise
 
 ## Show Completions On Input
 
@@ -2936,11 +3031,11 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "default_height": 320,
   "default_model": {
     "provider": "zed.dev",
-    "model": "claude-3-5-sonnet-latest"
+    "model": "claude-3-7-sonnet-latest"
   },
   "editor_model": {
     "provider": "zed.dev",
-    "model": "claude-3-5-sonnet-latest"
+    "model": "claude-3-7-sonnet-latest"
   }
 }
 ```

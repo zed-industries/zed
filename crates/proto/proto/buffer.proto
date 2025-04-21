@@ -1,0 +1,294 @@
+syntax = "proto3";
+package zed.messages;
+
+import "core.proto";
+import "worktree.proto";
+
+message OpenNewBuffer {
+    uint64 project_id = 1;
+}
+
+message OpenBufferResponse {
+    uint64 buffer_id = 1;
+}
+
+message CreateBufferForPeer {
+    uint64 project_id = 1;
+    PeerId peer_id = 2;
+    oneof variant {
+        BufferState state = 3;
+        BufferChunk chunk = 4;
+    }
+}
+
+message UpdateBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated Operation operations = 3;
+}
+
+message OpenBufferByPath {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+}
+
+message OpenBufferById {
+    uint64 project_id = 1;
+    uint64 id = 2;
+}
+
+message UpdateBufferFile {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    File file = 3;
+}
+
+message SaveBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+    optional ProjectPath new_path = 4;
+}
+
+message CloseBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message BufferSaved {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+    Timestamp mtime = 4;
+    reserved 5;
+}
+
+message BufferReloaded {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+    Timestamp mtime = 4;
+    reserved 5;
+    LineEnding line_ending = 6;
+}
+
+message ReloadBuffers {
+    uint64 project_id = 1;
+    repeated uint64 buffer_ids = 2;
+}
+
+message ReloadBuffersResponse {
+    ProjectTransaction transaction = 1;
+}
+
+message SynchronizeBuffers {
+    uint64 project_id = 1;
+    repeated BufferVersion buffers = 2;
+}
+
+message SynchronizeBuffersResponse {
+    repeated BufferVersion buffers = 1;
+}
+
+message BufferVersion {
+    uint64 id = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message BufferState {
+    uint64 id = 1;
+    optional File file = 2;
+    string base_text = 3;
+    LineEnding line_ending = 5;
+    repeated VectorClockEntry saved_version = 6;
+    Timestamp saved_mtime = 8;
+
+    reserved 7;
+    reserved 4;
+}
+
+message BufferChunk {
+    uint64 buffer_id = 1;
+    repeated Operation operations = 2;
+    bool is_last = 3;
+}
+
+enum LineEnding {
+    Unix = 0;
+    Windows = 1;
+}
+
+message VectorClockEntry {
+    uint32 replica_id = 1;
+    uint32 timestamp = 2;
+}
+
+message UndoMapEntry {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    repeated UndoCount counts = 3;
+}
+
+message UndoCount {
+    uint32 replica_id = 1;
+    uint32 lamport_timestamp = 2;
+    uint32 count = 3;
+}
+
+message Operation {
+    oneof variant {
+        Edit edit = 1;
+        Undo undo = 2;
+        UpdateSelections update_selections = 3;
+        UpdateDiagnostics update_diagnostics = 4;
+        UpdateCompletionTriggers update_completion_triggers = 5;
+    }
+
+    message Edit {
+        uint32 replica_id = 1;
+        uint32 lamport_timestamp = 2;
+        repeated VectorClockEntry version = 3;
+        repeated Range ranges = 4;
+        repeated string new_text = 5;
+    }
+
+    message Undo {
+        uint32 replica_id = 1;
+        uint32 lamport_timestamp = 2;
+        repeated VectorClockEntry version = 3;
+        repeated UndoCount counts = 4;
+    }
+
+    message UpdateSelections {
+        uint32 replica_id = 1;
+        uint32 lamport_timestamp = 2;
+        repeated Selection selections = 3;
+        bool line_mode = 4;
+        CursorShape cursor_shape = 5;
+    }
+
+    message UpdateCompletionTriggers {
+        uint32 replica_id = 1;
+        uint32 lamport_timestamp = 2;
+        repeated string triggers = 3;
+        uint64 language_server_id = 4;
+    }
+}
+
+message ProjectTransaction {
+    repeated uint64 buffer_ids = 1;
+    repeated Transaction transactions = 2;
+}
+
+message Transaction {
+    LamportTimestamp id = 1;
+    repeated LamportTimestamp edit_ids = 2;
+    repeated VectorClockEntry start = 3;
+}
+
+message LamportTimestamp {
+    uint32 replica_id = 1;
+    uint32 value = 2;
+}
+
+message Range {
+    uint64 start = 1;
+    uint64 end = 2;
+}
+
+message Selection {
+    uint64 id = 1;
+    EditorAnchor start = 2;
+    EditorAnchor end = 3;
+    bool reversed = 4;
+}
+
+message EditorAnchor {
+    uint64 excerpt_id = 1;
+    Anchor anchor = 2;
+}
+
+enum CursorShape {
+    CursorBar = 0;
+    CursorBlock = 1;
+    CursorUnderscore = 2;
+    CursorHollow = 3;
+}
+
+message UpdateDiagnostics {
+    uint32 replica_id = 1;
+    uint32 lamport_timestamp = 2;
+    uint64 server_id = 3;
+    repeated Diagnostic diagnostics = 4;
+}
+
+message Anchor {
+    uint32 replica_id = 1;
+    uint32 timestamp = 2;
+    uint64 offset = 3;
+    Bias bias = 4;
+    optional uint64 buffer_id = 5;
+}
+
+message AnchorRange {
+    Anchor start = 1;
+    Anchor end = 2;
+}
+
+message Location {
+    uint64 buffer_id = 1;
+    Anchor start = 2;
+    Anchor end = 3;
+}
+
+enum Bias {
+    Left = 0;
+    Right = 1;
+}
+
+message Diagnostic {
+    Anchor start = 1;
+    Anchor end = 2;
+    optional string source = 3;
+    Severity severity = 4;
+    string message = 5;
+    optional string code = 6;
+    uint64 group_id = 7;
+    bool is_primary = 8;
+
+    reserved 9;
+
+    bool is_disk_based = 10;
+    bool is_unnecessary = 11;
+
+    enum Severity {
+        None = 0;
+        Error = 1;
+        Warning = 2;
+        Information = 3;
+        Hint = 4;
+    }
+    optional string data = 12;
+}
+
+message SearchQuery {
+    string query = 2;
+    bool regex = 3;
+    bool whole_word = 4;
+    bool case_sensitive = 5;
+    string files_to_include = 6;
+    string files_to_exclude = 7;
+    bool match_full_paths = 9;
+    bool include_ignored = 8;
+}
+
+message FindSearchCandidates {
+    uint64 project_id = 1;
+    SearchQuery query = 2;
+    uint64 limit = 3;
+}
+
+message FindSearchCandidatesResponse {
+    repeated uint64 buffer_ids = 1;
+}

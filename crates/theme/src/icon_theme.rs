@@ -264,6 +264,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("vs_sln", &["sln"]),
     ("vs_suo", &["suo"]),
     ("vue", &["vue"]),
+    ("vyper", &["vy", "vyi"]),
     ("wgsl", &["wgsl"]),
     ("zig", &["zig"]),
 ];
@@ -349,6 +350,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("vs_sln", "icons/file_icons/file.svg"),
     ("vs_suo", "icons/file_icons/file.svg"),
     ("vue", "icons/file_icons/vue.svg"),
+    ("vyper", "icons/file_icons/vyper.svg"),
     ("wgsl", "icons/file_icons/wgsl.svg"),
     ("zig", "icons/file_icons/zig.svg"),
 ];

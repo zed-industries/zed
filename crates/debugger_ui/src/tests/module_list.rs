@@ -1,19 +1,20 @@
 use crate::{
     debugger_panel::DebugPanel,
-    session::ThreadItem,
     tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
     StoppedEvent,
-    requests::{Modules, StackTrace, Threads},
+    requests::{Initialize, Modules},
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
-use project::{FakeFs, Project};
+use project::{
+    FakeFs, Project,
+    debugger::{self},
+};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicI32, Ordering},
 };
-use task::LaunchConfig;
 
 #[gpui::test]
 async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -30,30 +31,18 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         .unwrap();
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            Some(dap::Capabilities {
+    let session = debugger::test::start_debug_session(&project, cx, |client| {
+        client.on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
                 supports_modules_request: Some(true),
                 ..Default::default()
-            }),
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
-    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
-
-    client
-        .on_request::<StackTrace, _>(move |_, args| {
-            assert!(args.thread_id == 1);
-            Ok(dap::StackTraceResponse {
-                stack_frames: Vec::default(),
-                total_frames: None,
             })
-        })
-        .await;
+        });
+    })
+    .await
+    .unwrap();
+
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     let called_modules = Arc::new(AtomicBool::new(false));
     let modules = vec![
@@ -83,38 +72,25 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         },
     ];
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
+    client.on_request::<Modules, _>({
+        let called_modules = called_modules.clone();
+        let modules_request_count = AtomicI32::new(0);
+        let modules = modules.clone();
+        move |_, _| {
+            modules_request_count.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                1,
+                modules_request_count.load(Ordering::SeqCst),
+                "This request should only be called once from the host"
+            );
+            called_modules.store(true, Ordering::SeqCst);
+
+            Ok(dap::ModulesResponse {
+                modules: modules.clone(),
+                total_modules: Some(2u64),
             })
-        })
-        .await;
-
-    client
-        .on_request::<Modules, _>({
-            let called_modules = called_modules.clone();
-            let modules_request_count = AtomicI32::new(0);
-            let modules = modules.clone();
-            move |_, _| {
-                modules_request_count.fetch_add(1, Ordering::SeqCst);
-                assert_eq!(
-                    1,
-                    modules_request_count.load(Ordering::SeqCst),
-                    "This request should only be called once from the host"
-                );
-                called_modules.store(true, Ordering::SeqCst);
-
-                Ok(dap::ModulesResponse {
-                    modules: modules.clone(),
-                    total_modules: Some(2u64),
-                })
-            }
-        })
-        .await;
+        }
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(StoppedEvent {
@@ -139,13 +115,8 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
                 .clone()
         });
 
-    assert!(
-        !called_modules.load(std::sync::atomic::Ordering::SeqCst),
-        "Request Modules shouldn't be called before it's needed"
-    );
-
-    running_state.update(cx, |state, cx| {
-        state.set_thread_item(ThreadItem::Modules, cx);
+    running_state.update_in(cx, |this, window, cx| {
+        this.activate_modules_list(window, cx);
         cx.refresh_windows();
     });
 
@@ -157,9 +128,6 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     );
 
     active_debug_session_panel(workspace, cx).update(cx, |_, cx| {
-        running_state.update(cx, |state, cx| {
-            state.set_thread_item(ThreadItem::Modules, cx)
-        });
         let actual_modules = running_state.update(cx, |state, cx| {
             state.module_list().update(cx, |list, cx| list.modules(cx))
         });

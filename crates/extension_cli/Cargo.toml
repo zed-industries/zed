@@ -30,3 +30,4 @@ tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
 tree-sitter.workspace = true
 wasmtime.workspace = true
+workspace-hack.workspace = true

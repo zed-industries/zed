@@ -1,15 +1,17 @@
-use std::future;
+use std::pin::Pin;
+use std::str::FromStr as _;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use collections::HashMap;
 use copilot::copilot_chat::{
     ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
-    Role as CopilotChatRole,
+    ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
-use futures::{FutureExt, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
     Transformation, percentage, svg,
@@ -17,12 +19,14 @@ use gpui::{
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::prelude::*;
+use util::maybe;
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
@@ -66,6 +70,13 @@ impl CopilotChatLanguageModelProvider {
 
         Self { state }
     }
+
+    fn create_language_model(&self, model: CopilotChatModel) -> Arc<dyn LanguageModel> {
+        Arc::new(CopilotChatLanguageModel {
+            model,
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for CopilotChatLanguageModelProvider {
@@ -90,21 +101,16 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = CopilotChatModel::default();
-        Some(Arc::new(CopilotChatLanguageModel {
-            model,
-            request_limiter: RateLimiter::new(4),
-        }) as Arc<dyn LanguageModel>)
+        Some(self.create_language_model(CopilotChatModel::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(CopilotChatModel::default_fast()))
     }
 
     fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
-            .map(|model| {
-                Arc::new(CopilotChatLanguageModel {
-                    model,
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -180,6 +186,15 @@ impl LanguageModel for CopilotChatLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        match self.model {
+            CopilotChatModel::Claude3_5Sonnet
+            | CopilotChatModel::Claude3_7Sonnet
+            | CopilotChatModel::Claude3_7SonnetThinking => true,
+            _ => false,
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("copilot_chat/{}", self.model.id())
     }
@@ -197,17 +212,24 @@ impl LanguageModel for CopilotChatLanguageModel {
             CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
             CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
             CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Gemini20Flash => count_google_tokens(request, cx),
+            CopilotChatModel::Gemini20Flash | CopilotChatModel::Gemini25Pro => {
+                count_google_tokens(request, cx)
+            }
             _ => {
                 let model = match self.model {
                     CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
+                    CopilotChatModel::Gpt4_1 => open_ai::Model::FourPointOne,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-                    CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
+                    CopilotChatModel::O1 => open_ai::Model::O1,
+                    CopilotChatModel::O3Mini => open_ai::Model::O3Mini,
+                    CopilotChatModel::O3 => open_ai::Model::O3,
+                    CopilotChatModel::O4Mini => open_ai::Model::O4Mini,
                     CopilotChatModel::Claude3_5Sonnet
                     | CopilotChatModel::Claude3_7Sonnet
                     | CopilotChatModel::Claude3_7SonnetThinking
-                    | CopilotChatModel::Gemini20Flash => {
+                    | CopilotChatModel::Gemini20Flash
+                    | CopilotChatModel::Gemini25Pro => {
                         unreachable!()
                     }
                 };
@@ -237,88 +259,255 @@ impl LanguageModel for CopilotChatLanguageModel {
             }
         }
 
-        let copilot_request = self.to_copilot_chat_request(request);
+        let copilot_request = match self.to_copilot_chat_request(request) {
+            Ok(request) => request,
+            Err(err) => return futures::future::ready(Err(err)).boxed(),
+        };
         let is_streaming = copilot_request.stream;
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(async move |cx| {
-            let response = CopilotChat::stream_completion(copilot_request, cx.clone());
-            request_limiter.stream(async move {
-                let response = response.await?;
-                let stream = response
-                    .filter_map(move |response| async move {
-                        match response {
-                            Ok(result) => {
-                                let choice = result.choices.first();
-                                match choice {
-                                    Some(choice) if !is_streaming => {
-                                        match &choice.message {
-                                            Some(msg) => Some(Ok(msg.content.clone().unwrap_or_default())),
-                                            None => Some(Err(anyhow::anyhow!(
-                                                "The Copilot Chat API returned a response with no message content"
-                                            ))),
-                                        }
-                                    },
-                                    Some(choice) => {
-                                        match &choice.delta {
-                                            Some(delta) => Some(Ok(delta.content.clone().unwrap_or_default())),
-                                            None => Some(Err(anyhow::anyhow!(
-                                                "The Copilot Chat API returned a response with no delta content"
-                                            ))),
-                                        }
-                                    },
-                                    None => Some(Err(anyhow::anyhow!(
-                                        "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."
-                                    ))),
-                                }
-                            }
-                            Err(err) => Some(Err(err)),
-                        }
-                    })
-                    .boxed();
-
-                Ok(stream)
-            }).await
+            let request = CopilotChat::stream_completion(copilot_request, cx.clone());
+            request_limiter
+                .stream(async move {
+                    let response = request.await?;
+                    Ok(map_to_language_model_completion_events(
+                        response,
+                        is_streaming,
+                    ))
+                })
+                .await
         });
-
-        async move {
-            Ok(future
-                .await?
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                .boxed())
-        }
-        .boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        _request: LanguageModelRequest,
-        _name: String,
-        _description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 }
 
+pub fn map_to_language_model_completion_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
+    is_streaming: bool,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    #[derive(Default)]
+    struct RawToolCall {
+        id: String,
+        name: String,
+        arguments: String,
+    }
+
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
+        tool_calls_by_index: HashMap<usize, RawToolCall>,
+    }
+
+    futures::stream::unfold(
+        State {
+            events,
+            tool_calls_by_index: HashMap::default(),
+        },
+        move |mut state| async move {
+            if let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => {
+                        let Some(choice) = event.choices.first() else {
+                            return Some((
+                                vec![Err(anyhow!("Response contained no choices"))],
+                                state,
+                            ));
+                        };
+
+                        let delta = if is_streaming {
+                            choice.delta.as_ref()
+                        } else {
+                            choice.message.as_ref()
+                        };
+
+                        let Some(delta) = delta else {
+                            return Some((
+                                vec![Err(anyhow!("Response contained no delta"))],
+                                state,
+                            ));
+                        };
+
+                        let mut events = Vec::new();
+                        if let Some(content) = delta.content.clone() {
+                            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                        }
+
+                        for tool_call in &delta.tool_calls {
+                            let entry = state
+                                .tool_calls_by_index
+                                .entry(tool_call.index)
+                                .or_default();
+
+                            if let Some(tool_id) = tool_call.id.clone() {
+                                entry.id = tool_id;
+                            }
+
+                            if let Some(function) = tool_call.function.as_ref() {
+                                if let Some(name) = function.name.clone() {
+                                    entry.name = name;
+                                }
+
+                                if let Some(arguments) = function.arguments.clone() {
+                                    entry.arguments.push_str(&arguments);
+                                }
+                            }
+                        }
+
+                        match choice.finish_reason.as_deref() {
+                            Some("stop") => {
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::EndTurn,
+                                )));
+                            }
+                            Some("tool_calls") => {
+                                events.extend(state.tool_calls_by_index.drain().map(
+                                    |(_, tool_call)| {
+                                        maybe!({
+                                            Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_call.id.into(),
+                                                    name: tool_call.name.as_str().into(),
+                                                    input: serde_json::Value::from_str(
+                                                        &tool_call.arguments,
+                                                    )?,
+                                                },
+                                            ))
+                                        })
+                                    },
+                                ));
+
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::ToolUse,
+                                )));
+                            }
+                            Some(stop_reason) => {
+                                log::error!("Unexpected Copilot Chat stop_reason: {stop_reason:?}");
+                                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                                    StopReason::EndTurn,
+                                )));
+                            }
+                            None => {}
+                        }
+
+                        return Some((events, state));
+                    }
+                    Err(err) => return Some((vec![Err(err)], state)),
+                }
+            }
+
+            None
+        },
+    )
+    .flat_map(futures::stream::iter)
+}
+
 impl CopilotChatLanguageModel {
-    pub fn to_copilot_chat_request(&self, request: LanguageModelRequest) -> CopilotChatRequest {
-        CopilotChatRequest::new(
-            self.model.clone(),
-            request
-                .messages
-                .into_iter()
-                .map(|msg| ChatMessage {
-                    role: match msg.role {
-                        Role::User => CopilotChatRole::User,
-                        Role::Assistant => CopilotChatRole::Assistant,
-                        Role::System => CopilotChatRole::System,
-                    },
-                    content: msg.string_contents(),
-                })
-                .collect(),
-        )
+    pub fn to_copilot_chat_request(
+        &self,
+        request: LanguageModelRequest,
+    ) -> Result<CopilotChatRequest> {
+        let model = self.model.clone();
+
+        let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
+        for message in request.messages {
+            if let Some(last_message) = request_messages.last_mut() {
+                if last_message.role == message.role {
+                    last_message.content.extend(message.content);
+                } else {
+                    request_messages.push(message);
+                }
+            } else {
+                request_messages.push(message);
+            }
+        }
+
+        let mut messages: Vec<ChatMessage> = Vec::new();
+        for message in request_messages {
+            let text_content = {
+                let mut buffer = String::new();
+                for string in message.content.iter().filter_map(|content| match content {
+                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                        Some(text.as_str())
+                    }
+                    MessageContent::ToolUse(_)
+                    | MessageContent::RedactedThinking(_)
+                    | MessageContent::ToolResult(_)
+                    | MessageContent::Image(_) => None,
+                }) {
+                    buffer.push_str(string);
+                }
+
+                buffer
+            };
+
+            match message.role {
+                Role::User => {
+                    for content in &message.content {
+                        if let MessageContent::ToolResult(tool_result) = content {
+                            messages.push(ChatMessage::Tool {
+                                tool_call_id: tool_result.tool_use_id.to_string(),
+                                content: tool_result.content.to_string(),
+                            });
+                        }
+                    }
+
+                    messages.push(ChatMessage::User {
+                        content: text_content,
+                    });
+                }
+                Role::Assistant => {
+                    let mut tool_calls = Vec::new();
+                    for content in &message.content {
+                        if let MessageContent::ToolUse(tool_use) = content {
+                            tool_calls.push(ToolCall {
+                                id: tool_use.id.to_string(),
+                                content: copilot::copilot_chat::ToolCallContent::Function {
+                                    function: copilot::copilot_chat::FunctionContent {
+                                        name: tool_use.name.to_string(),
+                                        arguments: serde_json::to_string(&tool_use.input)?,
+                                    },
+                                },
+                            });
+                        }
+                    }
+
+                    messages.push(ChatMessage::Assistant {
+                        content: if text_content.is_empty() {
+                            None
+                        } else {
+                            Some(text_content)
+                        },
+                        tool_calls,
+                    });
+                }
+                Role::System => messages.push(ChatMessage::System {
+                    content: message.string_contents(),
+                }),
+            }
+        }
+
+        let tools = request
+            .tools
+            .iter()
+            .map(|tool| Tool::Function {
+                function: copilot::copilot_chat::Function {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    parameters: tool.input_schema.clone(),
+                },
+            })
+            .collect();
+
+        Ok(CopilotChatRequest {
+            intent: true,
+            n: 1,
+            stream: model.uses_streaming(),
+            temperature: 0.1,
+            model,
+            messages,
+            tools,
+            tool_choice: None,
+        })
     }
 }
 
@@ -346,60 +535,51 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
-            const LABEL: &str = "Authorized.";
             h_flex()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(LABEL)),
+                        .child(Label::new("Authorized")),
                 )
                 .child(
                     Button::new("sign_out", "Sign Out")
-                        .style(ui::ButtonStyle::Filled)
+                        .label_size(LabelSize::Small)
                         .on_click(|_, window, cx| {
                             window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
                         }),
                 )
         } else {
-            let loading_icon = svg()
-                .size_8()
-                .path(IconName::ArrowCircle.path())
-                .text_color(window.text_style().color)
-                .with_animation(
-                    "icon_circle_arrow",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-                );
+            let loading_icon = Icon::new(IconName::ArrowCircle).with_animation(
+                "arrow-circle",
+                Animation::new(Duration::from_secs(4)).repeat(),
+                |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+            );
 
             const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
 
             match &self.copilot_status {
                 Some(status) => match status {
-                    Status::Starting { task: _ } => {
-                        const LABEL: &str = "Starting Copilot...";
-                        v_flex()
-                            .gap_6()
-                            .justify_center()
-                            .items_center()
-                            .child(Label::new(LABEL))
-                            .child(loading_icon)
-                    }
+                    Status::Starting { task: _ } => h_flex()
+                        .gap_2()
+                        .child(loading_icon)
+                        .child(Label::new("Starting Copilot…")),
                     Status::SigningIn { prompt: _ }
                     | Status::SignedOut {
                         awaiting_signing_in: true,
-                    } => {
-                        const LABEL: &str = "Signing in to Copilot...";
-                        v_flex()
-                            .gap_6()
-                            .justify_center()
-                            .items_center()
-                            .child(Label::new(LABEL))
-                            .child(loading_icon)
-                    }
+                    } => h_flex()
+                        .gap_2()
+                        .child(loading_icon)
+                        .child(Label::new("Signing into Copilot…")),
                     Status::Error(_) => {
                         const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
                         v_flex()
@@ -409,28 +589,14 @@ impl Render for ConfigurationView {
                     }
                     _ => {
                         const LABEL: &str = "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
-                        v_flex().gap_6().child(Label::new(LABEL)).child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    Button::new("sign_in", "Sign In")
-                                        .icon_color(Color::Muted)
-                                        .icon(IconName::Github)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Medium)
-                                        .style(ui::ButtonStyle::Filled)
-                                        .full_width()
-                                        .on_click(|_, window, cx| {
-                                            copilot::initiate_sign_in(window, cx)
-                                        }),
-                                )
-                                .child(
-                                    div().flex().w_full().items_center().child(
-                                        Label::new("Sign in to start using Github Copilot Chat.")
-                                            .color(Color::Muted)
-                                            .size(ui::LabelSize::Small),
-                                    ),
-                                ),
+                        v_flex().gap_2().child(Label::new(LABEL)).child(
+                            Button::new("sign_in", "Sign in to use GitHub Copilot")
+                                .icon_color(Color::Muted)
+                                .icon(IconName::Github)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Medium)
+                                .full_width()
+                                .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
                         )
                     }
                 },

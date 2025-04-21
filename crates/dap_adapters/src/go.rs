@@ -1,3 +1,4 @@
+use dap::StartDebuggingRequestArguments;
 use gpui::AsyncApp;
 use std::{ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
@@ -9,6 +10,31 @@ pub(crate) struct GoDebugAdapter;
 
 impl GoDebugAdapter {
     const ADAPTER_NAME: &'static str = "Delve";
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+        let mut args = match &config.request {
+            dap::DebugRequestType::Attach(attach_config) => {
+                json!({
+                    "processId": attach_config.process_id,
+                })
+            }
+            dap::DebugRequestType::Launch(launch_config) => json!({
+                "program": launch_config.program,
+                "cwd": launch_config.cwd,
+                "args": launch_config.args
+            }),
+        };
+
+        let map = args.as_object_mut().unwrap();
+
+        if let Some(stop_on_entry) = config.stop_on_entry {
+            map.insert("stopOnEntry".into(), stop_on_entry.into());
+        }
+
+        StartDebuggingRequestArguments {
+            configuration: args,
+            request: config.request.to_dap(),
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -20,7 +46,7 @@ impl DebugAdapter for GoDebugAdapter {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -53,7 +79,7 @@ impl DebugAdapter for GoDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -66,6 +92,7 @@ impl DebugAdapter for GoDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
+            adapter_name: self.name(),
             command: delve_path,
             arguments: Some(vec![
                 "dap".into(),
@@ -79,20 +106,7 @@ impl DebugAdapter for GoDebugAdapter {
                 port,
                 timeout,
             }),
+            request_args: self.request_args(config),
         })
-    }
-
-    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
-        match &config.request {
-            dap::DebugRequestType::Attach(attach_config) => {
-                json!({
-                    "processId": attach_config.process_id
-                })
-            }
-            dap::DebugRequestType::Launch(launch_config) => json!({
-                "program": launch_config.program,
-                "cwd": launch_config.cwd,
-            }),
-        }
     }
 }

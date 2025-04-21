@@ -37,6 +37,8 @@
       "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-d": "editor::DuplicateSelection",
       "alt-f3": "editor::SelectAllMatches", // find_all_under
+      // "ctrl-f3": "", // find_under (cancels any selections)
+      // "cmd-alt-shift-g": "" // find_under_prev (cancels any selections)
       "f9": "editor::SortLinesCaseSensitive",
       "ctrl-f9": "editor::SortLinesCaseInsensitive",
       "f12": "editor::GoToDefinition",
@@ -49,13 +51,21 @@
       "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd"
+      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "f3": "editor::FindNextMatch",
+      "shift-f3": "editor::FindPreviousMatch"
     }
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
       "ctrl-r": "outline::Toggle"
+    }
+  },
+  {
+    "context": "Editor && !agent_diff",
+    "bindings": {
+      "ctrl-k ctrl-z": "git::Restore"
     }
   },
   {

@@ -1,0 +1,94 @@
+syntax = "proto3";
+package zed.messages;
+
+message UpdateInviteInfo {
+    string url = 1;
+    uint32 count = 2;
+}
+
+message GetPrivateUserInfo {}
+
+message GetPrivateUserInfoResponse {
+    string metrics_id = 1;
+    bool staff = 2;
+    repeated string flags = 3;
+    optional uint64 accepted_tos_at = 4;
+}
+
+enum Plan {
+    Free = 0;
+    ZedPro = 1;
+    ZedProTrial = 2;
+}
+
+message UpdateUserPlan {
+    Plan plan = 1;
+}
+
+message AcceptTermsOfService {}
+
+message AcceptTermsOfServiceResponse {
+    uint64 accepted_tos_at = 1;
+}
+
+message ShutdownRemoteServer {}
+
+message Toast {
+    uint64 project_id = 1;
+    string notification_id = 2;
+    string message = 3;
+}
+
+message HideToast {
+    uint64 project_id = 1;
+    string notification_id = 2;
+}
+
+message OpenServerSettings {
+    uint64 project_id = 1;
+}
+
+message GetPanicFiles {
+}
+
+message GetPanicFilesResponse {
+    repeated string file_contents = 2;
+}
+
+message Extension {
+    string id = 1;
+    string version = 2;
+    bool dev = 3;
+}
+
+message SyncExtensions {
+    repeated Extension extensions = 1;
+}
+
+message SyncExtensionsResponse {
+    string tmp_dir = 1;
+    repeated Extension missing_extensions = 2;
+}
+
+message InstallExtension {
+    Extension extension = 1;
+    string tmp_dir = 2;
+}
+
+message AskPassRequest {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    uint64 askpass_id = 4;
+    string prompt = 5;
+}
+
+message AskPassResponse {
+    string response = 1;
+}
+
+message GetSupermavenApiKey {}
+
+message GetSupermavenApiKeyResponse {
+    string api_key = 1;
+}

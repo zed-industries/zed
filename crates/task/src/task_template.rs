@@ -1,16 +1,16 @@
-use std::path::PathBuf;
-use util::serde::default_true;
-
 use anyhow::{Context, bail};
 use collections::{HashMap, HashSet};
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
+use util::serde::default_true;
 use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
     AttachConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext, TaskId,
     VariableName, ZED_VARIABLE_NAME_PREFIX,
+    serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema},
 };
 
 /// A template definition of a Zed task to run.
@@ -61,8 +61,10 @@ pub struct TaskTemplate {
     /// If this task should start a debugger or not
     #[serde(default, skip)]
     pub task_type: TaskType,
-    /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
-    #[serde(default)]
+    /// Represents the tags which this template attaches to.
+    /// Adding this removes this task from other UI and gives you ability to run it by tag.
+    #[serde(default, deserialize_with = "non_empty_string_vec")]
+    #[schemars(schema_with = "non_empty_string_vec_json_schema")]
     pub tags: Vec<String>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
@@ -97,6 +99,8 @@ pub struct DebugArgs {
     pub initialize_args: Option<serde_json::value::Value>,
     /// the locator to use
     pub locator: Option<String>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
 }
 
 /// Represents the type of task that is being ran

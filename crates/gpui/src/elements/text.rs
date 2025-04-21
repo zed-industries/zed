@@ -417,6 +417,15 @@ impl TextLayout {
         let mut line_origin = bounds.origin;
         let text_style = window.text_style();
         for line in &element_state.lines {
+            line.paint_background(
+                line_origin,
+                line_height,
+                text_style.text_align,
+                Some(bounds),
+                window,
+                cx,
+            )
+            .log_err();
             line.paint(
                 line_origin,
                 line_height,
@@ -546,6 +555,25 @@ impl TextLayout {
             .map(|s| s.text.to_string())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The text for this layout (with soft-wraps as newlines)
+    pub fn wrapped_text(&self) -> String {
+        let mut lines = Vec::new();
+        for wrapped in self.0.borrow().as_ref().unwrap().lines.iter() {
+            let mut seen = 0;
+            for boundary in wrapped.layout.wrap_boundaries.iter() {
+                let index = wrapped.layout.unwrapped_layout.runs[boundary.run_ix].glyphs
+                    [boundary.glyph_ix]
+                    .index;
+
+                lines.push(wrapped.text[seen..index].to_string());
+                seen = index;
+            }
+            lines.push(wrapped.text[seen..].to_string());
+        }
+
+        lines.join("\n")
     }
 }
 

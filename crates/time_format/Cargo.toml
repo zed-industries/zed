@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 sys-locale.workspace = true
 time.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

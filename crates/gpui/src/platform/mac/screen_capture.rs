@@ -1,7 +1,7 @@
 use crate::{
-    Pixels, Size,
+    DevicePixels, ForegroundExecutor, Size,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
-    px, size,
+    size,
 };
 use anyhow::{Result, anyhow};
 use block::ConcreteBlock;
@@ -27,6 +27,8 @@ use objc::{
 };
 use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc};
 
+use super::NSStringExt;
+
 #[derive(Clone)]
 pub struct MacScreenCaptureSource {
     sc_display: id,
@@ -37,9 +39,6 @@ pub struct MacScreenCaptureStream {
     sc_stream_output: id,
 }
 
-#[link(name = "ScreenCaptureKit", kind = "framework")]
-unsafe extern "C" {}
-
 static mut DELEGATE_CLASS: *const Class = ptr::null();
 static mut OUTPUT_CLASS: *const Class = ptr::null();
 const FRAME_CALLBACK_IVAR: &str = "frame_callback";
@@ -48,7 +47,7 @@ const FRAME_CALLBACK_IVAR: &str = "frame_callback";
 const SCStreamOutputTypeScreen: NSInteger = 0;
 
 impl ScreenCaptureSource for MacScreenCaptureSource {
-    fn resolution(&self) -> Result<Size<Pixels>> {
+    fn resolution(&self) -> Result<Size<DevicePixels>> {
         unsafe {
             let display_id: CGDirectDisplayID = msg_send![self.sc_display, displayID];
             let display_mode_ref = CGDisplayCopyDisplayMode(display_id);
@@ -56,13 +55,17 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let height = CGDisplayModeGetPixelHeight(display_mode_ref);
             CGDisplayModeRelease(display_mode_ref);
 
-            Ok(size(px(width as f32), px(height as f32)))
+            Ok(size(
+                DevicePixels(width as i32),
+                DevicePixels(height as i32),
+            ))
         }
     }
 
     fn stream(
         &self,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        _foreground_executor: &ForegroundExecutor,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         unsafe {
             let stream: id = msg_send![class!(SCStream), alloc];
@@ -183,7 +186,10 @@ pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptur
                 Ok(result)
             } else {
                 let msg: id = msg_send![error, localizedDescription];
-                Err(anyhow!("Failed to register: {:?}", msg))
+                Err(anyhow!(
+                    "Screen share failed: {:?}",
+                    NSStringExt::to_str(&msg)
+                ))
             };
             tx.send(result).ok();
         });

@@ -9,7 +9,7 @@ use aws_smithy_runtime_api::client::http::{
 use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsHttpRequest, HttpResponse};
 use aws_smithy_runtime_api::client::result::ConnectorError;
 use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
-use aws_smithy_runtime_api::http::StatusCode;
+use aws_smithy_runtime_api::http::{Headers, StatusCode};
 use aws_smithy_types::body::SdkBody;
 use futures::AsyncReadExt;
 use http_client::{AsyncBody, Inner};
@@ -52,10 +52,17 @@ impl AwsConnector for AwsHttpConnector {
             let (parts, body) = response.into_parts();
             let body = convert_to_sdk_body(body, handle).await;
 
-            Ok(HttpResponse::new(
-                StatusCode::try_from(parts.status.as_u16()).unwrap(),
-                body,
-            ))
+            let mut response =
+                HttpResponse::new(StatusCode::try_from(parts.status.as_u16()).unwrap(), body);
+
+            let headers = match Headers::try_from(parts.headers) {
+                Ok(headers) => headers,
+                Err(err) => return Err(ConnectorError::other(err.into(), None)),
+            };
+
+            *response.headers_mut() = headers;
+
+            Ok(response)
         })
     }
 }

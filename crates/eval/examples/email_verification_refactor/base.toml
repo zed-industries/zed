@@ -1,0 +1,4 @@
+url = "https://github.com/dani-garcia/vaultwarden.git"
+revision = "3a1f1bae002bebf26ce3a38b879c1ba26529af1e"
+language_extension = "rs"
+allow_preexisting_diagnostics = true

@@ -14,6 +14,7 @@ pub async fn replace_exact(old: &str, new: &str, snapshot: &BufferSnapshot) -> O
         true,
         PathMatcher::new(iter::empty::<&str>()).ok()?,
         PathMatcher::new(iter::empty::<&str>()).ok()?,
+        false,
         None,
     )
     .log_err()?;
@@ -518,7 +519,7 @@ mod tests {
         // Call replace_flexible and transform the result
         replace_with_flexible_indent(old, new, &buffer_snapshot).map(|diff| {
             buffer.update(cx, |buffer, cx| {
-                let _ = buffer.apply_diff(diff, false, cx);
+                let _ = buffer.apply_diff(diff, cx);
                 buffer.text()
             })
         })

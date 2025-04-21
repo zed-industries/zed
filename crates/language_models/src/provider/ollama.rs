@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
@@ -9,17 +9,18 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaToolCall,
-    get_models, preload_model, stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, KeepAlive, get_models, preload_model,
+    stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, prelude::*};
+use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::ui::InstructionListItem;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -161,6 +162,10 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         self.provided_models(cx).into_iter().next()
     }
 
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.default_model(cx)
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models: BTreeMap<String, ollama::Model> = BTreeMap::default();
 
@@ -265,22 +270,6 @@ impl OllamaLanguageModel {
             tools: vec![],
         }
     }
-    fn request_completion(
-        &self,
-        request: ChatRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<ChatResponseDelta>> {
-        let http_client = self.http_client.clone();
-
-        let Ok(api_url) = cx.update(|cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            settings.api_url.clone()
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        async move { ollama::complete(http_client.as_ref(), &api_url, request).await }.boxed()
-    }
 }
 
 impl LanguageModel for OllamaLanguageModel {
@@ -298,6 +287,10 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn supports_tools(&self) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {
@@ -368,48 +361,6 @@ impl LanguageModel for OllamaLanguageModel {
         }
         .boxed()
     }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        use ollama::{OllamaFunctionTool, OllamaTool};
-        let function = OllamaFunctionTool {
-            name: tool_name.clone(),
-            description: Some(tool_description),
-            parameters: Some(schema),
-        };
-        let tools = vec![OllamaTool::Function { function }];
-        let request = self.to_ollama_request(request).with_tools(tools);
-        let response = self.request_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                let ChatMessage::Assistant { tool_calls, .. } = response.message else {
-                    bail!("message does not have an assistant role");
-                };
-                if let Some(tool_calls) = tool_calls.filter(|calls| !calls.is_empty()) {
-                    for call in tool_calls {
-                        let OllamaToolCall::Function(function) = call;
-                        if function.name == tool_name {
-                            return Ok(futures::stream::once(async move {
-                                Ok(function.arguments.to_string())
-                            })
-                            .boxed());
-                        }
-                    }
-                } else {
-                    bail!("assistant message does not have any tool calls");
-                };
-
-                bail!("tool not used")
-            })
-            .boxed()
-    }
 }
 
 struct ConfigurationView {
@@ -453,42 +404,26 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
-        let ollama_intro = "Get up and running with Llama 3.3, Mistral, Gemma 2, and other large language models with Ollama.";
-        let ollama_reqs =
-            "Ollama must be running with at least one model installed to use it in the assistant.";
-
-        let inline_code_bg = cx.theme().colors().editor_foreground.opacity(0.05);
+        let ollama_intro =
+            "Get up & running with Llama 3.3, Mistral, Gemma 2, and other LLMs with Ollama.";
 
         if self.loading_models_task.is_some() {
             div().child(Label::new("Loading models...")).into_any()
         } else {
             v_flex()
-                .size_full()
-                .gap_3()
+                .gap_2()
                 .child(
-                    v_flex()
-                        .size_full()
-                        .gap_2()
-                        .p_1()
-                        .child(Label::new(ollama_intro))
-                        .child(Label::new(ollama_reqs))
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(Label::new("Once installed, try "))
-                                .child(
-                                    div()
-                                        .bg(inline_code_bg)
-                                        .px_1p5()
-                                        .rounded_sm()
-                                        .child(Label::new("ollama run llama3.2")),
-                                ),
-                        ),
+                    v_flex().gap_1().child(Label::new(ollama_intro)).child(
+                        List::new()
+                            .child(InstructionListItem::text_only("Ollama must be running with at least one model installed to use it in the assistant."))
+                            .child(InstructionListItem::text_only(
+                                "Once installed, try `ollama run llama3.2`",
+                            )),
+                    ),
                 )
                 .child(
                     h_flex()
                         .w_full()
-                        .pt_2()
                         .justify_between()
                         .gap_2()
                         .child(
@@ -532,30 +467,32 @@ impl Render for ConfigurationView {
                                         .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                                 ),
                         )
-                        .child(if is_authenticated {
-                            // This is only a button to ensure the spacing is correct
-                            // it should stay disabled
-                            ButtonLike::new("connected")
-                                .disabled(true)
-                                // Since this won't ever be clickable, we can use the arrow cursor
-                                .cursor_style(gpui::CursorStyle::Arrow)
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Indicator::dot().color(Color::Success))
-                                        .child(Label::new("Connected"))
-                                        .into_any_element(),
+                        .map(|this| {
+                            if is_authenticated {
+                                this.child(
+                                    ButtonLike::new("connected")
+                                        .disabled(true)
+                                        .cursor_style(gpui::CursorStyle::Arrow)
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(Indicator::dot().color(Color::Success))
+                                                .child(Label::new("Connected"))
+                                                .into_any_element(),
+                                        ),
                                 )
-                                .into_any_element()
-                        } else {
-                            Button::new("retry_ollama_models", "Connect")
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::ArrowCircle)
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.retry_connection(cx)),
+                            } else {
+                                this.child(
+                                    Button::new("retry_ollama_models", "Connect")
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon(IconName::Play)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.retry_connection(cx)
+                                        })),
                                 )
-                                .into_any_element()
-                        }),
+                            }
+                        })
                 )
                 .into_any()
         }

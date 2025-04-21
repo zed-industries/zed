@@ -12,6 +12,7 @@ workspace = true
 path = "src/language_model_selector.rs"
 
 [dependencies]
+collections.workspace = true
 feature_flags.workspace = true
 gpui.workspace = true
 language_model.workspace = true
@@ -19,5 +20,5 @@ log.workspace = true
 picker.workspace = true
 proto.workspace = true
 ui.workspace = true
-workspace.workspace = true
+workspace-hack.workspace = true
 zed_actions.workspace = true

@@ -39,7 +39,6 @@ log.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
-regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -48,6 +47,7 @@ smallvec.workspace = true
 smol.workspace = true
 task.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true

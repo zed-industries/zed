@@ -130,6 +130,7 @@ pub fn init_panic_hook(
         if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
             log::error!("{}", panic_data_json);
         }
+        zlog::flush();
 
         if !is_pty {
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {

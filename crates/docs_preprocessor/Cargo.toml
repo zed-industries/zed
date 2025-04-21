@@ -14,6 +14,7 @@ serde_json.workspace = true
 settings.workspace = true
 regex.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [lints]
 workspace = true

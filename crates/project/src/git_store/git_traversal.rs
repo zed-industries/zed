@@ -3,21 +3,21 @@ use git::status::GitSummary;
 use std::{ops::Deref, path::Path};
 use sum_tree::Cursor;
 use text::Bias;
-use worktree::{
-    Entry, PathProgress, PathTarget, ProjectEntryId, RepositoryEntry, StatusEntry, Traversal,
-};
+use worktree::{Entry, PathProgress, PathTarget, Traversal};
+
+use super::{RepositoryId, RepositorySnapshot, StatusEntry};
 
 /// Walks the worktree entries and their associated git statuses.
 pub struct GitTraversal<'a> {
     traversal: Traversal<'a>,
     current_entry_summary: Option<GitSummary>,
-    repo_snapshots: &'a HashMap<ProjectEntryId, RepositoryEntry>,
-    repo_location: Option<(ProjectEntryId, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
+    repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
+    repo_location: Option<(RepositoryId, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
 }
 
 impl<'a> GitTraversal<'a> {
     pub fn new(
-        repo_snapshots: &'a HashMap<ProjectEntryId, RepositoryEntry>,
+        repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
         traversal: Traversal<'a>,
     ) -> GitTraversal<'a> {
         let mut this = GitTraversal {
@@ -46,8 +46,8 @@ impl<'a> GitTraversal<'a> {
             .repo_snapshots
             .values()
             .filter_map(|repo_snapshot| {
-                let relative_path = repo_snapshot.relativize_abs_path(&abs_path)?;
-                Some((repo_snapshot, relative_path))
+                let repo_path = repo_snapshot.abs_path_to_repo_path(&abs_path)?;
+                Some((repo_snapshot, repo_path))
             })
             .max_by_key(|(repo, _)| repo.work_directory_abs_path.clone())
         else {
@@ -61,12 +61,9 @@ impl<'a> GitTraversal<'a> {
                 .repo_location
                 .as_ref()
                 .map(|(prev_repo_id, _)| *prev_repo_id)
-                != Some(repo.work_directory_id())
+                != Some(repo.id)
         {
-            self.repo_location = Some((
-                repo.work_directory_id(),
-                repo.statuses_by_path.cursor::<PathProgress>(&()),
-            ));
+            self.repo_location = Some((repo.id, repo.statuses_by_path.cursor::<PathProgress>(&())));
         }
 
         let Some((_, statuses)) = &mut self.repo_location else {
@@ -148,7 +145,7 @@ pub struct ChildEntriesGitIter<'a> {
 
 impl<'a> ChildEntriesGitIter<'a> {
     pub fn new(
-        repo_snapshots: &'a HashMap<ProjectEntryId, RepositoryEntry>,
+        repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
         worktree_snapshot: &'a worktree::Snapshot,
         parent_path: &'a Path,
     ) -> Self {
@@ -771,7 +768,7 @@ mod tests {
 
     #[track_caller]
     fn check_git_statuses(
-        repo_snapshots: &HashMap<ProjectEntryId, RepositoryEntry>,
+        repo_snapshots: &HashMap<RepositoryId, RepositorySnapshot>,
         worktree_snapshot: &worktree::Snapshot,
         expected_statuses: &[(&Path, GitSummary)],
     ) {

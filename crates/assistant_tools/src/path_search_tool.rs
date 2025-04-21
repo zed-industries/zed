@@ -1,19 +1,19 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::{cmp, fmt::Write as _, path::PathBuf, sync::Arc};
 use ui::IconName;
 use util::paths::PathMatcher;
 use worktree::Snapshot;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct PathSearchToolInput {
-    /// The glob to search all project paths for.
+    /// The glob to match against every path in the project.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -38,10 +38,10 @@ pub struct PathSearchTool;
 
 impl Tool for PathSearchTool {
     fn name(&self) -> String {
-        "path-search".into()
+        "path_search".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 
@@ -53,7 +53,7 @@ impl Tool for PathSearchTool {
         IconName::SearchCode
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<PathSearchToolInput>(format)
     }
 
@@ -71,71 +71,130 @@ impl Tool for PathSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
             Ok(input) => (input.offset, input.glob),
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
-
-        let path_matcher = match PathMatcher::new([
-            // Sometimes models try to search for "". In this case, return all paths in the project.
-            if glob.is_empty() { "*" } else { &glob },
-        ]) {
-            Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
-        };
-        let snapshots: Vec<Snapshot> = project
-            .read(cx)
-            .worktrees(cx)
-            .map(|worktree| worktree.read(cx).snapshot())
-            .collect();
-
+        let offset = offset as usize;
+        let task = search_paths(&glob, project, cx);
         cx.background_spawn(async move {
-            let mut matches = Vec::new();
-
-            for worktree in snapshots {
-                let root_name = worktree.root_name();
-
-                // Don't consider ignored entries.
-                for entry in worktree.entries(false, 0) {
-                    if path_matcher.is_match(&entry.path) {
-                        matches.push(
-                            PathBuf::from(root_name)
-                                .join(&entry.path)
-                                .to_string_lossy()
-                                .to_string(),
-                        );
-                    }
-                }
-            }
+            let matches = task.await?;
+            let paginated_matches = &matches[cmp::min(offset, matches.len())
+                ..cmp::min(offset + RESULTS_PER_PAGE, matches.len())];
 
             if matches.is_empty() {
-                Ok(format!("No paths in the project matched the glob {glob:?}"))
+                Ok("No matches found".to_string())
             } else {
-                // Sort to group entries in the same directory together.
-                matches.sort();
-
-                let total_matches = matches.len();
-                let response = if total_matches > RESULTS_PER_PAGE + offset as usize {
-                let paginated_matches: Vec<_> = matches
-                      .into_iter()
-                      .skip(offset as usize)
-                      .take(RESULTS_PER_PAGE)
-                      .collect();
-
-                    format!(
-                        "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
-                        total_matches,
+                let mut message = format!("Found {} total matches.", matches.len());
+                if matches.len() > RESULTS_PER_PAGE {
+                    write!(
+                        &mut message,
+                        "\nShowing results {}-{} (provide 'offset' parameter for more results):",
                         offset + 1,
-                        offset as usize + paginated_matches.len(),
-                        paginated_matches.join("\n")
+                        offset + paginated_matches.len()
                     )
-                } else {
-                    matches.join("\n")
-                };
-
-                Ok(response)
+                    .unwrap();
+                }
+                for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
+                    write!(&mut message, "\n{}", mat.display()).unwrap();
+                }
+                Ok(message)
             }
         })
+        .into()
+    }
+}
+
+fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Result<Vec<PathBuf>>> {
+    let path_matcher = match PathMatcher::new([
+        // Sometimes models try to search for "". In this case, return all paths in the project.
+        if glob.is_empty() { "*" } else { glob },
+    ]) {
+        Ok(matcher) => matcher,
+        Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
+    };
+    let snapshots: Vec<Snapshot> = project
+        .read(cx)
+        .worktrees(cx)
+        .map(|worktree| worktree.read(cx).snapshot())
+        .collect();
+
+    cx.background_spawn(async move {
+        Ok(snapshots
+            .iter()
+            .flat_map(|snapshot| {
+                let root_name = PathBuf::from(snapshot.root_name());
+                snapshot
+                    .entries(false, 0)
+                    .map(move |entry| root_name.join(&entry.path))
+                    .filter(|path| path_matcher.is_match(&path))
+            })
+            .collect())
+    })
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use settings::SettingsStore;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_path_search_tool(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({
+                "apple": {
+                    "banana": {
+                        "carrot": "1",
+                    },
+                    "bandana": {
+                        "carbonara": "2",
+                    },
+                    "endive": "3"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let matches = cx
+            .update(|cx| search_paths("root/**/car*", project.clone(), cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            matches,
+            &[
+                PathBuf::from("root/apple/banana/carrot"),
+                PathBuf::from("root/apple/bandana/carbonara")
+            ]
+        );
+
+        let matches = cx
+            .update(|cx| search_paths("**/car*", project.clone(), cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            matches,
+            &[
+                PathBuf::from("root/apple/banana/carrot"),
+                PathBuf::from("root/apple/bandana/carbonara")
+            ]
+        );
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
     }
 }

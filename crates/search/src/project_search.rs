@@ -9,7 +9,7 @@ use editor::{
     Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MAX_TAB_TITLE_LEN,
     MultiBuffer, actions::SelectAll, items::active_match_index, scroll::Autoscroll,
 };
-use futures::StreamExt;
+use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
     Action, AnyElement, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
@@ -260,16 +260,18 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
-        self.pending_search = Some(cx.spawn(async move |this, cx| {
+        self.pending_search = Some(cx.spawn(async move |project_search, cx| {
             let mut matches = pin!(search.ready_chunks(1024));
-            let this = this.upgrade()?;
-            this.update(cx, |this, cx| {
-                this.match_ranges.clear();
-                this.excerpts.update(cx, |this, cx| this.clear(cx));
-                this.no_results = Some(true);
-                this.limit_reached = false;
-            })
-            .ok()?;
+            project_search
+                .update(cx, |project_search, cx| {
+                    project_search.match_ranges.clear();
+                    project_search
+                        .excerpts
+                        .update(cx, |excerpts, cx| excerpts.clear(cx));
+                    project_search.no_results = Some(true);
+                    project_search.limit_reached = false;
+                })
+                .ok()?;
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
@@ -285,35 +287,43 @@ impl ProjectSearch {
                     }
                 }
 
-                let match_ranges = this
-                    .update(cx, |this, cx| {
-                        this.excerpts.update(cx, |excerpts, cx| {
-                            excerpts.push_multiple_excerpts_with_context_lines(
-                                buffers_with_ranges,
-                                editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                                cx,
-                            )
-                        })
+                let excerpts = project_search
+                    .update(cx, |project_search, _| project_search.excerpts.clone())
+                    .ok()?;
+                let mut new_ranges = excerpts
+                    .update(cx, |excerpts, cx| {
+                        buffers_with_ranges
+                            .into_iter()
+                            .map(|(buffer, ranges)| {
+                                excerpts.set_anchored_excerpts_for_path(
+                                    buffer,
+                                    ranges,
+                                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                    cx,
+                                )
+                            })
+                            .collect::<FuturesOrdered<_>>()
                     })
-                    .ok()?
-                    .await;
+                    .ok()?;
+                while let Some(new_ranges) = new_ranges.next().await {
+                    project_search
+                        .update(cx, |project_search, _| {
+                            project_search.match_ranges.extend(new_ranges);
+                        })
+                        .ok()?;
+                }
+            }
 
-                this.update(cx, |this, cx| {
-                    this.match_ranges.extend(match_ranges);
+            project_search
+                .update(cx, |project_search, cx| {
+                    if !project_search.match_ranges.is_empty() {
+                        project_search.no_results = Some(false);
+                    }
+                    project_search.limit_reached = limit_reached;
+                    project_search.pending_search.take();
                     cx.notify();
                 })
                 .ok()?;
-            }
-
-            this.update(cx, |this, cx| {
-                if !this.match_ranges.is_empty() {
-                    this.no_results = Some(false);
-                }
-                this.limit_reached = limit_reached;
-                this.pending_search.take();
-                cx.notify();
-            })
-            .ok()?;
 
             None
         }));
@@ -1037,14 +1047,30 @@ impl ProjectSearchView {
                 }
             };
 
+        // If the project contains multiple visible worktrees, we match the
+        // include/exclude patterns against full paths to allow them to be
+        // disambiguated. For single worktree projects we use worktree relative
+        // paths for convenience.
+        let match_full_paths = self
+            .entity
+            .read(cx)
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .count()
+            > 1;
+
         let query = if self.search_options.contains(SearchOptions::REGEX) {
             match SearchQuery::regex(
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                self.search_options
+                    .contains(SearchOptions::ONE_MATCH_PER_LINE),
                 included_files,
                 excluded_files,
+                match_full_paths,
                 open_buffers,
             ) {
                 Ok(query) => {
@@ -1072,6 +1098,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
+                match_full_paths,
                 open_buffers,
             ) {
                 Ok(query) => {

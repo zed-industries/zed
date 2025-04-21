@@ -13,9 +13,11 @@ path = "src/command_palette.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
+db.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 picker.workspace = true
@@ -23,14 +25,17 @@ postage.workspace = true
 serde.workspace = true
 settings.workspace = true
 theme.workspace = true
+time.workspace = true
 ui.workspace = true
 util.workspace = true
 telemetry.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
+db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 go_to_line.workspace = true

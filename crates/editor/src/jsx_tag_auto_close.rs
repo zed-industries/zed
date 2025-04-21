@@ -29,7 +29,7 @@ const ALREADY_CLOSED_PARENT_ELEMENT_WALK_BACK_LIMIT: usize = 2;
 
 pub(crate) fn should_auto_close(
     buffer: &BufferSnapshot,
-    edited_ranges: &[Range<usize>],
+    edited_ranges: &[Range<Anchor>],
     config: &JsxTagAutoCloseConfig,
 ) -> Option<Vec<JsxTagCompletionState>> {
     let mut to_auto_edit = vec![];
@@ -37,6 +37,7 @@ pub(crate) fn should_auto_close(
         let text = buffer
             .text_for_range(edited_range.clone())
             .collect::<String>();
+        let edited_range = edited_range.to_offset(&buffer);
         if !text.ends_with(">") {
             continue;
         }
@@ -94,7 +95,7 @@ pub(crate) fn should_auto_close(
 
 pub(crate) fn generate_auto_close_edits(
     buffer: &BufferSnapshot,
-    ranges: &[Range<usize>],
+    ranges: &[Range<Anchor>],
     config: &JsxTagAutoCloseConfig,
     state: Vec<JsxTagCompletionState>,
 ) -> Result<Vec<(Range<Anchor>, String)>> {
@@ -381,7 +382,7 @@ pub(crate) fn handle_from(
     struct JsxAutoCloseEditContext {
         buffer: Entity<language::Buffer>,
         config: language::JsxTagAutoCloseConfig,
-        edits: Vec<Range<usize>>,
+        edits: Vec<Range<Anchor>>,
     }
 
     let mut edit_contexts =
@@ -392,7 +393,10 @@ pub(crate) fn handle_from(
             continue;
         };
         let snapshot = buffer.read(cx).snapshot();
-        for edit in buffer.read(cx).edits_since(&buffer_version_initial) {
+        for (edit, range) in buffer
+            .read(cx)
+            .anchored_edits_since::<usize>(&buffer_version_initial)
+        {
             let Some(language) = snapshot.language_at(edit.new.end) else {
                 continue;
             };
@@ -414,7 +418,7 @@ pub(crate) fn handle_from(
                     edits: vec![],
                 })
                 .edits
-                .push(edit.new);
+                .push(range);
         }
     }
 
@@ -448,7 +452,6 @@ pub(crate) fn handle_from(
             };
 
             let ensure_no_edits_since_start = || -> Option<()> {
-                // <div>wef,wefwef
                 let has_edits_since_start = this
                     .read_with(cx, |this, cx| {
                         this.buffer.read_with(cx, |buffer, cx| {
@@ -814,26 +817,17 @@ mod jsx_tag_autoclose_tests {
             let mut buf = MultiBuffer::new(language::Capability::ReadWrite);
             buf.push_excerpts(
                 buffer_a,
-                [ExcerptRange {
-                    context: text::Anchor::MIN..text::Anchor::MAX,
-                    primary: None,
-                }],
+                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
                 cx,
             );
             buf.push_excerpts(
                 buffer_b,
-                [ExcerptRange {
-                    context: text::Anchor::MIN..text::Anchor::MAX,
-                    primary: None,
-                }],
+                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
                 cx,
             );
             buf.push_excerpts(
                 buffer_c,
-                [ExcerptRange {
-                    context: text::Anchor::MIN..text::Anchor::MAX,
-                    primary: None,
-                }],
+                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
                 cx,
             );
             buf

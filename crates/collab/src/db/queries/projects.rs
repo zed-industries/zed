@@ -334,7 +334,7 @@ impl Database {
                             project_repository::ActiveModel {
                                 project_id: ActiveValue::set(project_id),
                                 legacy_worktree_id: ActiveValue::set(Some(worktree_id)),
-                                id: ActiveValue::set(repository.work_directory_id as i64),
+                                id: ActiveValue::set(repository.repository_id as i64),
                                 scan_id: ActiveValue::set(update.scan_id as i64),
                                 is_deleted: ActiveValue::set(false),
                                 branch_summary: ActiveValue::Set(
@@ -348,9 +348,10 @@ impl Database {
                                         .unwrap(),
                                 )),
 
-                                // Old clients do not use abs path or entry ids.
+                                // Old clients do not use abs path, entry ids or head_commit_details.
                                 abs_path: ActiveValue::set(String::new()),
                                 entry_ids: ActiveValue::set("[]".into()),
+                                head_commit_details: ActiveValue::set(None),
                             }
                         }),
                     )
@@ -384,7 +385,7 @@ impl Database {
                                         project_repository_statuses::ActiveModel {
                                             project_id: ActiveValue::set(project_id),
                                             repository_id: ActiveValue::set(
-                                                repository.work_directory_id as i64,
+                                                repository.repository_id as i64,
                                             ),
                                             scan_id: ActiveValue::set(update.scan_id as i64),
                                             is_deleted: ActiveValue::set(false),
@@ -424,7 +425,7 @@ impl Database {
                                         .eq(project_id)
                                         .and(
                                             project_repository_statuses::Column::RepositoryId
-                                                .eq(repo.work_directory_id),
+                                                .eq(repo.repository_id),
                                         )
                                         .and(
                                             project_repository_statuses::Column::RepoPath
@@ -490,6 +491,12 @@ impl Database {
                         .as_ref()
                         .map(|summary| serde_json::to_string(summary).unwrap()),
                 ),
+                head_commit_details: ActiveValue::Set(
+                    update
+                        .head_commit_details
+                        .as_ref()
+                        .map(|details| serde_json::to_string(details).unwrap()),
+                ),
                 current_merge_conflicts: ActiveValue::Set(Some(
                     serde_json::to_string(&update.current_merge_conflicts).unwrap(),
                 )),
@@ -505,6 +512,7 @@ impl Database {
                     project_repository::Column::EntryIds,
                     project_repository::Column::AbsPath,
                     project_repository::Column::CurrentMergeConflicts,
+                    project_repository::Column::HeadCommitDetails,
                 ])
                 .to_owned(),
             )
@@ -928,6 +936,13 @@ impl Database {
                     .transpose()?
                     .unwrap_or_default();
 
+                let head_commit_details = db_repository_entry
+                    .head_commit_details
+                    .as_ref()
+                    .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                    .transpose()?
+                    .unwrap_or_default();
+
                 let entry_ids = serde_json::from_str(&db_repository_entry.entry_ids)
                     .context("failed to deserialize repository's entry ids")?;
 
@@ -936,7 +951,7 @@ impl Database {
                         worktree.legacy_repository_entries.insert(
                             db_repository_entry.id as u64,
                             proto::RepositoryEntry {
-                                work_directory_id: db_repository_entry.id as u64,
+                                repository_id: db_repository_entry.id as u64,
                                 updated_statuses,
                                 removed_statuses: Vec::new(),
                                 current_merge_conflicts,
@@ -954,7 +969,9 @@ impl Database {
                         removed_statuses: Vec::new(),
                         current_merge_conflicts,
                         branch_summary,
+                        head_commit_details,
                         scan_id: db_repository_entry.scan_id as u64,
+                        is_last_update: true,
                     });
                 }
             }

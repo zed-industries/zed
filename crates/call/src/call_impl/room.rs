@@ -19,7 +19,7 @@ use livekit_client::{self as livekit, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
-use std::{any::Any, future::Future, mem, sync::Arc, time::Duration};
+use std::{any::Any, future::Future, mem, rc::Rc, sync::Arc, time::Duration};
 use util::{ResultExt, TryFutureExt, post_inc};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -469,7 +469,7 @@ impl Room {
                         let repository = repository.read(cx);
                         repositories.push(proto::RejoinRepository {
                             id: entry_id.to_proto(),
-                            scan_id: repository.completed_scan_id as u64,
+                            scan_id: repository.scan_id,
                         });
                     }
 
@@ -944,8 +944,8 @@ impl Room {
                     )
                 })?;
                 if self.live_kit.as_ref().map_or(true, |kit| kit.deafened) {
-                    if matches!(track, livekit_client::RemoteTrack::Audio(_)) {
-                        track.set_enabled(false, cx);
+                    if publication.is_audio() {
+                        publication.set_enabled(false, cx);
                     }
                 }
                 match track {
@@ -1594,7 +1594,7 @@ fn spawn_room_connection(
 
                 let muted_by_user = Room::mute_on_join(cx);
                 this.live_kit = Some(LiveKitRoom {
-                    room: Arc::new(room),
+                    room: Rc::new(room),
                     screen_track: LocalTrack::None,
                     microphone_track: LocalTrack::None,
                     next_publish_id: 0,
@@ -1617,7 +1617,7 @@ fn spawn_room_connection(
 }
 
 struct LiveKitRoom {
-    room: Arc<livekit::Room>,
+    room: Rc<livekit::Room>,
     screen_track: LocalTrack,
     microphone_track: LocalTrack,
     /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.

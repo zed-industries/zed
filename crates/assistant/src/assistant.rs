@@ -8,7 +8,7 @@ mod terminal_inline_assistant;
 
 use std::sync::Arc;
 
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AssistantSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
@@ -161,25 +161,38 @@ fn init_language_model_settings(cx: &mut App) {
 
 fn update_active_language_model_from_settings(cx: &mut App) {
     let settings = AssistantSettings::get_global(cx);
-    let active_model_provider_name =
-        LanguageModelProviderId::from(settings.default_model.provider.clone());
-    let active_model_id = LanguageModelId::from(settings.default_model.model.clone());
-    let editor_provider_name =
-        LanguageModelProviderId::from(settings.editor_model.provider.clone());
-    let editor_model_id = LanguageModelId::from(settings.editor_model.model.clone());
+
+    fn to_selected_model(selection: &LanguageModelSelection) -> language_model::SelectedModel {
+        language_model::SelectedModel {
+            provider: LanguageModelProviderId::from(selection.provider.clone()),
+            model: LanguageModelId::from(selection.model.clone()),
+        }
+    }
+
+    let default = to_selected_model(&settings.default_model);
+    let inline_assistant = settings
+        .inline_assistant_model
+        .as_ref()
+        .map(to_selected_model);
+    let commit_message = settings
+        .commit_message_model
+        .as_ref()
+        .map(to_selected_model);
+    let thread_summary = settings
+        .thread_summary_model
+        .as_ref()
+        .map(to_selected_model);
     let inline_alternatives = settings
         .inline_alternatives
         .iter()
-        .map(|alternative| {
-            (
-                LanguageModelProviderId::from(alternative.provider.clone()),
-                LanguageModelId::from(alternative.model.clone()),
-            )
-        })
+        .map(to_selected_model)
         .collect::<Vec<_>>();
+
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-        registry.select_active_model(&active_model_provider_name, &active_model_id, cx);
-        registry.select_editor_model(&editor_provider_name, &editor_model_id, cx);
+        registry.select_default_model(Some(&default), cx);
+        registry.select_inline_assistant_model(inline_assistant.as_ref(), cx);
+        registry.select_commit_message_model(commit_message.as_ref(), cx);
+        registry.select_thread_summary_model(thread_summary.as_ref(), cx);
         registry.select_inline_alternative_models(inline_alternatives, cx);
     });
 }

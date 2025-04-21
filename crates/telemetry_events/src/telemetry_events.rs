@@ -96,7 +96,7 @@ pub enum Event {
     InlineCompletion(InlineCompletionEvent),
     InlineCompletionRating(InlineCompletionRatingEvent),
     Call(CallEvent),
-    Assistant(AssistantEvent),
+    Assistant(AssistantEventData),
     Cpu(CpuEvent),
     Memory(MemoryEvent),
     App(AppEvent),
@@ -162,7 +162,7 @@ pub struct CallEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AssistantEvent {
+pub struct AssistantEventData {
     /// Unique random identifier for each assistant tab (None for inline assist)
     pub conversation_id: Option<String>,
     /// Server-generated message ID (only supported for some providers)

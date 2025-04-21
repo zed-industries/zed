@@ -28,6 +28,7 @@ if [[ -n $apt ]]; then
     libasound2-dev
     libfontconfig-dev
     libwayland-dev
+    libx11-xcb-dev
     libxkbcommon-x11-dev
     libssl-dev
     libzstd-dev
@@ -37,7 +38,6 @@ if [[ -n $apt ]]; then
     cmake
     clang
     jq
-    netcat-openbsd
     git
     curl
     gettext-base
@@ -76,6 +76,7 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     alsa-lib-devel
     fontconfig-devel
     wayland-devel
+    libxcb-devel
     libxkbcommon-x11-devel
     openssl-devel
     libzstd-devel
@@ -86,14 +87,12 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     tar
   )
   # perl used for building openssl-sys crate. See: https://docs.rs/openssl/latest/openssl/
-  # openbsd-netcat is unavailable in RHEL8/9 (and nmap-ncat doesn't support sockets)
   if grep -qP '^ID="?(fedora)' /etc/os-release; then
     deps+=(
       perl-FindBin
       perl-IPC-Cmd
       perl-File-Compare
       perl-File-Copy
-      netcat
       mold
     )
   elif grep -qP '^ID="?(rhel|rocky|alma|centos|ol)' /etc/os-release; then
@@ -144,12 +143,12 @@ if [[ -n $zyp ]]; then
     gzip
     jq
     libvulkan1
+    libxcb-devel
     libxkbcommon-devel
     libxkbcommon-x11-devel
     libzstd-devel
     make
     mold
-    netcat-openbsd
     openssl-devel
     sqlite3-devel
     tar
@@ -174,8 +173,8 @@ if [[ -n $pacman ]]; then
     fontconfig
     wayland
     libgit2
+    libxcb
     libxkbcommon-x11
-    openbsd-netcat
     openssl
     zstd
     pkgconf
@@ -205,7 +204,6 @@ if [[ -n $xbps ]]; then
     libxcb-devel
     libxkbcommon-devel
     libzstd-devel
-    openbsd-netcat
     openssl-devel
     wayland-devel
     vulkan-loader
@@ -230,7 +228,6 @@ if [[ -n $emerge ]]; then
     media-libs/alsa-lib
     media-libs/fontconfig
     media-libs/vulkan-loader
-    net-analyzer/openbsd-netcat
     x11-libs/libxcb
     x11-libs/libxkbcommon
     sys-devel/mold

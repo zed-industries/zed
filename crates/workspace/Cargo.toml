@@ -65,6 +65,10 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
@@ -77,5 +81,5 @@ gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-http_client =  { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

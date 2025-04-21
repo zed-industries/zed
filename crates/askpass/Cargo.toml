@@ -18,4 +18,4 @@ gpui.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 util.workspace = true
-which.workspace = true
+workspace-hack.workspace = true

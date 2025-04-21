@@ -2,8 +2,9 @@ use super::{
     Highlights,
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
 };
-use gpui::{AnyElement, App, ElementId};
-use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
+use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, Window};
+use language::{Edit, HighlightId, Point, TextSummary};
+use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
 };
@@ -13,8 +14,9 @@ use std::{
     fmt, iter,
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub},
     sync::Arc,
+    usize,
 };
-use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary};
+use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary, TreeMap};
 use ui::IntoElement as _;
 use util::post_inc;
 
@@ -177,6 +179,13 @@ impl FoldMapWriter<'_> {
             let mut new_tree = SumTree::new(buffer);
             let mut cursor = self.0.snapshot.folds.cursor::<FoldRange>(buffer);
             for fold in folds {
+                self.0.snapshot.fold_metadata_by_id.insert(
+                    fold.id,
+                    FoldMetadata {
+                        range: fold.range.clone(),
+                        width: None,
+                    },
+                );
                 new_tree.append(cursor.slice(&fold.range, Bias::Right, buffer), buffer);
                 new_tree.push(fold, buffer);
             }
@@ -240,6 +249,7 @@ impl FoldMapWriter<'_> {
                         });
                     }
                     fold_ixs_to_delete.push(*folds_cursor.start());
+                    self.0.snapshot.fold_metadata_by_id.remove(&fold.id);
                 }
                 folds_cursor.next(buffer);
             }
@@ -261,6 +271,42 @@ impl FoldMapWriter<'_> {
 
         let edits = consolidate_inlay_edits(edits);
         let edits = self.0.sync(snapshot.clone(), edits);
+        (self.0.snapshot.clone(), edits)
+    }
+
+    pub(crate) fn update_fold_widths(
+        &mut self,
+        new_widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+    ) -> (FoldSnapshot, Vec<FoldEdit>) {
+        let mut edits = Vec::new();
+        let inlay_snapshot = self.0.snapshot.inlay_snapshot.clone();
+        let buffer = &inlay_snapshot.buffer;
+
+        for (id, new_width) in new_widths {
+            if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned() {
+                if Some(new_width) != metadata.width {
+                    let buffer_start = metadata.range.start.to_offset(buffer);
+                    let buffer_end = metadata.range.end.to_offset(buffer);
+                    let inlay_range = inlay_snapshot.to_inlay_offset(buffer_start)
+                        ..inlay_snapshot.to_inlay_offset(buffer_end);
+                    edits.push(InlayEdit {
+                        old: inlay_range.clone(),
+                        new: inlay_range.clone(),
+                    });
+
+                    self.0.snapshot.fold_metadata_by_id.insert(
+                        id,
+                        FoldMetadata {
+                            range: metadata.range,
+                            width: Some(new_width),
+                        },
+                    );
+                }
+            }
+        }
+
+        let edits = consolidate_inlay_edits(edits);
+        let edits = self.0.sync(inlay_snapshot, edits);
         (self.0.snapshot.clone(), edits)
     }
 }
@@ -290,6 +336,7 @@ impl FoldMap {
                 ),
                 inlay_snapshot: inlay_snapshot.clone(),
                 version: 0,
+                fold_metadata_by_id: TreeMap::default(),
             },
             next_fold_id: FoldId::default(),
         };
@@ -481,6 +528,7 @@ impl FoldMap {
                                 placeholder: Some(TransformPlaceholder {
                                     text: ELLIPSIS,
                                     renderer: ChunkRenderer {
+                                        id: fold.id,
                                         render: Arc::new(move |cx| {
                                             (fold.placeholder.render)(
                                                 fold_id,
@@ -489,6 +537,7 @@ impl FoldMap {
                                             )
                                         }),
                                         constrain_width: fold.placeholder.constrain_width,
+                                        measured_width: self.snapshot.fold_width(&fold_id),
                                     },
                                 }),
                             },
@@ -573,6 +622,7 @@ impl FoldMap {
 pub struct FoldSnapshot {
     transforms: SumTree<Transform>,
     folds: SumTree<Fold>,
+    fold_metadata_by_id: TreeMap<FoldId, FoldMetadata>,
     pub inlay_snapshot: InlaySnapshot,
     pub version: usize,
 }
@@ -580,6 +630,10 @@ pub struct FoldSnapshot {
 impl FoldSnapshot {
     pub fn buffer(&self) -> &MultiBufferSnapshot {
         &self.inlay_snapshot.buffer
+    }
+
+    fn fold_width(&self, fold_id: &FoldId) -> Option<Pixels> {
+        self.fold_metadata_by_id.get(fold_id)?.width
     }
 
     #[cfg(test)]
@@ -1006,7 +1060,7 @@ impl sum_tree::Summary for TransformSummary {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Ord, PartialOrd, Hash)]
 pub struct FoldId(usize);
 
 impl From<FoldId> for ElementId {
@@ -1043,6 +1097,12 @@ impl Default for FoldRange {
     fn default() -> Self {
         Self(Anchor::min()..Anchor::max())
     }
+}
+
+#[derive(Clone, Debug)]
+struct FoldMetadata {
+    range: FoldRange,
+    width: Option<Pixels>,
 }
 
 impl sum_tree::Item for Fold {
@@ -1181,10 +1241,74 @@ impl Iterator for FoldRows<'_> {
     }
 }
 
+/// A chunk of a buffer's text, along with its syntax highlight and
+/// diagnostic status.
+#[derive(Clone, Debug, Default)]
+pub struct Chunk<'a> {
+    /// The text of the chunk.
+    pub text: &'a str,
+    /// The syntax highlighting style of the chunk.
+    pub syntax_highlight_id: Option<HighlightId>,
+    /// The highlight style that has been applied to this chunk in
+    /// the editor.
+    pub highlight_style: Option<HighlightStyle>,
+    /// The severity of diagnostic associated with this chunk, if any.
+    pub diagnostic_severity: Option<DiagnosticSeverity>,
+    /// Whether this chunk of text is marked as unnecessary.
+    pub is_unnecessary: bool,
+    /// Whether this chunk of text was originally a tab character.
+    pub is_tab: bool,
+    /// An optional recipe for how the chunk should be presented.
+    pub renderer: Option<ChunkRenderer>,
+}
+
+/// A recipe for how the chunk should be presented.
+#[derive(Clone)]
+pub struct ChunkRenderer {
+    /// The id of the fold associated with this chunk.
+    pub id: FoldId,
+    /// Creates a custom element to represent this chunk.
+    pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
+    /// If true, the element is constrained to the shaped width of the text.
+    pub constrain_width: bool,
+    /// The width of the element, as measured during the last layout pass.
+    ///
+    /// This is None if the element has not been laid out yet.
+    pub measured_width: Option<Pixels>,
+}
+
+pub struct ChunkRendererContext<'a, 'b> {
+    pub window: &'a mut Window,
+    pub context: &'b mut App,
+    pub max_width: Pixels,
+}
+
+impl fmt::Debug for ChunkRenderer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ChunkRenderer")
+            .field("constrain_width", &self.constrain_width)
+            .finish()
+    }
+}
+
+impl Deref for ChunkRendererContext<'_, '_> {
+    type Target = App;
+
+    fn deref(&self) -> &Self::Target {
+        self.context
+    }
+}
+
+impl DerefMut for ChunkRendererContext<'_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.context
+    }
+}
+
 pub struct FoldChunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, InlayOffset)>,
     inlay_chunks: InlayChunks<'a>,
-    inlay_chunk: Option<(InlayOffset, Chunk<'a>)>,
+    inlay_chunk: Option<(InlayOffset, language::Chunk<'a>)>,
     inlay_offset: InlayOffset,
     output_offset: FoldOffset,
     max_output_offset: FoldOffset,
@@ -1292,7 +1416,15 @@ impl<'a> Iterator for FoldChunks<'a> {
 
             self.inlay_offset = chunk_end;
             self.output_offset.0 += chunk.text.len();
-            return Some(chunk);
+            return Some(Chunk {
+                text: chunk.text,
+                syntax_highlight_id: chunk.syntax_highlight_id,
+                highlight_style: chunk.highlight_style,
+                diagnostic_severity: chunk.diagnostic_severity,
+                is_unnecessary: chunk.is_unnecessary,
+                is_tab: chunk.is_tab,
+                renderer: None,
+            });
         }
 
         None

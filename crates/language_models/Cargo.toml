@@ -47,10 +47,13 @@ settings.workspace = true
 smol.workspace = true
 strum.workspace = true
 theme.workspace = true
+thiserror.workspace = true
 tiktoken-rs.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
