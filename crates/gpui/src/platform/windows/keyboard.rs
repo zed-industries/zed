@@ -89,6 +89,7 @@ impl KeyboardMapper for WindowsKeyboardMapper {
             let mut state = [0; 256];
             if modifiers.shift {
                 state[VK_SHIFT.0 as usize] = 0x80;
+                modifiers.shift = false;
             }
             let scan_code = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_VSC) };
             let mut buffer = [0; 8];
@@ -452,4 +453,96 @@ pub(crate) fn get_keyboard_layout_name(id: &str) -> Result<String> {
     );
     let key = windows_registry::LOCAL_MACHINE.open(entry)?;
     Ok(key.get_hstring("Layout Text")?.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{KeyboardMapper, Keystroke, Modifiers, WindowsKeyboardMapper};
+
+    #[test]
+    fn test_to_vim_keystrokes() {
+        let mapper = WindowsKeyboardMapper::new();
+
+        // Test all letters
+        {
+            for c in 'a'..='z' {
+                let keystroke = Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: c.to_string(),
+                    key_char: Some(c.to_string()),
+                };
+                let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+                assert_eq!(*vim_keystroke, keystroke);
+
+                let keystroke = Keystroke {
+                    modifiers: Modifiers::shift(),
+                    key: c.to_string(),
+                    key_char: Some(c.to_string().to_uppercase()),
+                };
+                let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+                assert_eq!(*vim_keystroke, keystroke);
+            }
+        }
+        // Test case 2 and case 3
+        {
+            let shift_pairs = [
+                ("1", "!"),
+                ("2", "@"),
+                ("3", "#"),
+                ("4", "$"),
+                ("5", "%"),
+                ("6", "^"),
+                ("7", "&"),
+                ("8", "*"),
+                ("9", "("),
+                ("0", ")"),
+                ("`", "~"),
+                ("-", "_"),
+                ("=", "+"),
+                ("[", "{"),
+                ("]", "}"),
+                ("\\", "|"),
+                (";", ":"),
+                ("'", "\""),
+                (",", "<"),
+                (".", ">"),
+                ("/", "?"),
+            ];
+            for (key, shift_key) in shift_pairs {
+                let keystroke = Keystroke {
+                    modifiers: Modifiers::control_shift(),
+                    key: key.to_string(),
+                    key_char: None,
+                };
+                let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+                assert_eq!(
+                    *vim_keystroke,
+                    Keystroke {
+                        modifiers: Modifiers::control(),
+                        key: shift_key.to_string(),
+                        key_char: None
+                    }
+                );
+
+                let keystroke = Keystroke {
+                    modifiers: Modifiers {
+                        shift: true,
+                        alt: true,
+                        ..Default::default()
+                    },
+                    key: key.to_string(),
+                    key_char: None,
+                };
+                let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+                assert_eq!(
+                    *vim_keystroke,
+                    Keystroke {
+                        modifiers: Modifiers::alt(),
+                        key: shift_key.to_string(),
+                        key_char: None
+                    }
+                );
+            }
+        }
+    }
 }
