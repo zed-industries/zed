@@ -15,6 +15,7 @@ enum Request {
     Attach,
 }
 
+// TODO support preLaunchTask linkage with other tasks
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct VsCodeDebugTaskDefinition {
@@ -35,7 +36,6 @@ struct VsCodeDebugTaskDefinition {
     port: Option<u16>,
     #[serde(default)]
     stop_on_entry: Option<bool>,
-
     #[serde(flatten)]
     other_attributes: HashMap<String, serde_json_lenient::Value>,
 }
@@ -43,10 +43,15 @@ struct VsCodeDebugTaskDefinition {
 impl VsCodeDebugTaskDefinition {
     fn try_to_zed(self, replacer: &EnvVariableReplacer) -> anyhow::Result<TaskTemplate> {
         let label = replacer.replace(&self.name);
-        let command = self
-            .program
-            .ok_or_else(|| anyhow!("debug task configuration does not define a program"))?;
+        let command = match &self.request {
+            Request::Launch => self.program.clone().ok_or_else(|| {
+                anyhow!("debug task launch configuration does not define a program")
+            })?,
+            Request::Attach => Default::default(),
+        };
+
         let command = replacer.replace(&command);
+        // FIXME based on grep.app results it seems that vscode supports whitespace-splitting this field (ugh)
         let args = self
             .args
             .into_iter()
@@ -67,7 +72,7 @@ impl VsCodeDebugTaskDefinition {
                 .collect(),
             task_type: TaskType::Debug(DebugArgs {
                 request: match self.request {
-                    Request::Launch => DebugArgsRequest::Launch,
+                    Request::Launch { .. } => DebugArgsRequest::Launch,
                     Request::Attach => DebugArgsRequest::Attach(AttachConfig { process_id: None }),
                 },
                 adapter: task_type_to_adapter_name(self.r#type),
@@ -105,7 +110,6 @@ impl TryFrom<VsCodeDebugTaskFile> for TaskTemplates {
                 "workspaceFolder".to_owned(),
                 VariableName::WorktreeRoot.to_string(),
             ),
-            ("file".to_owned(), VariableName::File.to_string()),
             // TODO other interesting variables?
         ]));
         let templates = file
@@ -125,5 +129,65 @@ fn task_type_to_adapter_name(task_type: String) -> String {
         "php" => "PHP".to_owned(),
         // TODO figure out appropriate names for the other built-in debug adapters
         _ => task_type,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use collections::HashMap;
+
+    use crate::{DebugArgs, DebugArgsRequest, TCPHost, TaskTemplate, TaskTemplates, TaskType};
+
+    use super::VsCodeDebugTaskFile;
+
+    #[test]
+    fn test_parsing_vscode_launch_json() {
+        let raw = r#"
+            {
+                "version": "0.2.0",
+                "configurations": [
+                    {
+                        "name": "Debug my JS app",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/xyz.js",
+                        "showDevDebugOutput": false,
+                        "stopOnEntry": true,
+                        "args": ["--foo", "${workspaceFolder}/thing"],
+                        "cwd": "${workspaceFolder}/sub",
+                        "env": {
+                            "X": "Y"
+                        },
+                        "port": 17
+                    },
+                ]
+            }
+        "#;
+        let parsed: VsCodeDebugTaskFile =
+            serde_json_lenient::from_str(&raw).expect("deserializing launch.json");
+        let zed = TaskTemplates::try_from(parsed).expect("converting to Zed debug templates");
+        pretty_assertions::assert_eq!(
+            zed,
+            TaskTemplates(vec![TaskTemplate {
+                label: "Debug my JS app".into(),
+                command: "${ZED_WORKTREE_ROOT}/xyz.js".into(),
+                args: vec!["--foo".into(), "${ZED_WORKTREE_ROOT}/thing".into()],
+                cwd: Some("${ZED_WORKTREE_ROOT}/sub".into()),
+                env: HashMap::from_iter([("X".into(), "Y".into())]),
+                task_type: TaskType::Debug(DebugArgs {
+                    request: DebugArgsRequest::Launch,
+                    adapter: "JavaScript".into(),
+                    tcp_connection: Some(TCPHost {
+                        port: Some(17),
+                        host: None,
+                        timeout: None,
+                    }),
+                    stop_on_entry: Some(true),
+                    initialize_args: None,
+                    locator: None,
+                }),
+                ..Default::default()
+            }])
+        );
     }
 }

@@ -14219,6 +14219,7 @@ dependencies = [
  "gpui",
  "hex",
  "parking_lot",
+ "pretty_assertions",
  "schemars",
  "serde",
  "serde_json",
