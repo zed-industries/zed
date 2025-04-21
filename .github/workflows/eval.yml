@@ -2,7 +2,10 @@ name: Run Agent Eval
 
 on:
   schedule:
+    # Hourly
     - cron: "0 * * * *"
+    # Daily at 8 AM UTC
+    - cron: "0 8 * * *"
   push:
     branches:
       - main
@@ -75,7 +78,25 @@ jobs:
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
       - name: Run eval
-        run: cargo run --package=eval -- ${{ matrix.exercise }}
+        run: |
+          # Set cohort ID based on trigger type
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            # Check if it's 8 AM UTC
+            CURRENT_HOUR=$(date -u +%H)
+            if [[ "$CURRENT_HOUR" == "08" ]]; then
+              # Daily run at 8 AM UTC
+              COHORT_ID="daily${{ github.run_id }}"
+            else
+              # Hourly run
+              COHORT_ID="hourly${{ github.run_id }}"
+            fi
+          else
+            # CI run from push, pull request, or manual workflow dispatch
+            COHORT_ID="ci${{ github.run_id }}"
+          fi
+          
+          echo "Using cohort ID: $COHORT_ID"
+          cargo run --package=eval -- --cohort-id "$COHORT_ID" ${{ matrix.exercise }}
 
       # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
       # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code

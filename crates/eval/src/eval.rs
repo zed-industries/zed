@@ -52,6 +52,9 @@ struct Args {
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "10")]
     concurrency: usize,
+    /// Custom identifier for the cohort (default: timestamp-based)
+    #[arg(long)]
+    cohort_id: Option<String>,
 }
 
 fn main() {
@@ -118,10 +121,9 @@ fn main() {
             std::fs::create_dir_all(REPOS_DIR)?;
             std::fs::create_dir_all(WORKTREES_DIR)?;
 
-            let run_dir = Path::new(RUNS_DIR).join(format!(
-                "{}",
-                chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
-            ));
+            let run_dir = Path::new(RUNS_DIR).join(args.cohort_id.clone().unwrap_or_else(|| {
+                format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"))
+            }));
             std::fs::create_dir_all(&run_dir)?;
 
             let mut examples = Vec::new();
@@ -612,4 +614,92 @@ fn print_header(header: &str) {
     println!("\n========================================");
     println!("{:^40}", header);
     println!("========================================\n");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_cohort_id_parameter() {
+        let custom_cohort_id = "test-cohort-123";
+        let args = Args {
+            examples: vec![],
+            model: "claude-3-7-sonnet-latest".to_string(),
+            languages: None,
+            repetitions: 1,
+            judge_repetitions: 3,
+            concurrency: 10,
+            cohort_id: Some(custom_cohort_id.to_string()),
+        };
+
+        let expected_run_dir = PathBuf::from(RUNS_DIR).join(custom_cohort_id);
+
+        let actual_run_dir =
+            PathBuf::from(RUNS_DIR).join(args.cohort_id.clone().unwrap_or_else(|| {
+                format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"))
+            }));
+
+        assert_eq!(expected_run_dir, actual_run_dir);
+
+        let args_without_cohort_id = Args {
+            examples: vec![],
+            model: "claude-3-7-sonnet-latest".to_string(),
+            languages: None,
+            repetitions: 1,
+            judge_repetitions: 3,
+            concurrency: 10,
+            cohort_id: None,
+        };
+
+        let default_run_dir =
+            PathBuf::from(RUNS_DIR).join(args_without_cohort_id.cohort_id.clone().unwrap_or_else(
+                || format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")),
+            ));
+
+        assert_ne!(PathBuf::from(RUNS_DIR), default_run_dir);
+        assert!(
+            default_run_dir.to_string_lossy().len()
+                > PathBuf::from(RUNS_DIR).to_string_lossy().len()
+        );
+    }
+
+    #[test]
+    fn test_run_directory_creation_with_cohort_id() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_runs_dir = temp_dir.path().join("runs");
+        std::fs::create_dir(&temp_runs_dir).unwrap();
+
+        let custom_cohort_id = "test-cohort-xyz";
+        let run_dir_with_custom_id =
+            create_run_directory(&temp_runs_dir, Some(custom_cohort_id.to_string()));
+
+        let expected_dir = temp_runs_dir.join(custom_cohort_id);
+        assert_eq!(run_dir_with_custom_id, expected_dir);
+        assert!(run_dir_with_custom_id.exists());
+
+        let run_dir_with_default_id = create_run_directory(&temp_runs_dir, None);
+
+        assert!(run_dir_with_default_id.exists());
+        assert_ne!(run_dir_with_default_id, temp_runs_dir);
+        assert!(
+            run_dir_with_default_id.to_string_lossy().len() > temp_runs_dir.to_string_lossy().len()
+        );
+
+        let dir_name = run_dir_with_default_id
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        assert!(dir_name.chars().next().unwrap().is_ascii_digit());
+    }
+
+    fn create_run_directory(runs_dir: &std::path::Path, cohort_id: Option<String>) -> PathBuf {
+        let dir_path = runs_dir
+            .join(cohort_id.unwrap_or_else(|| {
+                format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"))
+            }));
+        std::fs::create_dir_all(&dir_path).unwrap();
+        dir_path
+    }
 }

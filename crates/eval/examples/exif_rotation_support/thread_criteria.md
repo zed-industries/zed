@@ -1,0 +1,10 @@
+1. The first tool call should locate the definition of the `get_dynamic_image_from_path` function via a **path search** that includes the filename `common_image.rs`. It should not begin by searching for function definitions using grep or guessing the file name.
+2. After resolving the correct path for `common_image.rs`, the model should **read** the file to examine the implementation of `get_dynamic_image_from_path` and determine how to inject EXIF-based rotation logic.
+3. The tool should then search for EXIF-related crates or documentation for `nom-exif`, `MediaParser`, and `ExifIter` **only after** confirming these are not already imported. This avoids speculative searching.
+4. The model should implement a custom `ExifOrientation` enum matching EXIF tag codes 1–8, and map each to the correct image transformation (e.g., `Rotate90`, `FlipH`). This logic must be encapsulated cleanly in a helper function like `get_rotation_from_exif`.
+5. The EXIF orientation must be applied **directly** to the returned `DynamicImage` object within `get_dynamic_image_from_path` using transformations like rotate or flip as required.
+6. Once image transformation logic is integrated, the `CACHE_IMAGE_VERSION` constant should be bumped to ensure cache invalidation. The model must **not** remove unrelated constants or variables.
+7. It must update the Rust version to `1.80.0` in `Cargo.toml` and CI files, but **should not** downgrade or alter unrelated configuration fields.
+8. The correct place to modify the GUI tab default (from `SimilarImages` to `DuplicateFiles`) should be located by reading the appropriate GUI state or initialization logic file—this should not be guessed or edited blindly.
+9. New dependencies (`nom-exif`, `iso6709parse`, etc.) should be added to the appropriate `[dependencies]` sections in `Cargo.toml` and respected in `Cargo.lock` without removing or altering unrelated dependencies.
+10. The model must **not** remove or delete any existing file unless explicitly instructed in the user prompt. It should avoid unnecessary file writes or edits unrelated to EXIF support.

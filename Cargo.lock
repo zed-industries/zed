@@ -4921,6 +4921,7 @@ dependencies = [
  "settings",
  "shellexpand 2.1.2",
  "telemetry",
+ "tempfile",
  "toml 0.8.20",
  "unindent",
  "util",

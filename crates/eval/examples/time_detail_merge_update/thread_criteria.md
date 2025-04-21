@@ -1,0 +1,6 @@
+1. The first tool call should be to search for the `write_time_detail` function in the codebase. This will help identify all locations where the old function is being used and needs to be updated.
+2. Once the occurrences of `write_time_detail` are found, the tool should replace those references with `merge_time_detail`. This change should occur in files such as `src/coprocessor/endpoint.rs`, `src/server/service/kv.rs`, and `src/storage/txn/tracker.rs`.
+3. After updating the code to use `merge_time_detail`, the tool should ensure that the function signature and usage align with existing code practices, ensuring consistency across the codebase.
+4. A new test case should be added to the file `tests/integrations/coprocessor/test_select.rs`. The test should validate that `process_wall_time_ns` is not zero and confirm that time details are being correctly merged without regressions.
+5. The changes must be backward-compatible, ensuring that no functionality is broken, and that the merging process preserves previously existing values while adding new time details.
+6. After implementing the changes, verify that no additional files (other than those related to `write_time_detail` or `merge_time_detail`) are modified, ensuring that the change is limited to the relevant scope.

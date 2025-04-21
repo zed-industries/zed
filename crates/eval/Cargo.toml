@@ -39,6 +39,7 @@ serde.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 telemetry.workspace = true
+tempfile = "3.8"
 toml.workspace = true
 unindent.workspace = true
 util.workspace = true
