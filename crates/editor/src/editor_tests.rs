@@ -12,8 +12,8 @@ use crate::{
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
-    BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions, div,
+    BackgroundExecutor, DismissEvent, SemanticVersion, TestAppContext, UpdateGlobal,
+    VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
@@ -19546,6 +19546,64 @@ println!("5");
                 "No folds: even after enabling the restoration, previous editor's data should not be saved to be used for the restoration"
             );
         })
+    });
+}
+
+#[gpui::test]
+async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
+    struct EmptyModalView {
+        focus_handle: gpui::FocusHandle,
+    }
+    impl EventEmitter<DismissEvent> for EmptyModalView {}
+    impl Render for EmptyModalView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+            div()
+        }
+    }
+    impl Focusable for EmptyModalView {
+        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+    impl workspace::ModalView for EmptyModalView {}
+    fn new_empty_modal_view(cx: &App) -> EmptyModalView {
+        EmptyModalView {
+            focus_handle: cx.focus_handle(),
+        }
+    }
+
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world!", cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        })
+        .unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_context_menu(&OpenContextMenu, window, cx);
+        assert!(editor.mouse_context_menu.is_some());
+    });
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |_, cx| new_empty_modal_view(cx));
+        })
+        .unwrap();
+    cx.read(|cx| {
+        assert!(editor.read(cx).mouse_context_menu.is_none());
     });
 }
 

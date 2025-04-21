@@ -19,7 +19,7 @@ use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     Role, report_assistant_event,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu, ModelType};
 use prompt_store::PromptBuilder;
 use settings::{Settings, update_settings_file};
 use std::{
@@ -755,6 +755,7 @@ impl PromptEditor {
                             move |settings, _| settings.set_model(model.clone()),
                         );
                     },
+                    ModelType::Default,
                     window,
                     cx,
                 )

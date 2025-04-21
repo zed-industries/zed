@@ -47,7 +47,7 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::UsageBanner;
 use crate::{
-    AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
+    AddContextServer, AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
@@ -1125,14 +1125,16 @@ impl AssistantPanel {
                                                 .action("Prompt Library", Box::new(OpenPromptLibrary::default()))
                                                 .action("Settings", Box::new(OpenConfiguration))
                                                 .separator()
+                                                .header("MCPs")
                                                 .action(
-                                                    "Install MCPs",
+                                                    "View Server Extensions",
                                                     Box::new(zed_actions::Extensions {
                                                         category_filter: Some(
                                                             zed_actions::ExtensionCategoryFilter::ContextServers,
                                                         ),
                                                         }),
                                                 )
+                                                .action("Add Custom Server", Box::new(AddContextServer))
                                             },
                                         ))
                                     }),

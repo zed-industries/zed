@@ -64,6 +64,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Model::Chat
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "deepseek-chat" => Ok(Self::Chat),

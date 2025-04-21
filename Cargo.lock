@@ -710,17 +710,21 @@ dependencies = [
  "gpui",
  "html_to_markdown",
  "http_client",
+ "indoc",
  "itertools 0.14.0",
  "language",
  "language_model",
  "linkme",
  "open",
+ "pretty_assertions",
  "project",
  "rand 0.8.5",
  "regex",
  "schemars",
  "serde",
  "serde_json",
+ "settings",
+ "tree-sitter-rust",
  "ui",
  "unindent",
  "util",
@@ -4009,6 +4013,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "paths",
+ "proto",
  "schemars",
  "serde",
  "serde_json",
@@ -4893,7 +4898,6 @@ dependencies = [
  "client",
  "collections",
  "context_server",
- "dap",
  "dirs 5.0.1",
  "env_logger 0.11.8",
  "extension",
@@ -6167,6 +6171,7 @@ dependencies = [
  "windows 0.61.1",
  "windows-core 0.61.0",
  "windows-numerics",
+ "windows-registry 0.5.1",
  "workspace-hack",
  "x11-clipboard",
  "x11rb",
@@ -7647,7 +7652,6 @@ dependencies = [
  "http_client",
  "icons",
  "image",
- "log",
  "open_ai",
  "parking_lot",
  "proto",
@@ -11739,6 +11743,7 @@ dependencies = [
  "client",
  "clock",
  "dap",
+ "dap_adapters",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -11927,7 +11932,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
- "windows-registry",
+ "windows-registry 0.2.0",
 ]
 
 [[package]]
@@ -14210,11 +14215,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "dap-types",
  "futures 0.3.31",
  "gpui",
  "hex",
  "parking_lot",
+ "proto",
  "schemars",
  "serde",
  "serde_json",
@@ -17039,6 +17044,17 @@ dependencies = [
  "windows-result 0.2.0",
  "windows-strings 0.1.0",
  "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-registry"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad1da3e436dc7653dfdf3da67332e22bff09bb0e28b0239e1624499c7830842e"
+dependencies = [
+ "windows-link",
+ "windows-result 0.3.2",
+ "windows-strings 0.4.0",
 ]
 
 [[package]]
