@@ -87,4 +87,4 @@ jobs:
         run: chmod +x ./target/release/eval
 
       - name: Run eval for ${{ matrix.exercise }}
-        run: bash -c "./target/release/eval --cohort-id dailyrun${{ github.run_id }} ${{ matrix.exercise }}"
+        run: ./target/release/eval --cohort-id dailyrun${{ github.run_id }} ${{ matrix.exercise }}
