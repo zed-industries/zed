@@ -840,7 +840,7 @@ pub struct Editor {
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
     hide_mouse_mode: HideMouseMode,
-    drag_selection: Option<Selection<Anchor>>,
+    drag_selection_head: Option<DisplayPoint>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1625,7 +1625,7 @@ impl Editor {
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
                 .unwrap_or_default(),
-            drag_selection: None,
+            drag_selection_head: None,
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -3023,14 +3023,26 @@ impl Editor {
         self.selections.pending_anchor().is_some() || self.columnar_selection_tail.is_some()
     }
 
+    pub fn update_drag_selection_head(
+        &mut self,
+        head: Option<DisplayPoint>,
+        scroll_delta: gpui::Point<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.drag_selection_head = head;
+        self.apply_scroll_delta(scroll_delta, window, cx);
+        cx.notify()
+    }
+
     pub fn is_intersect_drag_selection(
         &self,
         point: DisplayPoint,
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        if self.drag_selection.is_some() {
-            let selection = self.drag_selection.as_ref().unwrap();
+        if self.drag_selection_head.is_some() {
+            let selection = self.selections.disjoint[0].clone();
             let snapshot = self.snapshot(window, cx);
             let start = selection.start.to_display_point(&snapshot);
             let end = selection.end.to_display_point(&snapshot);
@@ -9423,7 +9435,8 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let mut edits = Vec::new();
-        if let Some(selection) = self.drag_selection.take() {
+        if let Some(_) = self.drag_selection_head.take() {
+            let selection = self.selections.disjoint[0].clone();
             let insert_point = display_map
                 .clip_point(point, Bias::Left)
                 .to_point(&display_map);
@@ -9433,7 +9446,7 @@ impl Editor {
             if is_cut {
                 edits.push(((selection.start..selection.end), String::new()));
             }
-            let insert_anchor = buffer.anchor_before(insert_point.clone());
+            let insert_anchor = buffer.anchor_before(insert_point);
             edits.push(((insert_anchor..insert_anchor), text));
             let last_edit_start = insert_anchor.bias_left(buffer);
             let last_edit_end = insert_anchor.bias_right(buffer);
