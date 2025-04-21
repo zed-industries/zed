@@ -75,6 +75,7 @@ impl ToolUseState {
                                 id: tool_use.id.clone(),
                                 name: tool_use.name.clone().into(),
                                 input: tool_use.input.clone(),
+                                is_input_complete: true,
                             })
                             .collect::<Vec<_>>();
 
@@ -176,6 +177,9 @@ impl ToolUseState {
                         PendingToolUseStatus::Error(ref err) => {
                             ToolUseStatus::Error(err.clone().into())
                         }
+                        PendingToolUseStatus::InputStillStreaming => {
+                            ToolUseStatus::InputStillStreaming
+                        }
                     }
                 } else {
                     ToolUseStatus::Pending
@@ -192,7 +196,12 @@ impl ToolUseState {
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
                 name: tool_use.name.clone().into(),
-                ui_text: self.tool_ui_label(&tool_use.name, &tool_use.input, cx),
+                ui_text: self.tool_ui_label(
+                    &tool_use.name,
+                    &tool_use.input,
+                    tool_use.is_input_complete,
+                    cx,
+                ),
                 input: tool_use.input.clone(),
                 status,
                 icon,
@@ -207,10 +216,15 @@ impl ToolUseState {
         &self,
         tool_name: &str,
         input: &serde_json::Value,
+        is_input_complete: bool,
         cx: &App,
     ) -> SharedString {
         if let Some(tool) = self.tools.read(cx).tool(tool_name, cx) {
-            tool.ui_text(input).into()
+            if is_input_complete {
+                tool.ui_text(input).into()
+            } else {
+                tool.still_streaming_ui_text(input).into()
+            }
         } else {
             format!("Unknown tool {tool_name:?}").into()
         }
@@ -258,22 +272,50 @@ impl ToolUseState {
         tool_use: LanguageModelToolUse,
         metadata: ToolUseMetadata,
         cx: &App,
-    ) {
-        self.tool_uses_by_assistant_message
+    ) -> Arc<str> {
+        let tool_uses = self
+            .tool_uses_by_assistant_message
             .entry(assistant_message_id)
-            .or_default()
-            .push(tool_use.clone());
+            .or_default();
 
-        self.tool_use_metadata_by_id
-            .insert(tool_use.id.clone(), metadata);
+        let mut existing_tool_use_found = false;
 
-        // The tool use is being requested by the Assistant, so we want to
-        // attach the tool results to the next user message.
-        let next_user_message_id = MessageId(assistant_message_id.0 + 1);
-        self.tool_uses_by_user_message
-            .entry(next_user_message_id)
-            .or_default()
-            .push(tool_use.id.clone());
+        for existing_tool_use in tool_uses.iter_mut() {
+            if existing_tool_use.id == tool_use.id {
+                *existing_tool_use = tool_use.clone();
+                existing_tool_use_found = true;
+            }
+        }
+
+        if !existing_tool_use_found {
+            tool_uses.push(tool_use.clone());
+        }
+
+        let status = if tool_use.is_input_complete {
+            self.tool_use_metadata_by_id
+                .insert(tool_use.id.clone(), metadata);
+
+            // The tool use is being requested by the Assistant, so we want to
+            // attach the tool results to the next user message.
+            let next_user_message_id = MessageId(assistant_message_id.0 + 1);
+            self.tool_uses_by_user_message
+                .entry(next_user_message_id)
+                .or_default()
+                .push(tool_use.id.clone());
+
+            PendingToolUseStatus::Idle
+        } else {
+            PendingToolUseStatus::InputStillStreaming
+        };
+
+        let ui_text: Arc<str> = self
+            .tool_ui_label(
+                &tool_use.name,
+                &tool_use.input,
+                tool_use.is_input_complete,
+                cx,
+            )
+            .into();
 
         self.pending_tool_uses_by_id.insert(
             tool_use.id.clone(),
@@ -281,13 +323,13 @@ impl ToolUseState {
                 assistant_message_id,
                 id: tool_use.id,
                 name: tool_use.name.clone(),
-                ui_text: self
-                    .tool_ui_label(&tool_use.name, &tool_use.input, cx)
-                    .into(),
+                ui_text: ui_text.clone(),
                 input: tool_use.input,
-                status: PendingToolUseStatus::Idle,
+                status,
             },
         );
+
+        ui_text
     }
 
     pub fn run_pending_tool(
@@ -497,6 +539,7 @@ pub struct Confirmation {
 
 #[derive(Debug, Clone)]
 pub enum PendingToolUseStatus {
+    InputStillStreaming,
     Idle,
     NeedsConfirmation(Arc<Confirmation>),
     Running { _task: Shared<Task<()>> },

@@ -426,6 +426,7 @@ impl Example {
                             ThreadEvent::ToolConfirmationNeeded => {
                                 panic!("{}Bug: Tool confirmation should not be required in eval", log_prefix);
                             },
+                            ThreadEvent::StreamedToolUse { .. } |
                             ThreadEvent::StreamedCompletion |
                             ThreadEvent::MessageAdded(_) |
                             ThreadEvent::MessageEdited(_) |
