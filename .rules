@@ -109,3 +109,13 @@ When a view's state has changed in a way that may affect its rendering, it shoul
 While updating an entity (`cx: Context<T>`), it can emit an event using `cx.emit(event)`. Entities register which events they can emit by declaring `impl EventEmittor<EventType> for EntityType {}`.
 
 Other entities can then register a callback to handle these events by doing `cx.subscribe(other_entity, |this, other_entity, event, cx| ...)`. This will return a `Subscription` which deregisters the callback when dropped.  Typically `cx.subscribe` happens when creating a new entity and the subscriptions are stored in a `_subscriptions: Vec<Subscription>` field.
+
+## Recent API changes
+
+GPUI has had some changes to its APIs. Always write code using the new APIs:
+
+* `spawn` methods now take async closures (`AsyncFn`), and so should be called like `cx.spawn(async move |cx| ...)`.
+* Use `Entity<T>`. This replaces `Model<T>` and `View<T>` which longer exists and should NEVER be used.
+* Use `App` references. This replaces `AppContext` which no longer exists and should NEVER be used.
+* Use `Context<T>` references. This replaces `ModelContext<T>` which no longer exists and should NEVER be used.
+* `Window` is now passed around explicitly. The new interface adds a `Window` reference parameter to some methods, and adds some new "*_in" methods for plumbing `Window`. The old types `WindowContext` and `ViewContext<T>` should NEVER be used.
