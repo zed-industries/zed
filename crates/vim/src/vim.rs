@@ -1189,6 +1189,11 @@ impl Vim {
         self.stop_recording_immediately(NormalBefore.boxed_clone(), cx);
         self.store_visual_marks(window, cx);
         self.clear_operator(window, cx);
+
+        if VimSettings::get_global(cx).normal_mode_on_focus_loss && self.mode != Mode::Normal {
+            self.switch_mode(Mode::Normal, false, window, cx);
+        }
+
         self.update_editor(window, cx, |vim, editor, _, cx| {
             if vim.cursor_shape(cx) == CursorShape::Block {
                 editor.set_cursor_shape(CursorShape::Hollow, cx);
@@ -1702,6 +1707,7 @@ struct VimSettings {
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
+    pub normal_mode_on_focus_loss: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1713,6 +1719,7 @@ struct VimSettingsContent {
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
+    pub normal_mode_on_focus_loss: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1770,6 +1777,9 @@ impl Settings for VimSettings {
             custom_digraphs: settings.custom_digraphs.ok_or_else(Self::missing_default)?,
             highlight_on_yank_duration: settings
                 .highlight_on_yank_duration
+                .ok_or_else(Self::missing_default)?,
+            normal_mode_on_focus_loss: settings
+                .normal_mode_on_focus_loss
                 .ok_or_else(Self::missing_default)?,
         })
     }
