@@ -111,7 +111,7 @@ impl PickerDelegate for RulesContextPickerDelegate {
         cx.spawn_in(window, async move |this, cx| {
             let matches = search_task.await;
             this.update(cx, |this, cx| {
-                this.delegate.matches = matches.into_iter().map(|mat| mat.rules).collect();
+                this.delegate.matches = matches;
                 this.delegate.selected_index = 0;
                 cx.notify();
             })
@@ -215,18 +215,12 @@ pub fn render_thread_context_entry(
         })
 }
 
-#[derive(Clone)]
-pub struct RulesMatch {
-    pub rules: RulesContextEntry,
-    pub is_recent: bool,
-}
-
 pub(crate) fn search_rules(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     thread_store: Entity<ThreadStore>,
     cx: &mut App,
-) -> Task<Vec<RulesMatch>> {
+) -> Task<Vec<RulesContextEntry>> {
     let Some(prompt_store) = thread_store.read(cx).prompt_store() else {
         return Task::ready(vec![]);
     };
@@ -242,12 +236,9 @@ pub(crate) fn search_rules(
                 } else {
                     match metadata.id {
                         PromptId::EditWorkflow => None,
-                        PromptId::User { uuid } => Some(RulesMatch {
-                            rules: RulesContextEntry {
-                                prompt_id: uuid,
-                                title: metadata.title?,
-                            },
-                            is_recent: false,
+                        PromptId::User { uuid } => Some(RulesContextEntry {
+                            prompt_id: uuid,
+                            title: metadata.title?,
                         }),
                     }
                 }

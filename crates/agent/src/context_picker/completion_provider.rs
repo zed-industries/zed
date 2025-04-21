@@ -28,7 +28,7 @@ use crate::thread_store::ThreadStore;
 
 use super::fetch_context_picker::fetch_url_content;
 use super::file_context_picker::FileMatch;
-use super::rules_context_picker::{RulesContextEntry, RulesMatch, search_rules};
+use super::rules_context_picker::{RulesContextEntry, search_rules};
 use super::symbol_context_picker::SymbolMatch;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
@@ -41,7 +41,7 @@ pub(crate) enum Match {
     File(FileMatch),
     Thread(ThreadMatch),
     Fetch(SharedString),
-    Rules(RulesMatch),
+    Rules(RulesContextEntry),
     Mode(ModeMatch),
 }
 
@@ -126,7 +126,7 @@ fn search(
                         .await
                         .into_iter()
                         .map(Match::Rules)
-                        .collect()
+                        .collect::<Vec<_>>()
                 })
             } else {
                 Task::ready(Vec::new())
@@ -311,18 +311,10 @@ impl ContextPickerCompletionProvider {
         rules: RulesContextEntry,
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
-        recent: bool,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
         thread_store: Entity<ThreadStore>,
     ) -> Completion {
-        let icon_for_completion = if recent {
-            // todo! is this ever true?
-            IconName::HistoryRerun
-        } else {
-            RULES_ICON
-        };
-
         let new_text = MentionLink::for_rules(&rules);
         let new_text_len = new_text.len();
         Completion {
@@ -332,7 +324,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(icon_for_completion.path().into()),
+            icon_path: Some(RULES_ICON.path().into()),
             confirm: Some(confirm_completion_callback(
                 RULES_ICON.path().into(),
                 rules.title.clone(),
@@ -675,17 +667,12 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 thread_store,
                             ))
                         }
-                        Match::Rules(RulesMatch {
-                            rules: user_rules,
-                            is_recent,
-                            ..
-                        }) => {
+                        Match::Rules(user_rules) => {
                             let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
                             Some(Self::completion_for_rules(
                                 user_rules,
                                 excerpt_id,
                                 source_range.clone(),
-                                is_recent,
                                 editor.clone(),
                                 context_store.clone(),
                                 thread_store,
