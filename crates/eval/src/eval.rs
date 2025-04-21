@@ -368,9 +368,7 @@ fn main() {
             print_header("CUMULATIVE TOOL METRICS");
             println!("{}", cumulative_tool_metrics);
 
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            app_state.client.telemetry().flush_events();
+            app_state.client.telemetry().flush_events().await;
 
             cx.update(|cx| cx.quit())
         })
