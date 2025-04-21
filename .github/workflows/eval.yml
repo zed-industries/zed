@@ -38,8 +38,19 @@ jobs:
       fail-fast: false
       matrix:
         exercise:
+          - add_arp_protocol_support
+          - buffer_string_input_support
+          - exif_rotation_support
           - find_and_replace_diff_card
+          - libdevice_symbol_reexport
+          - lhs_join_update_callbacks
           - metal_i64_support
+          - metrics_data_size_updates
+          - replace_hold_with_drain_on_exit
+          - restore_version_api_support
+          - time_detail_merge_update
+          - tool_response_handling
+          - virtio_block_request_refactor
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
