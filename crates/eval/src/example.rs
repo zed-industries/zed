@@ -37,6 +37,8 @@ pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
 
 const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
+const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExampleBase {
     pub url: String,
@@ -224,6 +226,10 @@ impl Example {
                 ],
             )
             .await?;
+        }
+
+        if self.base.url == ZED_REPO_URL {
+            std::fs::write(worktree_path.join(".rules"), std::fs::read(".rules")?)?;
         }
 
         std::fs::create_dir_all(self.example_output_directory())?;
@@ -637,7 +643,11 @@ impl Example {
     async fn repository_diff(&self) -> Result<String> {
         let worktree_path = self.worktree_path();
         run_git(&worktree_path, &["add", "."]).await?;
-        run_git(&worktree_path, &["diff", "--staged"]).await
+        let mut diff_args = vec!["diff", "--staged"];
+        if self.base.url == ZED_REPO_URL {
+            diff_args.push(":(exclude).rules");
+        }
+        run_git(&worktree_path, &diff_args).await
     }
 }
 
