@@ -73,6 +73,7 @@ pub struct Example {
     /// Prefix used for logging that identifies this example
     pub log_prefix: String,
     pub worktree_path: PathBuf,
+    pub repo_path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -122,6 +123,7 @@ impl Example {
         dir_path: &Path,
         run_dir: &Path,
         worktrees_dir: &Path,
+        repos_dir: &Path,
     ) -> Result<Self> {
         let name = Self::name_from_path(dir_path);
         let base_path = dir_path.join("base.toml");
@@ -134,13 +136,15 @@ impl Example {
             None
         };
 
-        let base = toml::from_str(&fs::read_to_string(&base_path)?)?;
+        let base: ExampleBase = toml::from_str(&fs::read_to_string(&base_path)?)?;
+
+        let repo_path = repo_path_for_url(repos_dir, &base.url);
 
         let worktree_path = worktrees_dir
             .canonicalize()
             .unwrap()
             .join(&name)
-            .join(&base);
+            .join(&base.repo_name());
 
         Ok(Example {
             name: name.clone(),
@@ -150,6 +154,7 @@ impl Example {
             diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
             run_directory_path: run_dir.to_path_buf(),
             worktree_path,
+            repo_path,
             log_prefix: name,
         })
     }
@@ -179,10 +184,8 @@ impl Example {
 
     /// Set up the example by checking out the specified Git revision
     pub async fn setup(&mut self) -> Result<()> {
-        let repo_path = repo_path_for_url(&self.base.url);
-
         let revision_exists = run_git(
-            &repo_path,
+            &self.repo_path,
             &["rev-parse", &format!("{}^{{commit}}", self.base.revision)],
         )
         .await
@@ -194,7 +197,7 @@ impl Example {
                 self.log_prefix, &self.base.revision
             );
             run_git(
-                &repo_path,
+                &self.repo_path,
                 &["fetch", "--depth", "1", "origin", &self.base.revision],
             )
             .await?;
@@ -214,7 +217,7 @@ impl Example {
             let worktree_path_string = self.worktree_path.to_string_lossy().to_string();
 
             run_git(
-                &repo_path,
+                &self.repo_path,
                 &[
                     "worktree",
                     "add",
@@ -248,9 +251,8 @@ impl Example {
             cx,
         );
 
-        let worktree_path = self.worktree_path();
         let worktree = project.update(cx, |project, cx| {
-            project.create_worktree(&worktree_path, true, cx)
+            project.create_worktree(&self.worktree_path, true, cx)
         });
 
         let tools = cx.new(|_| ToolWorkingSet::default());
@@ -636,9 +638,8 @@ impl Example {
     }
 
     async fn repository_diff(&self) -> Result<String> {
-        let worktree_path = self.worktree_path();
-        run_git(&worktree_path, &["add", "."]).await?;
-        run_git(&worktree_path, &["diff", "--staged"]).await
+        run_git(&self.worktree_path, &["add", "."]).await?;
+        run_git(&self.worktree_path, &["diff", "--staged"]).await
     }
 }
 
