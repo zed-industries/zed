@@ -323,6 +323,13 @@ impl Example {
                 return Err(anyhow!("Setup only mode"));
             }
 
+            let example_output_dir = this.example_output_directory();
+            let last_diff_file_path = example_output_dir.join("last.diff");
+
+            // Write an empty "last.diff" so that it can be opened in Zed for convenient view of the
+            // history using undo/redo.
+            std::fs::write(&last_diff_file_path, "")?;
+
             let thread_store = thread_store.await?;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
@@ -330,24 +337,43 @@ impl Example {
 
             thread.update(cx, |thread, _cx| {
                 let mut request_count = 0;
-                let example_dir_path = this.example_output_directory();
-
                 let last_request = Rc::clone(&last_request);
+                let previous_diff = Rc::new(RefCell::new("".to_string()));
+                let example_output_dir = example_output_dir.clone();
+                let last_diff_file_path = last_diff_file_path.clone();
+                let this = this.clone();
                 thread.set_request_callback(move |request, response_events| {
                     *last_request.borrow_mut() = Some(request.clone());
 
                     request_count += 1;
-                    let messages_file_path = example_dir_path.join(format!("{request_count}.messages.md"));
-                    let last_messages_file_path = example_dir_path.join("last.messages.md");
+                    let messages_file_path = example_output_dir.join(format!("{request_count}.messages.md"));
+                    let diff_file_path = example_output_dir.join(format!("{request_count}.diff"));
+                    let last_messages_file_path = example_output_dir.join("last.messages.md");
                     let request_markdown = RequestMarkdown::new(request);
                     let response_events_markdown = response_events_to_markdown(response_events);
 
                     let messages = format!("{}\n\n{}", request_markdown.messages, response_events_markdown);
-                    fs::write(messages_file_path, messages.clone()).expect("failed to write messages file");
-                    fs::write(last_messages_file_path, messages).expect("failed to write last messages file");
+                    fs::write(&messages_file_path, messages.clone()).expect("failed to write messages file");
+                    fs::write(&last_messages_file_path, messages).expect("failed to write last messages file");
+
+                    let diff_result = smol::block_on(this.repository_diff());
+                    match diff_result {
+                        Ok(diff) => {
+                            if diff != previous_diff.borrow().clone() {
+                                fs::write(&diff_file_path, &diff).expect("failed to write diff file");
+                                fs::write(&last_diff_file_path, &diff).expect("failed to write last diff file");
+                                *previous_diff.borrow_mut() = diff;
+                            }
+                        }
+                        Err(err) => {
+                            let error_message = format!("{err:?}");
+                            fs::write(&diff_file_path, &error_message).expect("failed to write diff error to file");
+                            fs::write(&last_diff_file_path, &error_message).expect("failed to write last diff file");
+                        }
+                    }
 
                     if request_count == 1 {
-                        let tools_file_path = example_dir_path.join("tools.md");
+                        let tools_file_path = example_output_dir.join("tools.md");
                         fs::write(tools_file_path, request_markdown.tools).expect("failed to write tools file");
                     }
                 });
@@ -459,11 +485,7 @@ impl Example {
 
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
-
-            let example_output_dir = this.example_output_directory();
-            let repository_diff_path = example_output_dir.join("patch.diff");
-            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
-            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
+            std::fs::write(last_diff_file_path, &repository_diff)?;
 
             println!("{}Getting diagnostics", this.log_prefix);
             let diagnostics_after = cx
