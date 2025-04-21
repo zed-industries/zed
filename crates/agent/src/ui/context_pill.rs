@@ -323,7 +323,7 @@ impl AddedContext {
 
                 AddedContext {
                     id: excerpt_context.id,
-                    kind: ContextKind::File, // Use File icon for excerpts
+                    kind: ContextKind::File,
                     name: name.into(),
                     parent,
                     tooltip: Some(full_path_string.into()),
@@ -353,6 +353,16 @@ impl AddedContext {
                     .thread
                     .read(cx)
                     .is_generating_detailed_summary(),
+            },
+
+            AssistantContext::Image(image_context) => AddedContext {
+                id: image_context.id,
+                kind: ContextKind::Image,
+                name: "Image".into(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                summarizing: false,
             },
         }
     }

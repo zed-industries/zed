@@ -3316,6 +3316,7 @@ pub(crate) fn open_context(
                 }
             })
         }
+        AssistantContext::Image(_) => {}
     }
 }
 

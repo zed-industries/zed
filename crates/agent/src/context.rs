@@ -1,6 +1,6 @@
 use std::{ops::Range, path::Path, sync::Arc};
 
-use gpui::{App, Entity, SharedString};
+use gpui::{App, Entity, Image, SharedString};
 use language::{Buffer, File};
 use language_model::LanguageModelRequestMessage;
 use project::{ProjectPath, Worktree};
@@ -27,6 +27,7 @@ pub enum ContextKind {
     Excerpt,
     FetchedUrl,
     Thread,
+    Image,
 }
 
 impl ContextKind {
@@ -38,6 +39,7 @@ impl ContextKind {
             ContextKind::Excerpt => IconName::Code,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
+            ContextKind::Image => IconName::FileGeneric,
         }
     }
 }
@@ -50,6 +52,7 @@ pub enum AssistantContext {
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
     Excerpt(ExcerptContext),
+    Image(ImageContext),
 }
 
 impl AssistantContext {
@@ -61,6 +64,7 @@ impl AssistantContext {
             Self::FetchedUrl(url) => url.id,
             Self::Thread(thread) => thread.id,
             Self::Excerpt(excerpt) => excerpt.id,
+            Self::Image(image) => image.id,
         }
     }
 }
@@ -118,6 +122,12 @@ impl ThreadContext {
             .summary()
             .unwrap_or("New thread".into())
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageContext {
+    pub id: ContextId,
+    pub image: Image,
 }
 
 #[derive(Clone)]
@@ -188,6 +198,7 @@ pub fn format_context_as_string<'a>(
             AssistantContext::Excerpt(context) => excerpt_context.push(context),
             AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context),
+            AssistantContext::Image(_) => {}
         }
     }
 

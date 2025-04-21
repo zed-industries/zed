@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::future::join_all;
 use futures::{self, Future, FutureExt, future};
-use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, Image, SharedString, Task, WeakEntity};
 use language::{Buffer, File};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use rope::{Point, Rope};
@@ -16,7 +16,7 @@ use util::{ResultExt as _, maybe};
 use crate::ThreadStore;
 use crate::context::{
     AssistantContext, ContextBuffer, ContextId, ContextSymbol, ContextSymbolId, DirectoryContext,
-    ExcerptContext, FetchedUrlContext, FileContext, SymbolContext, ThreadContext,
+    ExcerptContext, FetchedUrlContext, FileContext, ImageContext, SymbolContext, ThreadContext,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -419,6 +419,14 @@ impl ContextStore {
         cx.notify();
     }
 
+    pub fn add_image(&mut self, image: Image, cx: &mut Context<ContextStore>) {
+        let id = self.next_context_id.post_inc();
+
+        self.context
+            .push(AssistantContext::Image(ImageContext { id, image }));
+        cx.notify();
+    }
+
     pub fn add_excerpt(
         &mut self,
         range: Range<Anchor>,
@@ -518,6 +526,7 @@ impl ContextStore {
             AssistantContext::Thread(_) => {
                 self.threads.retain(|_, context_id| *context_id != id);
             }
+            AssistantContext::Image(_) => {}
         }
 
         cx.notify();
@@ -641,6 +650,7 @@ impl ContextStore {
                 | AssistantContext::Symbol(_)
                 | AssistantContext::Excerpt(_)
                 | AssistantContext::FetchedUrl(_)
+                | AssistantContext::Image(_)
                 | AssistantContext::Thread(_) => None,
             })
             .collect()
@@ -876,6 +886,7 @@ pub fn refresh_context_store_text(
                 // and doing the caching properly could be tricky (unless it's already handled by
                 // the HttpClient?).
                 AssistantContext::FetchedUrl(_) => {}
+                AssistantContext::Image(_) => {}
             }
 
             None
