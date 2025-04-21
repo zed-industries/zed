@@ -43,3 +43,9 @@ pub(crate) mod m_2025_04_15 {
 
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
+
+pub(crate) mod m_2025_04_21 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
