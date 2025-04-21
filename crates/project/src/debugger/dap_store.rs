@@ -797,15 +797,6 @@ fn create_new_session(
                         this.shutdown_session(session_id, cx).detach_and_log_err(cx);
                     }
                     SessionStateEvent::Restart => {
-                        let Some((config, binary)) = session.read_with(cx, |session, _| {
-                            session
-                                .configuration()
-                                .map(|config| (config, session.binary().clone()))
-                        }) else {
-                            log::error!("Failed to get debug config from session");
-                            return;
-                        };
-
                         let mut curr_session = session;
                         while let Some(parent_id) = curr_session.read(cx).parent_id() {
                             if let Some(parent_session) = this.sessions.get(&parent_id).cloned() {
@@ -816,6 +807,15 @@ fn create_new_session(
                             }
                         }
 
+                        let Some((config, binary)) = curr_session.read_with(cx, |session, _| {
+                            session
+                                .configuration()
+                                .map(|config| (config, session.root_binary().clone()))
+                        }) else {
+                            log::error!("Failed to get debug config from session");
+                            return;
+                        };
+
                         let session_id = curr_session.read(cx).session_id();
 
                         let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
@@ -825,7 +825,7 @@ fn create_new_session(
 
                             this.update(cx, |this, cx| {
                                 this.sessions.remove(&session_id);
-                                this.new_session(binary, config, None, cx)
+                                this.new_session(binary.as_ref().clone(), config, None, cx)
                             })?
                             .1
                             .await?;
