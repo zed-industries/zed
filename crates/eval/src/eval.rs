@@ -58,9 +58,10 @@ fn main() {
     let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
     let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
     let session_id = uuid::Uuid::new_v4().to_string();
+    let run_timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
     let run_id = match env::var("GITHUB_RUN_ID") {
         Ok(run_id) => format!("github/{}", run_id),
-        Err(_) => format!("local/{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")),
+        Err(_) => format!("local/{}", run_timestamp),
     };
 
     let root_dir = Path::new(std::env!("CARGO_MANIFEST_DIR"))
@@ -73,10 +74,7 @@ fn main() {
     let worktrees_dir = eval_crate_dir.join("worktrees");
     let examples_dir = eval_crate_dir.join("examples");
     let runs_dir = eval_crate_dir.join("runs");
-    let run_dir = runs_dir.join(format!(
-        "{}",
-        chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
-    ));
+    let run_dir = runs_dir.join(format!("{}", run_timestamp));
     std::fs::create_dir_all(&run_dir).unwrap();
     std::fs::create_dir_all(&repos_dir).unwrap();
     std::fs::create_dir_all(&worktrees_dir).unwrap();
@@ -158,7 +156,12 @@ fn main() {
             let mut skipped = Vec::new();
 
             for example_path in &example_paths {
-                let example = Example::load_from_directory(example_path, &run_dir, &worktrees_dir)?;
+                let example = Example::load_from_directory(
+                    example_path,
+                    &run_dir,
+                    &worktrees_dir,
+                    &repos_dir,
+                )?;
 
                 if !example
                     .base
@@ -208,7 +211,7 @@ fn main() {
 
                 let repo_url = example.base.url.clone();
                 if repo_urls.insert(repo_url.clone()) {
-                    let repo_path = repo_path_for_url(&repos_dir, &repo_url);
+                    let repo_path = example.repo_path.clone();
 
                     if !repo_path.join(".git").is_dir() {
                         println!(
