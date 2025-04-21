@@ -56,11 +56,9 @@ pub struct ModalLayer {
     dismiss_on_focus_lost: bool,
 }
 
-pub(crate) enum Event {
-    ModalOpened,
-}
+pub(crate) struct ModalOpenedEvent;
 
-impl EventEmitter<Event> for ModalLayer {}
+impl EventEmitter<ModalOpenedEvent> for ModalLayer {}
 
 impl Default for ModalLayer {
     fn default() -> Self {
@@ -90,7 +88,7 @@ impl ModalLayer {
         }
         let new_modal = cx.new(|cx| build_view(window, cx));
         self.show_modal(new_modal, window, cx);
-        cx.emit(Event::ModalOpened);
+        cx.emit(ModalOpenedEvent);
     }
 
     fn show_modal<V>(&mut self, new_modal: Entity<V>, window: &mut Window, cx: &mut Context<Self>)

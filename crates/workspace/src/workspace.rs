@@ -1052,11 +1052,12 @@ impl Workspace {
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
         let modal_layer = cx.new(|_| ModalLayer::new());
         let toast_layer = cx.new(|_| ToastLayer::new());
-        cx.subscribe(&modal_layer, |_, _, event: &modal_layer::Event, cx| {
-            if matches!(event, modal_layer::Event::ModalOpened) {
+        cx.subscribe(
+            &modal_layer,
+            |_, _, _: &modal_layer::ModalOpenedEvent, cx| {
                 cx.emit(Event::ModalOpened);
-            }
-        })
+            },
+        )
         .detach();
 
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
