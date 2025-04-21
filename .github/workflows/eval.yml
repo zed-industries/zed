@@ -30,10 +30,16 @@ env:
 jobs:
   run_eval:
     timeout-minutes: 60
-    name: Run Agent Eval
+    name: Run Agent Eval - ${{ matrix.exercise }}
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
+    strategy:
+      fail-fast: false
+      matrix:
+        exercise:
+          - find_and_replace_diff_card
+          - metal_i64_support
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -58,7 +64,7 @@ jobs:
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
       - name: Run eval
-        run: cargo run --package=eval -- find_and_replace_diff_card
+        run: cargo run --package=eval -- ${{ matrix.exercise }}
 
       # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
       # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
