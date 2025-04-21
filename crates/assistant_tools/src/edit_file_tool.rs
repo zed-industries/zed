@@ -92,16 +92,19 @@ impl Tool for EditFileTool {
     }
 
     fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<PartialInput>(input.clone()).ok() {
-            Some(input) if !input.path.is_empty() || !input.display_description.is_empty() => {
-                [input.path, input.display_description]
-                    .into_iter()
-                    .flat_map(|str| if str.is_empty() { None } else { Some(str) })
-                    .collect::<Vec<String>>()
-                    .join(" ")
+        if let Some(input) = serde_json::from_value::<PartialInput>(input.clone()).ok() {
+            let description = input.display_description.trim();
+            if !description.is_empty() {
+                return description.to_string();
             }
-            _ => DEFAULT_UI_TEXT.to_string(),
+
+            let path = input.path.trim();
+            if !path.is_empty() {
+                return path.to_string();
+            }
         }
+
+        DEFAULT_UI_TEXT.to_string()
     }
 
     fn run(

@@ -266,14 +266,6 @@ fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     }
 }
 
-fn render_tool_use_markdown(
-    text: SharedString,
-    language_registry: Arc<LanguageRegistry>,
-    cx: &mut App,
-) -> Entity<Markdown> {
-    cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
-}
-
 fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
@@ -861,21 +853,34 @@ impl ActiveThread {
         tool_output: SharedString,
         cx: &mut Context<Self>,
     ) {
-        let rendered = RenderedToolUse {
-            label: render_tool_use_markdown(tool_label.into(), self.language_registry.clone(), cx),
-            input: render_tool_use_markdown(
-                format!(
-                    "```json\n{}\n```",
-                    serde_json::to_string_pretty(tool_input).unwrap_or_default()
-                )
-                .into(),
-                self.language_registry.clone(),
-                cx,
-            ),
-            output: render_tool_use_markdown(tool_output, self.language_registry.clone(), cx),
-        };
-        self.rendered_tool_uses
-            .insert(tool_use_id.clone(), rendered);
+        let rendered = self
+            .rendered_tool_uses
+            .entry(tool_use_id.clone())
+            .or_insert_with(|| RenderedToolUse {
+                label: cx.new(|cx| {
+                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                }),
+                input: cx.new(|cx| {
+                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                }),
+                output: cx.new(|cx| {
+                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                }),
+            });
+
+        rendered.label.update(cx, |this, cx| {
+            this.replace(tool_label, cx);
+        });
+        rendered.input.update(cx, |this, cx| {
+            let input = format!(
+                "```json\n{}\n```",
+                serde_json::to_string_pretty(tool_input).unwrap_or_default()
+            );
+            this.replace(input, cx);
+        });
+        rendered.output.update(cx, |this, cx| {
+            this.replace(tool_output, cx);
+        });
     }
 
     fn handle_thread_event(
