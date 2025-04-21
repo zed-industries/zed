@@ -1,34 +1,20 @@
-use agent::{ThreadEvent, ThreadStore};
-use anyhow::{Context, Result, anyhow};
-use assistant_tool::ToolWorkingSet;
-use async_trait::async_trait;
-use futures::channel::mpsc;
-use futures::{FutureExt as _, StreamExt as _, select_biased};
-use gpui::{App, AppContext as _, Task};
-use language_model::{LanguageModel, StopReason};
-use project::{Project, ProjectPath};
-use std::cell::RefCell;
-use std::fmt;
-use std::fs;
-use std::fs::File;
-use std::io::Write as _;
-use std::path::Path;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-use std::{error::Error, path::PathBuf};
-use unindent::Unindent;
-use util::ResultExt as _;
+use std::{error::Error, fmt};
 
-use crate::{
-    AgentAppState, RequestMarkdown, RunOutput, THREAD_EVENT_TIMEOUT, ToolMetrics, WORKTREES_DIR,
-    ZED_REPO_URL, query_lsp_diagnostics, repo_path_for_url, response_events_to_markdown, run_git,
-    wait_for_lang_server,
-};
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use language_model::Role;
+use unindent::Unindent;
 
 #[async_trait]
 pub trait EvalThread {
     fn meta(&self) -> EvalThreadMetadata;
-    async fn run(&self, cx: &mut ThreadContext) -> Result<()>;
+    async fn conversation(&self, cx: &mut ThreadContext) -> Result<()>;
+    fn diff_criteria(&self) -> &'static str {
+        ""
+    }
+    fn thread_criteria(&self) -> &'static str {
+        ""
+    }
 }
 
 pub struct EvalThreadMetadata {
@@ -182,11 +168,6 @@ impl Message {
             tool_use: None,
         }
     }
-}
-
-pub enum Role {
-    Assistant,
-    User,
 }
 
 pub struct ToolUse {

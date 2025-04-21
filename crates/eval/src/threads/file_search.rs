@@ -22,7 +22,7 @@ impl EvalThread for Thread {
         }
     }
 
-    async fn run(&self, cx: &mut ThreadContext) -> Result<()> {
+    async fn conversation(&self, cx: &mut ThreadContext) -> Result<()> {
         const FILENAME: &str = "find_replace_file_tool.rs";
         cx.push_user_message(format!(
                 r#"
