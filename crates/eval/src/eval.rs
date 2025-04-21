@@ -24,9 +24,9 @@ use prompt_store::PromptBuilder;
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::usize;
 use util::ResultExt as _;
 
 pub const RUNS_DIR: &str = "./crates/eval/runs";
@@ -569,24 +569,27 @@ async fn run_judge_repetition(
         thread_diff_evaluation = None;
     }
 
-    telemetry::event!(
-        "Agent Eval Completed",
-        cohort_id = cohort_id,
-        example_name = example.name.clone(),
-        round = round,
-        diff_evaluation = diff_evaluation,
-        thread_evaluation = thread_diff_evaluation,
-        tool_metrics = run_output.tool_metrics,
-        response_count = run_output.response_count,
-        token_usage = run_output.token_usage,
-        model = model.telemetry_id(),
-        model_provider = model.provider_id().to_string(),
-        repository_url = example.base.url.clone(),
-        repository_revision = example.base.revision.clone(),
-        diagnostics_before = run_output.diagnostics_before,
-        diagnostics_after = run_output.diagnostics_after,
-        commit_id = commit_id
-    );
+    let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1");
+    if enable_telemetry {
+        telemetry::event!(
+            "Agent Eval Completed",
+            cohort_id = cohort_id,
+            example_name = example.name.clone(),
+            round = round,
+            diff_evaluation = diff_evaluation,
+            thread_evaluation = thread_diff_evaluation,
+            tool_metrics = run_output.tool_metrics,
+            response_count = run_output.response_count,
+            token_usage = run_output.token_usage,
+            model = model.telemetry_id(),
+            model_provider = model.provider_id().to_string(),
+            repository_url = example.base.url.clone(),
+            repository_revision = example.base.revision.clone(),
+            diagnostics_before = run_output.diagnostics_before,
+            diagnostics_after = run_output.diagnostics_after,
+            commit_id = commit_id
+        );
+    }
 
     judge_output
 }
