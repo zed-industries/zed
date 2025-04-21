@@ -369,19 +369,19 @@ impl SwitchColor {
             }
             SwitchColor::Accent => {
                 let status = cx.theme().status();
-                (status.info.opacity(0.6), status.info_border)
+                (status.info.opacity(0.4), status.info.opacity(0.2))
             }
             SwitchColor::Error => {
                 let status = cx.theme().status();
-                (status.error.opacity(0.6), status.error_border)
+                (status.error.opacity(0.4), status.error.opacity(0.2))
             }
             SwitchColor::Warning => {
                 let status = cx.theme().status();
-                (status.warning.opacity(0.6), status.warning_border)
+                (status.warning.opacity(0.4), status.warning.opacity(0.2))
             }
             SwitchColor::Success => {
                 let status = cx.theme().status();
-                (status.success.opacity(0.6), status.success_border)
+                (status.success.opacity(0.4), status.success.opacity(0.2))
             }
             SwitchColor::Custom(color) => (*color, color.opacity(0.6)),
         }
@@ -467,18 +467,17 @@ impl RenderOnce for Switch {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_on = self.toggle_state == ToggleState::Selected;
         let adjust_ratio = if is_light(cx) { 1.5 } else { 1.0 };
+
         let base_color = cx.theme().colors().text;
         let thumb_color = base_color;
-
-        // Get colors based on the selected color
         let (bg_color, border_color) = self.color.get_colors(is_on, cx);
 
-        // Lighter themes need higher contrast borders
-        let border_hover_color = if is_on {
-            border_color.blend(base_color.opacity(0.16 * adjust_ratio))
+        let bg_hover_color = if is_on {
+            bg_color.blend(base_color.opacity(0.16 * adjust_ratio))
         } else {
-            border_color.blend(base_color.opacity(0.05 * adjust_ratio))
+            bg_color.blend(base_color.opacity(0.05 * adjust_ratio))
         };
+
         let thumb_opacity = match (is_on, self.disabled) {
             (_, true) => 0.2,
             (true, false) => 1.0,
@@ -495,16 +494,15 @@ impl RenderOnce for Switch {
                 h_flex()
                     .when(is_on, |on| on.justify_end())
                     .when(!is_on, |off| off.justify_start())
-                    .items_center()
                     .size_full()
                     .rounded_full()
                     .px(DynamicSpacing::Base02.px(cx))
                     .bg(bg_color)
+                    .when(!self.disabled, |this| {
+                        this.group_hover(group_id.clone(), |el| el.bg(bg_hover_color))
+                    })
                     .border_1()
                     .border_color(border_color)
-                    .when(!self.disabled, |this| {
-                        this.group_hover(group_id.clone(), |el| el.border_color(border_hover_color))
-                    })
                     .child(
                         div()
                             .size(DynamicSpacing::Base12.rems(cx))
