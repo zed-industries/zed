@@ -3,6 +3,16 @@ name: Run Agent Eval
 on:
   schedule:
     - cron: "0 * * * *"
+  push:
+    branches:
+      - main
+      - "v[0-9]+.[0-9]+.x"
+    tags:
+      - "v*"
+
+  pull_request:
+    branches:
+      - "**"
   workflow_dispatch:
 
 concurrency:
