@@ -148,12 +148,13 @@ fn handle_get_min_max_info_msg(
     let lock = state_ptr.state.borrow();
     if let Some(min_size) = lock.min_size {
         let scale_factor = lock.scale_factor;
+        let boarder_offset = lock.border_offset;
         drop(lock);
 
         unsafe {
             let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
-            minmax_info.ptMinTrackSize.x = min_size.width.scale(scale_factor).0 as i32;
-            minmax_info.ptMinTrackSize.y = min_size.height.scale(scale_factor).0 as i32;
+            minmax_info.ptMinTrackSize.x = min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
+            minmax_info.ptMinTrackSize.y = min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
         }
         Some(0)
     } else {
