@@ -832,7 +832,6 @@ impl TerminalView {
                 }),
         )
     }
-
 }
 
 fn subscribe_for_terminal_events(

@@ -1554,8 +1554,9 @@ impl Terminal {
             self.last_content.terminal_bounds,
             self.last_content.display_offset,
         );
-        let selection = Selection::new(SelectionType::Semantic, point, side);  
-        self.events.push_back(InternalEvent::SetSelection(Some((selection, point))));  
+        let selection = Selection::new(SelectionType::Semantic, point, side);
+        self.events
+            .push_back(InternalEvent::SetSelection(Some((selection, point))));
     }
 
     pub fn mouse_drag(
