@@ -11,6 +11,8 @@ use gpui::{
     list,
 };
 use language::LanguageRegistry;
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
@@ -185,6 +187,7 @@ impl MarkdownPreviewView {
                                             })
                                         }
                                     });
+
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);
 
@@ -195,7 +198,9 @@ impl MarkdownPreviewView {
 
                             div()
                                 .id(ix)
-                                .when(should_apply_padding, |this| this.pb_3())
+                                .when(should_apply_padding, |this| {
+                                    this.pb(render_cx.scaled_rems(0.75))
+                                })
                                 .group("markdown-block")
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
@@ -234,7 +239,11 @@ impl MarkdownPreviewView {
                                     container.child(
                                         div()
                                             .relative()
-                                            .child(div().pl_4().child(rendered_block))
+                                            .child(
+                                                div()
+                                                    .pl(render_cx.scaled_rems(1.0))
+                                                    .child(rendered_block),
+                                            )
                                             .child(indicator.absolute().left_0().top_0()),
                                     )
                                 })
@@ -504,6 +513,8 @@ impl Item for MarkdownPreviewView {
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
+        let buffer_line_height = ThemeSettings::get_global(cx).buffer_line_height;
         v_flex()
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
@@ -511,6 +522,8 @@ impl Render for MarkdownPreviewView {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
+            .text_size(buffer_size)
+            .line_height(relative(buffer_line_height.value()))
             .child(
                 div()
                     .flex_grow()
