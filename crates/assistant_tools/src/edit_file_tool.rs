@@ -253,10 +253,7 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(
-            tool.still_streaming_ui_text(&input),
-            "src/main.rs Fix error handling"
-        );
+        assert_eq!(tool.still_streaming_ui_text(&input), "Fix error handling");
     }
 
     #[test]
