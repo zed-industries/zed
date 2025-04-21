@@ -663,42 +663,4 @@ mod tests {
                 > PathBuf::from(RUNS_DIR).to_string_lossy().len()
         );
     }
-
-    #[test]
-    fn test_run_directory_creation_with_cohort_id() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_runs_dir = temp_dir.path().join("runs");
-        std::fs::create_dir(&temp_runs_dir).unwrap();
-
-        let custom_cohort_id = "test-cohort-xyz";
-        let run_dir_with_custom_id =
-            create_run_directory(&temp_runs_dir, Some(custom_cohort_id.to_string()));
-
-        let expected_dir = temp_runs_dir.join(custom_cohort_id);
-        assert_eq!(run_dir_with_custom_id, expected_dir);
-        assert!(run_dir_with_custom_id.exists());
-
-        let run_dir_with_default_id = create_run_directory(&temp_runs_dir, None);
-
-        assert!(run_dir_with_default_id.exists());
-        assert_ne!(run_dir_with_default_id, temp_runs_dir);
-        assert!(
-            run_dir_with_default_id.to_string_lossy().len() > temp_runs_dir.to_string_lossy().len()
-        );
-
-        let dir_name = run_dir_with_default_id
-            .file_name()
-            .unwrap()
-            .to_string_lossy();
-        assert!(dir_name.chars().next().unwrap().is_ascii_digit());
-    }
-
-    fn create_run_directory(runs_dir: &std::path::Path, cohort_id: Option<String>) -> PathBuf {
-        let dir_path = runs_dir
-            .join(cohort_id.unwrap_or_else(|| {
-                format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"))
-            }));
-        std::fs::create_dir_all(&dir_path).unwrap();
-        dir_path
-    }
 }
