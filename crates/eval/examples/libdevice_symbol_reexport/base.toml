@@ -1,3 +1,4 @@
 url = "https://github.com/Rust-GPU/Rust-CUDA.git"
 revision = "728013419b6c4c80e099a42413574c36a9aff9c7"
 language_extension = "rs"
+allow_preexisting_diagnostics = true
