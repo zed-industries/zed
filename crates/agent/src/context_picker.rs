@@ -19,11 +19,14 @@ use gpui::{
 };
 use multi_buffer::MultiBufferRow;
 use project::{Entry, ProjectPath};
+use prompt_store::UserPromptId;
+use rules_context_picker::RulesContextEntry;
 use symbol_context_picker::SymbolContextPicker;
 use thread_context_picker::{ThreadContextEntry, render_thread_context_entry};
 use ui::{
     ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor, prelude::*,
 };
+use uuid::Uuid;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::AssistantPanel;
@@ -654,6 +657,7 @@ pub enum MentionLink {
     Symbol(ProjectPath, String),
     Fetch(String),
     Thread(ThreadId),
+    Rules(UserPromptId),
 }
 
 impl MentionLink {
@@ -661,14 +665,16 @@ impl MentionLink {
     const SYMBOL: &str = "@symbol";
     const THREAD: &str = "@thread";
     const FETCH: &str = "@fetch";
+    const RULES: &str = "@rules";
 
     const SEPARATOR: &str = ":";
 
     pub fn is_valid(url: &str) -> bool {
         url.starts_with(Self::FILE)
             || url.starts_with(Self::SYMBOL)
-            || url.starts_with(Self::FETCH)
             || url.starts_with(Self::THREAD)
+            || url.starts_with(Self::FETCH)
+            || url.starts_with(Self::RULES)
     }
 
     pub fn for_file(file_name: &str, full_path: &str) -> String {
@@ -685,12 +691,16 @@ impl MentionLink {
         )
     }
 
+    pub fn for_thread(thread: &ThreadContextEntry) -> String {
+        format!("[@{}]({}:{})", thread.summary, Self::THREAD, thread.id)
+    }
+
     pub fn for_fetch(url: &str) -> String {
         format!("[@{}]({}:{})", url, Self::FETCH, url)
     }
 
-    pub fn for_thread(thread: &ThreadContextEntry) -> String {
-        format!("[@{}]({}:{})", thread.summary, Self::THREAD, thread.id)
+    pub fn for_rules(rules: &RulesContextEntry) -> String {
+        format!("[@{}]({}:{})", rules.title, Self::RULES, rules.prompt_id.0)
     }
 
     pub fn try_parse(link: &str, workspace: &Entity<Workspace>, cx: &App) -> Option<Self> {
@@ -734,6 +744,10 @@ impl MentionLink {
                 Some(MentionLink::Thread(thread_id))
             }
             Self::FETCH => Some(MentionLink::Fetch(argument.to_string())),
+            Self::RULES => {
+                let prompt_id = UserPromptId(Uuid::try_parse(argument).ok()?);
+                Some(MentionLink::Rules(prompt_id))
+            }
             _ => None,
         }
     }

@@ -58,7 +58,6 @@ impl Match {
             Match::Thread(_) => 1.,
             Match::Symbol(_) => 1.,
             Match::Fetch(_) => 1.,
-            // todo! what should this be?
             Match::Rules(_) => 1.,
         }
     }
@@ -324,9 +323,8 @@ impl ContextPickerCompletionProvider {
             RULES_ICON
         };
 
-        let new_text = "todo!".to_string();
+        let new_text = MentionLink::for_rules(&rules);
         let new_text_len = new_text.len();
-
         Completion {
             replace_range: source_range.clone(),
             new_text,
