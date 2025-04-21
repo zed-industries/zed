@@ -43,7 +43,7 @@ pub struct BatchToolInput {
     ///       }
     ///     },
     ///     {
-    ///       "name": "regex_search",
+    ///       "name": "grep",
     ///       "input": {
     ///         "regex": "fn run\\("
     ///       }
@@ -91,7 +91,7 @@ pub struct BatchToolInput {
     /// {
     ///   "invocations": [
     ///     {
-    ///       "name": "regex_search",
+    ///       "name": "grep",
     ///       "input": {
     ///         "regex": "impl Database"
     ///       }

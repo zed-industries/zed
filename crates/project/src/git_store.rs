@@ -231,6 +231,7 @@ pub struct RepositorySnapshot {
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
     pub branch: Option<Branch>,
+    pub head_commit: Option<CommitDetails>,
     pub merge_conflicts: TreeSet<RepoPath>,
     pub merge_head_shas: Vec<SharedString>,
     pub scan_id: u64,
@@ -2426,6 +2427,7 @@ impl RepositorySnapshot {
             statuses_by_path: Default::default(),
             work_directory_abs_path,
             branch: None,
+            head_commit: None,
             merge_conflicts: Default::default(),
             merge_head_shas: Default::default(),
             scan_id: 0,
@@ -2435,6 +2437,7 @@ impl RepositorySnapshot {
     fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses: self
                 .statuses_by_path
                 .iter()
@@ -2499,6 +2502,7 @@ impl RepositorySnapshot {
 
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
             current_merge_conflicts: self
@@ -3748,6 +3752,11 @@ impl Repository {
                 .map(|path| RepoPath(Path::new(&path).into())),
         );
         self.snapshot.branch = update.branch_summary.as_ref().map(proto_to_branch);
+        self.snapshot.head_commit = update
+            .head_commit_details
+            .as_ref()
+            .map(proto_to_commit_details);
+
         self.snapshot.merge_conflicts = conflicted_paths;
 
         let edits = update
@@ -4322,6 +4331,26 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     }
 }
 
+fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
+    proto::GitCommitDetails {
+        sha: commit.sha.to_string(),
+        message: commit.message.to_string(),
+        commit_timestamp: commit.commit_timestamp,
+        author_email: commit.author_email.to_string(),
+        author_name: commit.author_name.to_string(),
+    }
+}
+
+fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
+    CommitDetails {
+        sha: proto.sha.clone().into(),
+        message: proto.message.clone().into(),
+        commit_timestamp: proto.commit_timestamp,
+        author_email: proto.author_email.clone().into(),
+        author_name: proto.author_name.clone().into(),
+    }
+}
+
 async fn compute_snapshot(
     id: RepositoryId,
     work_directory_abs_path: Arc<Path>,
@@ -4377,6 +4406,12 @@ async fn compute_snapshot(
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
 
+    // Useful when branch is None in detached head state
+    let head_commit = match backend.head_sha() {
+        Some(head_sha) => backend.show(head_sha).await.ok(),
+        None => None,
+    };
+
     let snapshot = RepositorySnapshot {
         id,
         merge_message,
@@ -4384,6 +4419,7 @@ async fn compute_snapshot(
         work_directory_abs_path,
         scan_id: prev_snapshot.scan_id + 1,
         branch,
+        head_commit,
         merge_conflicts,
         merge_head_shas,
     };

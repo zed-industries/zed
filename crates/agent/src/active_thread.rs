@@ -1,8 +1,8 @@
 use crate::context::{AssistantContext, ContextId, format_context_as_string};
 use crate::context_picker::MentionLink;
 use crate::thread::{
-    LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
-    ThreadEvent, ThreadFeedback,
+    LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
+    ThreadFeedback,
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
@@ -23,7 +23,8 @@ use gpui::{
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolUseId, Role, StopReason,
+    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolUseId, RequestUsage, Role,
+    StopReason,
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
@@ -41,6 +42,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
+use zed_actions::assistant::OpenPromptLibrary;
 
 use crate::context_store::ContextStore;
 
@@ -63,6 +65,7 @@ pub struct ActiveThread {
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     expanded_code_blocks: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
+    last_usage: Option<RequestUsage>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     copied_code_block_ids: HashSet<(MessageId, usize)>,
     _subscriptions: Vec<Subscription>,
@@ -130,18 +133,23 @@ impl RenderedMessage {
     }
 
     fn push_segment(&mut self, segment: &MessageSegment, cx: &mut App) {
-        let rendered_segment = match segment {
-            MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
-                content: parse_markdown(text.into(), self.language_registry.clone(), cx),
-                scroll_handle: ScrollHandle::default(),
-            },
-            MessageSegment::Text(text) => RenderedMessageSegment::Text(parse_markdown(
-                text.into(),
-                self.language_registry.clone(),
-                cx,
-            )),
+        match segment {
+            MessageSegment::Thinking { text, .. } => {
+                self.segments.push(RenderedMessageSegment::Thinking {
+                    content: parse_markdown(text.into(), self.language_registry.clone(), cx),
+                    scroll_handle: ScrollHandle::default(),
+                })
+            }
+            MessageSegment::Text(text) => {
+                self.segments
+                    .push(RenderedMessageSegment::Text(parse_markdown(
+                        text.into(),
+                        self.language_registry.clone(),
+                        cx,
+                    )))
+            }
+            MessageSegment::RedactedThinking(_) => {}
         };
-        self.segments.push(rendered_segment);
     }
 }
 
@@ -500,7 +508,6 @@ fn render_markdown_code_block(
         .blend(cx.theme().colors().editor_foreground.opacity(0.01));
 
     let codeblock_header = h_flex()
-        .group("codeblock_header")
         .py_1()
         .pl_1p5()
         .pr_1()
@@ -515,7 +522,7 @@ fn render_markdown_code_block(
             h_flex()
                 .gap_1()
                 .child(
-                    div().visible_on_hover("codeblock_header").child(
+                    div().visible_on_hover("codeblock_container").child(
                         IconButton::new(
                             ("copy-markdown-code", ix),
                             if codeblock_was_copied {
@@ -597,6 +604,7 @@ fn render_markdown_code_block(
         );
 
     v_flex()
+        .group("codeblock_container")
         .my_2()
         .overflow_hidden()
         .rounded_lg()
@@ -734,6 +742,7 @@ impl ActiveThread {
             hide_scrollbar_task: None,
             editing_message: None,
             last_error: None,
+            last_usage: None,
             copied_code_block_ids: HashSet::default(),
             notifications: Vec::new(),
             _subscriptions: subscriptions,
@@ -790,6 +799,10 @@ impl ActiveThread {
 
     pub fn clear_last_error(&mut self) {
         self.last_error.take();
+    }
+
+    pub fn last_usage(&self) -> Option<RequestUsage> {
+        self.last_usage
     }
 
     /// Returns the editing message id and the estimated token count in the content
@@ -875,6 +888,9 @@ impl ActiveThread {
         match event {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
+            }
+            ThreadEvent::UsageUpdated(usage) => {
+                self.last_usage = Some(*usage);
             }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryGenerated
@@ -1201,6 +1217,8 @@ impl ActiveThread {
                 }
 
                 let request = language_model::LanguageModelRequest {
+                    thread_id: None,
+                    prompt_id: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: language_model::Role::User,
                         content: vec![content.into()],
@@ -1266,7 +1284,8 @@ impl ActiveThread {
         }
 
         self.thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.model, RequestKind::Chat, cx)
+            thread.advance_prompt_id();
+            thread.send_to_model(model.model, cx)
         });
         cx.notify();
     }
@@ -2938,53 +2957,116 @@ impl ActiveThread {
             return div().into_any();
         };
 
+        let default_user_rules_text = if project_context.default_user_rules.is_empty() {
+            None
+        } else if project_context.default_user_rules.len() == 1 {
+            let user_rules = &project_context.default_user_rules[0];
+
+            match user_rules.title.as_ref() {
+                Some(title) => Some(format!("Using \"{title}\" user rule")),
+                None => Some("Using user rule".into()),
+            }
+        } else {
+            Some(format!(
+                "Using {} user rules",
+                project_context.default_user_rules.len()
+            ))
+        };
+
+        let first_default_user_rules_id = project_context
+            .default_user_rules
+            .first()
+            .map(|user_rules| user_rules.uuid);
+
         let rules_files = project_context
             .worktrees
             .iter()
             .filter_map(|worktree| worktree.rules_file.as_ref())
             .collect::<Vec<_>>();
 
-        let label_text = match rules_files.as_slice() {
-            &[] => return div().into_any(),
-            &[rules_file] => {
-                format!("Using {:?} file", rules_file.path_in_worktree)
-            }
-            rules_files => {
-                format!("Using {} rules files", rules_files.len())
-            }
+        let rules_file_text = match rules_files.as_slice() {
+            &[] => None,
+            &[rules_file] => Some(format!(
+                "Using project {:?} file",
+                rules_file.path_in_worktree
+            )),
+            rules_files => Some(format!("Using {} project rules files", rules_files.len())),
         };
 
-        div()
+        if default_user_rules_text.is_none() && rules_file_text.is_none() {
+            return div().into_any();
+        }
+
+        v_flex()
             .pt_2()
             .px_2p5()
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_0p5()
-                    .child(
+            .gap_1()
+            .when_some(
+                default_user_rules_text,
+                |parent, default_user_rules_text| {
+                    parent.child(
                         h_flex()
-                            .gap_1p5()
+                            .w_full()
                             .child(
                                 Icon::new(IconName::File)
                                     .size(IconSize::XSmall)
                                     .color(Color::Disabled),
                             )
                             .child(
-                                Label::new(label_text)
+                                Label::new(default_user_rules_text)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
-                                    .buffer_font(cx),
+                                    .truncate()
+                                    .buffer_font(cx)
+                                    .ml_1p5()
+                                    .mr_0p5(),
+                            )
+                            .child(
+                                IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Ignored)
+                                    // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
+                                    .tooltip(Tooltip::text("View User Rules"))
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(OpenPromptLibrary {
+                                                prompt_to_focus: first_default_user_rules_id,
+                                            }),
+                                            cx,
+                                        )
+                                    }),
                             ),
                     )
-                    .child(
-                        IconButton::new("open-rule", IconName::ArrowUpRightAlt)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Ignored)
-                            .on_click(cx.listener(Self::handle_open_rules))
-                            .tooltip(Tooltip::text("View Rules")),
-                    ),
+                },
             )
+            .when_some(rules_file_text, |parent, rules_file_text| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .child(
+                            Icon::new(IconName::File)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                        .child(
+                            Label::new(rules_file_text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx)
+                                .ml_1p5()
+                                .mr_0p5(),
+                        )
+                        .child(
+                            IconButton::new("open-rule", IconName::ArrowUpRightAlt)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                .on_click(cx.listener(Self::handle_open_rules))
+                                .tooltip(Tooltip::text("View Rules")),
+                        ),
+                )
+            })
             .into_any()
     }
 

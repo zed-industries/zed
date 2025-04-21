@@ -46,6 +46,7 @@ impl From<Role> for String {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[serde(rename = "codestral-latest", alias = "codestral-latest")]
+    #[default]
     CodestralLatest,
     #[serde(rename = "mistral-large-latest", alias = "mistral-large-latest")]
     MistralLargeLatest,
@@ -54,7 +55,6 @@ pub enum Model {
     #[serde(rename = "open-mistral-nemo", alias = "open-mistral-nemo")]
     OpenMistralNemo,
     #[serde(rename = "open-codestral-mamba", alias = "open-codestral-mamba")]
-    #[default]
     OpenCodestralMamba,
 
     #[serde(rename = "custom")]
@@ -69,6 +69,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Model::MistralSmallLatest
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "codestral-latest" => Ok(Self::CodestralLatest),

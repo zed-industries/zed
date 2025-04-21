@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::format_context_as_string;
+use crate::context::{AssistantContext, format_context_as_string};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -34,7 +34,7 @@ use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::{ContextStore, refresh_context_store_text};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
-use crate::thread::{RequestKind, Thread, TokenUsageRatio};
+use crate::thread::{Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
@@ -234,7 +234,7 @@ impl MessageEditor {
         }
 
         self.set_editor_is_expanded(false, cx);
-        self.send_to_model(RequestKind::Chat, window, cx);
+        self.send_to_model(window, cx);
 
         cx.notify();
     }
@@ -249,12 +249,7 @@ impl MessageEditor {
             .is_some()
     }
 
-    fn send_to_model(
-        &mut self,
-        request_kind: RequestKind,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(ConfiguredModel { model, provider }) = model_registry.default_model() else {
             return;
@@ -293,6 +288,21 @@ impl MessageEditor {
                 })
                 .log_err();
 
+            context_store
+                .update(cx, |context_store, cx| {
+                    let excerpt_ids = context_store
+                        .context()
+                        .iter()
+                        .filter(|ctx| matches!(ctx, AssistantContext::Excerpt(_)))
+                        .map(|ctx| ctx.id())
+                        .collect::<Vec<_>>();
+
+                    for id in excerpt_ids {
+                        context_store.remove_context(id, cx);
+                    }
+                })
+                .log_err();
+
             if let Some(wait_for_summaries) = context_store
                 .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
                 .log_err()
@@ -315,7 +325,8 @@ impl MessageEditor {
             // Send to model after summaries are done
             thread
                 .update(cx, |thread, cx| {
-                    thread.send_to_model(model, request_kind, cx);
+                    thread.advance_prompt_id();
+                    thread.send_to_model(model, cx);
                 })
                 .log_err();
         })
@@ -329,7 +340,7 @@ impl MessageEditor {
 
         if cancelled {
             self.set_editor_is_expanded(false, cx);
-            self.send_to_model(RequestKind::Chat, window, cx);
+            self.send_to_model(window, cx);
         }
     }
 
@@ -998,6 +1009,8 @@ impl MessageEditor {
                 }
 
                 let request = language_model::LanguageModelRequest {
+                    thread_id: None,
+                    prompt_id: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: language_model::Role::User,
                         content: vec![content.into()],

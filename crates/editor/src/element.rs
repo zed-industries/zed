@@ -2092,8 +2092,7 @@ impl EditorElement {
                 })) = editor.context_menu.borrow().as_ref()
                 {
                     actions
-                        .tasks
-                        .as_ref()
+                        .tasks()
                         .map(|tasks| tasks.position.to_display_point(snapshot).row())
                         .or(*deployed_from_indicator)
                 } else {

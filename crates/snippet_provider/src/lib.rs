@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::Result;
 use collections::{BTreeMap, BTreeSet, HashMap};
-use format::VSSnippetsFile;
+use format::VsSnippetsFile;
 use fs::Fs;
 use futures::stream::StreamExt;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
@@ -32,7 +32,7 @@ fn file_stem_to_key(stem: &str) -> SnippetKind {
     }
 }
 
-fn file_to_snippets(file_contents: VSSnippetsFile) -> Vec<Arc<Snippet>> {
+fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
     let mut snippets = vec![];
     for (prefix, snippet) in file_contents.snippets {
         let prefixes = snippet
@@ -98,7 +98,7 @@ async fn process_updates(
                 let Some(file_contents) = contents else {
                     return;
                 };
-                let Ok(as_json) = serde_json_lenient::from_str::<VSSnippetsFile>(&file_contents)
+                let Ok(as_json) = serde_json_lenient::from_str::<VsSnippetsFile>(&file_contents)
                 else {
                     return;
                 };

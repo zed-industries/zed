@@ -12,7 +12,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
+use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
 use text::{Point, PointUtf16};
 
 use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
