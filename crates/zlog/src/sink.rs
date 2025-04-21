@@ -257,6 +257,7 @@ mod tests {
         assert_eq!(size.load(Ordering::Relaxed), 0);
     }
 
+    /// Regression test, ensuring that if log level values change we are made aware
     #[test]
     fn test_log_level_names() {
         assert_eq!(LEVEL_OUTPUT_STRINGS[log::Level::Error as usize], "ERROR");
