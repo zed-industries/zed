@@ -986,6 +986,7 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
+            ThreadEvent::ReceivedTextChunk => {}
         }
     }
 

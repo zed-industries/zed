@@ -1232,6 +1232,7 @@ impl Thread {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
+                                cx.emit(ThreadEvent::ReceivedTextChunk);
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
                                         last_message.push_text(&chunk);
@@ -2185,6 +2186,7 @@ pub enum ThreadEvent {
     ShowError(ThreadError),
     UsageUpdated(RequestUsage),
     StreamedCompletion,
+    ReceivedTextChunk,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
     Stopped(Result<StopReason, Arc<anyhow::Error>>),
