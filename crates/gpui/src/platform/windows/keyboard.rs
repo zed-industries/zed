@@ -659,4 +659,59 @@ mod tests {
             unsafe { UnloadKeyboardLayout(keyboard).unwrap() };
         }
     }
+
+    #[test]
+    fn test_map_for_char() {
+        let mapper = WindowsKeyboardMapper::new();
+        // Test letter keys
+        {
+            let mut modifiers = Modifiers::default();
+            for c in 'a'..='z' {
+                let key = c.to_string();
+                let mapped_key = mapper.map_for_char(&key, &mut modifiers).unwrap();
+                assert_eq!(mapped_key, key);
+            }
+        }
+        // Test number keys
+        {
+            let mut modifiers = Modifiers::default();
+            for c in '0'..='9' {
+                let key = c.to_string();
+                let mapped_key = mapper.map_for_char(&key, &mut modifiers).unwrap();
+                assert_eq!(mapped_key, key);
+            }
+        }
+        // Test number keys with shift
+        {
+            let shift_pairs = [
+                ("1", "!"),
+                ("2", "@"),
+                ("3", "#"),
+                ("4", "$"),
+                ("5", "%"),
+                ("6", "^"),
+                ("7", "&"),
+                ("8", "*"),
+                ("9", "("),
+                ("0", ")"),
+                ("`", "~"),
+                ("-", "_"),
+                ("=", "+"),
+                ("[", "{"),
+                ("]", "}"),
+                ("\\", "|"),
+                (";", ":"),
+                ("'", "\""),
+                (",", "<"),
+                (".", ">"),
+                ("/", "?"),
+            ];
+            for (key, shift_key) in shift_pairs {
+                let mut modifiers = Modifiers::default();
+                let mapped_key = mapper.map_for_char(shift_key, &mut modifiers).unwrap();
+                assert_eq!(mapped_key, key.to_string());
+                assert!(modifiers.shift);
+            }
+        }
+    }
 }
