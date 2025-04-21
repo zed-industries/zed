@@ -5,6 +5,7 @@ use gpui::{App, Entity, SharedString, Task};
 use language::{Buffer, File};
 use language_model::{LanguageModelImage, LanguageModelRequestMessage};
 use project::{ProjectPath, Worktree};
+use prompt_store::UserPromptId;
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use text::{Anchor, BufferId};
@@ -12,6 +13,8 @@ use ui::IconName;
 use util::post_inc;
 
 use crate::thread::Thread;
+
+pub const RULES_ICON: IconName = IconName::Context;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextId(pub(crate) usize);
@@ -21,6 +24,7 @@ impl ContextId {
         Self(post_inc(&mut self.0))
     }
 }
+
 pub enum ContextKind {
     File,
     Directory,
@@ -28,6 +32,7 @@ pub enum ContextKind {
     Excerpt,
     FetchedUrl,
     Thread,
+    Rules,
     Image,
 }
 
@@ -40,6 +45,7 @@ impl ContextKind {
             ContextKind::Excerpt => IconName::Code,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
+            ContextKind::Rules => RULES_ICON,
             ContextKind::Image => IconName::Image,
         }
     }
@@ -53,6 +59,7 @@ pub enum AssistantContext {
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
     Excerpt(ExcerptContext),
+    Rules(RulesContext),
     Image(ImageContext),
 }
 
@@ -65,6 +72,7 @@ impl AssistantContext {
             Self::FetchedUrl(url) => url.id,
             Self::Thread(thread) => thread.id,
             Self::Excerpt(excerpt) => excerpt.id,
+            Self::Rules(rules) => rules.id,
             Self::Image(image) => image.id,
         }
     }
@@ -198,6 +206,14 @@ pub struct ExcerptContext {
     pub context_buffer: ContextBuffer,
 }
 
+#[derive(Debug, Clone)]
+pub struct RulesContext {
+    pub id: ContextId,
+    pub prompt_id: UserPromptId,
+    pub title: SharedString,
+    pub text: SharedString,
+}
+
 /// Formats a collection of contexts into a string representation
 pub fn format_context_as_string<'a>(
     contexts: impl Iterator<Item = &'a AssistantContext>,
@@ -209,6 +225,7 @@ pub fn format_context_as_string<'a>(
     let mut excerpt_context = Vec::new();
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
+    let mut rules_context = Vec::new();
 
     for context in contexts {
         match context {
@@ -218,6 +235,7 @@ pub fn format_context_as_string<'a>(
             AssistantContext::Excerpt(context) => excerpt_context.push(context),
             AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context),
+            AssistantContext::Rules(context) => rules_context.push(context),
             AssistantContext::Image(_) => {}
         }
     }
@@ -228,6 +246,7 @@ pub fn format_context_as_string<'a>(
         && excerpt_context.is_empty()
         && fetch_context.is_empty()
         && thread_context.is_empty()
+        && rules_context.is_empty()
     {
         return None;
     }
@@ -292,6 +311,18 @@ pub fn format_context_as_string<'a>(
             result.push('\n');
         }
         result.push_str("</conversation_threads>\n");
+    }
+
+    if !rules_context.is_empty() {
+        result.push_str(
+            "<user_rules>\n\
+            The user has specified the following rules that should be applied:\n\n",
+        );
+        for context in &rules_context {
+            result.push_str(&context.text);
+            result.push('\n');
+        }
+        result.push_str("</user_rules>\n");
     }
 
     result.push_str("</context>\n");

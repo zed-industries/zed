@@ -396,6 +396,17 @@ impl AddedContext {
                 show_preview: None,
             },
 
+            AssistantContext::Rules(user_rules_context) => AddedContext {
+                id: user_rules_context.id,
+                kind: ContextKind::Rules,
+                name: user_rules_context.title.clone(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                status: ContextStatus::Ready,
+                show_preview: None,
+            },
+
             AssistantContext::Image(image_context) => AddedContext {
                 id: image_context.id,
                 kind: ContextKind::Image,

@@ -1,4 +1,4 @@
-use crate::context::{AssistantContext, ContextId, format_context_as_string};
+use crate::context::{AssistantContext, ContextId, RULES_ICON, format_context_as_string};
 use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
@@ -688,6 +688,12 @@ fn open_markdown_link(
             }
         }),
         Some(MentionLink::Fetch(url)) => cx.open_url(&url),
+        Some(MentionLink::Rules(prompt_id)) => window.dispatch_action(
+            Box::new(OpenPromptLibrary {
+                prompt_to_select: Some(prompt_id.0),
+            }),
+            cx,
+        ),
         None => cx.open_url(&text),
     }
 }
@@ -2957,10 +2963,10 @@ impl ActiveThread {
             return div().into_any();
         };
 
-        let default_user_rules_text = if project_context.default_user_rules.is_empty() {
+        let user_rules_text = if project_context.user_rules.is_empty() {
             None
-        } else if project_context.default_user_rules.len() == 1 {
-            let user_rules = &project_context.default_user_rules[0];
+        } else if project_context.user_rules.len() == 1 {
+            let user_rules = &project_context.user_rules[0];
 
             match user_rules.title.as_ref() {
                 Some(title) => Some(format!("Using \"{title}\" user rule")),
@@ -2969,14 +2975,14 @@ impl ActiveThread {
         } else {
             Some(format!(
                 "Using {} user rules",
-                project_context.default_user_rules.len()
+                project_context.user_rules.len()
             ))
         };
 
-        let first_default_user_rules_id = project_context
-            .default_user_rules
+        let first_user_rules_id = project_context
+            .user_rules
             .first()
-            .map(|user_rules| user_rules.uuid);
+            .map(|user_rules| user_rules.uuid.0);
 
         let rules_files = project_context
             .worktrees
@@ -2993,7 +2999,7 @@ impl ActiveThread {
             rules_files => Some(format!("Using {} project rules files", rules_files.len())),
         };
 
-        if default_user_rules_text.is_none() && rules_file_text.is_none() {
+        if user_rules_text.is_none() && rules_file_text.is_none() {
             return div().into_any();
         }
 
@@ -3001,45 +3007,42 @@ impl ActiveThread {
             .pt_2()
             .px_2p5()
             .gap_1()
-            .when_some(
-                default_user_rules_text,
-                |parent, default_user_rules_text| {
-                    parent.child(
-                        h_flex()
-                            .w_full()
-                            .child(
-                                Icon::new(IconName::File)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
-                            .child(
-                                Label::new(default_user_rules_text)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted)
-                                    .truncate()
-                                    .buffer_font(cx)
-                                    .ml_1p5()
-                                    .mr_0p5(),
-                            )
-                            .child(
-                                IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Ignored)
-                                    // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
-                                    .tooltip(Tooltip::text("View User Rules"))
-                                    .on_click(move |_event, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(OpenPromptLibrary {
-                                                prompt_to_focus: first_default_user_rules_id,
-                                            }),
-                                            cx,
-                                        )
-                                    }),
-                            ),
-                    )
-                },
-            )
+            .when_some(user_rules_text, |parent, user_rules_text| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .child(
+                            Icon::new(RULES_ICON)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                        .child(
+                            Label::new(user_rules_text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .truncate()
+                                .buffer_font(cx)
+                                .ml_1p5()
+                                .mr_0p5(),
+                        )
+                        .child(
+                            IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
+                                .tooltip(Tooltip::text("View User Rules"))
+                                .on_click(move |_event, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(OpenPromptLibrary {
+                                            prompt_to_select: first_user_rules_id,
+                                        }),
+                                        cx,
+                                    )
+                                }),
+                        ),
+                )
+            })
             .when_some(rules_file_text, |parent, rules_file_text| {
                 parent.child(
                     h_flex()
@@ -3316,6 +3319,12 @@ pub(crate) fn open_context(
                 }
             })
         }
+        AssistantContext::Rules(rules_context) => window.dispatch_action(
+            Box::new(OpenPromptLibrary {
+                prompt_to_select: Some(rules_context.prompt_id.0),
+            }),
+            cx,
+        ),
         AssistantContext::Image(_) => {}
     }
 }
