@@ -396,7 +396,7 @@ impl LocalMode {
     }
 
     fn request_initialization(&self, cx: &App) -> Task<Result<Capabilities>> {
-        let adapter_id = self.binary.adapter_name.to_string();
+        let adapter_id = self.definition.adapter.clone();
 
         self.request(Initialize { adapter_id }, cx.background_executor().clone())
     }

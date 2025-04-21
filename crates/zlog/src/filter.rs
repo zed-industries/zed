@@ -14,7 +14,7 @@ use log;
 static ENV_FILTER: OnceLock<env_config::EnvFilter> = OnceLock::new();
 static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
 
-const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
+pub const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
 /// The maximum log level of verbosity that is enabled by default.
 /// All messages more verbose than this level will be discarded
 /// by default unless specially configured.
@@ -34,7 +34,7 @@ static mut LEVEL_ENABLED_MAX_STATIC: log::LevelFilter = LEVEL_ENABLED_MAX_DEFAUL
 /// `trace` logs will be discarded.
 /// Therefore, it should always be `>= LEVEL_ENABLED_MAX_STATIC`
 // PERF: this doesn't need to be an atomic, we don't actually care about race conditions here
-static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFAULT as u8);
+pub static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFAULT as u8);
 
 pub fn init_env_filter(filter: env_config::EnvFilter) {
     if let Some(level_max) = filter.level_global {

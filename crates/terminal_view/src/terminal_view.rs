@@ -982,15 +982,6 @@ fn subscribe_for_terminal_events(
                 window.invalidate_character_coordinates();
                 cx.emit(SearchEvent::ActiveMatchChanged)
             }
-            Event::TaskLocatorReady { task_id, success } => {
-                if *success {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.debug_task_ready(task_id, cx);
-                        })
-                        .log_err();
-                }
-            }
         },
     );
     vec![terminal_subscription, terminal_events_subscription]
