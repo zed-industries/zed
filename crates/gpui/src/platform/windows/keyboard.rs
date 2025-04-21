@@ -47,54 +47,43 @@ impl KeyboardMapper for WindowsKeyboardMapper {
     }
 
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
-        if is_immutable_key(keystroke.key.as_str()) {
+        if is_immutable_key(keystroke.key.as_str())
+            || is_letter_key(keystroke.key.as_str())
+            || is_already_vim_style(&keystroke.modifiers)
+        {
             return Cow::Borrowed(keystroke);
         }
-        let mut modifiers = keystroke.modifiers;
-        let vkey = match keystroke.key.as_str() {
-            "a" => VK_A,
-            "b" => VK_B,
-            "c" => VK_C,
-            "d" => VK_D,
-            "e" => VK_E,
-            "f" => VK_F,
-            "g" => VK_G,
-            "h" => VK_H,
-            "i" => VK_I,
-            "j" => VK_J,
-            "k" => VK_K,
-            "l" => VK_L,
-            "m" => VK_M,
-            "n" => VK_N,
-            "o" => VK_O,
-            "p" => VK_P,
-            "q" => VK_Q,
-            "r" => VK_R,
-            "s" => VK_S,
-            "t" => VK_T,
-            "u" => VK_U,
-            "v" => VK_V,
-            "w" => VK_W,
-            "x" => VK_X,
-            "y" => VK_Y,
-            "z" => VK_Z,
-            key => {
-                if key.len() != 1 {
-                    log::error!(
-                        "Failed to convert keystroke to vim keystroke: {}",
-                        keystroke
-                    );
-                    return Cow::Borrowed(keystroke);
-                }
-                let Some(key) = self.get_vkey_from_char(key, &mut modifiers).log_err() else {
-                    log::error!(
-                        "Failed to convert keystroke to vim keystroke: {}",
-                        keystroke
-                    );
-                    return Cow::Borrowed(keystroke);
-                };
-                key
+        // This handles case 1, case 4 and case 5, where the keystroke outputs a single character
+        if let Some(key_char) = keystroke.key_char.as_ref() {
+            if key_char.len() == 1 {
+                return Cow::Owned(Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: key_char.clone(),
+                    key_char: Some(key_char.clone()),
+                });
             }
+        }
+        // Below handles case 2 and case 3, `ctrl-shit-4` -> `ctrl-$`, `alt-shift-3` -> `alt-#`
+        let mut modifiers = keystroke.modifiers;
+        let vkey = {
+            if keystroke.key.len() != 1 {
+                log::error!(
+                    "Failed to convert keystroke to vim keystroke: {}",
+                    keystroke
+                );
+                return Cow::Borrowed(keystroke);
+            }
+            let Some(key) = self
+                .get_vkey_from_char(keystroke.key.as_str(), &mut modifiers)
+                .log_err()
+            else {
+                log::error!(
+                    "Failed to convert keystroke to vim keystroke: {}",
+                    keystroke
+                );
+                return Cow::Borrowed(keystroke);
+            };
+            key
         };
         let new_key = {
             let mut state = [0; 256];
@@ -334,6 +323,64 @@ fn is_immutable_key(key: &str) -> bool {
             | "fn"
             | "menu"
     )
+}
+
+fn is_letter_key(key: &str) -> bool {
+    matches!(
+        key,
+        "a" | "b"
+            | "c"
+            | "d"
+            | "e"
+            | "f"
+            | "g"
+            | "h"
+            | "i"
+            | "j"
+            | "k"
+            | "l"
+            | "m"
+            | "n"
+            | "o"
+            | "p"
+            | "q"
+            | "r"
+            | "s"
+            | "t"
+            | "u"
+            | "v"
+            | "w"
+            | "x"
+            | "y"
+            | "z"
+    )
+}
+
+/// The `already_vim_style` function determines whether the current modifier key combination is compatible with Vim-style keyboard handling.
+///
+/// | Shift | Control |  Alt  | Return Value | Explanation |
+/// |-------|---------|-------|--------------|-------------|
+/// | true  | true    | true  | false | Any combination with Shift pressed is not Vim-style |
+/// | true  | true    | false | false | Any combination with Shift pressed is not Vim-style |
+/// | true  | false   | true  | false | Any combination with Shift pressed is not Vim-style |
+/// | true  | false   | false | false | Any combination with Shift pressed is not Vim-style |
+/// | false | true    | true  | false | Ctrl+Alt combination is not Vim-style |
+/// | false | true    | false | true  | Control-only is considered Vim-style |
+/// | false | false   | true  | true  | Alt-only is considered Vim-style |
+/// | false | false   | false | true  | No modifiers is considered Vim-style |
+///
+/// The function evaluates all possible modifier combinations to determine if they're already in a format suitable for Vim-style keyboard handling.
+fn is_already_vim_style(modifiers: &Modifiers) -> bool {
+    match (modifiers.shift, modifiers.control, modifiers.alt) {
+        (true, true, true) => false,   // case 1
+        (true, true, false) => false,  // case 2
+        (true, false, true) => false,  // case 3
+        (true, false, false) => false, // case 4
+        (false, true, true) => false,  // case 5
+        (false, true, false) => true,
+        (false, false, true) => true,
+        (false, false, false) => true,
+    }
 }
 
 fn get_modifiers(high: i8) -> (bool, bool, bool) {
