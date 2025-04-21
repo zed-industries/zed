@@ -1759,7 +1759,7 @@ impl Thread {
                 thread_data,
                 final_project_snapshot
             );
-            client.telemetry().flush_events();
+            client.telemetry().flush_events().await;
 
             Ok(())
         })
@@ -1804,7 +1804,7 @@ impl Thread {
                     thread_data,
                     final_project_snapshot
                 );
-                client.telemetry().flush_events();
+                client.telemetry().flush_events().await;
 
                 Ok(())
             })
@@ -2060,7 +2060,7 @@ impl Thread {
                             github_login = github_login
                         );
 
-                        client.telemetry().flush_events();
+                        client.telemetry().flush_events().await;
                     }
                 }
             })

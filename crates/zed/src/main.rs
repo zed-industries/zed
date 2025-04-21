@@ -606,7 +606,7 @@ fn main() {
             setting = "keymap",
             value = BaseKeymap::get_global(cx).to_string()
         );
-        telemetry.flush_events();
+        telemetry.flush_events().detach();
 
         let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
