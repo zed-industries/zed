@@ -6,7 +6,7 @@ use crate::context::{AssistantContext, format_context_as_string};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
-use editor::actions::MoveUp;
+use editor::actions::{MoveUp, Paste};
 use editor::{
     ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, MultiBuffer,
@@ -14,8 +14,8 @@ use editor::{
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, ClipboardEntry, Entity, EventEmitter, Focusable, Subscription,
+    Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
 use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage};
@@ -370,6 +370,34 @@ impl MessageEditor {
         }
     }
 
+    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        let images = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.into_entries()
+                    .filter_map(|entry| {
+                        if let ClipboardEntry::Image(image) = entry {
+                            Some(image)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if images.is_empty() {
+            return;
+        }
+        cx.stop_propagation();
+
+        self.context_store.update(cx, |store, cx| {
+            for image in images {
+                store.add_image(image, cx);
+            }
+        });
+    }
+
     fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
         AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
     }
@@ -445,6 +473,7 @@ impl MessageEditor {
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::toggle_chat_mode))
             .on_action(cx.listener(Self::expand_message_editor))
+            .capture_action(cx.listener(Self::paste))
             .gap_2()
             .p_2()
             .bg(editor_bg_color)
