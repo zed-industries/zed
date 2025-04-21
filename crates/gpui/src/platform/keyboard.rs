@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use super::{Keystroke, WindowsKeyboardMapper};
+use super::Keystroke;
 
 /// A trait for platform-specific keyboard layouts
 pub trait PlatformKeyboardLayout {
@@ -33,14 +33,20 @@ impl KeyboardMapper for EmptyKeyboardMapper {
 
 /// TODO:
 pub struct TestKeyboardMapper {
-    mapper: WindowsKeyboardMapper,
+    #[cfg(target_os = "windows")]
+    mapper: super::WindowsKeyboardMapper,
+    #[cfg(not(target_os = "windows"))]
+    mapper: EmptyKeyboardMapper,
 }
 
 impl TestKeyboardMapper {
     /// TODO:
     pub fn new() -> Self {
         Self {
-            mapper: WindowsKeyboardMapper::new(),
+            #[cfg(target_os = "windows")]
+            mapper: super::WindowsKeyboardMapper::new(),
+            #[cfg(not(target_os = "windows"))]
+            mapper: EmptyKeyboardMapper,
         }
     }
 }
