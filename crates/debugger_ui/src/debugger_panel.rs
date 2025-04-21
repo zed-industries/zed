@@ -267,6 +267,7 @@ impl DebugPanel {
         let Some(project) = self.project.upgrade() else {
             return;
         };
+        let dap_store = project.read(cx).dap_store().clone();
 
         cx.spawn(async move |_, cx| {
             let task_context = if let Some(task) = task_contexts {
@@ -277,8 +278,8 @@ impl DebugPanel {
                 task::TaskContext::default()
             };
 
-            project
-                .update(cx, |project, cx| {
+            dap_store
+                .update(cx, |dap_store, cx| {
                     let template = DebugTaskTemplate {
                         locator: None,
                         definition: definition.clone(),
@@ -288,9 +289,9 @@ impl DebugPanel {
                         .resolve_task("debug_task", &task_context)
                         .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
                     {
-                        project.start_debug_session(debug_config.definition, cx)
+                        dap_store.start_session(debug_config.definition, None, cx)
                     } else {
-                        project.start_debug_session(definition, cx)
+                        dap_store.start_session(definition, None, cx)
                     }
                 })?
                 .await

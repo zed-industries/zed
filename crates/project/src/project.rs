@@ -1070,7 +1070,13 @@ impl Project {
                 cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone().into()));
 
             let dap_store = cx.new(|cx| {
-                DapStore::new_ssh(SSH_PROJECT_ID, ssh.clone(), breakpoint_store.clone(), cx)
+                DapStore::new_ssh(
+                    SSH_PROJECT_ID,
+                    ssh.clone(),
+                    worktree_store.clone(),
+                    breakpoint_store.clone(),
+                    cx,
+                )
             });
 
             let git_store = cx.new(|cx| {
@@ -1252,6 +1258,7 @@ impl Project {
             DapStore::new_collab(
                 remote_id,
                 client.clone().into(),
+                worktree_store.clone(),
                 breakpoint_store.clone(),
                 cx,
             )
@@ -1463,6 +1470,7 @@ impl Project {
         definition: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
+        self.dap_store.update(cx, |dap_stpo)
         let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
         };
@@ -1508,25 +1516,13 @@ impl Project {
                     binary.envs,
                     None,
                 );
-
-                binary = DebugAdapterBinary {
-                    command: program,
-                    arguments: args,
-                    envs: HashMap::default(),
-                    cwd: None,
-                    connection,
-                    request_args: binary.request_args.into(),
-                }
             };
 
-            let ret = this
-                .update(cx, |project, cx| {
-                    project.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.new_session(binary, definition, worktree.downgrade(), None, cx)
-                    })
-                })?
-                .1
-                .await;
+            let ret = this.update(cx, |project, cx| {
+                project.dap_store.update(cx, |dap_store, cx| {
+                    dap_store.start_session(definition, None, cx)
+                })
+            })?;
             ret
         });
         result

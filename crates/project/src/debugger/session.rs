@@ -28,7 +28,6 @@ use gpui::{
     Task, WeakEntity,
 };
 
-use rpc::AnyProtoClient;
 use serde_json::{Value, json};
 use smol::stream::StreamExt;
 use std::any::TypeId;
@@ -41,7 +40,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use task::{DebugTaskDefinition, DebugTaskTemplate};
+use task::DebugTaskDefinition;
 use text::{PointUtf16, ToPointUtf16};
 use util::{ResultExt, merge_json_value_into};
 use worktree::Worktree;
@@ -125,11 +124,11 @@ enum Mode {
 #[derive(Clone)]
 pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
-    definition: DebugTaskDefinition,
     binary: DebugAdapterBinary,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
+    _background_tasks: Vec<Task<()>>,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -148,49 +147,42 @@ fn client_source(abs_path: &Path) -> dap::Source {
 }
 
 impl LocalMode {
-    fn new(
+    async fn new(
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         worktree: WeakEntity<Worktree>,
         breakpoint_store: Entity<BreakpointStore>,
-        config: DebugTaskDefinition,
         binary: DebugAdapterBinary,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
+        background_tasks: Vec<Task<()>>,
         cx: AsyncApp,
-    ) -> Task<Result<Self>> {
-        cx.spawn(async move |cx| {
-            let message_handler = Box::new(move |message| {
-                messages_tx.unbounded_send(message).ok();
-            });
+    ) -> Result<Self> {
+        let message_handler = Box::new(move |message| {
+            messages_tx.unbounded_send(message).ok();
+        });
 
-            let client = Arc::new(
-                if let Some(client) = parent_session
-                    .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
-                    .flatten()
-                {
-                    client
-                        .reconnect(session_id, binary.clone(), message_handler, cx.clone())
-                        .await?
-                } else {
-                    DebugAdapterClient::start(
-                        session_id,
-                        binary.clone(),
-                        message_handler,
-                        cx.clone(),
-                    )
+        let client = Arc::new(
+            if let Some(client) = parent_session
+                .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
+                .flatten()
+            {
+                client
+                    .reconnect(session_id, binary.clone(), message_handler, cx.clone())
+                    .await?
+            } else {
+                DebugAdapterClient::start(session_id, binary.clone(), message_handler, cx.clone())
                     .await
                     .with_context(|| "Failed to start communication with debug adapter")?
-                },
-            );
+            },
+        );
 
-            Ok(Self {
-                client,
-                breakpoint_store,
-                worktree,
-                tmp_breakpoint: None,
-                definition: config,
-                binary,
-            })
+        Ok(Self {
+            client,
+            breakpoint_store,
+            worktree,
+            tmp_breakpoint: None,
+            binary,
+            _background_tasks: background_tasks,
         })
     }
 
@@ -326,19 +318,10 @@ impl LocalMode {
         })
     }
 
-    pub fn label(&self) -> String {
-        self.definition.label.clone()
-    }
-
-    fn request_initialization(&self, cx: &App) -> Task<Result<Capabilities>> {
-        let adapter_id = self.definition.adapter.clone();
-
-        self.request(Initialize { adapter_id }, cx.background_executor().clone())
-    }
-
     fn initialize_sequence(
         &self,
         capabilities: &Capabilities,
+        definition: &DebugTaskDefinition,
         initialized_rx: oneshot::Receiver<()>,
         dap_store: WeakEntity<DapStore>,
         cx: &App,
@@ -346,7 +329,7 @@ impl LocalMode {
         let mut raw = self.binary.request_args.clone();
 
         merge_json_value_into(
-            self.definition.initialize_args.clone().unwrap_or(json!({})),
+            definition.initialize_args.clone().unwrap_or(json!({})),
             &mut raw.configuration,
         );
 
@@ -466,11 +449,6 @@ impl LocalMode {
         })
     }
 }
-impl From<RemoteConnection> for Mode {
-    fn from(value: RemoteConnection) -> Self {
-        Self::Building(value)
-    }
-}
 
 impl Mode {
     fn request_dap<R: DapCommand>(
@@ -487,7 +465,7 @@ impl Mode {
             Mode::Running(debug_adapter_client) => {
                 debug_adapter_client.request(request, cx.background_executor().clone())
             }
-            Mode::Building(remote_connection) => remote_connection.request(request, session_id, cx),
+            Mode::Building => Task::ready(Err(anyhow!("no adapter running"))),
         }
     }
 }
@@ -564,10 +542,11 @@ pub struct OutputToken(pub usize);
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
     mode: Mode,
+    definition: DebugTaskDefinition,
     pub(super) capabilities: Capabilities,
     id: SessionId,
     child_session_ids: HashSet<SessionId>,
-    parent_session: Option<SessionId>,
+    parent_session: Option<Entity<Session>>,
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
@@ -582,7 +561,6 @@ pub struct Session {
     requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
-    initialized_tx: oneshot::Sender<()>,
     _background_tasks: Vec<Task<()>>,
 }
 
@@ -685,17 +663,39 @@ impl Session {
         worktree: WeakEntity<Worktree>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
-        template: DebugTaskTemplate,
+        template: DebugTaskDefinition,
         start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
-        initialized_tx: oneshot::Sender<()>,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|cx| {
+        cx.new::<Self>(|cx| {
+            cx.subscribe(&breakpoint_store, |this, _, event, cx| match event {
+                BreakpointStoreEvent::BreakpointsUpdated(path, reason) => {
+                    if let Some(local) = (!this.ignore_breakpoints)
+                        .then(|| this.as_local_mut())
+                        .flatten()
+                    {
+                        local
+                            .send_breakpoints_from_path(path.clone(), *reason, cx)
+                            .detach();
+                    };
+                }
+                BreakpointStoreEvent::BreakpointsCleared(paths) => {
+                    if let Some(local) = (!this.ignore_breakpoints)
+                        .then(|| this.as_local_mut())
+                        .flatten()
+                    {
+                        local.unset_breakpoints_from_paths(paths, cx).detach();
+                    }
+                }
+                BreakpointStoreEvent::ActiveDebugLineChanged => {}
+            })
+            .detach();
+
             let this = Self {
                 mode: Mode::Building,
                 id: session_id,
                 child_session_ids: HashSet::default(),
-                parent_session: parent_session
+                parent_session,
                 capabilities: Capabilities::default(),
                 ignore_breakpoints: false,
                 variables: Default::default(),
@@ -711,64 +711,76 @@ impl Session {
                 locations: Default::default(),
                 is_session_terminated: false,
                 exception_breakpoints: Default::default(),
+                definition: template,
                 start_debugging_requests_tx,
-                initialized_tx,
             };
 
             this
         })
     }
 
-    pub fn boot(&mut self, binary: DebugAdapterBinary, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let mode = LocalMode::new(
-            self.id,
-            self.parent_session.clone(),
-            parent_session.clone(),
-            worktree,
-            breakpoint_store.clone(),
-            config.clone(),
-            binary,
-            message_tx,
-            cx.clone(),
-        )
-        .await?;
+    pub fn boot(
+        &mut self,
+        binary: DebugAdapterBinary,
+        definition: DebugTaskDefinition,
+        worktree: Entity<Worktree>,
+        breakpoint_store: Entity<BreakpointStore>,
+        dap_store: WeakEntity<DapStore>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let (message_tx, message_rx) = futures::channel::mpsc::unbounded();
+        let (initialized_tx, initialized_rx) = futures::channel::oneshot::channel();
+        let sesion_id = self.session_id();
+        let session = cx.entity();
 
-        create_local_session(
-            breakpoint_store,
-            session_id,
-            parent_session,
-            start_debugging_requests_tx,
-            initialized_tx,
-            message_rx,
-            mode,
-            cx,
-        );
+        let background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
+            let mut initialized_tx = Some(initialized_tx);
+            while let Some(message) = message_rx.next().await {
+                if let Message::Event(event) = message {
+                    if let Events::Initialized(_) = *event {
+                        if let Some(tx) = initialized_tx.take() {
+                            tx.send(()).ok();
+                        }
+                    } else {
+                        let Ok(_) = this.update(cx, |session, cx| {
+                            session.handle_dap_event(event, cx);
+                        }) else {
+                            break;
+                        };
+                    }
+                } else {
+                    let Ok(_) = self
+                        .start_debugging_requests_tx
+                        .unbounded_send((session_id, message))
+                    else {
+                        break;
+                    };
+                }
+            }
+        })];
 
-        self.mode = Mode::Running(())
-        // let seq_result = async || {
-        //     session
-        //         .update(cx, |session, cx| session.request_initialize(cx))?
-        //         .await?;
+        cx.spawn(async move |this, cx| {
+            let mode = LocalMode::new(
+                self.id,
+                self.parent_session.clone(),
+                worktree.downgrade(),
+                breakpoint_store.clone(),
+                binary,
+                message_tx,
+                background_tasks,
+                cx.clone(),
+            )
+            .await?;
+            this.update(cx, |this, cx| this.mode = Mode::Running(mode));
 
-        //     session
-        //         .update(cx, |session, cx| {
-        //             session.initialize_sequence(initialized_rx, this.clone(), cx)
-        //         })?
-        //         .await
-        // };
-        // match seq_result().await {
-        //     Ok(_) => {}
-        //     Err(error) => {
-        //         this.update(cx, |this, cx| {
-        //             cx.emit(DapStoreEvent::Notification(error.to_string()));
-        //             this.shutdown_session(session_id, cx)
-        //         })?
-        //         .await
-        //         .log_err();
+            this.update(cx, |session, cx| session.request_initialize(cx))?
+                .await?;
 
-        //         return Err(error);
-        //     }
-        // }
+            this.update(cx, |session, cx| {
+                session.initialize_sequence(initialized_rx, dap_store.clone(), cx)
+            })?
+            .await
+        })
     }
 
     pub fn session_id(&self) -> SessionId {
@@ -787,8 +799,10 @@ impl Session {
         self.child_session_ids.remove(&session_id);
     }
 
-    pub fn parent_id(&self) -> Option<SessionId> {
+    pub fn parent_id(&self, cx: &App) -> Option<SessionId> {
         self.parent_session
+            .as_ref()
+            .map(|session| session.read(cx).id)
     }
 
     pub fn capabilities(&self) -> &Capabilities {
@@ -803,18 +817,11 @@ impl Session {
     }
 
     pub fn adapter_name(&self) -> SharedString {
-        match &self.mode {
-            Mode::Running(local_mode) => local_mode.definition.adapter.clone().into(),
-            Mode::Building(remote_mode) => remote_mode._adapter_name.clone(),
-        }
+        self.definition.adapter.clone().into()
     }
 
-    pub fn configuration(&self) -> Option<DebugTaskDefinition> {
-        if let Mode::Running(local_mode) = &self.mode {
-            Some(local_mode.definition.clone())
-        } else {
-            None
-        }
+    pub fn definition(&self) -> DebugTaskDefinition {
+        self.definition.clone()
     }
 
     pub fn is_terminated(&self) -> bool {
@@ -828,21 +835,23 @@ impl Session {
     pub fn as_local_mut(&mut self) -> Option<&mut LocalMode> {
         match &mut self.mode {
             Mode::Running(local_mode) => Some(local_mode),
-            Mode::Building(_) => None,
+            Mode::Building => None,
         }
     }
 
     pub fn as_local(&self) -> Option<&LocalMode> {
         match &self.mode {
             Mode::Running(local_mode) => Some(local_mode),
-            Mode::Building(_) => None,
+            Mode::Building => None,
         }
     }
 
     pub(super) fn request_initialize(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let adapter_id = self.definition.adapter.clone();
+        let request = Initialize { adapter_id };
         match &self.mode {
             Mode::Running(local_mode) => {
-                let capabilities = local_mode.clone().request_initialization(cx);
+                let capabilities = local_mode.request(request, cx.background_executor().clone());
 
                 cx.spawn(async move |this, cx| {
                     let capabilities = capabilities.await?;
@@ -864,8 +873,8 @@ impl Session {
                     Ok(())
                 })
             }
-            Mode::Building(_) => Task::ready(Err(anyhow!(
-                "Cannot send initialize request from remote session"
+            Mode::Building => Task::ready(Err(anyhow!(
+                "Cannot send initialize request, task still building"
             ))),
         }
     }
@@ -877,10 +886,14 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         match &self.mode {
-            Mode::Running(local_mode) => {
-                local_mode.initialize_sequence(&self.capabilities, initialize_rx, dap_store, cx)
-            }
-            Mode::Building(_) => Task::ready(Err(anyhow!("cannot initialize remote session"))),
+            Mode::Running(local_mode) => local_mode.initialize_sequence(
+                &self.capabilities,
+                &self.definition,
+                initialize_rx,
+                dap_store,
+                cx,
+            ),
+            Mode::Building => Task::ready(Err(anyhow!("cannot initialize, still building"))),
         }
     }
 
@@ -914,7 +927,7 @@ impl Session {
                 })
                 .detach();
             }
-            Mode::Building(_) => {}
+            Mode::Building => {}
         }
     }
 
@@ -1535,7 +1548,7 @@ impl Session {
     pub fn adapter_client(&self) -> Option<Arc<DebugAdapterClient>> {
         match self.mode {
             Mode::Running(ref local) => Some(local.client.clone()),
-            Mode::Building(_) => None,
+            Mode::Building => None,
         }
     }
 
@@ -1899,85 +1912,5 @@ impl Session {
         } else {
             self.shutdown(cx).detach();
         }
-    }
-}
-
-fn create_local_session(
-    breakpoint_store: Entity<BreakpointStore>,
-    session_id: SessionId,
-    parent_session: Option<Entity<Session>>,
-    start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
-    initialized_tx: oneshot::Sender<()>,
-    mut message_rx: futures::channel::mpsc::UnboundedReceiver<Message>,
-    mode: LocalMode,
-    cx: &mut Context<Session>,
-) -> Session {
-    let _background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
-        let mut initialized_tx = Some(initialized_tx);
-        while let Some(message) = message_rx.next().await {
-            if let Message::Event(event) = message {
-                if let Events::Initialized(_) = *event {
-                    if let Some(tx) = initialized_tx.take() {
-                        tx.send(()).ok();
-                    }
-                } else {
-                    let Ok(_) = this.update(cx, |session, cx| {
-                        session.handle_dap_event(event, cx);
-                    }) else {
-                        break;
-                    };
-                }
-            } else {
-                let Ok(_) = start_debugging_requests_tx.unbounded_send((session_id, message))
-                else {
-                    break;
-                };
-            }
-        }
-    })];
-
-    cx.subscribe(&breakpoint_store, |this, _, event, cx| match event {
-        BreakpointStoreEvent::BreakpointsUpdated(path, reason) => {
-            if let Some(local) = (!this.ignore_breakpoints)
-                .then(|| this.as_local_mut())
-                .flatten()
-            {
-                local
-                    .send_breakpoints_from_path(path.clone(), *reason, cx)
-                    .detach();
-            };
-        }
-        BreakpointStoreEvent::BreakpointsCleared(paths) => {
-            if let Some(local) = (!this.ignore_breakpoints)
-                .then(|| this.as_local_mut())
-                .flatten()
-            {
-                local.unset_breakpoints_from_paths(paths, cx).detach();
-            }
-        }
-        BreakpointStoreEvent::ActiveDebugLineChanged => {}
-    })
-    .detach();
-
-    Session {
-        mode: Mode::Running(mode),
-        id: session_id,
-        child_session_ids: HashSet::default(),
-        parent_session: parent_session.map(|session| session.read(cx).id),
-        variables: Default::default(),
-        capabilities: Capabilities::default(),
-        thread_states: ThreadStates::default(),
-        output_token: OutputToken(0),
-        ignore_breakpoints: false,
-        output: circular_buffer::CircularBuffer::boxed(),
-        requests: HashMap::default(),
-        modules: Vec::default(),
-        loaded_sources: Vec::default(),
-        threads: IndexMap::default(),
-        stack_frames: IndexMap::default(),
-        locations: Default::default(),
-        exception_breakpoints: Default::default(),
-        _background_tasks,
-        is_session_terminated: false,
     }
 }
