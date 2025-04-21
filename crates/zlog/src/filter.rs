@@ -49,7 +49,7 @@ pub fn is_possibly_enabled_level(level: log::Level) -> bool {
     return level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed);
 }
 
-pub fn is_scope_enabled(scope: &Scope, level: log::Level) -> bool {
+pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Level) -> bool {
     if level <= unsafe { LEVEL_ENABLED_MAX_STATIC } {
         // [FAST PATH]
         // if the message is at or below the minimum printed log level
@@ -77,7 +77,7 @@ pub fn is_scope_enabled(scope: &Scope, level: log::Level) -> bool {
         // if no scopes are enabled, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
         return false;
     }
-    let enabled_status = map.is_enabled(&scope, level);
+    let enabled_status = map.is_enabled(&scope, module_path, level);
     return match enabled_status {
         // if it isn't configured, then it it's disabled because it's not <= LEVEL_ENABLED_MAX_STATIC
         EnabledStatus::NotConfigured => false,
@@ -160,11 +160,14 @@ fn scope_alloc_from_scope_str(scope_str: &String) -> Option<ScopeAlloc> {
     return Some(scope);
 }
 
+#[derive(PartialEq, Eq)]
 pub struct ScopeMap {
     entries: Vec<ScopeMapEntry>,
+    modules: Vec<(String, log::LevelFilter)>,
     root_count: usize,
 }
 
+#[derive(PartialEq, Eq)]
 pub struct ScopeMapEntry {
     scope: String,
     enabled: Option<log::Level>,
@@ -186,6 +189,8 @@ impl ScopeMap {
         let mut items = Vec::with_capacity(
             items_input_map.len() + env_config.map_or(0, |c| c.directive_names.len()),
         );
+        let mut modules = Vec::with_capacity(4);
+
         if let Some(env_filter) = env_config {
             // TODO: parse on load instead of every reload
             items.extend(
@@ -193,11 +198,15 @@ impl ScopeMap {
                     .directive_names
                     .iter()
                     .zip(env_filter.directive_levels.iter())
-                    .filter_map(|(scope, level_filter)| {
-                        if items_input_map.get(scope).is_some() {
+                    .filter_map(|(scope_str, level_filter)| {
+                        if items_input_map.get(scope_str).is_some() {
                             return None;
                         }
-                        let scope = scope_alloc_from_scope_str(scope)?;
+                        if scope_str.contains("::") {
+                            modules.push((scope_str.clone(), *level_filter));
+                            return None;
+                        }
+                        let scope = scope_alloc_from_scope_str(scope_str)?;
                         // TODO: use level filters instead of scopes in scope map
                         let level = level_filter.to_level()?;
 
@@ -209,16 +218,22 @@ impl ScopeMap {
             items_input_map
                 .into_iter()
                 .filter_map(|(scope_str, level_str)| {
-                    let scope = scope_alloc_from_scope_str(&scope_str)?;
+                    if scope_str.contains("::") {
+                        modules.push((scope_str.clone(), level_str.parse().ok()?));
+                        return None;
+                    }
                     let level = level_from_level_str(&level_str)?;
+                    let scope = scope_alloc_from_scope_str(&scope_str)?;
                     return Some((scope, level));
                 }),
         );
 
         items.sort_by(|a, b| a.0.cmp(&b.0));
+        modules.sort_by(|(a_name, _), (b_name, _)| a_name.cmp(b_name));
 
         let mut this = Self {
             entries: Vec::with_capacity(items.len() * SCOPE_DEPTH_MAX),
+            modules,
             root_count: 0,
         };
 
@@ -299,10 +314,15 @@ impl ScopeMap {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.is_empty() && self.modules.is_empty()
     }
 
-    pub fn is_enabled<S>(&self, scope: &[S; SCOPE_DEPTH_MAX], level: log::Level) -> EnabledStatus
+    pub fn is_enabled<S>(
+        &self,
+        scope: &[S; SCOPE_DEPTH_MAX],
+        module_path: Option<&str>,
+        level: log::Level,
+    ) -> EnabledStatus
     where
         S: AsRef<str>,
     {
@@ -316,7 +336,6 @@ impl ScopeMap {
         {
             for entry in cur_range {
                 if entry.scope == scope[depth].as_ref() {
-                    // note:
                     enabled = entry.enabled.or(enabled);
                     cur_range = &self.entries[entry.descendants.clone()];
                     depth += 1;
@@ -326,13 +345,27 @@ impl ScopeMap {
             break 'search;
         }
 
-        return enabled.map_or(EnabledStatus::NotConfigured, |level_enabled| {
-            if level <= level_enabled {
-                EnabledStatus::Enabled
-            } else {
-                EnabledStatus::Disabled
+        // todo: remove once scope map stores filters
+        let mut enabled = enabled.map(|level| level.to_level_filter());
+
+        if enabled.is_none() && !self.modules.is_empty() && module_path.is_some() {
+            let module_path = module_path.unwrap();
+            for (module, filter) in &self.modules {
+                if module == module_path {
+                    enabled.replace(*filter);
+                    break;
+                }
             }
-        });
+        }
+
+        if let Some(enabled_filter) = enabled {
+            if level <= enabled_filter {
+                return EnabledStatus::Enabled;
+            }
+            return EnabledStatus::Disabled;
+        }
+        return EnabledStatus::NotConfigured;
+
     }
 }
 
@@ -414,60 +447,105 @@ mod tests {
         ]);
         use log::Level;
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("a.b.c.d"), Level::Trace),
+            map.is_enabled(&scope_from_scope_str("a.b.c.d"), None, Level::Trace),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("a.b.c.d"), Level::Debug),
+            map.is_enabled(&scope_from_scope_str("a.b.c.d"), None, Level::Debug),
             EnabledStatus::Enabled
         );
 
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Debug),
+            map.is_enabled(&scope_from_scope_str("e.f.g.h"), None, Level::Debug),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Info),
+            map.is_enabled(&scope_from_scope_str("e.f.g.h"), None, Level::Info),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Trace),
+            map.is_enabled(&scope_from_scope_str("e.f.g.h"), None, Level::Trace),
             EnabledStatus::Disabled
         );
 
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Info),
+            map.is_enabled(&scope_from_scope_str("i.j.k.l"), None, Level::Info),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Warn),
+            map.is_enabled(&scope_from_scope_str("i.j.k.l"), None, Level::Warn),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Debug),
+            map.is_enabled(&scope_from_scope_str("i.j.k.l"), None, Level::Debug),
             EnabledStatus::Disabled
         );
 
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Warn),
+            map.is_enabled(&scope_from_scope_str("m.n.o.p"), None, Level::Warn),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Error),
+            map.is_enabled(&scope_from_scope_str("m.n.o.p"), None, Level::Error),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Info),
+            map.is_enabled(&scope_from_scope_str("m.n.o.p"), None, Level::Info),
             EnabledStatus::Disabled
         );
 
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("q.r.s.t"), Level::Error),
+            map.is_enabled(&scope_from_scope_str("q.r.s.t"), None, Level::Error),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_from_scope_str("q.r.s.t"), Level::Warn),
+            map.is_enabled(&scope_from_scope_str("q.r.s.t"), None, Level::Warn),
             EnabledStatus::Disabled
+        );
+    }
+
+    #[test]
+    fn test_is_enabled_module() {
+        let mut map = scope_map_from_keys(&[("a", "trace")]);
+        map.modules = [("a::b::c", "trace"), ("a::b::d", "debug")]
+            .map(|(k, v)| (k.to_string(), v.parse().unwrap()))
+            .to_vec();
+        use log::Level;
+        assert_eq!(
+            map.is_enabled(
+                &scope_from_scope_str("__unused__"),
+                Some("a::b::c"),
+                Level::Trace
+            ),
+            EnabledStatus::Enabled
+        );
+        assert_eq!(
+            map.is_enabled(
+                &scope_from_scope_str("__unused__"),
+                Some("a::b::d"),
+                Level::Debug
+            ),
+            EnabledStatus::Enabled
+        );
+        assert_eq!(
+            map.is_enabled(
+                &scope_from_scope_str("__unused__"),
+                Some("a::b::d"),
+                Level::Trace,
+            ),
+            EnabledStatus::Disabled
+        );
+        assert_eq!(
+            map.is_enabled(
+                &scope_from_scope_str("__unused__"),
+                Some("a::e"),
+                Level::Info
+            ),
+            EnabledStatus::NotConfigured
+        );
+        assert_eq!(
+            map.is_enabled(&scope_from_scope_str("a"), Some("a::b::d"), Level::Trace),
+            EnabledStatus::Enabled,
         );
     }
 
@@ -486,15 +564,15 @@ mod tests {
         assert_eq!(map.root_count, 2);
         assert_eq!(map.entries.len(), 3);
         assert_eq!(
-            map.is_enabled(&scope_new(&["a"]), log::Level::Debug),
+            map.is_enabled(&scope_new(&["a"]), None, log::Level::Debug),
             EnabledStatus::NotConfigured
         );
         assert_eq!(
-            map.is_enabled(&scope_new(&["a", "b"]), log::Level::Debug),
+            map.is_enabled(&scope_new(&["a", "b"]), None, log::Level::Debug),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_new(&["a", "b", "c"]), log::Level::Trace),
+            map.is_enabled(&scope_new(&["a", "b", "c"]), None, log::Level::Trace),
             EnabledStatus::Disabled
         );
 
@@ -518,20 +596,20 @@ mod tests {
         assert_eq!(map.entries[4].scope, "q");
         assert_eq!(map.entries[5].scope, "u");
         assert_eq!(
-            map.is_enabled(&scope_new(&["a", "b", "c", "d"]), log::Level::Trace),
+            map.is_enabled(&scope_new(&["a", "b", "c", "d"]), None, log::Level::Trace),
             EnabledStatus::Enabled
         );
         assert_eq!(
-            map.is_enabled(&scope_new(&["a", "b", "c"]), log::Level::Trace),
+            map.is_enabled(&scope_new(&["a", "b", "c"]), None, log::Level::Trace),
             EnabledStatus::Disabled
         );
         assert_eq!(
-            map.is_enabled(&scope_new(&["u", "v"]), log::Level::Warn),
+            map.is_enabled(&scope_new(&["u", "v"]), None, log::Level::Warn),
             EnabledStatus::Disabled
         );
         // settings override env
         assert_eq!(
-            map.is_enabled(&scope_new(&["e", "f", "g", "h"]), log::Level::Trace),
+            map.is_enabled(&scope_new(&["e", "f", "g", "h"]), None, log::Level::Trace),
             EnabledStatus::Disabled,
         );
     }

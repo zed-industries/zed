@@ -43,28 +43,28 @@ impl log::Log for Zlog {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let scope = match record.module_path_static() {
+        let (crate_name_scope, module_scope) = match record.module_path_static() {
             Some(module_path) => {
-                // TODO: better module name -> scope translation
                 let crate_name = private::extract_crate_name_from_module_path(module_path);
-                private::scope_new(&[crate_name])
+                let crate_name_scope = private::scope_new(&[crate_name]);
+                let module_scope = private::scope_new(&[module_path]);
+                (crate_name_scope, module_scope)
             }
             // TODO: when do we hit this
-            None => private::scope_new(&["*unknown*"]),
+            None => (private::scope_new(&[]), private::scope_new(&["*unknown*"])),
         };
         let level = record.metadata().level();
-        if !filter::is_scope_enabled(&scope, level) {
+        if !filter::is_scope_enabled(&crate_name_scope, record.module_path(), level) {
             return;
         }
         sink::submit(sink::Record {
-            scope,
+            scope: module_scope,
             level,
             message: record.args(),
         });
     }
 
     fn flush(&self) {
-        // todo: necessary?
         sink::flush();
     }
 }
@@ -74,7 +74,7 @@ macro_rules! log {
     ($logger:expr, $level:expr, $($arg:tt)+) => {
         let level = $level;
         let logger = $logger;
-        let enabled = $crate::filter::is_scope_enabled(&logger.scope, level);
+        let enabled = $crate::filter::is_scope_enabled(&logger.scope, Some(module_path!()), level);
         if enabled {
             $crate::sink::submit($crate::sink::Record {
                 scope: logger.scope,
@@ -260,7 +260,7 @@ impl log::Log for Logger {
             return;
         }
         let level = record.metadata().level();
-        if !filter::is_scope_enabled(&self.scope, level) {
+        if !filter::is_scope_enabled(&self.scope, record.module_path(), level) {
             return;
         }
         sink::submit(sink::Record {
