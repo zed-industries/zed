@@ -1,7 +1,7 @@
 use crate::context::attach_context_to_message;
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::CodegenStatus;
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use client::telemetry::Telemetry;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
