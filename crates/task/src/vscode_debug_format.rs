@@ -51,14 +51,13 @@ impl VsCodeDebugTaskDefinition {
         };
 
         let command = replacer.replace(&command);
-        // FIXME based on grep.app results it seems that vscode supports whitespace-splitting this field (ugh)
+        // TODO based on grep.app results it seems that vscode supports whitespace-splitting this field (ugh)
         let args = self
             .args
             .into_iter()
             .map(|arg| replacer.replace(&arg))
             .collect();
         let cwd = self.cwd.map(|cwd| replacer.replace(&cwd));
-        // TODO should we replace variables in other things?
         let template = TaskTemplate {
             label,
             command,
@@ -121,13 +120,14 @@ impl TryFrom<VsCodeDebugTaskFile> for TaskTemplates {
     }
 }
 
-// FIXME figure out how to make JsDebugAdapter::ADAPTER_NAME et al available here
+// TODO figure out how to make JsDebugAdapter::ADAPTER_NAME et al available here
 fn task_type_to_adapter_name(task_type: String) -> String {
     match task_type.as_str() {
         "node" => "JavaScript".to_owned(),
         "go" => "Delve".to_owned(),
         "php" => "PHP".to_owned(),
-        // TODO figure out appropriate names for the other built-in debug adapters
+        "cppdbg" | "lldb" => "CodeLLDB".to_owned(),
+        "debugpy" => "Debugpy".to_owned(),
         _ => task_type,
     }
 }

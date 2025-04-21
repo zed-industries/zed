@@ -100,7 +100,10 @@ impl LocalDapStore {
     ) -> Task<DebugTaskDefinition> {
         let locator_store = self.locator_store.clone();
         executor.spawn(async move {
-            let _ = locator_store.resolve_debug_config(&mut definition).await;
+            locator_store
+                .resolve_debug_config(&mut definition)
+                .await
+                .log_err();
             definition
         })
     }
