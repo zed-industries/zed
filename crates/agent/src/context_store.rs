@@ -8,6 +8,7 @@ use futures::future::join_all;
 use futures::{self, Future, FutureExt, future};
 use gpui::{App, AppContext as _, Context, Entity, Image, SharedString, Task, WeakEntity};
 use language::{Buffer, File};
+use language_model::LanguageModelImage;
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use rope::{Point, Rope};
 use text::{Anchor, BufferId, OffsetRangeExt};
@@ -419,9 +420,20 @@ impl ContextStore {
         cx.notify();
     }
 
-    pub fn add_image(&mut self, image: Image, cx: &mut Context<ContextStore>) {
-        let id = self.next_context_id.post_inc();
+    pub fn add_image(&mut self, image: Image, cx: &mut Context<ContextStore>) -> Task<Result<()>> {
+        let convert_image_task = LanguageModelImage::from_image(image, cx);
+        cx.spawn(async move |this, cx| {
+            let image = convert_image_task
+                .await
+                .context("Failed to attach image as context")?;
+            this.update(cx, |this, cx| this.insert_image(image, cx))?;
 
+            anyhow::Ok(())
+        })
+    }
+
+    fn insert_image(&mut self, image: LanguageModelImage, cx: &mut Context<ContextStore>) {
+        let id = self.next_context_id.post_inc();
         self.context
             .push(AssistantContext::Image(ImageContext { id, image }));
         cx.notify();

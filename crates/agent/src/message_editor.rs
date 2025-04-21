@@ -293,7 +293,12 @@ impl MessageEditor {
                     let excerpt_ids = context_store
                         .context()
                         .iter()
-                        .filter(|ctx| matches!(ctx, AssistantContext::Excerpt(_)))
+                        .filter(|ctx| {
+                            matches!(
+                                ctx,
+                                AssistantContext::Excerpt(_) | AssistantContext::Image(_)
+                            )
+                        })
                         .map(|ctx| ctx.id())
                         .collect::<Vec<_>>();
 
@@ -393,7 +398,7 @@ impl MessageEditor {
 
         self.context_store.update(cx, |store, cx| {
             for image in images {
-                store.add_image(image, cx);
+                store.add_image(image, cx).detach_and_log_err(cx);
             }
         });
     }

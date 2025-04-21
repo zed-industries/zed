@@ -1,8 +1,8 @@
 use std::{ops::Range, path::Path, sync::Arc};
 
-use gpui::{App, Entity, Image, SharedString};
+use gpui::{App, Entity, SharedString};
 use language::{Buffer, File};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelImage, LanguageModelRequestMessage};
 use project::{ProjectPath, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
@@ -127,7 +127,7 @@ impl ThreadContext {
 #[derive(Debug, Clone)]
 pub struct ImageContext {
     pub id: ContextId,
-    pub image: Image,
+    pub image: LanguageModelImage,
 }
 
 #[derive(Clone)]

@@ -16,7 +16,7 @@ use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelImage, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
@@ -97,6 +97,7 @@ pub struct Message {
     pub role: Role,
     pub segments: Vec<MessageSegment>,
     pub context: String,
+    pub images: Vec<LanguageModelImage>,
 }
 
 impl Message {
@@ -418,6 +419,7 @@ impl Thread {
                         })
                         .collect(),
                     context: message.context,
+                    images: Vec::new(),
                 })
                 .collect(),
             next_message_id,
@@ -750,6 +752,19 @@ impl Thread {
                 }
             }
 
+            if let Some(message) = self.messages.iter_mut().find(|m| m.id == message_id) {
+                message.images = new_context
+                    .iter()
+                    .filter_map(|context| {
+                        if let AssistantContext::Image(image_context) = context {
+                            Some(image_context.image.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+            }
+
             self.action_log.update(cx, |log, cx| {
                 // Track all buffers added as context
                 for ctx in &new_context {
@@ -817,6 +832,7 @@ impl Thread {
             role,
             segments,
             context: String::new(),
+            images: Vec::new(),
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -1038,6 +1054,21 @@ impl Thread {
                 request_message
                     .content
                     .push(MessageContent::Text(message.context.to_string()));
+            }
+
+            if !message.images.is_empty() {
+                // Some providers only support image parts after an initial text part
+                if request_message.content.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text("Images attached by user:".to_string()));
+                }
+
+                for image in &message.images {
+                    request_message
+                        .content
+                        .push(MessageContent::Image(image.clone()))
+                }
             }
 
             for segment in &message.segments {
