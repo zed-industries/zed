@@ -215,6 +215,7 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -811,7 +812,8 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
-    selection_highlight_task: Option<Task<()>>,
+    quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
+    debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -1590,7 +1592,8 @@ impl Editor {
             code_action_providers,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
-            selection_highlight_task: Default::default(),
+            quick_selection_highlight_task: Default::default(),
+            debounced_selection_highlight_task: Default::default(),
             document_highlights_task: Default::default(),
             linked_editing_range_task: Default::default(),
             pending_rename: Default::default(),
@@ -1720,6 +1723,7 @@ impl Editor {
                                 new_anchor.offset,
                             );
                         });
+                        editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
                     }
                 }
                 EditorEvent::Edited { .. } => {
@@ -5013,15 +5017,15 @@ impl Editor {
                             None => None,
                         };
                         let resolved_tasks =
-                            tasks.zip(task_context).map(|(tasks, task_context)| {
-                                Rc::new(ResolvedTasks {
+                            tasks
+                                .zip(task_context)
+                                .map(|(tasks, task_context)| ResolvedTasks {
                                     templates: tasks.resolve(&task_context).collect(),
                                     position: snapshot.buffer_snapshot.anchor_before(Point::new(
                                         multibuffer_point.row,
                                         tasks.column,
                                     )),
-                                })
-                            });
+                                });
                         let spawn_straight_away = resolved_tasks.as_ref().map_or(false, |tasks| {
                             tasks
                                 .templates
@@ -5042,10 +5046,11 @@ impl Editor {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
-                                    actions: CodeActionContents {
-                                        tasks: resolved_tasks,
-                                        actions: code_actions,
-                                    },
+                                    actions: CodeActionContents::new(
+                                        resolved_tasks,
+                                        code_actions,
+                                        cx,
+                                    ),
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
                                     deployed_from_indicator,
@@ -5106,44 +5111,21 @@ impl Editor {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
                 match resolved_task.task_type() {
                     task::TaskType::Script => workspace.update(cx, |workspace, cx| {
-                        workspace::tasks::schedule_resolved_task(
-                            workspace,
+                        workspace.schedule_resolved_task(
                             task_source_kind,
                             resolved_task,
                             false,
+                            window,
                             cx,
                         );
 
                         Some(Task::ready(Ok(())))
                     }),
-                    task::TaskType::Debug(debug_args) => {
-                        if debug_args.locator.is_some() {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace::tasks::schedule_resolved_task(
-                                    workspace,
-                                    task_source_kind,
-                                    resolved_task,
-                                    false,
-                                    cx,
-                                );
-                            });
-
-                            return Some(Task::ready(Ok(())));
-                        }
-
-                        if let Some(project) = self.project.as_ref() {
-                            project
-                                .update(cx, |project, cx| {
-                                    project.start_debug_session(
-                                        resolved_task.resolved_debug_adapter_config().unwrap(),
-                                        cx,
-                                    )
-                                })
-                                .detach_and_log_err(cx);
-                            Some(Task::ready(Ok(())))
-                        } else {
-                            Some(Task::ready(Ok(())))
-                        }
+                    task::TaskType::Debug(_) => {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.schedule_debug_task(resolved_task, window, cx);
+                        });
+                        Some(Task::ready(Ok(())))
                     }
                 }
             }
@@ -5474,111 +5456,169 @@ impl Editor {
         None
     }
 
-    pub fn refresh_selected_text_highlights(
+    fn prepare_highlight_query_from_selection(
         &mut self,
-        window: &mut Window,
         cx: &mut Context<Editor>,
-    ) {
+    ) -> Option<(String, Range<Anchor>)> {
         if matches!(self.mode, EditorMode::SingleLine { .. }) {
-            return;
+            return None;
         }
-        self.selection_highlight_task.take();
         if !EditorSettings::get_global(cx).selection_highlight {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
+            return None;
         }
         if self.selections.count() != 1 || self.selections.line_mode {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
+            return None;
         }
         let selection = self.selections.newest::<Point>(cx);
         if selection.is_empty() || selection.start.row != selection.end.row {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
+            return None;
         }
-        let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
-        self.selection_highlight_task = Some(cx.spawn_in(window, async move |editor, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(debounce))
-                .await;
-            let Some(Some(matches_task)) = editor
-                .update_in(cx, |editor, _, cx| {
-                    if editor.selections.count() != 1 || editor.selections.line_mode {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                        return None;
-                    }
-                    let selection = editor.selections.newest::<Point>(cx);
-                    if selection.is_empty() || selection.start.row != selection.end.row {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                        return None;
-                    }
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let query = buffer.text_for_range(selection.range()).collect::<String>();
-                    if query.trim().is_empty() {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                        return None;
-                    }
-                    Some(cx.background_spawn(async move {
-                        let mut ranges = Vec::new();
-                        let selection_anchors = selection.range().to_anchors(&buffer);
-                        for range in [buffer.anchor_before(0)..buffer.anchor_after(buffer.len())] {
-                            for (search_buffer, search_range, excerpt_id) in
-                                buffer.range_to_buffer_ranges(range)
-                            {
-                                ranges.extend(
-                                    project::search::SearchQuery::text(
-                                        query.clone(),
-                                        false,
-                                        false,
-                                        false,
-                                        Default::default(),
-                                        Default::default(),
-                                        None,
-                                    )
-                                    .unwrap()
-                                    .search(search_buffer, Some(search_range.clone()))
-                                    .await
-                                    .into_iter()
-                                    .filter_map(
-                                        |match_range| {
-                                            let start = search_buffer.anchor_after(
-                                                search_range.start + match_range.start,
-                                            );
-                                            let end = search_buffer.anchor_before(
-                                                search_range.start + match_range.end,
-                                            );
-                                            let range = Anchor::range_in_buffer(
-                                                excerpt_id,
-                                                search_buffer.remote_id(),
-                                                start..end,
-                                            );
-                                            (range != selection_anchors).then_some(range)
-                                        },
-                                    ),
-                                );
-                            }
-                        }
-                        ranges
-                    }))
-                })
-                .log_err()
-            else {
-                return;
-            };
-            let matches = matches_task.await;
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let selection_anchor_range = selection.range().to_anchors(&multi_buffer_snapshot);
+        let query = multi_buffer_snapshot
+            .text_for_range(selection_anchor_range.clone())
+            .collect::<String>();
+        if query.trim().is_empty() {
+            return None;
+        }
+        Some((query, selection_anchor_range))
+    }
+
+    fn update_selection_occurrence_highlights(
+        &mut self,
+        query_text: String,
+        query_range: Range<Anchor>,
+        multi_buffer_range_to_query: Range<Point>,
+        use_debounce: bool,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<()> {
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        cx.spawn_in(window, async move |editor, cx| {
+            if use_debounce {
+                cx.background_executor()
+                    .timer(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT)
+                    .await;
+            }
+            let match_task = cx.background_spawn(async move {
+                let buffer_ranges = multi_buffer_snapshot
+                    .range_to_buffer_ranges(multi_buffer_range_to_query)
+                    .into_iter()
+                    .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty());
+                let mut match_ranges = Vec::new();
+                for (buffer_snapshot, search_range, excerpt_id) in buffer_ranges {
+                    match_ranges.extend(
+                        project::search::SearchQuery::text(
+                            query_text.clone(),
+                            false,
+                            false,
+                            false,
+                            Default::default(),
+                            Default::default(),
+                            false,
+                            None,
+                        )
+                        .unwrap()
+                        .search(&buffer_snapshot, Some(search_range.clone()))
+                        .await
+                        .into_iter()
+                        .filter_map(|match_range| {
+                            let match_start = buffer_snapshot
+                                .anchor_after(search_range.start + match_range.start);
+                            let match_end =
+                                buffer_snapshot.anchor_before(search_range.start + match_range.end);
+                            let match_anchor_range = Anchor::range_in_buffer(
+                                excerpt_id,
+                                buffer_snapshot.remote_id(),
+                                match_start..match_end,
+                            );
+                            (match_anchor_range != query_range).then_some(match_anchor_range)
+                        }),
+                    );
+                }
+                match_ranges
+            });
+            let match_ranges = match_task.await;
             editor
                 .update_in(cx, |editor, _, cx| {
                     editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                    if !matches.is_empty() {
+                    if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
-                            &matches,
+                            &match_ranges,
                             |theme| theme.editor_document_highlight_bracket_background,
                             cx,
                         )
                     }
                 })
                 .log_err();
-        }));
+        })
+    }
+
+    fn refresh_selected_text_highlights(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        let Some((query_text, query_range)) = self.prepare_highlight_query_from_selection(cx)
+        else {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            self.quick_selection_highlight_task.take();
+            self.debounced_selection_highlight_task.take();
+            return;
+        };
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        if self
+            .quick_selection_highlight_task
+            .as_ref()
+            .map_or(true, |(prev_anchor_range, _)| {
+                prev_anchor_range != &query_range
+            })
+        {
+            let multi_buffer_visible_start = self
+                .scroll_manager
+                .anchor()
+                .anchor
+                .to_point(&multi_buffer_snapshot);
+            let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
+                multi_buffer_visible_start
+                    + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
+                Bias::Left,
+            );
+            let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
+            self.quick_selection_highlight_task = Some((
+                query_range.clone(),
+                self.update_selection_occurrence_highlights(
+                    query_text.clone(),
+                    query_range.clone(),
+                    multi_buffer_visible_range,
+                    false,
+                    window,
+                    cx,
+                ),
+            ));
+        }
+        if self
+            .debounced_selection_highlight_task
+            .as_ref()
+            .map_or(true, |(prev_anchor_range, _)| {
+                prev_anchor_range != &query_range
+            })
+        {
+            let multi_buffer_start = multi_buffer_snapshot
+                .anchor_before(0)
+                .to_point(&multi_buffer_snapshot);
+            let multi_buffer_end = multi_buffer_snapshot
+                .anchor_after(multi_buffer_snapshot.len())
+                .to_point(&multi_buffer_snapshot);
+            let multi_buffer_full_range = multi_buffer_start..multi_buffer_end;
+            self.debounced_selection_highlight_task = Some((
+                query_range.clone(),
+                self.update_selection_occurrence_highlights(
+                    query_text,
+                    query_range,
+                    multi_buffer_full_range,
+                    true,
+                    window,
+                    cx,
+                ),
+            ));
+        }
     }
 
     pub fn refresh_inline_completion(
@@ -6782,12 +6822,12 @@ impl Editor {
             resolved.reveal = reveal_strategy;
 
             workspace
-                .update(cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
-                        workspace,
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.schedule_resolved_task(
                         task_source_kind,
                         resolved_task,
                         false,
+                        window,
                         cx,
                     );
                 })

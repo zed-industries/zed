@@ -242,7 +242,7 @@ impl CloudLanguageModelProvider {
             llm_api_token: llm_api_token.clone(),
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
-        }) as Arc<dyn LanguageModel>
+        })
     }
 }
 
@@ -270,13 +270,13 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
         let model = CloudModel::Anthropic(anthropic::Model::default());
-        Some(Arc::new(CloudLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            llm_api_token: llm_api_token.clone(),
-            client: self.client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(model, llm_api_token))
+    }
+
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let llm_api_token = self.state.read(cx).llm_api_token.clone();
+        let model = CloudModel::Anthropic(anthropic::Model::default_fast());
+        Some(self.create_language_model(model, llm_api_token))
     }
 
     fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -728,6 +728,8 @@ impl LanguageModel for CloudLanguageModel {
             Option<RequestUsage>,
         )>,
     > {
+        let thread_id = request.thread_id.clone();
+        let prompt_id = request.prompt_id.clone();
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
@@ -744,6 +746,8 @@ impl LanguageModel for CloudLanguageModel {
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
+                            thread_id,
+                            prompt_id,
                             provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -788,6 +792,8 @@ impl LanguageModel for CloudLanguageModel {
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
+                            thread_id,
+                            prompt_id,
                             provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -816,6 +822,8 @@ impl LanguageModel for CloudLanguageModel {
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
+                            thread_id,
+                            prompt_id,
                             provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,

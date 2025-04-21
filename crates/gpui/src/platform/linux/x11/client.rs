@@ -59,9 +59,10 @@ use crate::platform::{
 };
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform, PlatformDisplay,
-    PlatformInput, Point, RequestFrameOptions, ScaledPixels, ScreenCaptureSource, ScrollDelta,
-    Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
+    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
+    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
+    ScaledPixels, ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -1282,14 +1283,16 @@ impl LinuxClient for X11Client {
         f(&mut self.0.borrow_mut().common)
     }
 
-    fn keyboard_layout(&self) -> String {
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
         let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
-        state
-            .xkb
-            .get_keymap()
-            .layout_get_name(layout_idx)
-            .to_string()
+        Box::new(LinuxKeyboardLayout::new(
+            state
+                .xkb
+                .get_keymap()
+                .layout_get_name(layout_idx)
+                .to_string(),
+        ))
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

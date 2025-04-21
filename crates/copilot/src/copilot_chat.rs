@@ -84,6 +84,10 @@ pub enum ModelVendor {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::Claude3_7Sonnet
+    }
+
     pub fn uses_streaming(&self) -> bool {
         self.capabilities.supports.streaming
     }

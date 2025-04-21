@@ -150,6 +150,16 @@ impl GoogleLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: google_ai::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(GoogleLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for GoogleLanguageModelProvider {
@@ -174,14 +184,11 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = google_ai::Model::default();
-        Some(Arc::new(GoogleLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(google_ai::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(google_ai::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -368,13 +375,15 @@ pub fn into_google(
         content
             .into_iter()
             .filter_map(|content| match content {
-                language_model::MessageContent::Text(text) => {
+                language_model::MessageContent::Text(text)
+                | language_model::MessageContent::Thinking { text, .. } => {
                     if !text.is_empty() {
                         Some(Part::TextPart(google_ai::TextPart { text }))
                     } else {
                         None
                     }
                 }
+                language_model::MessageContent::RedactedThinking(_) => None,
                 language_model::MessageContent::Image(_) => None,
                 language_model::MessageContent::ToolUse(tool_use) => {
                     Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
@@ -740,7 +749,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(cx.theme().colors().border)
                         .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
@@ -753,8 +762,13 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -766,7 +780,8 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
+                        .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)

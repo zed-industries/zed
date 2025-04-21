@@ -5,7 +5,7 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::{AttachConfig, DebugTaskDefinition, TCPHost};
+use task::{AttachRequest, DebugTaskDefinition, TcpArgumentsTemplate};
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -31,13 +31,12 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
         cx,
         DebugTaskDefinition {
             adapter: "fake-adapter".to_string(),
-            request: dap::DebugRequestType::Attach(AttachConfig {
+            request: dap::DebugRequest::Attach(AttachRequest {
                 process_id: Some(10),
             }),
             label: "label".to_string(),
             initialize_args: None,
             tcp_connection: None,
-            locator: None,
             stop_on_entry: None,
         },
         |client| {
@@ -105,11 +104,10 @@ async fn test_show_attach_modal_and_select_process(
                     project.clone(),
                     DebugTaskDefinition {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
-                        request: dap::DebugRequestType::Attach(AttachConfig::default()),
+                        request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),
                         initialize_args: None,
-                        tcp_connection: Some(TCPHost::default()),
-                        locator: None,
+                        tcp_connection: Some(TcpArgumentsTemplate::default()),
                         stop_on_entry: None,
                     },
                     vec![

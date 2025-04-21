@@ -2661,12 +2661,12 @@ impl Pane {
                     tab_bar
                 }
             })
-            .children(pinned_tabs.len().ne(&0).then(|| {
-                h_flex()
-                    .children(pinned_tabs)
-                    .border_r_2()
-                    .border_color(cx.theme().colors().border)
-            }))
+            .children(
+                pinned_tabs
+                    .len()
+                    .ne(&0)
+                    .then(|| h_flex().children(pinned_tabs)),
+            )
             .child(
                 h_flex()
                     .id("unpinned tabs")

@@ -102,6 +102,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::FourPointOneMini
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
