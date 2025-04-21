@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_cohort_id_parameter() {
-        let custom_cohort_id = "test-cohort-123";
+        let custom_cohort_id = "testcohort123";
         let args = Args {
             examples: vec![],
             model: "claude-3-7-sonnet-latest".to_string(),
