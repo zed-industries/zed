@@ -662,14 +662,11 @@ mod tests {
         };
 
         let default_run_dir =
-            runs_dir.join(args_without_cohort_id.cohort_id.clone().unwrap_or_else(
-                || format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")),
-            ));
+            runs_dir.join(args_without_cohort_id.cohort_id.clone().unwrap_or_else(|| {
+                format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"))
+            }));
 
         assert_ne!(runs_dir, default_run_dir);
-        assert!(
-            default_run_dir.to_string_lossy().len()
-                > runs_dir.to_string_lossy().len()
-        );
+        assert!(default_run_dir.to_string_lossy().len() > runs_dir.to_string_lossy().len());
     }
 }
