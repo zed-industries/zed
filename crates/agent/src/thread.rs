@@ -38,7 +38,7 @@ use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse, SharedProjectContext,
 };
-use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState, USING_TOOL_MARKER};
+use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState, USING_TOOL_MARKER};
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -1180,6 +1180,12 @@ impl Thread {
             None
         };
         let prompt_id = self.last_prompt_id.clone();
+        let tool_use_metadata = ToolUseMetadata {
+            model: model.clone(),
+            thread_id: self.id.clone(),
+            prompt_id: prompt_id.clone(),
+        };
+
         let task = cx.spawn(async move |thread, cx| {
             let stream_completion_future = model.stream_completion_with_usage(request, &cx);
             let initial_token_usage =
@@ -1288,6 +1294,7 @@ impl Thread {
                                 thread.tool_use.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
+                                    tool_use_metadata.clone(),
                                     cx,
                                 );
                             }
