@@ -195,7 +195,7 @@ impl WindowsKeyboardMapper {
             ">" => (VK_OEM_PERIOD, true),
             "/" => (VK_OEM_2, false),
             "?" => (VK_OEM_2, true),
-            _ => return Err(anyhow::anyhow!("Unrecognized key to virtual key: {}", key)),
+            _ => anyhow::bail!("Unrecognized key to virtual key: {}", key),
         };
         let (key, _) = get_key_from_vkey(virtual_key).context(format!(
             "Failed to generate char given virtual key: {}, {:?}",
@@ -224,10 +224,7 @@ impl WindowsKeyboardMapper {
 
     fn get_vkey_from_char(&self, key: &str, modifiers: &mut Modifiers) -> Result<VIRTUAL_KEY> {
         if key.len() != 1 {
-            return Err(anyhow::anyhow!(
-                "Key must be a single character, but got: {}",
-                key
-            ));
+            anyhow::bail!("Key must be a single character, but got: {}", key);
         }
         let key_char = key
             .encode_utf16()
@@ -235,24 +232,16 @@ impl WindowsKeyboardMapper {
             .context("Empty key in keystorke")?;
         let result = unsafe { VkKeyScanW(key_char) };
         if result == -1 {
-            return Err(anyhow::anyhow!("Failed to get vkey from char: {}", key));
+            anyhow::bail!("Failed to get vkey from char: {}", key);
         }
         let high = (result >> 8) as i8;
         let low = result as u8;
         let (shift, ctrl, alt) = get_modifiers(high);
-        if shift {
-            if modifiers.shift {
-                log::error!(
-                    "Shift modifier already set, but shift is required for this key: {}",
-                    key
-                );
-            }
-            modifiers.shift = true;
-        }
         if ctrl {
             if modifiers.control {
-                log::error!(
-                    "Ctrl modifier already set, but ctrl is required for this key: {}",
+                anyhow::bail!(
+                    "Error parsing: {}, Ctrl modifier already set, but ctrl is required for this key: {}, you may be unable to use this shortcut.",
+                    display_keystroke(key, modifiers),
                     key
                 );
             }
@@ -260,15 +249,44 @@ impl WindowsKeyboardMapper {
         }
         if alt {
             if modifiers.alt {
-                log::error!(
-                    "Alt modifier already set, but alt is required for this key: {}",
+                anyhow::bail!(
+                    "Error parsing: {}, Alt modifier already set, but alt is required for this key: {}, you may be unable to use this shortcut.",
+                    display_keystroke(key, modifiers),
                     key
                 );
             }
             modifiers.alt = true;
         }
+        if shift {
+            if modifiers.shift {
+                anyhow::bail!(
+                    "Error parsing: {}, Shift modifier already set, but shift is required for this key: {}, you may be unable to use this shortcut.",
+                    display_keystroke(key, modifiers),
+                    key
+                );
+            }
+            modifiers.shift = true;
+        }
         Ok(VIRTUAL_KEY(low as u16))
     }
+}
+
+fn display_keystroke(key: &str, modifiers: &Modifiers) -> String {
+    let mut display = String::new();
+    if modifiers.platform {
+        display.push_str("win-");
+    }
+    if modifiers.control {
+        display.push_str("ctrl-");
+    }
+    if modifiers.alt {
+        display.push_str("alt-");
+    }
+    if modifiers.shift {
+        display.push_str("shift-");
+    }
+    display.push_str(key);
+    display
 }
 
 fn is_immutable_key(key: &str) -> bool {
