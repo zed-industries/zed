@@ -250,6 +250,7 @@ pub fn main(socket: &str) {
 pub struct AskPassSession {
     askpass_helper: String,
     _askpass_task: Task<()>,
+    secrete: std::sync::Arc<std::sync::Mutex<String>>,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
 }
@@ -263,6 +264,7 @@ impl AskPassSession {
     ) -> anyhow::Result<Self> {
         use windows_net::async_net::UnixListener;
 
+        let secrete = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join("askpass.ps1");
@@ -275,38 +277,42 @@ impl AskPassSession {
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
 
-        let askpass_task = executor.spawn(async move {
-            let mut askpass_opened_tx = Some(askpass_opened_tx);
+        let askpass_task = executor.spawn({
+            let secrete = secrete.clone();
+            async move {
+                let mut askpass_opened_tx = Some(askpass_opened_tx);
 
-            while let Ok(mut stream) = listener.accept().await {
-                if let Some(askpass_opened_tx) = askpass_opened_tx.take() {
-                    askpass_opened_tx.send(()).ok();
-                }
-                let mut buffer = Vec::new();
-                let mut reader = BufReader::new(&mut stream);
-                if reader.read_until(b'\0', &mut buffer).await.is_err() {
-                    buffer.clear();
-                }
-                let prompt = String::from_utf8_lossy(&buffer);
-                if let Some(password) = delegate
-                    .ask_password(prompt.to_string())
-                    .await
-                    .context("failed to get askpass password")
-                    .log_err()
-                {
-                    stream.write_all(password.as_bytes()).await.log_err();
-                } else {
-                    if let Some(kill_tx) = kill_tx.take() {
-                        kill_tx.send(()).log_err();
+                while let Ok(mut stream) = listener.accept().await {
+                    if let Some(askpass_opened_tx) = askpass_opened_tx.take() {
+                        askpass_opened_tx.send(()).ok();
                     }
-                    // note: we expect the caller to drop this task when it's done.
-                    // We need to keep the stream open until the caller is done to avoid
-                    // spurious errors from ssh.
-                    std::future::pending::<()>().await;
-                    drop(stream);
+                    let mut buffer = Vec::new();
+                    let mut reader = BufReader::new(&mut stream);
+                    if reader.read_until(b'\0', &mut buffer).await.is_err() {
+                        buffer.clear();
+                    }
+                    let prompt = String::from_utf8_lossy(&buffer);
+                    if let Some(password) = delegate
+                        .ask_password(prompt.to_string())
+                        .await
+                        .context("failed to get askpass password")
+                        .log_err()
+                    {
+                        stream.write_all(password.as_bytes()).await.log_err();
+                        *secrete.lock().unwrap() = password;
+                    } else {
+                        if let Some(kill_tx) = kill_tx.take() {
+                            kill_tx.send(()).log_err();
+                        }
+                        // note: we expect the caller to drop this task when it's done.
+                        // We need to keep the stream open until the caller is done to avoid
+                        // spurious errors from ssh.
+                        std::future::pending::<()>().await;
+                        drop(stream);
+                    }
                 }
+                drop(temp_dir)
             }
-            drop(temp_dir)
         });
 
         // Create an askpass script that communicates back to this process.
@@ -327,6 +333,7 @@ impl AskPassSession {
         Ok(Self {
             askpass_helper,
             _askpass_task: askpass_task,
+            secrete,
             askpass_kill_master_rx: Some(askpass_kill_master_rx),
             askpass_opened_rx: Some(askpass_opened_rx),
         })
@@ -359,5 +366,11 @@ impl AskPassSession {
                 return AskPassResult::Timedout
             }
         }
+    }
+
+    /// TODO:
+    pub fn get_password(&self) -> String {
+        let secrete = self.secrete.lock().unwrap();
+        secrete.clone()
     }
 }

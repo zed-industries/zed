@@ -59,7 +59,10 @@ pub struct SshProjectId(pub u64);
 #[derive(Clone)]
 pub struct SshSocket {
     connection_options: SshConnectionOptions,
+    #[cfg(not(target_os = "windows"))]
     socket_path: PathBuf,
+    #[cfg(target_os = "windows")]
+    askpass_content: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
@@ -338,6 +341,35 @@ pub trait SshClientDelegate: Send + Sync {
 }
 
 impl SshSocket {
+    #[cfg(not(target_os = "windows"))]
+    fn new(options: SshConnectionOptions, socket_path: PathBuf) -> Result<Self> {
+        Ok(Self {
+            connection_options: options,
+            socket_path,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    fn new(options: SshConnectionOptions, temp_dir: &TempDir, secrete: String) -> Result<Self> {
+        let pwsh_script_path = temp_dir.path().join("askpass.ps1");
+        let pwsh_script_content = format!(
+            r#"
+            $ErrorActionPreference = 'Stop';
+            Write-Host "{secrete}"
+            "#,
+            secrete = secrete
+        );
+        std::fs::write(&pwsh_script_path, pwsh_script_content)?;
+        let askpass_content = format!(
+            "powershell.exe -ExecutionPolicy Bypass -File {}",
+            pwsh_script_path.display()
+        );
+        Ok(Self {
+            connection_options: options,
+            askpass_content,
+        })
+    }
+
     // :WARNING: ssh unquotes arguments when executing on the remote :WARNING:
     // e.g. $ ssh host sh -c 'ls -l' is equivalent to $ ssh host sh -c ls -l
     // and passes -l as an argument to sh, not to ls.
@@ -375,6 +407,7 @@ impl SshSocket {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
         command
             .stdin(Stdio::piped())
@@ -384,6 +417,17 @@ impl SshSocket {
             .arg(format!("ControlPath={}", self.socket_path.display()))
     }
 
+    #[cfg(target_os = "windows")]
+    fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env("SSH_ASKPASS", &self.askpass_content)
+    }
+
+    #[cfg(not(target_os = "windows"))]
     fn ssh_args(&self) -> Vec<String> {
         vec![
             "-o".to_string(),
@@ -392,6 +436,13 @@ impl SshSocket {
             format!("ControlPath={}", self.socket_path.display()),
             self.connection_options.ssh_url(),
         ]
+    }
+
+    // todo(windows)
+    // This is definitely wrong, we should find a way to use `SSH_ASKPASS`
+    #[cfg(target_os = "windows")]
+    fn ssh_args(&self) -> Vec<String> {
+        vec![self.connection_options.ssh_url()]
     }
 }
 
@@ -1470,6 +1521,7 @@ impl SshRemoteConnection {
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it
         // via a control socket.
+        #[cfg(not(target_os = "windows"))]
         let socket_path = temp_dir.path().join("ssh.sock");
 
         let mut master_process = {
@@ -1543,13 +1595,11 @@ impl SshRemoteConnection {
             anyhow::bail!(error_message);
         }
 
-        let askpass_helper = askpass::AskPassSecret::new(askpass.get_password())?;
+        #[cfg(not(target_os = "windows"))]
+        let socket = SshSocket::new(connection_options, socket_path)?;
+        #[cfg(target_os = "windows")]
+        let socket = SshSocket::new(connection_options, &temp_dir, askpass.get_password())?;
         drop(askpass);
-
-        let socket = SshSocket {
-            connection_options,
-            socket_path,
-        };
 
         let mut this = Self {
             socket,
@@ -1730,6 +1780,7 @@ impl SshRemoteConnection {
             version_str
         );
         let dst_path = paths::remote_server_dir_relative().join(binary_name);
+        println!("==> remote server path: {:?}", dst_path);
 
         let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
@@ -1749,12 +1800,12 @@ impl SshRemoteConnection {
             return Ok(dst_path);
         }
 
-        if self
+        let ret = self
             .socket
             .run_command(&dst_path.to_string_lossy(), &["version"])
-            .await
-            .is_ok()
-        {
+            .await;
+        println!("==> remote server version: {:?}", ret);
+        if ret.is_ok() {
             return Ok(dst_path);
         }
 
