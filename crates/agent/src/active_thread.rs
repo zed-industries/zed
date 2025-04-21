@@ -2061,7 +2061,8 @@ impl ActiveThread {
             .map(|m| m.role)
             .unwrap_or(Role::User);
 
-        let is_assistant = message_role == Role::Assistant;
+        let is_assistant_message = message_role == Role::Assistant;
+        let is_user_message = message_role == Role::User;
 
         v_flex()
             .text_ui(cx)
@@ -2086,7 +2087,7 @@ impl ActiveThread {
                         RenderedMessageSegment::Text(markdown) => {
                             let markdown_element = MarkdownElement::new(
                                 markdown.clone(),
-                                if message_role == Role::User {
+                                if is_user_message {
                                     let mut style = default_markdown_style(window, cx);
                                     let theme_settings = ThemeSettings::get_global(cx);
                                     let buffer_font_size = TextSize::Small.rems(cx);
@@ -2115,7 +2116,7 @@ impl ActiveThread {
                                 },
                             );
 
-                            let markdown_element = if is_assistant {
+                            let markdown_element = if is_assistant_message {
                                 markdown_element.code_block_renderer(
                                     markdown::CodeBlockRenderer::Custom {
                                         render: Arc::new({
