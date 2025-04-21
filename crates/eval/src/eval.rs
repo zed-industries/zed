@@ -559,7 +559,8 @@ pub fn commit_sha_for_path(repo_path: &Path) -> String {
 }
 
 pub fn git_branch_for_path(repo_path: &Path) -> String {
-    futures::executor::block_on(run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"])).unwrap_or_else(|_| "unknown".to_string())
+    futures::executor::block_on(run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]))
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 async fn run_judge_repetition(
