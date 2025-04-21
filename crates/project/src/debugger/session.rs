@@ -164,6 +164,7 @@ pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
     definition: DebugTaskDefinition,
     binary: DebugAdapterBinary,
+    root_binary: Option<Arc<DebugAdapterBinary>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
@@ -195,34 +196,16 @@ impl LocalMode {
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         cx: AsyncApp,
     ) -> Task<Result<Self>> {
-        Self::new_inner(
-            session_id,
-            parent_session,
-            breakpoint_store,
-            worktree,
-            config,
-            binary,
-            messages_tx,
-            async |_, _| {},
-            cx,
-        )
-    }
-
-    fn new_inner(
-        session_id: SessionId,
-        parent_session: Option<Entity<Session>>,
-        breakpoint_store: Entity<BreakpointStore>,
-        worktree: WeakEntity<Worktree>,
-        config: DebugTaskDefinition,
-        binary: DebugAdapterBinary,
-        messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
-        on_initialized: impl AsyncFnOnce(&mut LocalMode, AsyncApp) + 'static,
-        cx: AsyncApp,
-    ) -> Task<Result<Self>> {
         cx.spawn(async move |cx| {
             let message_handler = Box::new(move |message| {
                 messages_tx.unbounded_send(message).ok();
             });
+
+            let root_binary = if let Some(parent_session) = parent_session.as_ref() {
+                Some(parent_session.read_with(cx, |session, _| session.root_binary().clone())?)
+            } else {
+                None
+            };
 
             let client = Arc::new(
                 if let Some(client) = parent_session
@@ -244,18 +227,15 @@ impl LocalMode {
                 },
             );
 
-            let mut session = Self {
+            Ok(Self {
                 client,
                 breakpoint_store,
                 worktree,
                 tmp_breakpoint: None,
                 definition: config,
+                root_binary,
                 binary,
-            };
-
-            on_initialized(&mut session, cx.clone()).await;
-
-            Ok(session)
+            })
         })
     }
 
@@ -396,7 +376,7 @@ impl LocalMode {
     }
 
     fn request_initialization(&self, cx: &App) -> Task<Result<Capabilities>> {
-        let adapter_id = self.binary.adapter_name.to_string();
+        let adapter_id = self.definition.adapter.clone();
 
         self.request(Initialize { adapter_id }, cx.background_executor().clone())
     }
@@ -838,6 +818,16 @@ impl Session {
 
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+
+    pub(crate) fn root_binary(&self) -> Arc<DebugAdapterBinary> {
+        let Mode::Local(local_mode) = &self.mode else {
+            panic!("Session is not local");
+        };
+        local_mode
+            .root_binary
+            .clone()
+            .unwrap_or_else(|| Arc::new(local_mode.binary.clone()))
     }
 
     pub fn binary(&self) -> &DebugAdapterBinary {
