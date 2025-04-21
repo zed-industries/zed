@@ -269,6 +269,7 @@ impl log::Log for Logger {
             message: record.args(),
         });
     }
+
     fn flush(&self) {
         sink::flush();
     }
@@ -299,6 +300,7 @@ impl Timer {
             done: false,
         };
     }
+
     pub fn warn_if_gt(mut self, warn_limit: std::time::Duration) -> Self {
         self.warn_if_longer_than = Some(warn_limit);
         return self;

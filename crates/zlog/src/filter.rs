@@ -96,7 +96,7 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     let mut level_enabled_max = unsafe { LEVEL_ENABLED_MAX_STATIC };
     for entry in &map_new.entries {
         if let Some(level) = entry.enabled {
-            level_enabled_max = level_enabled_max.max(level.to_level_filter());
+            level_enabled_max = level_enabled_max.max(level);
         }
     }
     LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max as u8, Ordering::Release);
@@ -111,19 +111,21 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     log::trace!("Log configuration updated");
 }
 
-fn level_from_level_str(level_str: &String) -> Option<log::Level> {
+fn level_filter_from_str(level_str: &String) -> Option<log::LevelFilter> {
+    use log::LevelFilter::*;
     let level = match level_str.to_ascii_lowercase().as_str() {
-        "" => log::Level::Trace,
-        "trace" => log::Level::Trace,
-        "debug" => log::Level::Debug,
-        "info" => log::Level::Info,
-        "warn" => log::Level::Warn,
-        "error" => log::Level::Error,
-        "off" | "disable" | "no" | "none" | "disabled" => {
+        "" => Trace,
+        "trace" => Trace,
+        "debug" => Debug,
+        "info" => Info,
+        "warn" => Warn,
+        "error" => Error,
+        "off" => Off,
+        "disable" | "no" | "none" | "disabled" => {
             crate::warn!(
-                "Invalid log level \"{level_str}\", set to error to disable non-error logging. Defaulting to error"
+                "Invalid log level \"{level_str}\", to disable logging set to \"off\". Defaulting to \"off\"."
             );
-            log::Level::Error
+            Off
         }
         _ => {
             crate::warn!("Invalid log level \"{level_str}\", ignoring");
@@ -170,7 +172,7 @@ pub struct ScopeMap {
 #[derive(PartialEq, Eq)]
 pub struct ScopeMapEntry {
     scope: String,
-    enabled: Option<log::Level>,
+    enabled: Option<log::LevelFilter>,
     descendants: std::ops::Range<usize>,
 }
 
@@ -198,19 +200,17 @@ impl ScopeMap {
                     .directive_names
                     .iter()
                     .zip(env_filter.directive_levels.iter())
-                    .filter_map(|(scope_str, level_filter)| {
+                    .filter_map(|(scope_str, &level_filter)| {
                         if items_input_map.get(scope_str).is_some() {
                             return None;
                         }
                         if scope_str.contains("::") {
-                            modules.push((scope_str.clone(), *level_filter));
+                            modules.push((scope_str.clone(), level_filter));
                             return None;
                         }
                         let scope = scope_alloc_from_scope_str(scope_str)?;
-                        // TODO: use level filters instead of scopes in scope map
-                        let level = level_filter.to_level()?;
 
-                        Some((scope, level))
+                        Some((scope, level_filter))
                     }),
             );
         }
@@ -222,9 +222,9 @@ impl ScopeMap {
                         modules.push((scope_str.clone(), level_str.parse().ok()?));
                         return None;
                     }
-                    let level = level_from_level_str(&level_str)?;
+                    let level_filter = level_filter_from_str(&level_str)?;
                     let scope = scope_alloc_from_scope_str(&scope_str)?;
-                    return Some((scope, level));
+                    return Some((scope, level_filter));
                 }),
         );
 
@@ -345,9 +345,6 @@ impl ScopeMap {
             break 'search;
         }
 
-        // todo: remove once scope map stores filters
-        let mut enabled = enabled.map(|level| level.to_level_filter());
-
         if enabled.is_none() && !self.modules.is_empty() && module_path.is_some() {
             let module_path = module_path.unwrap();
             for (module, filter) in &self.modules {
@@ -365,7 +362,6 @@ impl ScopeMap {
             return EnabledStatus::Disabled;
         }
         return EnabledStatus::NotConfigured;
-
     }
 }
 
