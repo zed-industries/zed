@@ -40,7 +40,7 @@ impl ContextKind {
             ContextKind::Excerpt => IconName::Code,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
-            ContextKind::Image => IconName::FileGeneric,
+            ContextKind::Image => IconName::Image,
         }
     }
 }
