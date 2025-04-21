@@ -1,4 +1,4 @@
-use crate::{attach_modal::Candidate, *};
+use crate::{attach_modal::Candidate, tests::start_debug_session_with, *};
 use attach_modal::AttachModal;
 use dap::{FakeAdapter, client::SessionId};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -26,8 +26,8 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session_with(
-        &project,
+    let session = start_debug_session_with(
+        &workspace,
         cx,
         DebugTaskDefinition {
             adapter: "fake-adapter".to_string(),

@@ -398,6 +398,7 @@ impl DapStore {
         cx.subscribe(&session, {
             let template = template.clone();
             move |this: &mut DapStore, session, event: &SessionStateEvent, cx| match event {
+                SessionStateEvent::Running => {}
                 SessionStateEvent::Shutdown => {
                     this.shutdown_session(session_id, cx).detach_and_log_err(cx);
                 }
@@ -476,6 +477,7 @@ impl DapStore {
                 .ok();
             }
             Err(error) => {
+                log::error!("{error}");
                 this.update(cx, |_, cx| {
                     cx.emit(DapStoreEvent::Notification(error.to_string()));
                 })

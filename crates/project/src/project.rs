@@ -1461,16 +1461,6 @@ impl Project {
         }
     }
 
-    pub fn start_debug_session(
-        &mut self,
-        definition: DebugTaskDefinition,
-        cx: &mut Context<Self>,
-    ) -> Result<Entity<Session>> {
-        self.dap_store.update(cx, |dap_store, cx| {
-            dap_store.start_session(definition, None, cx)
-        })
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,

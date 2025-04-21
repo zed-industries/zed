@@ -459,7 +459,10 @@ impl Mode {
             Mode::Running(debug_adapter_client) => {
                 debug_adapter_client.request(request, cx.background_executor().clone())
             }
-            Mode::Building => Task::ready(Err(anyhow!("no adapter running"))),
+            Mode::Building => Task::ready(Err(anyhow!(
+                "no adapter running to send request: {:?}",
+                request
+            ))),
         }
     }
 }
@@ -639,7 +642,9 @@ pub enum SessionEvent {
     Threads,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SessionStateEvent {
+    Running,
     Shutdown,
     Restart,
 }
@@ -763,12 +768,18 @@ impl Session {
                 cx.clone(),
             )
             .await?;
-            this.update(cx, |this, _| this.mode = Mode::Running(mode))?;
+            this.update(cx, |this, cx| {
+                this.mode = Mode::Running(mode);
+                cx.emit(SessionStateEvent::Running);
+                dbg!("Emitted running event");
+            })?;
 
+            dbg!("requesting initialization");
             this.update(cx, |session, cx| session.request_initialize(cx))?
                 .await?;
 
             this.update(cx, |session, cx| {
+                dbg!(session.capabilities());
                 session.initialize_sequence(initialized_rx, dap_store.clone(), cx)
             })?
             .await

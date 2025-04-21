@@ -724,7 +724,9 @@ impl RunningState {
             .find_map(|pane| {
                 pane.read(cx)
                     .items_of_type::<SubView>()
-                    .position(|view| view.read(cx).view_kind().to_shared_string() == *"Modules")
+                    .position(|view| {
+                        dbg!(view.read(cx).view_kind().to_shared_string()) == *"Modules"
+                    })
                     .map(|view| (view, pane))
             })
             .unwrap();

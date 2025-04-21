@@ -1,6 +1,6 @@
 use crate::{
     debugger_panel::DebugPanel,
-    tests::{active_debug_session_panel, init_test, init_test_workspace},
+    tests::{active_debug_session_panel, init_test, init_test_workspace, start_debug_session},
 };
 use dap::{
     StoppedEvent,
@@ -31,8 +31,10 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         .unwrap();
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |client| {
+    let session = start_debug_session(&workspace, cx, |client| {
+        dbg!("HERE");
         client.on_request::<Initialize, _>(move |_, _| {
+            dbg!("request initialize intercepted");
             Ok(dap::Capabilities {
                 supports_modules_request: Some(true),
                 ..Default::default()

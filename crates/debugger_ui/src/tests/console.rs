@@ -1,4 +1,7 @@
-use crate::{tests::active_debug_session_panel, *};
+use crate::{
+    tests::{active_debug_session_panel, start_debug_session},
+    *,
+};
 use dap::requests::StackTrace;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
@@ -28,7 +31,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         })
         .unwrap();
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {}).unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<StackTrace, _>(move |_, _| {

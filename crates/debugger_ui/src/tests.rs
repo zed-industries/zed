@@ -1,6 +1,11 @@
-use gpui::{Entity, TestAppContext, WindowHandle};
-use project::Project;
+use std::sync::Arc;
+
+use anyhow::{Result, anyhow};
+use dap::{DebugRequest, client::DebugAdapterClient};
+use gpui::{Entity, Flatten, TestAppContext, WindowHandle};
+use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
+use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
@@ -81,4 +86,47 @@ pub fn active_debug_session_panel(
                 .unwrap()
         })
         .unwrap()
+}
+
+pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
+    workspace: &WindowHandle<Workspace>,
+    cx: &mut gpui::TestAppContext,
+    config: DebugTaskDefinition,
+    configure: T,
+) -> Result<Entity<Session>> {
+    let _subscription = project::debugger::test::intercept_debug_sessions(cx, configure);
+    let result = workspace.update(cx, |workspace, window, cx| {
+        workspace.start_debug_session(config, window, cx)
+    })?;
+    cx.run_until_parked();
+    let session = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .panel::<DebugPanel>(cx)
+            .and_then(|panel| panel.read(cx).active_session())
+            .and_then(|session| session.read(cx).mode().as_running().cloned())
+            .map(|running| running.read(cx).session().clone())
+            .ok_or_else(|| anyhow!("Failed to get active session"))
+    })??;
+    
+    Ok(session)
+}
+
+pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
+    workspace: &WindowHandle<Workspace>,
+    cx: &mut gpui::TestAppContext,
+    configure: T,
+) -> Result<Entity<Session>> {
+    start_debug_session_with(
+        workspace,
+        cx,
+        DebugTaskDefinition {
+            adapter: "fake-adapter".to_string(),
+            request: DebugRequest::Launch(Default::default()),
+            label: "test".to_string(),
+            initialize_args: None,
+            tcp_connection: None,
+            stop_on_entry: None,
+        },
+        configure,
+    )
 }
