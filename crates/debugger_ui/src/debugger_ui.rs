@@ -13,6 +13,7 @@ use workspace::{ShutdownDebugAdapters, Workspace};
 pub mod attach_modal;
 pub mod debugger_panel;
 mod new_session_modal;
+mod persistence;
 pub(crate) mod session;
 
 #[cfg(test)]

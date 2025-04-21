@@ -1,6 +1,7 @@
 pub mod parser;
 mod path_range;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::iter;
 use std::mem;
@@ -32,6 +33,17 @@ use crate::parser::CodeBlockKind;
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 
+/// Defines custom style refinements for each heading level (H1-H6)
+#[derive(Clone, Default)]
+pub struct HeadingLevelStyles {
+    pub h1: Option<TextStyleRefinement>,
+    pub h2: Option<TextStyleRefinement>,
+    pub h3: Option<TextStyleRefinement>,
+    pub h4: Option<TextStyleRefinement>,
+    pub h5: Option<TextStyleRefinement>,
+    pub h6: Option<TextStyleRefinement>,
+}
+
 #[derive(Clone)]
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
@@ -46,7 +58,9 @@ pub struct MarkdownStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
+    pub heading_level_styles: Option<HeadingLevelStyles>,
     pub table_overflow_x_scroll: bool,
+    pub height_is_multiple_of_line_height: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -64,7 +78,9 @@ impl Default for MarkdownStyle {
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
             heading: Default::default(),
+            heading_level_styles: None,
             table_overflow_x_scroll: false,
+            height_is_multiple_of_line_height: false,
         }
     }
 }
@@ -91,6 +107,7 @@ struct Options {
 pub enum CodeBlockRenderer {
     Default {
         copy_button: bool,
+        border: bool,
     },
     Custom {
         render: CodeBlockRenderFn,
@@ -190,6 +207,22 @@ impl Markdown {
 
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {
         &self.parsed_markdown
+    }
+
+    pub fn escape(s: &str) -> Cow<str> {
+        let count = s.bytes().filter(|c| c.is_ascii_punctuation()).count();
+        if count > 0 {
+            let mut output = String::with_capacity(s.len() + count);
+            for c in s.chars() {
+                if c.is_ascii_punctuation() {
+                    output.push('\\')
+                }
+                output.push(c)
+            }
+            output.into()
+        } else {
+            s.into()
+        }
     }
 
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
@@ -349,9 +382,33 @@ impl MarkdownElement {
         Self {
             markdown,
             style,
-            code_block_renderer: CodeBlockRenderer::Default { copy_button: true },
+            code_block_renderer: CodeBlockRenderer::Default {
+                copy_button: true,
+                border: false,
+            },
             on_url_click: None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rendered_text(
+        markdown: Entity<Markdown>,
+        cx: &mut gpui::VisualTestContext,
+        style: impl FnOnce(&Window, &App) -> MarkdownStyle,
+    ) -> String {
+        use gpui::size;
+
+        let (text, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |window, cx| Self::new(markdown, style(window, cx)),
+        );
+        text.text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn code_block_renderer(mut self, variant: CodeBlockRenderer) -> Self {
@@ -483,9 +540,9 @@ impl MarkdownElement {
                                 pending: true,
                             };
                             window.focus(&markdown.focus_handle);
-                            window.prevent_default();
                         }
 
+                        window.prevent_default();
                         cx.notify();
                     }
                 } else if phase.capture() {
@@ -621,24 +678,28 @@ impl Element for MarkdownElement {
                     match tag {
                         MarkdownTag::Paragraph => {
                             builder.push_div(
-                                div().mb_2().line_height(rems(1.3)),
+                                div().when(!self.style.height_is_multiple_of_line_height, |el| {
+                                    el.mb_2().line_height(rems(1.3))
+                                }),
                                 range,
                                 markdown_end,
                             );
                         }
                         MarkdownTag::Heading { level, .. } => {
                             let mut heading = div().mb_2();
-                            heading = match level {
-                                pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
-                                pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
-                                pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
-                                pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
-                                _ => heading,
-                            };
-                            heading.style().refine(&self.style.heading);
-                            builder.push_text_style(
-                                self.style.heading.text_style().clone().unwrap_or_default(),
+
+                            heading = apply_heading_style(
+                                heading,
+                                *level,
+                                self.style.heading_level_styles.as_ref(),
                             );
+
+                            heading.style().refine(&self.style.heading);
+
+                            let text_style =
+                                self.style.heading.text_style().clone().unwrap_or_default();
+
+                            builder.push_text_style(text_style);
                             builder.push_div(heading, range, markdown_end);
                         }
                         MarkdownTag::BlockQuote => {
@@ -691,6 +752,16 @@ impl Element for MarkdownElement {
                                                 code_block.w_full()
                                             }
                                         });
+
+                                    if let CodeBlockRenderer::Default { border: true, .. } =
+                                        &self.code_block_renderer
+                                    {
+                                        code_block = code_block
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border_variant);
+                                    }
+
                                     code_block.style().refine(&self.style.code_block);
                                     if let Some(code_block_text_style) = &self.style.code_block.text
                                     {
@@ -752,11 +823,11 @@ impl Element for MarkdownElement {
                             };
                             builder.push_div(
                                 div()
-                                    .mb_1()
+                                    .when(!self.style.height_is_multiple_of_line_height, |el| {
+                                        el.mb_1().gap_1().line_height(rems(1.3))
+                                    })
                                     .h_flex()
                                     .items_start()
-                                    .gap_1()
-                                    .line_height(rems(1.3))
                                     .child(bullet),
                                 range,
                                 markdown_end,
@@ -890,10 +961,10 @@ impl Element for MarkdownElement {
                             });
                         }
 
-                        if matches!(
-                            &self.code_block_renderer,
-                            CodeBlockRenderer::Default { copy_button: true }
-                        ) {
+                        if let CodeBlockRenderer::Default {
+                            copy_button: true, ..
+                        } = &self.code_block_renderer
+                        {
                             builder.flush_text();
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
@@ -1041,6 +1112,38 @@ impl Element for MarkdownElement {
         rendered_markdown.element.paint(window, cx);
         self.paint_selection(bounds, &rendered_markdown.text, window, cx);
     }
+}
+
+fn apply_heading_style(
+    mut heading: Div,
+    level: pulldown_cmark::HeadingLevel,
+    custom_styles: Option<&HeadingLevelStyles>,
+) -> Div {
+    heading = match level {
+        pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
+        pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
+        pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
+        pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
+        pulldown_cmark::HeadingLevel::H5 => heading.text_base(),
+        pulldown_cmark::HeadingLevel::H6 => heading.text_sm(),
+    };
+
+    if let Some(styles) = custom_styles {
+        let style_opt = match level {
+            pulldown_cmark::HeadingLevel::H1 => &styles.h1,
+            pulldown_cmark::HeadingLevel::H2 => &styles.h2,
+            pulldown_cmark::HeadingLevel::H3 => &styles.h3,
+            pulldown_cmark::HeadingLevel::H4 => &styles.h4,
+            pulldown_cmark::HeadingLevel::H5 => &styles.h5,
+            pulldown_cmark::HeadingLevel::H6 => &styles.h6,
+        };
+
+        if let Some(style) = style_opt {
+            heading.style().text = Some(style.clone());
+        }
+    }
+
+    heading
 }
 
 fn render_copy_code_block_button(

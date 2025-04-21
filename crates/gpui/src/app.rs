@@ -25,6 +25,7 @@ use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
 use http_client::HttpClient;
+use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
@@ -34,10 +35,10 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
     LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem,
-    Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator, current_platform, hash,
-    init_app_menus,
+    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator, current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -247,7 +248,7 @@ pub struct App {
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
-    pub(crate) keyboard_layout: SharedString,
+    pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -288,7 +289,7 @@ impl App {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
-        let keyboard_layout = SharedString::from(platform.keyboard_layout());
+        let keyboard_layout = platform.keyboard_layout();
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
@@ -344,7 +345,7 @@ impl App {
             move || {
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
-                    cx.keyboard_layout = SharedString::from(cx.platform.keyboard_layout());
+                    cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_layout_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
@@ -386,8 +387,8 @@ impl App {
     }
 
     /// Get the id of the current keyboard layout
-    pub fn keyboard_layout(&self) -> &SharedString {
-        &self.keyboard_layout
+    pub fn keyboard_layout(&self) -> &dyn PlatformKeyboardLayout {
+        self.keyboard_layout.as_ref()
     }
 
     /// Invokes a handler when the current keyboard layout changes
@@ -504,8 +505,8 @@ impl App {
         self.new_observer(
             entity_id,
             Box::new(move |cx| {
-                if let Some(handle) = Entity::<W>::upgrade_from(&handle) {
-                    on_notify(handle, cx)
+                if let Some(entity) = handle.upgrade() {
+                    on_notify(entity, cx)
                 } else {
                     false
                 }
@@ -549,15 +550,15 @@ impl App {
         Evt: 'static,
     {
         let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
+        let handle = entity.downgrade();
         self.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
                     let event: &Evt = event.downcast_ref().expect("invalid event type");
-                    if let Some(handle) = Entity::<T>::upgrade_from(&entity) {
-                        on_event(handle, event, cx)
+                    if let Some(entity) = handle.upgrade() {
+                        on_event(entity, event, cx)
                     } else {
                         false
                     }
@@ -1430,7 +1431,7 @@ impl App {
 
     /// Sets the right click menu for the app icon in the dock
     pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
-        self.platform.set_dock_menu(menus, &self.keymap.borrow());
+        self.platform.set_dock_menu(menus, &self.keymap.borrow())
     }
 
     /// Performs the action associated with the given dock menu item, only used on Windows for now.
@@ -1444,6 +1445,16 @@ impl App {
     /// If the path is already in the list, it will be moved to the bottom of the list.
     pub fn add_recent_document(&self, path: &Path) {
         self.platform.add_recent_document(path);
+    }
+
+    /// Updates the jump list with the updated list of recent paths for the application, only used on Windows for now.
+    /// Note that this also sets the dock menu on Windows.
+    pub fn update_jump_list(
+        &self,
+        menus: Vec<MenuItem>,
+        entries: Vec<SmallVec<[PathBuf; 2]>>,
+    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+        self.platform.update_jump_list(menus, entries)
     }
 
     /// Dispatch an action to the currently active window or global action handler

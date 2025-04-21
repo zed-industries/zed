@@ -1,7 +1,7 @@
-use crate::{Keep, Reject, Thread, ThreadEvent};
+use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{
     Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
@@ -355,15 +355,23 @@ impl AgentDiff {
             self.update_selection(&diff_hunks_in_ranges, window, cx);
         }
 
+        let mut ranges_by_buffer = HashMap::default();
         for hunk in &diff_hunks_in_ranges {
             let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
             if let Some(buffer) = buffer {
-                self.thread
-                    .update(cx, |thread, cx| {
-                        thread.reject_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
-                    })
-                    .detach_and_log_err(cx);
+                ranges_by_buffer
+                    .entry(buffer.clone())
+                    .or_insert_with(Vec::new)
+                    .push(hunk.buffer_range.clone());
             }
+        }
+
+        for (buffer, ranges) in ranges_by_buffer {
+            self.thread
+                .update(cx, |thread, cx| {
+                    thread.reject_edits_in_ranges(buffer, ranges, cx)
+                })
+                .detach_and_log_err(cx);
         }
     }
 
@@ -843,7 +851,7 @@ impl ToolbarItemView for AgentDiffToolbar {
 }
 
 impl Render for AgentDiffToolbar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_diff = match self.agent_diff(cx) {
             Some(ad) => ad,
             None => return div(),
@@ -855,6 +863,8 @@ impl Render for AgentDiffToolbar {
             return div();
         }
 
+        let focus_handle = agent_diff.focus_handle(cx);
+
         h_group_xl()
             .my_neg_1()
             .items_center()
@@ -864,15 +874,25 @@ impl Render for AgentDiffToolbar {
             .child(
                 h_group_sm()
                     .child(
-                        Button::new("reject-all", "Reject All").on_click(cx.listener(
-                            |this, _, window, cx| {
-                                this.dispatch_action(&crate::RejectAll, window, cx)
-                            },
-                        )),
+                        Button::new("reject-all", "Reject All")
+                            .key_binding({
+                                KeyBinding::for_action_in(&RejectAll, &focus_handle, window, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.)))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&RejectAll, window, cx)
+                            })),
                     )
-                    .child(Button::new("keep-all", "Keep All").on_click(cx.listener(
-                        |this, _, window, cx| this.dispatch_action(&crate::KeepAll, window, cx),
-                    ))),
+                    .child(
+                        Button::new("keep-all", "Keep All")
+                            .key_binding({
+                                KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.)))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&KeepAll, window, cx)
+                            })),
+                    ),
             )
     }
 }
@@ -882,6 +902,7 @@ mod tests {
     use super::*;
     use crate::{ThreadStore, thread_store};
     use assistant_settings::AssistantSettings;
+    use assistant_tool::ToolWorkingSet;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::TestAppContext;
@@ -901,6 +922,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             AssistantSettings::register(cx);
+            prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
@@ -925,12 +947,13 @@ mod tests {
             .update(|cx| {
                 ThreadStore::load(
                     project.clone(),
-                    Arc::default(),
+                    cx.new(|_| ToolWorkingSet::default()),
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )
             })
-            .await;
+            .await
+            .unwrap();
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 

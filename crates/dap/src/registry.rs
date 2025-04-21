@@ -8,7 +8,7 @@ struct DapRegistryState {
     adapters: BTreeMap<DebugAdapterName, Arc<dyn DebugAdapter>>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 /// Stores available debug adapters.
 pub struct DapRegistry(Arc<RwLock<DapRegistryState>>);
 

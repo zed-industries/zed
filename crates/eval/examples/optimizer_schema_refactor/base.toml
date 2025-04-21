@@ -1,0 +1,3 @@
+url = "https://github.com/redis/redis-vl-python.git"
+revision = "494e5e2f8cf800b90c7383385095c2e503404bc5"
+language_extension = "py"

@@ -7,28 +7,42 @@ edition.workspace = true
 [dependencies]
 agent.workspace = true
 anyhow.workspace = true
+async-watch.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
-assistant_settings.workspace = true
+chrono.workspace = true
+clap.workspace = true
 client.workspace = true
+collections.workspace = true
 context_server.workspace = true
 dap.workspace = true
+dirs = "5.0"
 env_logger.workspace = true
+extension.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
+handlebars.workspace = true
 language.workspace = true
+language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
+languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
+paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true
 settings.workspace = true
+shellexpand.workspace = true
+telemetry.workspace = true
 toml.workspace = true
+unindent.workspace = true
+util.workspace = true
+uuid = { version = "1.6", features = ["v4"] }
 workspace-hack.workspace = true
 
 [[bin]]

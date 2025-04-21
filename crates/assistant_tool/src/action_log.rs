@@ -3,8 +3,8 @@ use buffer_diff::BufferDiff;
 use collections::BTreeMap;
 use futures::{StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
-use language::{Anchor, Buffer, BufferEvent, DiskState, Point};
-use project::{Project, ProjectItem};
+use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
+use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
 use util::RangeExt;
@@ -49,6 +49,10 @@ impl ActionLog {
             .tracked_buffers
             .entry(buffer.clone())
             .or_insert_with(|| {
+                let open_lsp_handle = self.project.update(cx, |project, cx| {
+                    project.register_buffer_with_language_servers(&buffer, cx)
+                });
+
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
@@ -76,6 +80,7 @@ impl ActionLog {
                     version: buffer.read(cx).version(),
                     diff,
                     diff_update: diff_update_tx,
+                    _open_lsp_handle: open_lsp_handle,
                     _maintain_diff: cx.spawn({
                         let buffer = buffer.clone();
                         async move |this, cx| {
@@ -358,10 +363,10 @@ impl ActionLog {
         }
     }
 
-    pub fn reject_edits_in_range(
+    pub fn reject_edits_in_ranges(
         &mut self,
         buffer: Entity<Buffer>,
-        buffer_range: Range<impl language::ToPoint>,
+        buffer_ranges: Vec<Range<impl language::ToPoint>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
@@ -398,29 +403,15 @@ impl ActionLog {
             }
             TrackedBufferStatus::Modified => {
                 buffer.update(cx, |buffer, cx| {
-                    let buffer_range =
-                        buffer_range.start.to_point(buffer)..buffer_range.end.to_point(buffer);
+                    let mut buffer_row_ranges = buffer_ranges
+                        .into_iter()
+                        .map(|range| {
+                            range.start.to_point(buffer).row..range.end.to_point(buffer).row
+                        })
+                        .peekable();
 
                     let mut edits_to_revert = Vec::new();
                     for edit in tracked_buffer.unreviewed_changes.edits() {
-                        if buffer_range.end.row < edit.new.start {
-                            break;
-                        } else if buffer_range.start.row > edit.new.end {
-                            continue;
-                        }
-
-                        let old_range = tracked_buffer
-                            .base_text
-                            .point_to_offset(Point::new(edit.old.start, 0))
-                            ..tracked_buffer.base_text.point_to_offset(cmp::min(
-                                Point::new(edit.old.end, 0),
-                                tracked_buffer.base_text.max_point(),
-                            ));
-                        let old_text = tracked_buffer
-                            .base_text
-                            .chunks_in_range(old_range)
-                            .collect::<String>();
-
                         let new_range = tracked_buffer
                             .snapshot
                             .anchor_before(Point::new(edit.new.start, 0))
@@ -428,7 +419,35 @@ impl ActionLog {
                                 Point::new(edit.new.end, 0),
                                 tracked_buffer.snapshot.max_point(),
                             ));
-                        edits_to_revert.push((new_range, old_text));
+                        let new_row_range = new_range.start.to_point(buffer).row
+                            ..new_range.end.to_point(buffer).row;
+
+                        let mut revert = false;
+                        while let Some(buffer_row_range) = buffer_row_ranges.peek() {
+                            if buffer_row_range.end < new_row_range.start {
+                                buffer_row_ranges.next();
+                            } else if buffer_row_range.start > new_row_range.end {
+                                break;
+                            } else {
+                                revert = true;
+                                break;
+                            }
+                        }
+
+                        if revert {
+                            let old_range = tracked_buffer
+                                .base_text
+                                .point_to_offset(Point::new(edit.old.start, 0))
+                                ..tracked_buffer.base_text.point_to_offset(cmp::min(
+                                    Point::new(edit.old.end, 0),
+                                    tracked_buffer.base_text.max_point(),
+                                ));
+                            let old_text = tracked_buffer
+                                .base_text
+                                .chunks_in_range(old_range)
+                                .collect::<String>();
+                            edits_to_revert.push((new_range, old_text));
+                        }
                     }
 
                     buffer.edit(edits_to_revert, None, cx);
@@ -594,6 +613,7 @@ fn point_to_row_edit(edit: Edit<Point>, old_text: &Rope, new_text: &Rope) -> Edi
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 enum ChangeAuthor {
     User,
     Agent,
@@ -615,6 +635,7 @@ struct TrackedBuffer {
     diff: Entity<BufferDiff>,
     snapshot: text::BufferSnapshot,
     diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
+    _open_lsp_handle: OpenLspBufferHandle,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
 }
@@ -1129,9 +1150,48 @@ mod tests {
             )]
         );
 
+        // If the rejected range doesn't overlap with any hunk, we ignore it.
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(4, 0)..Point::new(4, 0)],
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndE\nXYZf\nghi\njkl\nmnO"
+        );
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(3, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
+                    },
+                    HunkStatus {
+                        range: Point::new(5, 0)..Point::new(5, 3),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
+                    }
+                ],
+            )]
+        );
+
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(0, 0)..Point::new(1, 0)],
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1154,10 +1214,90 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_range(buffer.clone(), Point::new(4, 0)..Point::new(4, 0), cx)
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(4, 0)..Point::new(4, 0)],
+                    cx,
+                )
             })
             .await
             .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndef\nghi\njkl\nmno"
+        );
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_reject_multiple_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(1, 1)..Point::new(1, 2), "E\nXYZ")], None, cx)
+                    .unwrap()
+            });
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(5, 2)..Point::new(5, 3), "O")], None, cx)
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndE\nXYZf\nghi\njkl\nmnO"
+        );
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(3, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
+                    },
+                    HunkStatus {
+                        range: Point::new(5, 0)..Point::new(5, 3),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
+                    }
+                ],
+            )]
+        );
+
+        action_log.update(cx, |log, cx| {
+            let range_1 = buffer.read(cx).anchor_before(Point::new(0, 0))
+                ..buffer.read(cx).anchor_before(Point::new(1, 0));
+            let range_2 = buffer.read(cx).anchor_before(Point::new(5, 0))
+                ..buffer.read(cx).anchor_before(Point::new(5, 3));
+
+            log.reject_edits_in_ranges(buffer.clone(), vec![range_1, range_2], cx)
+                .detach();
+            assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                "abc\ndef\nghi\njkl\nmno"
+            );
+        });
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -1209,7 +1349,11 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(0, 0), cx)
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(0, 0)..Point::new(0, 0)],
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1260,7 +1404,11 @@ mod tests {
 
         action_log
             .update(cx, |log, cx| {
-                log.reject_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(0, 11), cx)
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(0, 0)..Point::new(0, 11)],
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1306,7 +1454,7 @@ mod tests {
                         .update(cx, |log, cx| {
                             let range = buffer.read(cx).random_byte_range(0, &mut rng);
                             log::info!("rejecting edits in range {:?}", range);
-                            log.reject_edits_in_range(buffer.clone(), range, cx)
+                            log.reject_edits_in_ranges(buffer.clone(), vec![range], cx)
                         })
                         .await
                         .unwrap();

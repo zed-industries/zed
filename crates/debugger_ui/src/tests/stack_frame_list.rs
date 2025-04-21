@@ -5,14 +5,13 @@ use crate::{
 };
 use dap::{
     StackFrame,
-    requests::{StackTrace, Threads},
+    requests::{Scopes, StackTrace, Threads},
 };
 use editor::{Editor, ToPoint as _};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
-use project::{FakeFs, Project};
+use project::{FakeFs, Project, debugger};
 use serde_json::json;
 use std::sync::Arc;
-use task::LaunchConfig;
 use unindent::Unindent as _;
 use util::path;
 
@@ -51,29 +50,20 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
 
     let stack_frames = vec![
         StackFrame {
@@ -122,19 +112,17 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
         },
     ];
 
-    client
-        .on_request::<StackTrace, _>({
-            let stack_frames = Arc::new(stack_frames.clone());
-            move |_, args| {
-                assert_eq!(1, args.thread_id);
+    client.on_request::<StackTrace, _>({
+        let stack_frames = Arc::new(stack_frames.clone());
+        move |_, args| {
+            assert_eq!(1, args.thread_id);
 
-                Ok(dap::StackTraceResponse {
-                    stack_frames: (*stack_frames).clone(),
-                    total_frames: None,
-                })
-            }
-        })
-        .await;
+            Ok(dap::StackTraceResponse {
+                stack_frames: (*stack_frames).clone(),
+                total_frames: None,
+            })
+        }
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -241,29 +229,21 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     });
 
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
+
+    client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
 
     let stack_frames = vec![
         StackFrame {
@@ -312,19 +292,17 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         },
     ];
 
-    client
-        .on_request::<StackTrace, _>({
-            let stack_frames = Arc::new(stack_frames.clone());
-            move |_, args| {
-                assert_eq!(1, args.thread_id);
+    client.on_request::<StackTrace, _>({
+        let stack_frames = Arc::new(stack_frames.clone());
+        move |_, args| {
+            assert_eq!(1, args.thread_id);
 
-                Ok(dap::StackTraceResponse {
-                    stack_frames: (*stack_frames).clone(),
-                    total_frames: None,
-                })
-            }
-        })
-        .await;
+            Ok(dap::StackTraceResponse {
+                stack_frames: (*stack_frames).clone(),
+                total_frames: None,
+            })
+        }
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -517,28 +495,21 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {})
+        .await
+        .unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
+
+    client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
 
     let stack_frames = vec![
         StackFrame {
@@ -697,19 +668,17 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
         },
     ];
 
-    client
-        .on_request::<StackTrace, _>({
-            let stack_frames = Arc::new(stack_frames.clone());
-            move |_, args| {
-                assert_eq!(1, args.thread_id);
+    client.on_request::<StackTrace, _>({
+        let stack_frames = Arc::new(stack_frames.clone());
+        move |_, args| {
+            assert_eq!(1, args.thread_id);
 
-                Ok(dap::StackTraceResponse {
-                    stack_frames: (*stack_frames).clone(),
-                    total_frames: None,
-                })
-            }
-        })
-        .await;
+            Ok(dap::StackTraceResponse {
+                stack_frames: (*stack_frames).clone(),
+                total_frames: None,
+            })
+        }
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {

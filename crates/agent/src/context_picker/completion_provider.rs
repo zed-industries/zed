@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use file_icons::FileIcons;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use language::{Buffer, CodeLabel, HighlightId};
@@ -37,7 +38,24 @@ pub(crate) enum Match {
     File(FileMatch),
     Thread(ThreadMatch),
     Fetch(SharedString),
-    Mode(ContextPickerMode),
+    Mode(ModeMatch),
+}
+
+pub struct ModeMatch {
+    mat: Option<StringMatch>,
+    mode: ContextPickerMode,
+}
+
+impl Match {
+    pub fn score(&self) -> f64 {
+        match self {
+            Match::File(file) => file.mat.score,
+            Match::Mode(mode) => mode.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
+            Match::Thread(_) => 1.,
+            Match::Symbol(_) => 1.,
+            Match::Fetch(_) => 1.,
+        }
+    }
 }
 
 fn search(
@@ -126,19 +144,54 @@ fn search(
                 matches.extend(
                     supported_context_picker_modes(&thread_store)
                         .into_iter()
-                        .map(Match::Mode),
+                        .map(|mode| Match::Mode(ModeMatch { mode, mat: None })),
                 );
 
                 Task::ready(matches)
             } else {
+                let executor = cx.background_executor().clone();
+
                 let search_files_task =
                     search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
+
+                let modes = supported_context_picker_modes(&thread_store);
+                let mode_candidates = modes
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, mode)| StringMatchCandidate::new(ix, mode.mention_prefix()))
+                    .collect::<Vec<_>>();
+
                 cx.background_spawn(async move {
-                    search_files_task
+                    let mut matches = search_files_task
                         .await
                         .into_iter()
                         .map(Match::File)
-                        .collect()
+                        .collect::<Vec<_>>();
+
+                    let mode_matches = fuzzy::match_strings(
+                        &mode_candidates,
+                        &query,
+                        false,
+                        100,
+                        &Arc::new(AtomicBool::default()),
+                        executor,
+                    )
+                    .await;
+
+                    matches.extend(mode_matches.into_iter().map(|mat| {
+                        Match::Mode(ModeMatch {
+                            mode: modes[mat.candidate_id],
+                            mat: Some(mat),
+                        })
+                    }));
+
+                    matches.sort_by(|a, b| {
+                        b.score()
+                            .partial_cmp(&a.score())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                    matches
                 })
             }
         }
@@ -548,7 +601,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             context_store.clone(),
                             http_client.clone(),
                         )),
-                        Match::Mode(mode) => {
+                        Match::Mode(ModeMatch { mode, .. }) => {
                             Some(Self::completion_for_mode(source_range.clone(), mode))
                         }
                     })
@@ -610,21 +663,20 @@ fn confirm_completion_callback(
     editor: Entity<Editor>,
     add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
-    Arc::new(move |_, window, cx| {
+    Arc::new(move |_, _, cx| {
         add_context_fn(cx);
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
         let editor = editor.clone();
-        window.defer(cx, move |window, cx| {
-            crate::context_picker::insert_crease_for_mention(
+        cx.defer(move |cx| {
+            crate::context_picker::insert_fold_for_mention(
                 excerpt_id,
                 start,
                 content_len,
                 crease_text,
                 crease_icon_path,
                 editor,
-                window,
                 cx,
             );
         });
@@ -694,6 +746,7 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use editor::AnchorRangeExt;
     use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
     use project::{Project, ProjectPath};
     use serde_json::json;
@@ -967,7 +1020,7 @@ mod tests {
             assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt)",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
@@ -978,7 +1031,7 @@ mod tests {
             assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt) ",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
@@ -992,7 +1045,7 @@ mod tests {
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
@@ -1006,7 +1059,7 @@ mod tests {
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![Point::new(0, 6)..Point::new(0, 37)]
             );
         });
@@ -1024,7 +1077,7 @@ mod tests {
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
                     Point::new(0, 44)..Point::new(0, 79)
@@ -1041,7 +1094,7 @@ mod tests {
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
                     Point::new(0, 44)..Point::new(0, 79)
@@ -1062,7 +1115,7 @@ mod tests {
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
-                crease_ranges(editor, cx),
+                fold_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
                     Point::new(0, 44)..Point::new(0, 79),
@@ -1072,15 +1125,13 @@ mod tests {
         });
     }
 
-    fn crease_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
+    fn fold_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         editor.display_map.update(cx, |display_map, cx| {
             display_map
                 .snapshot(cx)
-                .crease_snapshot
-                .crease_items_with_offsets(&snapshot)
-                .into_iter()
-                .map(|(_, range)| range)
+                .folds_in_range(0..snapshot.len())
+                .map(|fold| fold.range.to_point(&snapshot))
                 .collect()
         })
     }

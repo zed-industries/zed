@@ -15,6 +15,7 @@ members = [
     "crates/assistant_tools",
     "crates/audio",
     "crates/auto_update",
+    "crates/auto_update_helper",
     "crates/auto_update_ui",
     "crates/aws_http_client",
     "crates/bedrock",
@@ -46,7 +47,6 @@ members = [
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/eval",
-    "crates/evals",
     "crates/extension",
     "crates/extension_api",
     "crates/extension_cli",
@@ -164,6 +164,8 @@ members = [
     "crates/util_macros",
     "crates/vim",
     "crates/vim_mode_setting",
+    "crates/web_search",
+    "crates/web_search_providers",
     "crates/welcome",
     "crates/workspace",
     "crates/worktree",
@@ -222,6 +224,7 @@ assistant_tool = { path = "crates/assistant_tool" }
 assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
+auto_update_helper = { path = "crates/auto_update_helper" }
 auto_update_ui = { path = "crates/auto_update_ui" }
 aws_http_client = { path = "crates/aws_http_client" }
 bedrock = { path = "crates/bedrock" }
@@ -368,6 +371,8 @@ util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
+web_search = { path = "crates/web_search" }
+web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
@@ -399,8 +404,12 @@ async-tungstenite = "0.29.1"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
-aws-credential-types = { version = "1.2.2", features = ["hardcoded-credentials"] }
-aws-sdk-bedrockruntime = { version = "1.80.0", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.2", features = [
+    "hardcoded-credentials",
+] }
+aws-sdk-bedrockruntime = { version = "1.80.0", features = [
+    "behavior-version-latest",
+] }
 aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
@@ -439,6 +448,7 @@ futures-lite = "1.13"
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
+heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
@@ -529,7 +539,7 @@ smol = "2.0"
 sqlformat = "0.2"
 streaming-iterator = "0.1"
 strsim = "0.11"
-strum = { version = "0.26.0", features = ["derive"] }
+strum = { version = "0.27.0", features = ["derive"] }
 subtle = "2.5.0"
 syn = { version = "1.0.72", features = ["full", "extra-traits"] }
 sys-locale = "0.3.1"
@@ -594,7 +604,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.4"
+zed_llm_client = "0.6.1"
 zstd = "0.11"
 metal = "0.29"
 
@@ -615,12 +625,10 @@ features = [
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
-    "Foundation_Collections",
     "Foundation_Numerics",
     "Storage_Search",
     "Storage_Streams",
     "System_Threading",
-    "UI_StartScreen",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
@@ -647,6 +655,7 @@ features = [
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
+    "Win32_System_Variant",
     "Win32_System_WinRT",
     "Win32_UI_Controls",
     "Win32_UI_HiDpi",
@@ -654,6 +663,7 @@ features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ]
 
@@ -685,7 +695,6 @@ breadcrumbs = { codegen-units = 1 }
 collections = { codegen-units = 1 }
 command_palette = { codegen-units = 1 }
 command_palette_hooks = { codegen-units = 1 }
-evals = { codegen-units = 1 }
 extension_cli = { codegen-units = 1 }
 feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
@@ -777,4 +786,12 @@ let_underscore_future = "allow"
 too_many_arguments = "allow"
 
 [workspace.metadata.cargo-machete]
-ignored = ["bindgen", "cbindgen", "prost_build", "serde", "component", "linkme", "workspace-hack"]
+ignored = [
+    "bindgen",
+    "cbindgen",
+    "prost_build",
+    "serde",
+    "component",
+    "linkme",
+    "workspace-hack",
+]

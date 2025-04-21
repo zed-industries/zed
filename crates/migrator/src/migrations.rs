@@ -39,7 +39,9 @@ pub(crate) mod m_2025_03_29 {
 }
 
 pub(crate) mod m_2025_04_15 {
+    mod keymap;
     mod settings;
 
+    pub(crate) use keymap::KEYMAP_PATTERNS;
     pub(crate) use settings::SETTINGS_PATTERNS;
 }

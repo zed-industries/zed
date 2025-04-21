@@ -11,6 +11,7 @@ use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
     WeakEntity,
 };
+use project::Project;
 use settings::Settings;
 use task::{DebugTaskDefinition, LaunchConfig};
 use theme::ThemeSettings;
@@ -59,7 +60,7 @@ impl NewSessionModal {
         debug_panel: WeakEntity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Self {
         let debugger = past_debug_definition
             .as_ref()
@@ -145,7 +146,7 @@ impl NewSessionModal {
                 {
                     this.start_debug_session(debug_config, cx)
                 } else {
-                    this.start_debug_session(config.into(), cx)
+                    this.start_debug_session(config, cx)
                 }
             })?;
             let spawn_result = task.await;
@@ -171,25 +172,13 @@ impl NewSessionModal {
         attach.update(cx, |this, cx| {
             if selected_debugger != this.debug_definition.adapter {
                 this.debug_definition.adapter = selected_debugger.into();
-                if let Some(project) = this
-                    .workspace
-                    .read_with(cx, |workspace, _| workspace.project().clone())
-                    .ok()
-                {
-                    this.attach_picker = Some(cx.new(|cx| {
-                        let modal = AttachModal::new(
-                            project,
-                            this.debug_definition.clone(),
-                            false,
-                            window,
-                            cx,
-                        );
 
-                        window.focus(&modal.focus_handle(cx));
-
-                        modal
-                    }));
-                }
+                this.attach_picker.update(cx, |this, cx| {
+                    this.picker.update(cx, |this, cx| {
+                        this.delegate.debug_config.adapter = selected_debugger.into();
+                        this.focus(window, cx);
+                    })
+                });
             }
 
             cx.notify();
@@ -256,7 +245,6 @@ impl NewSessionModal {
             ContextMenu::build(window, cx, move |mut menu, _, cx| {
                 let setter_for_name = |task: DebugTaskDefinition| {
                     let weak = weak.clone();
-                    let workspace = workspace.clone();
                     move |window: &mut Window, cx: &mut App| {
                         weak.update(cx, |this, cx| {
                             this.last_selected_profile_name = Some(SharedString::from(&task.label));
@@ -271,12 +259,19 @@ impl NewSessionModal {
                                     );
                                 }
                                 DebugRequestType::Attach(_) => {
+                                    let Ok(project) = this
+                                        .workspace
+                                        .read_with(cx, |this, _| this.project().clone())
+                                    else {
+                                        return;
+                                    };
                                     this.mode = NewSessionMode::attach(
                                         this.debugger.clone(),
-                                        workspace.clone(),
+                                        project,
                                         window,
                                         cx,
                                     );
+                                    this.mode.focus_handle(cx).focus(window);
                                     if let Some((debugger, attach)) =
                                         this.debugger.as_ref().zip(this.mode.as_attach())
                                     {
@@ -365,18 +360,16 @@ impl LaunchMode {
 
 #[derive(Clone)]
 struct AttachMode {
-    workspace: WeakEntity<Workspace>,
     debug_definition: DebugTaskDefinition,
-    attach_picker: Option<Entity<AttachModal>>,
-    focus_handle: FocusHandle,
+    attach_picker: Entity<AttachModal>,
 }
 
 impl AttachMode {
     fn new(
         debugger: Option<SharedString>,
-        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<NewSessionModal>,
     ) -> Entity<Self> {
         let debug_definition = DebugTaskDefinition {
             label: "Attach New Session Setup".into(),
@@ -387,27 +380,15 @@ impl AttachMode {
             initialize_args: None,
             stop_on_entry: Some(false),
         };
+        let attach_picker = cx.new(|cx| {
+            let modal = AttachModal::new(project, debug_definition.clone(), false, window, cx);
+            window.focus(&modal.focus_handle(cx));
 
-        let attach_picker = if let Some(project) = debugger.and(
-            workspace
-                .read_with(cx, |workspace, _| workspace.project().clone())
-                .ok(),
-        ) {
-            Some(cx.new(|cx| {
-                let modal = AttachModal::new(project, debug_definition.clone(), false, window, cx);
-                window.focus(&modal.focus_handle(cx));
-
-                modal
-            }))
-        } else {
-            None
-        };
-
-        cx.new(|cx| Self {
-            workspace,
+            modal
+        });
+        cx.new(|_| Self {
             debug_definition,
             attach_picker,
-            focus_handle: cx.focus_handle(),
         })
     }
     fn debug_task(&self) -> task::AttachConfig {
@@ -444,7 +425,7 @@ impl Focusable for NewSessionMode {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self {
             NewSessionMode::Launch(entity) => entity.read(cx).program.focus_handle(cx),
-            NewSessionMode::Attach(entity) => entity.read(cx).focus_handle.clone(),
+            NewSessionMode::Attach(entity) => entity.read(cx).attach_picker.focus_handle(cx),
         }
     }
 }
@@ -476,8 +457,11 @@ impl RenderOnce for LaunchMode {
 }
 
 impl RenderOnce for AttachMode {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        v_flex().w_full().children(self.attach_picker.clone())
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            .track_focus(&self.attach_picker.focus_handle(cx))
+            .child(self.attach_picker.clone())
     }
 }
 
@@ -497,13 +481,17 @@ impl RenderOnce for NewSessionMode {
 impl NewSessionMode {
     fn attach(
         debugger: Option<SharedString>,
-        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<NewSessionModal>,
     ) -> Self {
-        Self::Attach(AttachMode::new(debugger, workspace, window, cx))
+        Self::Attach(AttachMode::new(debugger, project, window, cx))
     }
-    fn launch(past_launch_config: Option<LaunchConfig>, window: &mut Window, cx: &mut App) -> Self {
+    fn launch(
+        past_launch_config: Option<LaunchConfig>,
+        window: &mut Window,
+        cx: &mut Context<NewSessionModal>,
+    ) -> Self {
         Self::Launch(LaunchMode::new(past_launch_config, window, cx))
     }
 }
@@ -592,18 +580,25 @@ impl Render for NewSessionModal {
                                 .toggle_state(matches!(self.mode, NewSessionMode::Attach(_)))
                                 .style(ui::ButtonStyle::Subtle)
                                 .on_click(cx.listener(|this, _, window, cx| {
+                                    let Ok(project) = this
+                                        .workspace
+                                        .read_with(cx, |this, _| this.project().clone())
+                                    else {
+                                        return;
+                                    };
                                     this.mode = NewSessionMode::attach(
                                         this.debugger.clone(),
-                                        this.workspace.clone(),
+                                        project,
                                         window,
                                         cx,
                                     );
+                                    this.mode.focus_handle(cx).focus(window);
                                     if let Some((debugger, attach)) =
                                         this.debugger.as_ref().zip(this.mode.as_attach())
                                     {
                                         Self::update_attach_picker(&attach, &debugger, window, cx);
                                     }
-                                    this.mode.focus_handle(cx).focus(window);
+
                                     cx.notify();
                                 }))
                                 .last(),

@@ -1,6 +1,6 @@
 use crate::{replace::replace_with_flexible_indent, schema::json_schema_for};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -151,7 +151,7 @@ impl Tool for FindReplaceFileTool {
         IconName::Pencil
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<FindReplaceFileToolInput>(format)
     }
 
@@ -169,10 +169,10 @@ impl Tool for FindReplaceFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<FindReplaceFileToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         cx.spawn(async move |cx: &mut AsyncApp| {
@@ -263,6 +263,6 @@ impl Tool for FindReplaceFileTool {
 
             Ok(format!("Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str))
 
-        })
+        }).into()
     }
 }

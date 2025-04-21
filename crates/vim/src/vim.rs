@@ -145,6 +145,7 @@ actions!(
         PushDeleteSurrounds,
         PushMark,
         ToggleMarksView,
+        PushForcedMotion,
         PushIndent,
         PushOutdent,
         PushAutoIndent,
@@ -233,6 +234,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &ResizePaneRight, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
             let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
                 return;
@@ -248,6 +250,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &ResizePaneLeft, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
             let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
                 return;
@@ -263,6 +266,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &ResizePaneUp, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
             let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, height * count, window, cx);
@@ -270,6 +274,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &ResizePaneDown, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
             let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, -height * count, window, cx);
@@ -318,8 +323,6 @@ pub(crate) struct Vim {
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
-    pub(crate) change_list: Vec<Vec<Anchor>>,
-    pub(crate) change_list_position: Option<usize>,
 
     pub(crate) current_tx: Option<TransactionId>,
     pub(crate) current_anchor: Option<Selection<Anchor>>,
@@ -365,8 +368,6 @@ impl Vim {
             replacements: Vec::new(),
 
             stored_visual_mode: None,
-            change_list: Vec::new(),
-            change_list_position: None,
             current_tx: None,
             current_anchor: None,
             undo_modes: HashMap::default(),
@@ -472,7 +473,9 @@ impl Vim {
                     vim.switch_mode(Mode::HelixNormal, false, window, cx)
                 },
             );
-
+            Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
+                Vim::globals(cx).forced_motion = true;
+            });
             Vim::action(editor, cx, |vim, action: &PushObject, window, cx| {
                 vim.push_operator(
                     Operator::Object {
@@ -907,6 +910,7 @@ impl Vim {
             self.current_tx.take();
             self.current_anchor.take();
         }
+        Vim::take_forced_motion(cx);
         if mode != Mode::Insert && mode != Mode::Replace {
             Vim::take_count(cx);
         }
@@ -1009,6 +1013,13 @@ impl Vim {
             global_state.recorded_count = count;
         }
         count
+    }
+
+    pub fn take_forced_motion(cx: &mut App) -> bool {
+        let global_state = cx.global_mut::<VimGlobals>();
+        let forced_motion = global_state.forced_motion;
+        global_state.forced_motion = false;
+        forced_motion
     }
 
     pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
@@ -1372,6 +1383,7 @@ impl Vim {
 
     fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         self.selected_register.take();
         self.operator_stack.clear();
         self.sync_vim_settings(window, cx);

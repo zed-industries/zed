@@ -190,7 +190,8 @@
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
-      "ctrl-6": "pane::AlternateFile"
+      "ctrl-6": "pane::AlternateFile",
+      "ctrl-^": "pane::AlternateFile"
     }
   },
   {
@@ -203,6 +204,7 @@
       "c": "vim::PushChange",
       "shift-c": "vim::ChangeToEndOfLine",
       "d": "vim::PushDelete",
+      "delete": "vim::DeleteRight",
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "g shift-j": "vim::JoinLinesNoWhitespace",
@@ -538,6 +540,7 @@
     "bindings": {
       "d": "vim::CurrentLine",
       "s": "vim::PushDeleteSurrounds",
+      "v": "vim::PushForcedMotion", // "d v"
       "o": "editor::ToggleSelectedDiffHunks", // "d o"
       "shift-o": "git::ToggleStaged",
       "p": "git::Restore", // "d p"
@@ -586,6 +589,7 @@
     "context": "vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine",
+      "v": "vim::PushForcedMotion",
       "s": ["vim::PushAddSurrounds", {}]
     }
   },
@@ -783,8 +787,7 @@
       "{": "project_panel::SelectPrevDirectory",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
-      "-": "project_panel::SelectParent",
-      "ctrl-6": "pane::AlternateFile"
+      "-": "project_panel::SelectParent"
     }
   },
   {

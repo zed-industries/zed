@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::adapters::latest_github_release;
 use gpui::AsyncApp;
-use task::{DebugAdapterConfig, DebugRequestType, DebugTaskDefinition};
+use task::{DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
@@ -15,6 +15,42 @@ pub(crate) struct CodeLldbDebugAdapter {
 
 impl CodeLldbDebugAdapter {
     const ADAPTER_NAME: &'static str = "CodeLLDB";
+
+    fn request_args(&self, config: &DebugTaskDefinition) -> dap::StartDebuggingRequestArguments {
+        let mut configuration = json!({
+            "request": match config.request {
+                DebugRequestType::Launch(_) => "launch",
+                DebugRequestType::Attach(_) => "attach",
+            },
+        });
+        let map = configuration.as_object_mut().unwrap();
+        // CodeLLDB uses `name` for a terminal label.
+        map.insert("name".into(), Value::String(config.label.clone()));
+        let request = config.request.to_dap();
+        match &config.request {
+            DebugRequestType::Attach(attach) => {
+                map.insert("pid".into(), attach.process_id.into());
+            }
+            DebugRequestType::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
+
+                if let Some(stop_on_entry) = config.stop_on_entry {
+                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        }
+        dap::StartDebuggingRequestArguments {
+            request,
+            configuration,
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -86,7 +122,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
     async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -111,39 +147,10 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     .to_string()
                     .into(),
             ]),
-            ..Default::default()
+            request_args: self.request_args(config),
+            adapter_name: "test".into(),
+            envs: None,
+            connection: None,
         })
-    }
-
-    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
-        let mut args = json!({
-            "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
-            },
-        });
-        let map = args.as_object_mut().unwrap();
-        // CodeLLDB uses `name` for a terminal label.
-        map.insert("name".into(), Value::String(config.label.clone()));
-        match &config.request {
-            DebugRequestType::Attach(attach) => {
-                map.insert("pid".into(), attach.process_id.into());
-            }
-            DebugRequestType::Launch(launch) => {
-                map.insert("program".into(), launch.program.clone().into());
-
-                if !launch.args.is_empty() {
-                    map.insert("args".into(), launch.args.clone().into());
-                }
-
-                if let Some(stop_on_entry) = config.stop_on_entry {
-                    map.insert("stopOnEntry".into(), stop_on_entry.into());
-                }
-                if let Some(cwd) = launch.cwd.as_ref() {
-                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-                }
-            }
-        }
-        args
     }
 }

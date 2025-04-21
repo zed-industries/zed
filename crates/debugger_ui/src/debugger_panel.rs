@@ -1,6 +1,6 @@
 use crate::{
     ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, Pause, Restart, StepBack,
-    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
+    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
@@ -12,8 +12,9 @@ use dap::{
 };
 use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
-    Action, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity, actions,
+    Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
+    actions, anchored, deferred,
 };
 
 use project::{
@@ -32,6 +33,7 @@ use std::sync::Arc;
 use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
+use util::debug_panic;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -64,6 +66,7 @@ pub struct DebugPanel {
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -126,6 +129,7 @@ impl DebugPanel {
                 focus_handle: cx.focus_handle(),
                 project: project.downgrade(),
                 workspace: workspace.weak_handle(),
+                context_menu: None,
             };
 
             debug_panel
@@ -293,35 +297,61 @@ impl DebugPanel {
                     );
                 };
 
-                let Some(project) = self.project.upgrade() else {
-                    return log::error!("Debug Panel out lived it's weak reference to Project");
-                };
+                let adapter_name = session.read(cx).adapter_name();
 
-                if self
-                    .sessions
-                    .iter()
-                    .any(|item| item.read(cx).session_id(cx) == *session_id)
-                {
-                    // We already have an item for this session.
-                    return;
-                }
-                let session_item = DebugSession::running(
-                    project,
-                    self.workspace.clone(),
-                    session,
-                    cx.weak_entity(),
-                    window,
-                    cx,
-                );
+                let session_id = *session_id;
+                cx.spawn_in(window, async move |this, cx| {
+                    let serialized_layout =
+                        persistence::get_serialized_pane_layout(adapter_name).await;
 
-                if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
-                    // We might want to make this an event subscription and only notify when a new thread is selected
-                    // This is used to filter the command menu correctly
-                    cx.observe(&running, |_, _, cx| cx.notify()).detach();
-                }
+                    this.update_in(cx, |this, window, cx| {
+                        let Some(project) = this.project.upgrade() else {
+                            return log::error!(
+                                "Debug Panel out lived it's weak reference to Project"
+                            );
+                        };
 
-                self.sessions.push(session_item.clone());
-                self.activate_session(session_item, window, cx);
+                        if this
+                            .sessions
+                            .iter()
+                            .any(|item| item.read(cx).session_id(cx) == session_id)
+                        {
+                            // We already have an item for this session.
+                            debug_panic!("We should never reuse session ids");
+                            return;
+                        }
+
+                        this.sessions.retain(|session| {
+                            session
+                                .read(cx)
+                                .mode()
+                                .as_running()
+                                .map_or(false, |running_state| {
+                                    !running_state.read(cx).session().read(cx).is_terminated()
+                                })
+                        });
+
+                        let session_item = DebugSession::running(
+                            project,
+                            this.workspace.clone(),
+                            session,
+                            cx.weak_entity(),
+                            serialized_layout,
+                            window,
+                            cx,
+                        );
+
+                        if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
+                            // We might want to make this an event subscription and only notify when a new thread is selected
+                            // This is used to filter the command menu correctly
+                            cx.observe(&running, |_, _, cx| cx.notify()).detach();
+                        }
+
+                        this.sessions.push(session_item.clone());
+                        this.activate_session(session_item, window, cx);
+                    })
+                })
+                .detach();
             }
             dap_store::DapStoreEvent::RunInTerminal {
                 title,
@@ -415,32 +445,64 @@ impl DebugPanel {
         })
     }
 
-    fn close_session(&mut self, entity_id: EntityId, cx: &mut Context<Self>) {
+    fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self
             .sessions
             .iter()
             .find(|other| entity_id == other.entity_id())
+            .cloned()
         else {
             return;
         };
-
-        session.update(cx, |session, cx| session.shutdown(cx));
-
-        self.sessions.retain(|other| entity_id != other.entity_id());
-
-        if let Some(active_session_id) = self
-            .active_session
-            .as_ref()
-            .map(|session| session.entity_id())
-        {
-            if active_session_id == entity_id {
-                self.active_session = self.sessions.first().cloned();
+        session.update(cx, |this, cx| {
+            if let Some(running) = this.mode().as_running() {
+                running.update(cx, |this, cx| {
+                    this.serialize_layout(window, cx);
+                });
             }
-        }
+        });
+        let session_id = session.update(cx, |this, cx| this.session_id(cx));
+        let should_prompt = self
+            .project
+            .update(cx, |this, cx| {
+                let session = this.dap_store().read(cx).session_by_id(session_id);
+                session.map(|session| !session.read(cx).is_terminated())
+            })
+            .ok()
+            .flatten()
+            .unwrap_or_default();
 
-        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            if should_prompt {
+                let response = cx.prompt(
+                    gpui::PromptLevel::Warning,
+                    "This Debug Session is still running. Are you sure you want to terminate it?",
+                    None,
+                    &["Yes", "No"],
+                );
+                if response.await == Ok(1) {
+                    return;
+                }
+            }
+            session.update(cx, |session, cx| session.shutdown(cx)).ok();
+            this.update(cx, |this, cx| {
+                this.sessions.retain(|other| entity_id != other.entity_id());
+
+                if let Some(active_session_id) = this
+                    .active_session
+                    .as_ref()
+                    .map(|session| session.entity_id())
+                {
+                    if active_session_id == entity_id {
+                        this.active_session = this.sessions.first().cloned();
+                    }
+                }
+                cx.notify()
+            })
+            .ok();
+        })
+        .detach();
     }
-
     fn sessions_drop_down_menu(
         &self,
         active_session: &Entity<DebugSession>,
@@ -487,8 +549,11 @@ impl DebugPanel {
                                                     let weak = weak.clone();
                                                     move |_, window, cx| {
                                                         weak.update(cx, |panel, cx| {
-                                                            panel
-                                                                .close_session(weak_session_id, cx);
+                                                            panel.close_session(
+                                                                weak_session_id,
+                                                                window,
+                                                                cx,
+                                                            );
                                                         })
                                                         .ok();
                                                         context_menu
@@ -522,6 +587,57 @@ impl DebugPanel {
                 this
             }),
         )
+    }
+
+    fn deploy_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(running_state) = self
+            .active_session
+            .as_ref()
+            .and_then(|session| session.read(cx).mode().as_running().cloned())
+        {
+            let pane_items_status = running_state.read(cx).pane_items_status(cx);
+            let this = cx.weak_entity();
+
+            let context_menu = ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                for (item_kind, is_visible) in pane_items_status.into_iter() {
+                    menu = menu.toggleable_entry(item_kind, is_visible, IconPosition::End, None, {
+                        let this = this.clone();
+                        move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                if let Some(running_state) =
+                                    this.active_session.as_ref().and_then(|session| {
+                                        session.read(cx).mode().as_running().cloned()
+                                    })
+                                {
+                                    running_state.update(cx, |state, cx| {
+                                        if is_visible {
+                                            state.remove_pane_item(item_kind, window, cx);
+                                        } else {
+                                            state.add_pane_item(item_kind, position, window, cx);
+                                        }
+                                    })
+                                }
+                            })
+                            .ok();
+                        }
+                    });
+                }
+
+                menu
+            });
+
+            window.focus(&context_menu.focus_handle(cx));
+            let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                this.context_menu.take();
+                cx.notify();
+            });
+            self.context_menu = Some((context_menu, position, subscription));
+        }
     }
 
     fn top_controls_strip(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
@@ -666,9 +782,6 @@ impl DebugPanel {
                                             this.restart_session(cx);
                                         },
                                     ))
-                                    .disabled(
-                                        !capabilities.supports_restart_request.unwrap_or_default(),
-                                    )
                                     .tooltip(move |window, cx| {
                                         Tooltip::text("Restart")(window, cx)
                                     }),
@@ -848,11 +961,49 @@ impl Render for DebugPanel {
         let has_sessions = self.sessions.len() > 0;
         debug_assert_eq!(has_sessions, self.active_session.is_some());
 
+        if self
+            .active_session
+            .as_ref()
+            .and_then(|session| session.read(cx).mode().as_running().cloned())
+            .map(|state| state.read(cx).has_open_context_menu(cx))
+            .unwrap_or(false)
+        {
+            self.context_menu.take();
+        }
+
         v_flex()
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
             .track_focus(&self.focus_handle(cx))
+            .when(self.active_session.is_some(), |this| {
+                this.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        if this
+                            .active_session
+                            .as_ref()
+                            .and_then(|session| {
+                                session.read(cx).mode().as_running().map(|state| {
+                                    state.read(cx).has_pane_at_position(event.position)
+                                })
+                            })
+                            .unwrap_or(false)
+                        {
+                            this.deploy_context_menu(event.position, window, cx);
+                        }
+                    }),
+                )
+                .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                    deferred(
+                        anchored()
+                            .position(*position)
+                            .anchor(gpui::Corner::TopLeft)
+                            .child(menu.clone()),
+                    )
+                    .with_priority(1)
+                }))
+            })
             .map(|this| {
                 if has_sessions {
                     this.children(self.active_session.clone())

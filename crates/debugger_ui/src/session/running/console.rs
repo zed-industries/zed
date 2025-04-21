@@ -235,7 +235,6 @@ impl Render for Console {
             .when(self.is_local(cx), |this| {
                 this.child(Divider::horizontal())
                     .child(self.render_query_bar(cx))
-                    .pt(DynamicSpacing::Base04.rems(cx))
             })
             .border_2()
     }

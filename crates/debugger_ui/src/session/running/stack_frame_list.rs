@@ -321,11 +321,15 @@ impl StackFrameList {
         let source = stack_frame.source.clone();
         let is_selected_frame = Some(stack_frame.id) == self.selected_stack_frame_id;
 
-        let formatted_path = format!(
-            "{}:{}",
-            source.clone().and_then(|s| s.name).unwrap_or_default(),
-            stack_frame.line,
-        );
+        let path = source.clone().and_then(|s| s.path.or(s.name));
+        let formatted_path = path.map(|path| format!("{}:{}", path, stack_frame.line,));
+        let formatted_path = formatted_path.map(|path| {
+            Label::new(path)
+                .size(LabelSize::XSmall)
+                .line_height_style(LineHeightStyle::UiLabel)
+                .truncate()
+                .color(Color::Muted)
+        });
 
         let supports_frame_restart = self
             .session
@@ -334,32 +338,19 @@ impl StackFrameList {
             .supports_restart_frame
             .unwrap_or_default();
 
-        let origin = stack_frame
-            .source
-            .to_owned()
-            .and_then(|source| source.origin);
-
+        let should_deemphasize = matches!(
+            stack_frame.presentation_hint,
+            Some(
+                dap::StackFramePresentationHint::Subtle
+                    | dap::StackFramePresentationHint::Deemphasize
+            )
+        );
         h_flex()
             .rounded_md()
             .justify_between()
             .w_full()
             .group("")
             .id(("stack-frame", stack_frame.id))
-            .tooltip({
-                let formatted_path = formatted_path.clone();
-                move |_window, app| {
-                    app.new(|_| {
-                        let mut tooltip = Tooltip::new(formatted_path.clone());
-
-                        if let Some(origin) = &origin {
-                            tooltip = tooltip.meta(origin);
-                        }
-
-                        tooltip
-                    })
-                    .into()
-                }
-            })
             .p_1()
             .when(is_selected_frame, |this| {
                 this.bg(cx.theme().colors().element_hover)
@@ -374,21 +365,14 @@ impl StackFrameList {
             .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
             .child(
                 v_flex()
+                    .gap_0p5()
                     .child(
-                        h_flex()
-                            .gap_0p5()
-                            .text_ui_sm(cx)
+                        Label::new(stack_frame.name.clone())
+                            .size(LabelSize::Small)
                             .truncate()
-                            .child(stack_frame.name.clone())
-                            .child(formatted_path),
+                            .when(should_deemphasize, |this| this.color(Color::Muted)),
                     )
-                    .child(
-                        h_flex()
-                            .text_ui_xs(cx)
-                            .truncate()
-                            .text_color(cx.theme().colors().text_muted)
-                            .when_some(source.and_then(|s| s.path), |this, path| this.child(path)),
-                    ),
+                    .children(formatted_path),
             )
             .when(
                 supports_frame_restart && stack_frame.can_restart.unwrap_or(true),

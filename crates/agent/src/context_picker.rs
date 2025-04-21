@@ -34,12 +34,6 @@ use crate::context_store::ContextStore;
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
 
-#[derive(Debug, Clone, Copy)]
-pub enum ConfirmBehavior {
-    KeepOpen,
-    Close,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPickerMode {
     File,
@@ -105,7 +99,6 @@ pub(super) struct ContextPicker {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
-    confirm_behavior: ConfirmBehavior,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -114,7 +107,6 @@ impl ContextPicker {
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -143,7 +135,6 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
-            confirm_behavior,
             _subscriptions: subscriptions,
         }
     }
@@ -166,37 +157,32 @@ impl ContextPicker {
 
             let modes = supported_context_picker_modes(&self.thread_store);
 
-            let menu = menu
-                .when(has_recent, |menu| {
-                    menu.custom_row(|_, _| {
-                        div()
-                            .mb_1()
-                            .child(
-                                Label::new("Recent")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            )
-                            .into_any_element()
-                    })
+            menu.when(has_recent, |menu| {
+                menu.custom_row(|_, _| {
+                    div()
+                        .mb_1()
+                        .child(
+                            Label::new("Recent")
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .into_any_element()
                 })
-                .extend(recent_entries)
-                .when(has_recent, |menu| menu.separator())
-                .extend(modes.into_iter().map(|mode| {
-                    let context_picker = context_picker.clone();
+            })
+            .extend(recent_entries)
+            .when(has_recent, |menu| menu.separator())
+            .extend(modes.into_iter().map(|mode| {
+                let context_picker = context_picker.clone();
 
-                    ContextMenuEntry::new(mode.label())
-                        .icon(mode.icon())
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .handler(move |window, cx| {
-                            context_picker.update(cx, |this, cx| this.select_mode(mode, window, cx))
-                        })
-                }));
-
-            match self.confirm_behavior {
-                ConfirmBehavior::KeepOpen => menu.keep_open_on_confirm(),
-                ConfirmBehavior::Close => menu,
-            }
+                ContextMenuEntry::new(mode.label())
+                    .icon(mode.icon())
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .handler(move |window, cx| {
+                        context_picker.update(cx, |this, cx| this.select_mode(mode, window, cx))
+                    })
+            }))
+            .keep_open_on_confirm()
         });
 
         cx.subscribe(&menu, move |_, _, _: &DismissEvent, cx| {
@@ -227,7 +213,6 @@ impl ContextPicker {
                         context_picker.clone(),
                         self.workspace.clone(),
                         self.context_store.clone(),
-                        self.confirm_behavior,
                         window,
                         cx,
                     )
@@ -239,7 +224,6 @@ impl ContextPicker {
                         context_picker.clone(),
                         self.workspace.clone(),
                         self.context_store.clone(),
-                        self.confirm_behavior,
                         window,
                         cx,
                     )
@@ -251,7 +235,6 @@ impl ContextPicker {
                         context_picker.clone(),
                         self.workspace.clone(),
                         self.context_store.clone(),
-                        self.confirm_behavior,
                         window,
                         cx,
                     )
@@ -264,7 +247,6 @@ impl ContextPicker {
                             thread_store.clone(),
                             context_picker.clone(),
                             self.context_store.clone(),
-                            self.confirm_behavior,
                             window,
                             cx,
                         )
@@ -509,14 +491,13 @@ fn recent_context_picker_entries(
     recent
 }
 
-pub(crate) fn insert_crease_for_mention(
+pub(crate) fn insert_fold_for_mention(
     excerpt_id: ExcerptId,
     crease_start: text::Anchor,
     content_len: usize,
     crease_label: SharedString,
     crease_icon_path: SharedString,
     editor_entity: Entity<Editor>,
-    window: &mut Window,
     cx: &mut App,
 ) {
     editor_entity.update(cx, |editor, cx| {
@@ -535,6 +516,7 @@ pub(crate) fn insert_crease_for_mention(
                 crease_label,
                 editor_entity.downgrade(),
             ),
+            merge_adjacent: false,
             ..Default::default()
         };
 
@@ -548,8 +530,9 @@ pub(crate) fn insert_crease_for_mention(
             render_trailer,
         );
 
-        editor.insert_creases(vec![crease.clone()], cx);
-        editor.fold_creases(vec![crease], false, window, cx);
+        editor.display_map.update(cx, |display_map, cx| {
+            display_map.fold(vec![crease], cx);
+        });
     });
 }
 

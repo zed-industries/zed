@@ -242,7 +242,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-y": "agent::Keep",
-      "cmd-n": "agent::Reject"
+      "cmd-n": "agent::Reject",
+      "cmd-shift-y": "agent::KeepAll",
+      "cmd-shift-n": "agent::RejectAll"
     }
   },
   {
@@ -281,9 +283,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewThread",
-      "cmd-alt-n": "agent::NewPromptEditor",
+      "cmd-alt-n": "agent::NewTextThread",
       "cmd-shift-h": "agent::OpenHistory",
       "cmd-alt-c": "agent::OpenConfiguration",
+      "cmd-alt-p": "assistant::OpenPromptLibrary",
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
@@ -303,7 +306,7 @@
     "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "agent::NewPromptEditor",
+      "cmd-n": "agent::NewTextThread",
       "cmd-alt-t": "agent::NewThread"
     }
   },
@@ -489,12 +492,15 @@
       "alt-shift-down": "editor::DuplicateLineDown",
       "ctrl-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
       "ctrl-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
-      "cmd-d": ["editor::SelectNext", { "replace_newest": false }], // Add selection to Next Find Match
+      "cmd-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch / find_under_expand
       "cmd-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "cmd-f2": "editor::SelectAllMatches", // Select all occurrences of current word
-      "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }],
-      "cmd-k cmd-d": ["editor::SelectNext", { "replace_newest": true }],
-      "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }],
+      "cmd-k cmd-d": ["editor::SelectNext", { "replace_newest": true }], // editor.action.moveSelectionToNextFindMatch / find_under_expand_skip
+      // macOS binds `ctrl-cmd-d` to Show Dictionary which breaks these two binds
+      // To use `ctrl-cmd-d` or `ctrl-k ctrl-cmd-d` in Zed you must execute this command and then restart:
+      //   defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 70 '<dict><key>enabled</key><false/></dict>'
+      "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }], // editor.action.addSelectionToPreviousFindMatch
+      "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
       "cmd-k cmd-i": "editor::Hover",
       "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
       "cmd-u": "editor::UndoSelection",
@@ -536,7 +542,9 @@
       "cmd-\\": "pane::SplitRight",
       "cmd-k v": "markdown::OpenPreviewToTheSide",
       "cmd-shift-v": "markdown::OpenPreview",
-      "ctrl-cmd-c": "editor::DisplayCursorNames"
+      "ctrl-cmd-c": "editor::DisplayCursorNames",
+      "cmd-shift-backspace": "editor::GoToPreviousChange",
+      "cmd-shift-alt-backspace": "editor::GoToNextChange"
     }
   },
   {
@@ -781,7 +789,7 @@
       "cmd-alt-c": "workspace::CopyPath",
       "alt-cmd-shift-c": "workspace::CopyRelativePath",
       "alt-cmd-r": "outline_panel::RevealInFileManager",
-      "space": "outline_panel::Open",
+      "space": "outline_panel::OpenSelectedEntry",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "alt-enter": "editor::OpenExcerpts",
@@ -850,6 +858,7 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "cmd-enter": "git::Commit",
+      "cmd-shift-enter": "git::Amend",
       "backspace": ["git::RestoreFile", { "skip_prompt": false }],
       "delete": ["git::RestoreFile", { "skip_prompt": false }],
       "cmd-backspace": ["git::RestoreFile", { "skip_prompt": true }],
@@ -857,10 +866,18 @@
     }
   },
   {
+    "context": "GitPanel && CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git::Cancel"
+    }
+  },
+  {
     "context": "GitDiff > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-enter": "git::Commit",
+      "cmd-shift-enter": "git::Amend",
       "cmd-ctrl-y": "git::StageAll",
       "cmd-ctrl-shift-y": "git::UnstageAll"
     }
@@ -871,6 +888,7 @@
     "bindings": {
       "enter": "editor::Newline",
       "cmd-enter": "git::Commit",
+      "cmd-shift-enter": "git::Amend",
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
       "alt-up": "git_panel::FocusChanges",
@@ -900,6 +918,7 @@
       "enter": "editor::Newline",
       "escape": "menu::Cancel",
       "cmd-enter": "git::Commit",
+      "cmd-shift-enter": "git::Amend",
       "alt-tab": "git::GenerateCommitMessage"
     }
   },
@@ -986,6 +1005,7 @@
       "alt-right": ["terminal::SendText", "\u001bf"],
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
+      "alt-.": ["terminal::SendText", "\u001b."],
       // There are conflicting bindings for these keys in the global context.
       // these bindings override them, remove at your own risk:
       "up": ["terminal::SendKeystroke", "up"],

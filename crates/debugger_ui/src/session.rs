@@ -16,6 +16,7 @@ use workspace::{
 };
 
 use crate::debugger_panel::DebugPanel;
+use crate::persistence::SerializedPaneLayout;
 
 pub(crate) enum DebugSessionState {
     Running(Entity<running::RunningState>),
@@ -52,6 +53,7 @@ impl DebugSession {
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
         _debug_panel: WeakEntity<DebugPanel>,
+        serialized_pane_layout: Option<SerializedPaneLayout>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -60,6 +62,7 @@ impl DebugSession {
                 session.clone(),
                 project.clone(),
                 workspace.clone(),
+                serialized_pane_layout,
                 window,
                 cx,
             )

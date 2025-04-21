@@ -699,14 +699,8 @@ impl StdioTransport {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-type RequestHandler = Box<
-    dyn Send
-        + FnMut(
-            u64,
-            serde_json::Value,
-            Arc<Mutex<async_pipe::PipeWriter>>,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
->;
+type RequestHandler =
+    Box<dyn Send + FnMut(u64, serde_json::Value) -> dap_types::messages::Response>;
 
 #[cfg(any(test, feature = "test-support"))]
 type ResponseHandler = Box<dyn Send + Fn(Response)>;
@@ -714,45 +708,41 @@ type ResponseHandler = Box<dyn Send + Fn(Response)>;
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeTransport {
     // for sending fake response back from adapter side
-    request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
+    request_handlers: Arc<parking_lot::Mutex<HashMap<&'static str, RequestHandler>>>,
     // for reverse request responses
-    response_handlers: Arc<Mutex<HashMap<&'static str, ResponseHandler>>>,
+    response_handlers: Arc<parking_lot::Mutex<HashMap<&'static str, ResponseHandler>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeTransport {
-    pub async fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
+    pub fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
     where
         F: 'static + Send + FnMut(u64, R::Arguments) -> Result<R::Response, ErrorResponse>,
     {
-        self.request_handlers.lock().await.insert(
+        self.request_handlers.lock().insert(
             R::COMMAND,
-            Box::new(
-                move |seq, args, writer: Arc<Mutex<async_pipe::PipeWriter>>| {
-                    let response = handler(seq, serde_json::from_value(args).unwrap());
-
-                    let message = serde_json::to_string(&Message::Response(Response {
+            Box::new(move |seq, args| {
+                let result = handler(seq, serde_json::from_value(args).unwrap());
+                let response = match result {
+                    Ok(response) => Response {
                         seq: seq + 1,
                         request_seq: seq,
-                        success: response.as_ref().is_ok(),
+                        success: true,
                         command: R::COMMAND.into(),
-                        body: util::maybe!({ serde_json::to_value(response.ok()?).ok() }),
+                        body: Some(serde_json::to_value(response).unwrap()),
                         message: None,
-                    }))
-                    .unwrap();
-
-                    let writer = writer.clone();
-
-                    Box::pin(async move {
-                        let mut writer = writer.lock().await;
-                        writer
-                            .write_all(TransportDelegate::build_rpc_message(message).as_bytes())
-                            .await
-                            .unwrap();
-                        writer.flush().await.unwrap();
-                    })
-                },
-            ),
+                    },
+                    Err(response) => Response {
+                        seq: seq + 1,
+                        request_seq: seq,
+                        success: false,
+                        command: R::COMMAND.into(),
+                        body: Some(serde_json::to_value(response).unwrap()),
+                        message: None,
+                    },
+                };
+                response
+            }),
         );
     }
 
@@ -762,14 +752,13 @@ impl FakeTransport {
     {
         self.response_handlers
             .lock()
-            .await
             .insert(R::COMMAND, Box::new(handler));
     }
 
     async fn start(cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let this = Self {
-            request_handlers: Arc::new(Mutex::new(HashMap::default())),
-            response_handlers: Arc::new(Mutex::new(HashMap::default())),
+            request_handlers: Arc::new(parking_lot::Mutex::new(HashMap::default())),
+            response_handlers: Arc::new(parking_lot::Mutex::new(HashMap::default())),
         };
         use dap_types::requests::{Request, RunInTerminal, StartDebugging};
         use serde_json::json;
@@ -816,23 +805,31 @@ impl FakeTransport {
                                             .unwrap();
                                         writer.flush().await.unwrap();
                                     } else {
-                                        if let Some(handle) = request_handlers
+                                        let response = if let Some(handle) = request_handlers
                                             .lock()
-                                            .await
                                             .get_mut(request.command.as_str())
                                         {
                                             handle(
                                                 request.seq,
                                                 request.arguments.unwrap_or(json!({})),
-                                                stdout_writer.clone(),
                                             )
-                                            .await;
                                         } else {
-                                            log::error!(
-                                                "No request handler for {}",
-                                                request.command
-                                            );
-                                        }
+                                            panic!("No request handler for {}", request.command);
+                                        };
+                                        let message =
+                                            serde_json::to_string(&Message::Response(response))
+                                                .unwrap();
+
+                                        let mut writer = stdout_writer.lock().await;
+
+                                        writer
+                                            .write_all(
+                                                TransportDelegate::build_rpc_message(message)
+                                                    .as_bytes(),
+                                            )
+                                            .await
+                                            .unwrap();
+                                        writer.flush().await.unwrap();
                                     }
                                 }
                                 Message::Event(event) => {
@@ -850,10 +847,8 @@ impl FakeTransport {
                                     writer.flush().await.unwrap();
                                 }
                                 Message::Response(response) => {
-                                    if let Some(handle) = response_handlers
-                                        .lock()
-                                        .await
-                                        .get(response.command.as_str())
+                                    if let Some(handle) =
+                                        response_handlers.lock().get(response.command.as_str())
                                     {
                                         handle(response);
                                     } else {

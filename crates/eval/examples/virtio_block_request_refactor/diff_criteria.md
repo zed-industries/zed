@@ -1,0 +1,5 @@
+1. The changes remove unnecessary generic type parameters from the `FileEngine`, `AsyncFileEngine`, and related structures by directly using the `PendingRequest` type, simplifying type signatures and improving code clarity.
+2. Error handling is unified through the replacement of `UserDataError` with `RequestError` that specifically carries `PendingRequest` information, ensuring consistent error propagation with request context.
+3. The `WrappedUserData` struct is renamed to `WrappedRequest` and directly embeds `PendingRequest`, aligning terminology with the virtio block device’s request lifecycle and improving traceability.
+4. Test code is updated to use `PendingRequest::default()` instead of placeholder `()` types, ensuring type consistency and proper request initialization in all scenarios.
+5. Code organization is improved by consolidating imports (e.g., merging `IO_URING_NUM_ENTRIES` and `PendingRequest` imports) and removing redundant type parameters across async/sync I/O implementations.

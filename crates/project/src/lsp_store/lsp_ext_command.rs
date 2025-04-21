@@ -531,7 +531,31 @@ impl LspCommand for GetLspRunnables {
                     task_template.args.extend(cargo.cargo_args);
                     if !cargo.executable_args.is_empty() {
                         task_template.args.push("--".to_string());
-                        task_template.args.extend(cargo.executable_args);
+                        task_template.args.extend(
+                            cargo
+                                .executable_args
+                                .into_iter()
+                                // rust-analyzer's doctest data may be smth. like
+                                // ```
+                                // command: "cargo",
+                                // args: [
+                                //     "test",
+                                //     "--doc",
+                                //     "--package",
+                                //     "cargo-output-parser",
+                                //     "--",
+                                //     "X<T>::new",
+                                //     "--show-output",
+                                // ],
+                                // ```
+                                // and `X<T>::new` will cause troubles if not escaped properly, as later
+                                // the task runs as `$SHELL -i -c "cargo test ..."`.
+                                //
+                                // We cannot escape all shell arguments unconditionally, as we use this for ssh commands, which may involve paths starting with `~`.
+                                // That bit is not auto-expanded when using single quotes.
+                                // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
+                                .map(|extra_arg| format!("'{extra_arg}'")),
+                        );
                     }
                 }
                 RunnableArgs::Shell(shell) => {

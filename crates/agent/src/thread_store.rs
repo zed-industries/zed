@@ -12,8 +12,9 @@ use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use fs::Fs;
-use futures::FutureExt as _;
+use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     App, BackgroundExecutor, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString,
     Subscription, Task, prelude::*,
@@ -22,12 +23,17 @@ use heed::Database;
 use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
-use prompt_store::{ProjectContext, PromptBuilder, RulesFileContext, WorktreeContext};
+use prompt_store::{
+    DefaultUserRulesContext, ProjectContext, PromptBuilder, PromptId, PromptStore,
+    PromptsUpdatedEvent, RulesFileContext, WorktreeContext,
+};
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
 
-use crate::thread::{DetailedSummaryState, MessageId, ProjectSnapshot, Thread, ThreadId};
+use crate::thread::{
+    DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
+};
 
 const RULES_FILE_NAMES: [&'static str; 6] = [
     ".rules",
@@ -54,12 +60,14 @@ impl SharedProjectContext {
 
 pub struct ThreadStore {
     project: Entity<Project>,
-    tools: Arc<ToolWorkingSet>,
+    tools: Entity<ToolWorkingSet>,
     prompt_builder: Arc<PromptBuilder>,
     context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
     project_context: SharedProjectContext,
+    reload_system_prompt_tx: mpsc::Sender<()>,
+    _reload_system_prompt_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -72,33 +80,79 @@ impl EventEmitter<RulesLoadingError> for ThreadStore {}
 impl ThreadStore {
     pub fn load(
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
-    ) -> Task<Entity<Self>> {
-        let thread_store = cx.new(|cx| Self::new(project, tools, prompt_builder, cx));
-        let reload = thread_store.update(cx, |store, cx| store.reload_system_prompt(cx));
-        cx.foreground_executor().spawn(async move {
-            reload.await;
-            thread_store
+    ) -> Task<Result<Entity<Self>>> {
+        let prompt_store = PromptStore::global(cx);
+        cx.spawn(async move |cx| {
+            let prompt_store = prompt_store.await.ok();
+            let (thread_store, ready_rx) = cx.update(|cx| {
+                let mut option_ready_rx = None;
+                let thread_store = cx.new(|cx| {
+                    let (thread_store, ready_rx) =
+                        Self::new(project, tools, prompt_builder, prompt_store, cx);
+                    option_ready_rx = Some(ready_rx);
+                    thread_store
+                });
+                (thread_store, option_ready_rx.take().unwrap())
+            })?;
+            ready_rx.await?;
+            Ok(thread_store)
         })
     }
 
     fn new(
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
+        prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
-    ) -> Self {
+    ) -> (Self, oneshot::Receiver<()>) {
         let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
         let context_server_manager = cx.new(|cx| {
             ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
         });
-        let settings_subscription =
+
+        let mut subscriptions = vec![
             cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
                 this.load_default_profile(cx);
-            });
-        let project_subscription = cx.subscribe(&project, Self::handle_project_event);
+            }),
+            cx.subscribe(&project, Self::handle_project_event),
+        ];
+
+        if let Some(prompt_store) = prompt_store.as_ref() {
+            subscriptions.push(cx.subscribe(
+                prompt_store,
+                |this, _prompt_store, PromptsUpdatedEvent, _cx| {
+                    this.enqueue_system_prompt_reload();
+                },
+            ))
+        }
+
+        // This channel and task prevent concurrent and redundant loading of the system prompt.
+        let (reload_system_prompt_tx, mut reload_system_prompt_rx) = mpsc::channel(1);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let mut ready_tx = Some(ready_tx);
+        let reload_system_prompt_task = cx.spawn({
+            async move |thread_store, cx| {
+                loop {
+                    let Some(reload_task) = thread_store
+                        .update(cx, |thread_store, cx| {
+                            thread_store.reload_system_prompt(prompt_store.clone(), cx)
+                        })
+                        .ok()
+                    else {
+                        return;
+                    };
+                    reload_task.await;
+                    if let Some(ready_tx) = ready_tx.take() {
+                        ready_tx.send(()).ok();
+                    }
+                    reload_system_prompt_rx.next().await;
+                }
+            }
+        });
 
         let this = Self {
             project,
@@ -108,23 +162,25 @@ impl ThreadStore {
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
             project_context: SharedProjectContext::default(),
-            _subscriptions: vec![settings_subscription, project_subscription],
+            reload_system_prompt_tx,
+            _reload_system_prompt_task: reload_system_prompt_task,
+            _subscriptions: subscriptions,
         };
         this.load_default_profile(cx);
         this.register_context_server_handlers(cx);
         this.reload(cx).detach_and_log_err(cx);
-        this
+        (this, ready_rx)
     }
 
     fn handle_project_event(
         &mut self,
         _project: Entity<Project>,
         event: &project::Event,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         match event {
             project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
-                self.reload_system_prompt(cx).detach();
+                self.enqueue_system_prompt_reload();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
                 if items.iter().any(|(path, _, _)| {
@@ -132,16 +188,25 @@ impl ThreadStore {
                         .iter()
                         .any(|name| path.as_ref() == Path::new(name))
                 }) {
-                    self.reload_system_prompt(cx).detach();
+                    self.enqueue_system_prompt_reload();
                 }
             }
             _ => {}
         }
     }
 
-    pub fn reload_system_prompt(&self, cx: &mut Context<Self>) -> Task<()> {
+    fn enqueue_system_prompt_reload(&mut self) {
+        self.reload_system_prompt_tx.try_send(()).ok();
+    }
+
+    // Note that this should only be called from `reload_system_prompt_task`.
+    fn reload_system_prompt(
+        &self,
+        prompt_store: Option<Entity<PromptStore>>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let project = self.project.read(cx);
-        let tasks = project
+        let worktree_tasks = project
             .visible_worktrees(cx)
             .map(|worktree| {
                 Self::load_worktree_info_for_system_prompt(
@@ -151,10 +216,23 @@ impl ThreadStore {
                 )
             })
             .collect::<Vec<_>>();
+        let default_user_rules_task = match prompt_store {
+            None => Task::ready(vec![]),
+            Some(prompt_store) => prompt_store.read_with(cx, |prompt_store, cx| {
+                let prompts = prompt_store.default_prompt_metadata();
+                let load_tasks = prompts.into_iter().map(|prompt_metadata| {
+                    let contents = prompt_store.load(prompt_metadata.id, cx);
+                    async move { (contents.await, prompt_metadata) }
+                });
+                cx.background_spawn(future::join_all(load_tasks))
+            }),
+        };
 
         cx.spawn(async move |this, cx| {
-            let results = futures::future::join_all(tasks).await;
-            let worktrees = results
+            let (worktrees, default_user_rules) =
+                future::join(future::join_all(worktree_tasks), default_user_rules_task).await;
+
+            let worktrees = worktrees
                 .into_iter()
                 .map(|(worktree, rules_error)| {
                     if let Some(rules_error) = rules_error {
@@ -163,8 +241,33 @@ impl ThreadStore {
                     worktree
                 })
                 .collect::<Vec<_>>();
+
+            let default_user_rules = default_user_rules
+                .into_iter()
+                .flat_map(|(contents, prompt_metadata)| match contents {
+                    Ok(contents) => Some(DefaultUserRulesContext {
+                        uuid: match prompt_metadata.id {
+                            PromptId::User { uuid } => uuid,
+                            PromptId::EditWorkflow => return None,
+                        },
+                        title: prompt_metadata.title.map(|title| title.to_string()),
+                        contents,
+                    }),
+                    Err(err) => {
+                        this.update(cx, |_, cx| {
+                            cx.emit(RulesLoadingError {
+                                message: format!("{err:?}").into(),
+                            });
+                        })
+                        .ok();
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
             this.update(cx, |this, _cx| {
-                *this.project_context.0.borrow_mut() = Some(ProjectContext::new(worktrees));
+                *this.project_context.0.borrow_mut() =
+                    Some(ProjectContext::new(worktrees, default_user_rules));
             })
             .ok();
         })
@@ -176,14 +279,12 @@ impl ThreadStore {
         cx: &App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let root_name = worktree.root_name().into();
-        let abs_path = worktree.abs_path();
 
         let rules_task = Self::load_worktree_rules_file(fs, worktree, cx);
         let Some(rules_task) = rules_task else {
             return Task::ready((
                 WorktreeContext {
                     root_name,
-                    abs_path,
                     rules_file: None,
                 },
                 None,
@@ -202,7 +303,6 @@ impl ThreadStore {
             };
             let worktree_info = WorktreeContext {
                 root_name,
-                abs_path,
                 rules_file,
             };
             (worktree_info, rules_file_error)
@@ -246,7 +346,7 @@ impl ThreadStore {
         self.context_server_manager.clone()
     }
 
-    pub fn tools(&self) -> Arc<ToolWorkingSet> {
+    pub fn tools(&self) -> Entity<ToolWorkingSet> {
         self.tools.clone()
     }
 
@@ -353,52 +453,60 @@ impl ThreadStore {
         })
     }
 
-    fn load_default_profile(&self, cx: &Context<Self>) {
+    fn load_default_profile(&self, cx: &mut Context<Self>) {
         let assistant_settings = AssistantSettings::get_global(cx);
 
-        self.load_profile_by_id(&assistant_settings.default_profile, cx);
+        self.load_profile_by_id(assistant_settings.default_profile.clone(), cx);
     }
 
-    pub fn load_profile_by_id(&self, profile_id: &AgentProfileId, cx: &Context<Self>) {
+    pub fn load_profile_by_id(&self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
         let assistant_settings = AssistantSettings::get_global(cx);
 
-        if let Some(profile) = assistant_settings.profiles.get(profile_id) {
-            self.load_profile(profile, cx);
+        if let Some(profile) = assistant_settings.profiles.get(&profile_id) {
+            self.load_profile(profile.clone(), cx);
         }
     }
 
-    pub fn load_profile(&self, profile: &AgentProfile, cx: &Context<Self>) {
-        self.tools.disable_all_tools();
-        self.tools.enable(
-            ToolSource::Native,
-            &profile
-                .tools
-                .iter()
-                .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
-                .collect::<Vec<_>>(),
-        );
+    pub fn load_profile(&self, profile: AgentProfile, cx: &mut Context<Self>) {
+        self.tools.update(cx, |tools, cx| {
+            tools.disable_all_tools(cx);
+            tools.enable(
+                ToolSource::Native,
+                &profile
+                    .tools
+                    .iter()
+                    .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                    .collect::<Vec<_>>(),
+                cx,
+            );
+        });
 
         if profile.enable_all_context_servers {
             for context_server in self.context_server_manager.read(cx).all_servers() {
-                self.tools.enable_source(
-                    ToolSource::ContextServer {
-                        id: context_server.id().into(),
-                    },
-                    cx,
-                );
+                self.tools.update(cx, |tools, cx| {
+                    tools.enable_source(
+                        ToolSource::ContextServer {
+                            id: context_server.id().into(),
+                        },
+                        cx,
+                    );
+                });
             }
         } else {
             for (context_server_id, preset) in &profile.context_servers {
-                self.tools.enable(
-                    ToolSource::ContextServer {
-                        id: context_server_id.clone().into(),
-                    },
-                    &preset
-                        .tools
-                        .iter()
-                        .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
-                        .collect::<Vec<_>>(),
-                )
+                self.tools.update(cx, |tools, cx| {
+                    tools.enable(
+                        ToolSource::ContextServer {
+                            id: context_server_id.clone().into(),
+                        },
+                        &preset
+                            .tools
+                            .iter()
+                            .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                            .collect::<Vec<_>>(),
+                        cx,
+                    )
+                })
             }
         }
     }
@@ -432,29 +540,36 @@ impl ThreadStore {
 
                             if protocol.capable(context_server::protocol::ServerCapability::Tools) {
                                 if let Some(tools) = protocol.list_tools().await.log_err() {
-                                    let tool_ids = tools
-                                        .tools
-                                        .into_iter()
-                                        .map(|tool| {
-                                            log::info!(
-                                                "registering context server tool: {:?}",
-                                                tool.name
-                                            );
-                                            tool_working_set.insert(Arc::new(
-                                                ContextServerTool::new(
-                                                    context_server_manager.clone(),
-                                                    server.id(),
-                                                    tool,
-                                                ),
-                                            ))
+                                    let tool_ids = tool_working_set
+                                        .update(cx, |tool_working_set, _| {
+                                            tools
+                                                .tools
+                                                .into_iter()
+                                                .map(|tool| {
+                                                    log::info!(
+                                                        "registering context server tool: {:?}",
+                                                        tool.name
+                                                    );
+                                                    tool_working_set.insert(Arc::new(
+                                                        ContextServerTool::new(
+                                                            context_server_manager.clone(),
+                                                            server.id(),
+                                                            tool,
+                                                        ),
+                                                    ))
+                                                })
+                                                .collect::<Vec<_>>()
                                         })
-                                        .collect::<Vec<_>>();
+                                        .log_err();
 
-                                    this.update(cx, |this, cx| {
-                                        this.context_server_tool_ids.insert(server_id, tool_ids);
-                                        this.load_default_profile(cx);
-                                    })
-                                    .log_err();
+                                    if let Some(tool_ids) = tool_ids {
+                                        this.update(cx, |this, cx| {
+                                            this.context_server_tool_ids
+                                                .insert(server_id, tool_ids);
+                                            this.load_default_profile(cx);
+                                        })
+                                        .log_err();
+                                    }
                                 }
                             }
                         }
@@ -464,7 +579,9 @@ impl ThreadStore {
             }
             context_server::manager::Event::ServerStopped { server_id } => {
                 if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
-                    tool_working_set.remove(&tool_ids);
+                    tool_working_set.update(cx, |tool_working_set, _| {
+                        tool_working_set.remove(&tool_ids);
+                    });
                     self.load_default_profile(cx);
                 }
             }
@@ -490,7 +607,11 @@ pub struct SerializedThread {
     #[serde(default)]
     pub cumulative_token_usage: TokenUsage,
     #[serde(default)]
+    pub request_token_usage: Vec<TokenUsage>,
+    #[serde(default)]
     pub detailed_summary_state: DetailedSummaryState,
+    #[serde(default)]
+    pub exceeded_window_error: Option<ExceededWindowError>,
 }
 
 impl SerializedThread {
@@ -539,9 +660,18 @@ pub struct SerializedMessage {
 #[serde(tag = "type")]
 pub enum SerializedMessageSegment {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+    },
     #[serde(rename = "thinking")]
-    Thinking { text: String },
+    Thinking {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    RedactedThinking {
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -576,7 +706,9 @@ impl LegacySerializedThread {
             messages: self.messages.into_iter().map(|msg| msg.upgrade()).collect(),
             initial_project_snapshot: self.initial_project_snapshot,
             cumulative_token_usage: TokenUsage::default(),
+            request_token_usage: Vec::new(),
             detailed_summary_state: DetailedSummaryState::default(),
+            exceeded_window_error: None,
         }
     }
 }

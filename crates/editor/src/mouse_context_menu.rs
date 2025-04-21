@@ -2,7 +2,7 @@ use crate::{
     Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DebuggerEvaluateSelectedText, DisplayPoint,
     DisplaySnapshot, Editor, FindAllReferences, GoToDeclaration, GoToDefinition,
     GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode,
-    ToDisplayPoint, ToggleCodeActions,
+    SelectionExt, ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
 };
@@ -28,7 +28,8 @@ pub enum MenuPosition {
 pub struct MouseContextMenu {
     pub(crate) position: MenuPosition,
     pub(crate) context_menu: Entity<ui::ContextMenu>,
-    _subscription: Subscription,
+    _dismiss_subscription: Subscription,
+    _cursor_move_subscription: Subscription,
 }
 
 impl std::fmt::Debug for MouseContextMenu {
@@ -61,6 +62,7 @@ impl MouseContextMenu {
             offset: position - (source_position + content_origin),
         };
         return Some(MouseContextMenu::new(
+            editor,
             menu_position,
             context_menu,
             window,
@@ -69,6 +71,7 @@ impl MouseContextMenu {
     }
 
     pub(crate) fn new(
+        editor: &Editor,
         position: MenuPosition,
         context_menu: Entity<ui::ContextMenu>,
         window: &mut Window,
@@ -77,10 +80,36 @@ impl MouseContextMenu {
         let context_menu_focus = context_menu.focus_handle(cx);
         window.focus(&context_menu_focus);
 
-        let _subscription = cx.subscribe_in(
-            &context_menu,
-            window,
+        let _dismiss_subscription = cx.subscribe_in(&context_menu, window, {
+            let context_menu_focus = context_menu_focus.clone();
             move |editor, _, _event: &DismissEvent, window, cx| {
+                editor.mouse_context_menu.take();
+                if context_menu_focus.contains_focused(window, cx) {
+                    window.focus(&editor.focus_handle(cx));
+                }
+            }
+        });
+
+        let selection_init = editor.selections.newest_anchor().clone();
+
+        let _cursor_move_subscription = cx.subscribe_in(
+            &cx.entity(),
+            window,
+            move |editor, _, event: &crate::EditorEvent, window, cx| {
+                let crate::EditorEvent::SelectionsChanged { local: true } = event else {
+                    return;
+                };
+                let display_snapshot = &editor
+                    .display_map
+                    .update(cx, |display_map, cx| display_map.snapshot(cx));
+                let selection_init_range = selection_init.display_range(&display_snapshot);
+                let selection_now_range = editor
+                    .selections
+                    .newest_anchor()
+                    .display_range(&display_snapshot);
+                if selection_now_range == selection_init_range {
+                    return;
+                }
                 editor.mouse_context_menu.take();
                 if context_menu_focus.contains_focused(window, cx) {
                     window.focus(&editor.focus_handle(cx));
@@ -91,7 +120,8 @@ impl MouseContextMenu {
         Self {
             position,
             context_menu,
-            _subscription,
+            _dismiss_subscription,
+            _cursor_move_subscription,
         }
     }
 }
@@ -177,6 +207,13 @@ pub fn deploy_context_menu(
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
+                .action(
+                    "Show Code Actions",
+                    Box::new(ToggleCodeActions {
+                        deployed_from_indicator: None,
+                    }),
+                )
+                .separator()
                 .when(evaluate_selection && has_selections, |builder| {
                     builder
                         .action("Evaluate Selection", Box::new(DebuggerEvaluateSelectedText))
@@ -193,12 +230,6 @@ pub fn deploy_context_menu(
                 .when(has_selections, |cx| {
                     cx.action("Format Selections", Box::new(FormatSelections))
                 })
-                .action(
-                    "Code Actions",
-                    Box::new(ToggleCodeActions {
-                        deployed_from_indicator: None,
-                    }),
-                )
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))
@@ -253,6 +284,7 @@ pub fn deploy_context_menu(
                 offset: gpui::point(character_size.width, character_size.height),
             };
             Some(MouseContextMenu::new(
+                editor,
                 menu_position,
                 context_menu,
                 window,

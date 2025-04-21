@@ -4,7 +4,6 @@ use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
 use picker::{Picker, PickerDelegate};
 
-use std::cell::LazyCell;
 use std::sync::Arc;
 use sysinfo::System;
 use ui::{Context, Tooltip, prelude::*};
@@ -24,7 +23,7 @@ pub(crate) struct AttachModalDelegate {
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
     project: Entity<project::Project>,
-    debug_config: task::DebugTaskDefinition,
+    pub(crate) debug_config: task::DebugTaskDefinition,
     candidates: Arc<[Candidate]>,
 }
 
@@ -58,7 +57,7 @@ impl AttachModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut processes: Vec<_> = System::new_all()
+        let mut processes: Box<[_]> = System::new_all()
             .processes()
             .values()
             .map(|process| {
@@ -75,30 +74,18 @@ impl AttachModal {
             })
             .collect();
         processes.sort_by_key(|k| k.name.clone());
+        let processes = processes.into_iter().collect();
         Self::with_processes(project, debug_config, processes, modal, window, cx)
     }
 
     pub(super) fn with_processes(
         project: Entity<project::Project>,
         debug_config: task::DebugTaskDefinition,
-        processes: Vec<Candidate>,
+        processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let adapter = project
-            .read(cx)
-            .debug_adapters()
-            .adapter(&debug_config.adapter);
-        let filter = LazyCell::new(|| adapter.map(|adapter| adapter.attach_processes_filter()));
-        let processes = processes
-            .into_iter()
-            .filter(|process| {
-                filter
-                    .as_ref()
-                    .map_or(false, |filter| filter.is_match(&process.name))
-            })
-            .collect();
         let picker = cx.new(|cx| {
             Picker::uniform_list(
                 AttachModalDelegate::new(project, debug_config, processes),
@@ -117,9 +104,10 @@ impl AttachModal {
 }
 
 impl Render for AttachModal {
-    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         v_flex()
             .key_context("AttachModal")
+            .track_focus(&self.focus_handle(cx))
             .w(rems(34.))
             .child(self.picker.clone())
     }
@@ -240,10 +228,7 @@ impl PickerDelegate for AttachModalDelegate {
         let config = self.debug_config.clone();
         self.project
             .update(cx, |project, cx| {
-                #[cfg(any(test, feature = "test-support"))]
-                let ret = project.fake_debug_session(config.request, None, false, cx);
-                #[cfg(not(any(test, feature = "test-support")))]
-                let ret = project.start_debug_session(config.into(), cx);
+                let ret = project.start_debug_session(config, cx);
                 ret
             })
             .detach_and_log_err(cx);

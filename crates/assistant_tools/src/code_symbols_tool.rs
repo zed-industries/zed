@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use collections::IndexMap;
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{OutlineItem, ParseStatus, Point};
@@ -91,7 +91,7 @@ impl Tool for CodeSymbolsTool {
         IconName::Code
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<CodeSymbolsInput>(format)
     }
 
@@ -129,10 +129,10 @@ impl Tool for CodeSymbolsTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<CodeSymbolsInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         let regex = match input.regex {
@@ -141,15 +141,16 @@ impl Tool for CodeSymbolsTool {
                 .build()
             {
                 Ok(regex) => Some(regex),
-                Err(err) => return Task::ready(Err(anyhow!("Invalid regex: {err}"))),
+                Err(err) => return Task::ready(Err(anyhow!("Invalid regex: {err}"))).into(),
             },
             None => None,
         };
 
         cx.spawn(async move |cx| match input.path {
-            Some(path) => file_outline(project, path, action_log, regex, input.offset, cx).await,
+            Some(path) => file_outline(project, path, action_log, regex, cx).await,
             None => project_symbols(project, regex, input.offset, cx).await,
         })
+        .into()
     }
 }
 
@@ -158,7 +159,6 @@ pub async fn file_outline(
     path: String,
     action_log: Entity<ActionLog>,
     regex: Option<Regex>,
-    offset: u32,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<String> {
     let buffer = {
@@ -194,7 +194,8 @@ pub async fn file_outline(
             .into_iter()
             .map(|item| item.to_point(&snapshot)),
         regex,
-        offset,
+        0,
+        usize::MAX,
     )
     .await
 }
@@ -293,11 +294,10 @@ async fn project_symbols(
 async fn render_outline(
     items: impl IntoIterator<Item = OutlineItem<Point>>,
     regex: Option<Regex>,
-    offset: u32,
+    offset: usize,
+    results_per_page: usize,
 ) -> Result<String> {
-    const RESULTS_PER_PAGE_USIZE: usize = RESULTS_PER_PAGE as usize;
-
-    let mut items = items.into_iter().skip(offset as usize);
+    let mut items = items.into_iter().skip(offset);
 
     let entries = items
         .by_ref()
@@ -306,7 +306,7 @@ async fn render_outline(
                 .as_ref()
                 .is_none_or(|regex| regex.is_match(&item.text))
         })
-        .take(RESULTS_PER_PAGE_USIZE)
+        .take(results_per_page)
         .collect::<Vec<_>>();
     let has_more = items.next().is_some();
 
@@ -337,7 +337,10 @@ async fn render_outline(
     Ok(output)
 }
 
-fn render_entries(output: &mut String, items: impl IntoIterator<Item = OutlineItem<Point>>) -> u32 {
+fn render_entries(
+    output: &mut String,
+    items: impl IntoIterator<Item = OutlineItem<Point>>,
+) -> usize {
     let mut entries_rendered = 0;
 
     for item in items {

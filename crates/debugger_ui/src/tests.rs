@@ -68,6 +68,7 @@ pub async fn init_test_workspace(
     workspace_handle
 }
 
+#[track_caller]
 pub fn active_debug_session_panel(
     workspace: WindowHandle<Workspace>,
     cx: &mut TestAppContext,

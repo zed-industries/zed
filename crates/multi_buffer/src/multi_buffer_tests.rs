@@ -746,19 +746,20 @@ fn test_expand_excerpts(cx: &mut App) {
     drop(snapshot);
 
     multibuffer.update(cx, |multibuffer, cx| {
+        let line_zero = multibuffer.snapshot(cx).anchor_before(Point::new(0, 0));
         multibuffer.expand_excerpts(
             multibuffer.excerpt_ids(),
             1,
             ExpandExcerptDirection::UpAndDown,
             cx,
-        )
+        );
+        let snapshot = multibuffer.snapshot(cx);
+        let line_two = snapshot.anchor_before(Point::new(2, 0));
+        assert_eq!(line_two.cmp(&line_zero, &snapshot), cmp::Ordering::Greater);
     });
 
     let snapshot = multibuffer.read(cx).snapshot(cx);
 
-    // Expanding context lines causes the line containing 'fff' to appear in two different excerpts.
-    // We don't attempt to merge them, because removing the excerpt could create inconsistency with other layers
-    // that are tracking excerpt ids.
     assert_eq!(
         snapshot.text(),
         concat!(

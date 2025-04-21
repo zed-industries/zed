@@ -361,9 +361,8 @@ impl PickerDelegate for TasksModalDelegate {
 
         match task.task_type() {
             TaskType::Debug(config) if config.locator.is_none() => {
-                let Some(config): Option<DebugTaskDefinition> = task
-                    .resolved_debug_adapter_config()
-                    .and_then(|config| config.try_into().ok())
+                let Some(config): Option<DebugTaskDefinition> =
+                    task.resolved_debug_adapter_config()
                 else {
                     return;
                 };
@@ -382,7 +381,7 @@ impl PickerDelegate for TasksModalDelegate {
                             .update(cx, |workspace, cx| {
                                 workspace.project().update(cx, |project, cx| {
                                     project
-                                        .start_debug_session(config.into(), cx)
+                                        .start_debug_session(config, cx)
                                         .detach_and_log_err(cx);
                                 });
                             })

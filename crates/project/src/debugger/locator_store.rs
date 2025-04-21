@@ -1,9 +1,9 @@
 use anyhow::{Result, anyhow};
 use cargo::CargoLocator;
 use collections::HashMap;
-use dap::DebugAdapterConfig;
 use gpui::SharedString;
 use locators::DapLocator;
+use task::DebugTaskDefinition;
 
 mod cargo;
 mod locators;
@@ -23,7 +23,7 @@ impl LocatorStore {
 
     pub(super) async fn resolve_debug_config(
         &self,
-        debug_config: &mut DebugAdapterConfig,
+        debug_config: &mut DebugTaskDefinition,
     ) -> Result<()> {
         let Some(locator_name) = &debug_config.locator else {
             log::debug!("Attempted to resolve debug config without a locator field");

@@ -1,7 +1,7 @@
 mod supported_countries;
 
 use anyhow::{Result, anyhow, bail};
-use futures::{AsyncBufReadExt, AsyncReadExt, Stream, StreamExt, io::BufReader, stream::BoxStream};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 
@@ -125,6 +125,7 @@ pub struct GenerateContentRequest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
     pub contents: Vec<Content>,
+    pub system_instruction: Option<SystemInstruction>,
     pub generation_config: Option<GenerationConfig>,
     pub safety_settings: Option<Vec<SafetySetting>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -157,6 +158,12 @@ pub struct GenerateContentCandidate {
 pub struct Content {
     pub parts: Vec<Part>,
     pub role: Role,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemInstruction {
+    pub parts: Vec<Part>,
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -405,6 +412,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Model {
+        Model::Gemini15Flash
+    }
+
     pub fn id(&self) -> &str {
         match self {
             Model::Gemini15Pro => "gemini-1.5-pro",
@@ -454,25 +465,4 @@ impl std::fmt::Display for Model {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.id())
     }
-}
-
-pub fn extract_text_from_events(
-    events: impl Stream<Item = Result<GenerateContentResponse>>,
-) -> impl Stream<Item = Result<String>> {
-    events.filter_map(|event| async move {
-        match event {
-            Ok(event) => event.candidates.and_then(|candidates| {
-                candidates.into_iter().next().and_then(|candidate| {
-                    candidate.content.parts.into_iter().next().and_then(|part| {
-                        if let Part::TextPart(TextPart { text }) = part {
-                            Some(Ok(text))
-                        } else {
-                            None
-                        }
-                    })
-                })
-            }),
-            Err(error) => Some(Err(error)),
-        }
-    })
 }

@@ -3,7 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{StreamExt, io::BufReader};
-use gpui::{App, AsyncApp, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
@@ -548,46 +548,11 @@ impl ContextProvider for RustContextProvider {
             .file()
             .and_then(|file| Some(file.as_local()?.abs_path(cx)));
 
-        let local_abs_path = local_abs_path.as_deref();
-
         let mut variables = TaskVariables::default();
 
-        if let Some(target) =
-            local_abs_path.and_then(|path| target_info_from_abs_path(path, project_env.as_ref()))
+        if let (Some(path), Some(stem)) = (&local_abs_path, task_variables.get(&VariableName::Stem))
         {
-            variables.extend(TaskVariables::from_iter([
-                (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
-                (RUST_BIN_NAME_TASK_VARIABLE.clone(), target.target_name),
-                (
-                    RUST_BIN_KIND_TASK_VARIABLE.clone(),
-                    target.target_kind.to_string(),
-                ),
-            ]));
-            if target.required_features.is_empty() {
-                variables.insert(RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE, "".into());
-                variables.insert(RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE, "".into());
-            } else {
-                variables.insert(
-                    RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.clone(),
-                    "--features".to_string(),
-                );
-                variables.insert(
-                    RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.clone(),
-                    target.required_features.join(","),
-                );
-            }
-        }
-
-        if let Some(package_name) = local_abs_path
-            .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(|path| human_readable_package_name(path, project_env.as_ref()))
-        {
-            variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
-        }
-
-        if let (Some(path), Some(stem)) = (local_abs_path, task_variables.get(&VariableName::Stem))
-        {
-            let fragment = test_fragment(&variables, path, stem);
+            let fragment = test_fragment(&variables, &path, stem);
             variables.insert(RUST_TEST_FRAGMENT_TASK_VARIABLE, fragment);
         };
         if let Some(test_name) =
@@ -600,8 +565,44 @@ impl ContextProvider for RustContextProvider {
         {
             variables.insert(RUST_DOC_TEST_NAME_TASK_VARIABLE, doc_test_name.into());
         }
-
-        Task::ready(Ok(variables))
+        cx.background_spawn(async move {
+            if let Some(path) = local_abs_path
+                .as_deref()
+                .and_then(|local_abs_path| local_abs_path.parent())
+            {
+                if let Some(package_name) =
+                    human_readable_package_name(path, project_env.as_ref()).await
+                {
+                    variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
+                }
+            }
+            if let Some(path) = local_abs_path.as_ref() {
+                if let Some(target) = target_info_from_abs_path(&path, project_env.as_ref()).await {
+                    variables.extend(TaskVariables::from_iter([
+                        (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
+                        (RUST_BIN_NAME_TASK_VARIABLE.clone(), target.target_name),
+                        (
+                            RUST_BIN_KIND_TASK_VARIABLE.clone(),
+                            target.target_kind.to_string(),
+                        ),
+                    ]));
+                    if target.required_features.is_empty() {
+                        variables.insert(RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE, "".into());
+                        variables.insert(RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE, "".into());
+                    } else {
+                        variables.insert(
+                            RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.clone(),
+                            "--features".to_string(),
+                        );
+                        variables.insert(
+                            RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.clone(),
+                            target.required_features.join(","),
+                        );
+                    }
+                }
+            }
+            Ok(variables)
+        })
     }
 
     fn associated_tasks(
@@ -681,7 +682,7 @@ impl ContextProvider for RustContextProvider {
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 task_type: TaskType::Debug(task::DebugArgs {
-                    adapter: "LLDB".to_owned(),
+                    adapter: "CodeLLDB".to_owned(),
                     request: task::DebugArgsRequest::Launch,
                     locator: Some("cargo".into()),
                     tcp_connection: None,
@@ -790,7 +791,7 @@ impl ContextProvider for RustContextProvider {
                 command: "cargo".into(),
                 task_type: TaskType::Debug(task::DebugArgs {
                     request: task::DebugArgsRequest::Launch,
-                    adapter: "LLDB".to_owned(),
+                    adapter: "CodeLLDB".to_owned(),
                     initialize_args: None,
                     locator: Some("cargo".into()),
                     tcp_connection: None,
@@ -888,11 +889,11 @@ struct TargetInfo {
     required_features: Vec<String>,
 }
 
-fn target_info_from_abs_path(
+async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<TargetInfo> {
-    let mut command = util::command::new_std_command("cargo");
+    let mut command = util::command::new_smol_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -903,6 +904,7 @@ fn target_info_from_abs_path(
         .arg("--format-version")
         .arg("1")
         .output()
+        .await
         .log_err()?
         .stdout;
 
@@ -936,11 +938,11 @@ fn target_info_from_metadata(metadata: CargoMetadata, abs_path: &Path) -> Option
     None
 }
 
-fn human_readable_package_name(
+async fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = util::command::new_std_command("cargo");
+    let mut command = util::command::new_smol_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -949,6 +951,7 @@ fn human_readable_package_name(
             .current_dir(package_directory)
             .arg("pkgid")
             .output()
+            .await
             .log_err()?
             .stdout,
     )
@@ -1036,7 +1039,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{AppContext as _, BorrowAppContext, Hsla, TestAppContext};
+    use gpui::{BorrowAppContext, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;

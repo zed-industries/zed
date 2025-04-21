@@ -4,11 +4,14 @@ use assistant_context_editor::SavedContextMetadata;
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Entity, FocusHandle, Focusable, ScrollStrategy, Task, UniformListScrollHandle, WeakEntity,
-    Window, uniform_list,
+    App, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task, UniformListScrollHandle,
+    WeakEntity, Window, uniform_list,
 };
 use time::{OffsetDateTime, UtcOffset};
-use ui::{HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
+    Tooltip, prelude::*,
+};
 use util::ResultExt;
 
 use crate::history_store::{HistoryEntry, HistoryStore};
@@ -26,6 +29,8 @@ pub struct ThreadHistory {
     matches: Vec<StringMatch>,
     _subscriptions: Vec<gpui::Subscription>,
     _search_task: Option<Task<()>>,
+    scrollbar_visibility: bool,
+    scrollbar_state: ScrollbarState,
 }
 
 impl ThreadHistory {
@@ -58,10 +63,13 @@ impl ThreadHistory {
             this.update_all_entries(cx);
         });
 
+        let scroll_handle = UniformListScrollHandle::default();
+        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
+
         Self {
             assistant_panel,
             history_store,
-            scroll_handle: UniformListScrollHandle::default(),
+            scroll_handle,
             selected_index: 0,
             search_query: SharedString::new_static(""),
             all_entries: entries,
@@ -69,6 +77,8 @@ impl ThreadHistory {
             search_editor,
             _subscriptions: vec![search_editor_subscription, history_store_subscription],
             _search_task: None,
+            scrollbar_visibility: true,
+            scrollbar_state,
         }
     }
 
@@ -220,6 +230,43 @@ impl ThreadHistory {
         cx.notify();
     }
 
+    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if !(self.scrollbar_visibility || self.scrollbar_state.is_dragging()) {
+            return None;
+        }
+
+        Some(
+            div()
+                .occlude()
+                .id("thread-history-scroll")
+                .h_full()
+                .bg(cx.theme().colors().panel_background.opacity(0.8))
+                .border_l_1()
+                .border_color(cx.theme().colors().border_variant)
+                .absolute()
+                .right_1()
+                .top_0()
+                .bottom_0()
+                .w_4()
+                .pl_1()
+                .cursor_default()
+                .on_mouse_move(cx.listener(|_, _, _window, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, _window, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, _window, cx| {
+                    cx.stop_propagation();
+                })
+                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
+                    cx.notify();
+                }))
+                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
+        )
+    }
+
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry) = self.get_match(self.selected_index) {
             let task_result = match entry {
@@ -305,7 +352,11 @@ impl Render for ThreadHistory {
                 )
             })
             .child({
-                let view = v_flex().overflow_hidden().flex_grow();
+                let view = v_flex()
+                    .id("list-container")
+                    .relative()
+                    .overflow_hidden()
+                    .flex_grow();
 
                 if self.all_entries.is_empty() {
                     view.justify_center()
@@ -322,59 +373,70 @@ impl Render for ThreadHistory {
                         ),
                     )
                 } else {
-                    view.p_1().child(
-                        uniform_list(
-                            cx.entity().clone(),
-                            "thread-history",
-                            self.matched_count(),
-                            move |history, range, _window, _cx| {
-                                let range_start = range.start;
-                                let assistant_panel = history.assistant_panel.clone();
+                    view.pr_5()
+                        .child(
+                            uniform_list(
+                                cx.entity().clone(),
+                                "thread-history",
+                                self.matched_count(),
+                                move |history, range, _window, _cx| {
+                                    let range_start = range.start;
+                                    let assistant_panel = history.assistant_panel.clone();
 
-                                let render_item = |index: usize,
-                                                   entry: &HistoryEntry,
-                                                   highlight_positions: Vec<usize>|
-                                 -> Div {
-                                    h_flex().w_full().pb_1().child(match entry {
-                                        HistoryEntry::Thread(thread) => PastThread::new(
-                                            thread.clone(),
-                                            assistant_panel.clone(),
-                                            selected_index == index + range_start,
-                                            highlight_positions,
-                                        )
-                                        .into_any_element(),
-                                        HistoryEntry::Context(context) => PastContext::new(
-                                            context.clone(),
-                                            assistant_panel.clone(),
-                                            selected_index == index + range_start,
-                                            highlight_positions,
-                                        )
-                                        .into_any_element(),
-                                    })
-                                };
-
-                                if history.has_search_query() {
-                                    history.matches[range]
-                                        .iter()
-                                        .enumerate()
-                                        .filter_map(|(index, m)| {
-                                            history.all_entries.get(m.candidate_id).map(|entry| {
-                                                render_item(index, entry, m.positions.clone())
-                                            })
+                                    let render_item = |index: usize,
+                                                       entry: &HistoryEntry,
+                                                       highlight_positions: Vec<usize>|
+                                     -> Div {
+                                        h_flex().w_full().pb_1().child(match entry {
+                                            HistoryEntry::Thread(thread) => PastThread::new(
+                                                thread.clone(),
+                                                assistant_panel.clone(),
+                                                selected_index == index + range_start,
+                                                highlight_positions,
+                                            )
+                                            .into_any_element(),
+                                            HistoryEntry::Context(context) => PastContext::new(
+                                                context.clone(),
+                                                assistant_panel.clone(),
+                                                selected_index == index + range_start,
+                                                highlight_positions,
+                                            )
+                                            .into_any_element(),
                                         })
-                                        .collect()
-                                } else {
-                                    history.all_entries[range]
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(index, entry)| render_item(index, entry, vec![]))
-                                        .collect()
-                                }
-                            },
+                                    };
+
+                                    if history.has_search_query() {
+                                        history.matches[range]
+                                            .iter()
+                                            .enumerate()
+                                            .filter_map(|(index, m)| {
+                                                history.all_entries.get(m.candidate_id).map(
+                                                    |entry| {
+                                                        render_item(
+                                                            index,
+                                                            entry,
+                                                            m.positions.clone(),
+                                                        )
+                                                    },
+                                                )
+                                            })
+                                            .collect()
+                                    } else {
+                                        history.all_entries[range]
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(index, entry)| render_item(index, entry, vec![]))
+                                            .collect()
+                                    }
+                                },
+                            )
+                            .p_1()
+                            .track_scroll(self.scroll_handle.clone())
+                            .flex_grow(),
                         )
-                        .track_scroll(self.scroll_handle.clone())
-                        .flex_grow(),
-                    )
+                        .when_some(self.render_scrollbar(cx), |div, scrollbar| {
+                            div.child(scrollbar)
+                        })
                 }
             })
     }
@@ -440,6 +502,7 @@ impl RenderOnce for PastThread {
                         IconButton::new("delete", IconName::TrashAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
                             .tooltip(move |window, cx| {
                                 Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
                             })
@@ -531,6 +594,7 @@ impl RenderOnce for PastContext {
                     IconButton::new("delete", IconName::TrashAlt)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
                         .tooltip(move |window, cx| {
                             Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
                         })

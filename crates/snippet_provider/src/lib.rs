@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::Result;
 use collections::{BTreeMap, BTreeSet, HashMap};
-use format::VSSnippetsFile;
+use format::VsSnippetsFile;
 use fs::Fs;
 use futures::stream::StreamExt;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
@@ -32,7 +32,7 @@ fn file_stem_to_key(stem: &str) -> SnippetKind {
     }
 }
 
-fn file_to_snippets(file_contents: VSSnippetsFile) -> Vec<Arc<Snippet>> {
+fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
     let mut snippets = vec![];
     for (prefix, snippet) in file_contents.snippets {
         let prefixes = snippet
@@ -98,7 +98,7 @@ async fn process_updates(
                 let Some(file_contents) = contents else {
                     return;
                 };
-                let Ok(as_json) = serde_json_lenient::from_str::<VSSnippetsFile>(&file_contents)
+                let Ok(as_json) = serde_json_lenient::from_str::<VsSnippetsFile>(&file_contents)
                 else {
                     return;
                 };
@@ -222,14 +222,14 @@ impl SnippetProvider {
                         .lookup_snippets::<false>(language, cx),
                 );
             }
+
+            let Some(registry) = SnippetRegistry::try_global(cx) else {
+                return user_snippets;
+            };
+
+            let registry_snippets = registry.get_snippets(language);
+            user_snippets.extend(registry_snippets);
         }
-
-        let Some(registry) = SnippetRegistry::try_global(cx) else {
-            return user_snippets;
-        };
-
-        let registry_snippets = registry.get_snippets(language);
-        user_snippets.extend(registry_snippets);
 
         user_snippets
     }
@@ -242,5 +242,40 @@ impl SnippetProvider {
             requested_snippets.extend(self.lookup_snippets::<true>(&None, cx));
         }
         requested_snippets
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui;
+    use gpui::TestAppContext;
+    use indoc::indoc;
+
+    #[gpui::test]
+    fn test_lookup_snippets_dup_registry_snippets(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| {
+            SnippetRegistry::init_global(cx);
+            SnippetRegistry::global(cx)
+                .register_snippets(
+                    "ruby".as_ref(),
+                    indoc! {r#"
+                    {
+                      "Log to console": {
+                        "prefix": "log",
+                        "body": ["console.info(\"Hello, ${1:World}!\")", "$0"],
+                        "description": "Logs to console"
+                      }
+                    }
+            "#},
+                )
+                .unwrap();
+            let provider = SnippetProvider::new(fs.clone(), Default::default(), cx);
+            cx.update_entity(&provider, |provider, cx| {
+                assert_eq!(1, provider.snippets_for(Some("ruby".to_owned()), cx).len());
+            });
+        });
     }
 }
