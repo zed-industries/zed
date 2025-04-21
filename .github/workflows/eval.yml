@@ -58,7 +58,7 @@ jobs:
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
       - name: Run eval
-        run: cargo run --package=eval
+        run: cargo run --package=eval -- find_and_replace_diff_card
 
       # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
       # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
