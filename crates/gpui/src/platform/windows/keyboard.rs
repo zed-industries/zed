@@ -34,7 +34,6 @@ impl KeyboardMapper for WindowsKeyboardMapper {
         } else {
             key = self
                 .map_for_char(&key, &mut modifiers)
-                .or_else(|_| self.map_virtual_key(&key))
                 .context("Failed to map keystroke with use_key_equivalents = false")
                 .log_err()
                 .unwrap_or(key);
