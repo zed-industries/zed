@@ -4,9 +4,8 @@ use std::sync::atomic::AtomicBool;
 use anyhow::anyhow;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
-use prompt_store::PromptId;
+use prompt_store::{PromptId, UserPromptId};
 use ui::{ListItem, prelude::*};
-use uuid::Uuid;
 
 use crate::context::RULES_ICON;
 use crate::context_picker::ContextPicker;
@@ -46,7 +45,7 @@ impl Render for RulesContextPicker {
 
 #[derive(Debug, Clone)]
 pub struct RulesContextEntry {
-    pub prompt_id: Uuid,
+    pub prompt_id: UserPromptId,
     pub title: SharedString,
 }
 

@@ -15,7 +15,8 @@ use std::{
 };
 use text::LineEnding;
 use util::{ResultExt, get_system_shell};
-use uuid::Uuid;
+
+use crate::UserPromptId;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectContext {
@@ -49,7 +50,7 @@ impl ProjectContext {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserRulesContext {
-    pub uuid: Uuid,
+    pub uuid: UserPromptId,
     pub title: Option<String>,
     pub contents: String,
 }
@@ -395,6 +396,7 @@ impl PromptBuilder {
 #[cfg(test)]
 mod test {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_assistant_system_prompt_renders() {
@@ -408,7 +410,7 @@ mod test {
             }),
         }];
         let default_user_rules = vec![UserRulesContext {
-            uuid: Uuid::nil(),
+            uuid: UserPromptId(Uuid::nil()),
             title: Some("Rules title".into()),
             contents: "Rules contents".into(),
         }];

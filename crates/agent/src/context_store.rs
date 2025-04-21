@@ -9,10 +9,10 @@ use futures::{self, Future, FutureExt, future};
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, File};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
+use prompt_store::UserPromptId;
 use rope::{Point, Rope};
 use text::{Anchor, BufferId, OffsetRangeExt};
 use util::{ResultExt as _, maybe};
-use uuid::Uuid;
 
 use crate::ThreadStore;
 use crate::context::{
@@ -35,7 +35,7 @@ pub struct ContextStore {
     threads: HashMap<ThreadId, ContextId>,
     thread_summary_tasks: Vec<Task<()>>,
     fetched_urls: HashMap<String, ContextId>,
-    user_rules: HashMap<Uuid, ContextId>,
+    user_rules: HashMap<UserPromptId, ContextId>,
 }
 
 impl ContextStore {
@@ -395,7 +395,7 @@ impl ContextStore {
 
     pub fn add_rules(
         &mut self,
-        prompt_id: Uuid,
+        prompt_id: UserPromptId,
         title: impl Into<SharedString>,
         text: impl Into<SharedString>,
         remove_if_exists: bool,
@@ -412,7 +412,7 @@ impl ContextStore {
 
     pub fn insert_user_rules(
         &mut self,
-        prompt_id: Uuid,
+        prompt_id: UserPromptId,
         title: impl Into<SharedString>,
         text: impl Into<SharedString>,
         cx: &mut Context<ContextStore>,
@@ -656,7 +656,7 @@ impl ContextStore {
         self.threads.get(thread_id).copied()
     }
 
-    pub fn includes_user_rules(&self, prompt_id: &Uuid) -> Option<ContextId> {
+    pub fn includes_user_rules(&self, prompt_id: &UserPromptId) -> Option<ContextId> {
         self.user_rules.get(prompt_id).copied()
     }
 

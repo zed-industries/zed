@@ -54,19 +54,35 @@ pub struct PromptMetadata {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum PromptId {
-    User { uuid: Uuid },
+    User { uuid: UserPromptId },
     EditWorkflow,
 }
 
 impl PromptId {
     pub fn new() -> PromptId {
         PromptId::User {
-            uuid: Uuid::new_v4(),
+            uuid: UserPromptId::new(),
         }
     }
 
     pub fn is_built_in(&self) -> bool {
         !matches!(self, PromptId::User { .. })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UserPromptId(pub Uuid);
+
+impl UserPromptId {
+    pub fn new() -> UserPromptId {
+        UserPromptId(Uuid::new_v4())
+    }
+}
+
+impl From<Uuid> for UserPromptId {
+    fn from(uuid: Uuid) -> Self {
+        UserPromptId(uuid)
     }
 }
 
@@ -212,7 +228,7 @@ impl PromptStore {
 
         for (prompt_id_v1, metadata_v1) in metadata_v1 {
             let prompt_id_v2 = PromptId::User {
-                uuid: prompt_id_v1.0,
+                uuid: UserPromptId(prompt_id_v1.0),
             };
             let Some(body_v1) = bodies_v1.remove(&prompt_id_v1) else {
                 continue;

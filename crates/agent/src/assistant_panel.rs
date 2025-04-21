@@ -25,7 +25,7 @@ use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::{PromptBuilder, PromptId};
+use prompt_store::{PromptBuilder, PromptId, UserPromptId};
 use proto::Plan;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
@@ -502,7 +502,9 @@ impl AssistantPanel {
                     None,
                 ))
             }),
-            action.prompt_to_select.map(|uuid| PromptId::User { uuid }),
+            action.prompt_to_select.map(|uuid| PromptId::User {
+                uuid: UserPromptId(uuid),
+            }),
             cx,
         )
         .detach_and_log_err(cx);

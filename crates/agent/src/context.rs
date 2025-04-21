@@ -4,12 +4,12 @@ use gpui::{App, Entity, SharedString};
 use language::{Buffer, File};
 use language_model::LanguageModelRequestMessage;
 use project::{ProjectPath, Worktree};
+use prompt_store::UserPromptId;
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use text::{Anchor, BufferId};
 use ui::IconName;
 use util::post_inc;
-use uuid::Uuid;
 
 use crate::thread::Thread;
 
@@ -179,7 +179,7 @@ pub struct ExcerptContext {
 #[derive(Debug, Clone)]
 pub struct RulesContext {
     pub id: ContextId,
-    pub prompt_id: Uuid,
+    pub prompt_id: UserPromptId,
     pub title: SharedString,
     pub text: SharedString,
 }

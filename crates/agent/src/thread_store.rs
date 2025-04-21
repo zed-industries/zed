@@ -25,12 +25,11 @@ use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
 use prompt_store::{
     ProjectContext, PromptBuilder, PromptId, PromptMetadata, PromptStore, PromptsUpdatedEvent,
-    RulesFileContext, UserRulesContext, WorktreeContext,
+    RulesFileContext, UserPromptId, UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
-use uuid::Uuid;
 
 use crate::thread::{
     DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
@@ -357,7 +356,11 @@ impl ThreadStore {
         self.prompt_store.clone()
     }
 
-    pub fn load_rules(&self, prompt_id: Uuid, cx: &App) -> Task<Result<(PromptMetadata, String)>> {
+    pub fn load_rules(
+        &self,
+        prompt_id: UserPromptId,
+        cx: &App,
+    ) -> Task<Result<(PromptMetadata, String)>> {
         let prompt_id = PromptId::User { uuid: prompt_id };
         let Some(prompt_store) = self.prompt_store.as_ref() else {
             return Task::ready(Err(anyhow!("Prompt store unexpectedly missing.")));

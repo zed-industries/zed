@@ -2971,7 +2971,7 @@ impl ActiveThread {
         let first_user_rules_id = project_context
             .user_rules
             .first()
-            .map(|user_rules| user_rules.uuid);
+            .map(|user_rules| user_rules.uuid.0);
 
         let rules_files = project_context
             .worktrees
@@ -3310,7 +3310,7 @@ pub(crate) fn open_context(
         }
         AssistantContext::Rules(rules_context) => window.dispatch_action(
             Box::new(OpenPromptLibrary {
-                prompt_to_select: Some(rules_context.prompt_id),
+                prompt_to_select: Some(rules_context.prompt_id.0),
             }),
             cx,
         ),
