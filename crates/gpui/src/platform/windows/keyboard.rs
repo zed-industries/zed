@@ -359,29 +359,20 @@ fn is_letter_key(key: &str) -> bool {
 
 /// The `already_vim_style` function determines whether the current modifier key combination is compatible with Vim-style keyboard handling.
 ///
-/// | Shift | Control |  Alt  | Return Value | Explanation |
-/// |-------|---------|-------|--------------|-------------|
-/// | true  | true    | true  | false | Any combination with Shift pressed is not Vim-style |
-/// | true  | true    | false | false | Any combination with Shift pressed is not Vim-style |
-/// | true  | false   | true  | false | Any combination with Shift pressed is not Vim-style |
-/// | true  | false   | false | false | Any combination with Shift pressed is not Vim-style |
-/// | false | true    | true  | false | Ctrl+Alt combination is not Vim-style |
-/// | false | true    | false | true  | Control-only is considered Vim-style |
-/// | false | false   | true  | true  | Alt-only is considered Vim-style |
-/// | false | false   | false | true  | No modifiers is considered Vim-style |
+/// | No. | Shift | Control |  Alt  | Return Value | Explanation |
+/// |-----|-------|---------|-------|--------------|-------------|
+/// |  1  | true  | true    | true  | false | Any combination with Shift pressed is not Vim-style |
+/// |  2  | true  | true    | false | false | Any combination with Shift pressed is not Vim-style |
+/// |  3  | true  | false   | true  | false | Any combination with Shift pressed is not Vim-style |
+/// |  4  | true  | false   | false | false | Any combination with Shift pressed is not Vim-style |
+/// |  5  | false | true    | true  | false | Ctrl+Alt combination is not Vim-style |
+/// |  6  | false | true    | false | true  | Control-only is considered Vim-style |
+/// |  7  | false | false   | true  | true  | Alt-only is considered Vim-style |
+/// |  8  | false | false   | false | true  | No modifiers is considered Vim-style |
 ///
 /// The function evaluates all possible modifier combinations to determine if they're already in a format suitable for Vim-style keyboard handling.
 fn is_already_vim_style(modifiers: &Modifiers) -> bool {
-    match (modifiers.shift, modifiers.control, modifiers.alt) {
-        (true, true, true) => false,   // case 1
-        (true, true, false) => false,  // case 2
-        (true, false, true) => false,  // case 3
-        (true, false, false) => false, // case 4
-        (false, true, true) => false,  // case 5
-        (false, true, false) => true,
-        (false, false, true) => true,
-        (false, false, false) => true,
-    }
+    !modifiers.shift && !(modifiers.control && modifiers.alt)
 }
 
 fn get_modifiers(high: i8) -> (bool, bool, bool) {
@@ -458,6 +449,83 @@ pub(crate) fn get_keyboard_layout_name(id: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use crate::{KeyboardMapper, Keystroke, Modifiers, WindowsKeyboardMapper};
+
+    use super::is_already_vim_style;
+
+    #[test]
+    fn test_is_already_vim_style() {
+        // Case 1: Shift + Control + Alt (should not be Vim-style)
+        let modifiers = Modifiers {
+            shift: true,
+            control: true,
+            alt: true,
+            ..Default::default()
+        };
+        assert!(!is_already_vim_style(&modifiers));
+
+        // Case 2: Shift + Control (should not be Vim-style)
+        let modifiers = Modifiers {
+            shift: true,
+            control: true,
+            alt: false,
+            ..Default::default()
+        };
+        assert!(!is_already_vim_style(&modifiers));
+
+        // Case 3: Shift + Alt (should not be Vim-style)
+        let modifiers = Modifiers {
+            shift: true,
+            control: false,
+            alt: true,
+            ..Default::default()
+        };
+        assert!(!is_already_vim_style(&modifiers));
+
+        // Case 4: Shift only (should not be Vim-style)
+        let modifiers = Modifiers {
+            shift: true,
+            control: false,
+            alt: false,
+            ..Default::default()
+        };
+        assert!(!is_already_vim_style(&modifiers));
+
+        // Case 5: Control + Alt (should not be Vim-style)
+        let modifiers = Modifiers {
+            shift: false,
+            control: true,
+            alt: true,
+            ..Default::default()
+        };
+        assert!(!is_already_vim_style(&modifiers));
+
+        // Case 6: Control only (should be Vim-style)
+        let modifiers = Modifiers {
+            shift: false,
+            control: true,
+            alt: false,
+            ..Default::default()
+        };
+        assert!(is_already_vim_style(&modifiers));
+
+        // Case 7: Alt only (should be Vim-style)
+        let modifiers = Modifiers {
+            shift: false,
+            control: false,
+            alt: true,
+            ..Default::default()
+        };
+        assert!(is_already_vim_style(&modifiers));
+
+        // Case 8: No modifiers (should be Vim-style)
+        let modifiers = Modifiers {
+            shift: false,
+            control: false,
+            alt: false,
+            ..Default::default()
+        };
+        assert!(is_already_vim_style(&modifiers));
+    }
 
     #[test]
     fn test_to_vim_keystrokes() {
