@@ -1744,8 +1744,7 @@ impl ActiveThread {
                         .child(div().p_2().children(message_content))
                         .child(
                             h_flex()
-                                .py_1()
-                                .px_2()
+                                .p_1()
                                 .border_t_1()
                                 .border_color(colors.border_variant)
                                 .justify_end()
@@ -2087,7 +2086,33 @@ impl ActiveThread {
                         RenderedMessageSegment::Text(markdown) => {
                             let markdown_element = MarkdownElement::new(
                                 markdown.clone(),
-                                default_markdown_style(window, cx),
+                                if message_role == Role::User {
+                                    let mut style = default_markdown_style(window, cx);
+                                    let theme_settings = ThemeSettings::get_global(cx);
+                                    let buffer_font_size = TextSize::Small.rems(cx);
+                                    let mut text_style = window.text_style();
+
+                                    text_style.refine(&TextStyleRefinement {
+                                        font_family: Some(
+                                            theme_settings.buffer_font.family.clone(),
+                                        ),
+                                        font_fallbacks: theme_settings
+                                            .buffer_font
+                                            .fallbacks
+                                            .clone(),
+                                        font_features: Some(
+                                            theme_settings.buffer_font.features.clone(),
+                                        ),
+                                        font_size: Some(buffer_font_size.into()),
+                                        color: Some(cx.theme().colors().text),
+                                        ..Default::default()
+                                    });
+
+                                    style.base_text_style = text_style;
+                                    style
+                                } else {
+                                    default_markdown_style(window, cx)
+                                },
                             );
 
                             let markdown_element = if is_assistant {
