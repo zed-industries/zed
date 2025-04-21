@@ -149,6 +149,7 @@ impl Example {
             thread_criteria,
             diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
             run_directory_path: run_dir.to_path_buf(),
+            worktree_path,
             log_prefix: name,
         })
     }
