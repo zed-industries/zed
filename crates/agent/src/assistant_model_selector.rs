@@ -1,7 +1,7 @@
 use assistant_settings::AssistantSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
-use language_model::LanguageModelRegistry;
+
 use language_model_selector::{
     LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
@@ -9,17 +9,12 @@ use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
 
-#[derive(Clone, Copy)]
-pub enum ModelType {
-    Default,
-    InlineAssistant,
-}
+pub use language_model_selector::ModelType;
 
 pub struct AssistantModelSelector {
     selector: Entity<LanguageModelSelector>,
     menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     focus_handle: FocusHandle,
-    model_type: ModelType,
 }
 
 impl AssistantModelSelector {
@@ -63,13 +58,13 @@ impl AssistantModelSelector {
                             }
                         }
                     },
+                    model_type,
                     window,
                     cx,
                 )
             }),
             menu_handle,
             focus_handle,
-            model_type,
         }
     }
 
@@ -82,11 +77,7 @@ impl Render for AssistantModelSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
 
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let model = match self.model_type {
-            ModelType::Default => model_registry.default_model(),
-            ModelType::InlineAssistant => model_registry.inline_assistant_model(),
-        };
+        let model = self.selector.read(cx).active_model(cx);
         let (model_name, model_icon) = match model {
             Some(model) => (model.model.name().0, Some(model.provider.icon())),
             _ => (SharedString::from("No model selected"), None),
