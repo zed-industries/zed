@@ -757,7 +757,7 @@ impl Thread {
                     .iter()
                     .filter_map(|context| {
                         if let AssistantContext::Image(image_context) = context {
-                            Some(image_context.image.clone())
+                            dbg!(image_context.image_task.clone().now_or_never().flatten())
                         } else {
                             None
                         }

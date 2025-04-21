@@ -1,6 +1,7 @@
 use std::{ops::Range, path::Path, sync::Arc};
 
-use gpui::{App, Entity, SharedString};
+use futures::{FutureExt, future::Shared};
+use gpui::{App, Entity, SharedString, Task};
 use language::{Buffer, File};
 use language_model::{LanguageModelImage, LanguageModelRequestMessage};
 use project::{ProjectPath, Worktree};
@@ -127,7 +128,17 @@ impl ThreadContext {
 #[derive(Debug, Clone)]
 pub struct ImageContext {
     pub id: ContextId,
-    pub image: LanguageModelImage,
+    pub image_task: Shared<Task<Option<LanguageModelImage>>>,
+}
+
+impl ImageContext {
+    pub fn image(&self) -> Option<LanguageModelImage> {
+        self.image_task.clone().now_or_never().flatten()
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.image_task.clone().now_or_never().is_none()
+    }
 }
 
 #[derive(Clone)]

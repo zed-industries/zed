@@ -172,21 +172,18 @@ impl RenderOnce for ContextPill {
                         .cursor_pointer()
                         .on_click(move |event, window, cx| on_click(event, window, cx))
                 })
-                .map(|element| {
-                    if context.summarizing {
-                        element
-                            .tooltip(ui::Tooltip::text("Summarizing..."))
-                            .with_animation(
-                                "pulsating-ctx-pill",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.opacity(delta),
-                            )
-                            .into_any_element()
-                    } else {
-                        element.into_any()
-                    }
+                .map(|element| match &context.status {
+                    ContextStatus::Loading { message } => element
+                        .tooltip(ui::Tooltip::text(message.clone()))
+                        .with_animation(
+                            "pulsating-ctx-pill",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.4, 0.8)),
+                            |label, delta| label.opacity(delta),
+                        )
+                        .into_any_element(),
+                    ContextStatus::Ready => element.into_any(),
                 }),
             ContextPill::Suggested {
                 name,
@@ -227,6 +224,11 @@ impl RenderOnce for ContextPill {
     }
 }
 
+pub enum ContextStatus {
+    Ready,
+    Loading { message: SharedString },
+}
+
 pub struct AddedContext {
     pub id: ContextId,
     pub kind: ContextKind,
@@ -234,7 +236,7 @@ pub struct AddedContext {
     pub parent: Option<SharedString>,
     pub tooltip: Option<SharedString>,
     pub icon_path: Option<SharedString>,
-    pub summarizing: bool,
+    pub status: ContextStatus,
 }
 
 impl AddedContext {
@@ -259,7 +261,7 @@ impl AddedContext {
                     parent,
                     tooltip: Some(full_path_string),
                     icon_path: FileIcons::get_icon(&full_path, cx),
-                    summarizing: false,
+                    status: ContextStatus::Ready,
                 }
             }
 
@@ -285,7 +287,7 @@ impl AddedContext {
                     parent,
                     tooltip: Some(full_path_string),
                     icon_path: None,
-                    summarizing: false,
+                    status: ContextStatus::Ready,
                 }
             }
 
@@ -296,7 +298,7 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
-                summarizing: false,
+                status: ContextStatus::Ready,
             },
 
             AssistantContext::Excerpt(excerpt_context) => {
@@ -328,7 +330,7 @@ impl AddedContext {
                     parent,
                     tooltip: Some(full_path_string.into()),
                     icon_path: FileIcons::get_icon(&full_path, cx),
-                    summarizing: false,
+                    status: ContextStatus::Ready,
                 }
             }
 
@@ -339,7 +341,7 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
-                summarizing: false,
+                status: ContextStatus::Ready,
             },
 
             AssistantContext::Thread(thread_context) => AddedContext {
@@ -349,10 +351,17 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
-                summarizing: thread_context
+                status: if thread_context
                     .thread
                     .read(cx)
-                    .is_generating_detailed_summary(),
+                    .is_generating_detailed_summary()
+                {
+                    ContextStatus::Loading {
+                        message: "Summarizing…".into(),
+                    }
+                } else {
+                    ContextStatus::Ready
+                },
             },
 
             AssistantContext::Image(image_context) => AddedContext {
@@ -362,7 +371,13 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
-                summarizing: false,
+                status: if image_context.is_loading() {
+                    ContextStatus::Loading {
+                        message: "Loading…".into(),
+                    }
+                } else {
+                    ContextStatus::Ready
+                },
             },
         }
     }

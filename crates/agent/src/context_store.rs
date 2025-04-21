@@ -420,23 +420,27 @@ impl ContextStore {
         cx.notify();
     }
 
-    pub fn add_image(&mut self, image: Image, cx: &mut Context<ContextStore>) -> Task<Result<()>> {
-        let convert_image_task = LanguageModelImage::from_image(image, cx);
-        cx.spawn(async move |this, cx| {
-            let image = convert_image_task
-                .await
-                .context("Failed to attach image as context")?;
-            this.update(cx, |this, cx| this.insert_image(image, cx))?;
-
-            anyhow::Ok(())
-        })
-    }
-
-    fn insert_image(&mut self, image: LanguageModelImage, cx: &mut Context<ContextStore>) {
+    pub fn add_image(&mut self, image: Image, cx: &mut Context<ContextStore>) {
+        let image_task = LanguageModelImage::from_image(image, cx).shared();
         let id = self.next_context_id.post_inc();
         self.context
-            .push(AssistantContext::Image(ImageContext { id, image }));
+            .push(AssistantContext::Image(ImageContext { id, image_task }));
         cx.notify();
+    }
+
+    pub fn wait_for_images(&self, cx: &App) -> Task<()> {
+        let tasks = self
+            .context
+            .iter()
+            .filter_map(|ctx| match ctx {
+                AssistantContext::Image(ctx) => Some(ctx.image_task.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |_cx| {
+            join_all(tasks).await;
+        })
     }
 
     pub fn add_excerpt(

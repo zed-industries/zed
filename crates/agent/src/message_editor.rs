@@ -271,6 +271,7 @@ impl MessageEditor {
 
         let refresh_task =
             refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
+        let wait_for_images = self.context_store.read(cx).wait_for_images(cx);
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
@@ -280,6 +281,7 @@ impl MessageEditor {
         cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await.ok();
             refresh_task.await;
+            wait_for_images.await;
 
             thread
                 .update(cx, |thread, cx| {
@@ -398,7 +400,7 @@ impl MessageEditor {
 
         self.context_store.update(cx, |store, cx| {
             for image in images {
-                store.add_image(image, cx).detach_and_log_err(cx);
+                store.add_image(image, cx);
             }
         });
     }
