@@ -362,7 +362,7 @@ fn is_letter_key(key: &str) -> bool {
 ///
 /// The function evaluates all possible modifier combinations to determine if they're already in a format suitable for Vim-style keyboard handling.
 fn is_already_vim_style(modifiers: &Modifiers) -> bool {
-    !modifiers.shift && !(modifiers.control && modifiers.alt)
+    !(modifiers.shift || modifiers.control && modifiers.alt)
 }
 
 fn get_modifiers(high: i8) -> (bool, bool, bool) {
