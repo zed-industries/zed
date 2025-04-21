@@ -1256,7 +1256,7 @@ impl Terminal {
         }
 
         let motion: Option<ViMotion> = match key.as_str() {
-            "h" | "left" => Some(ViMotion::Left),
+            "h" | "left" => Some(ViMotion::Left), // shift-left -> "LEFT"
             "j" | "down" => Some(ViMotion::Down),
             "k" | "up" => Some(ViMotion::Up),
             "l" | "right" => Some(ViMotion::Right),
