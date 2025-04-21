@@ -187,6 +187,7 @@ impl MarkdownPreviewView {
                                             })
                                         }
                                     });
+
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);
 
@@ -197,7 +198,9 @@ impl MarkdownPreviewView {
 
                             div()
                                 .id(ix)
-                                .when(should_apply_padding, |this| this.pb_3())
+                                .when(should_apply_padding, |this| {
+                                    this.pb(render_cx.scaled_rems(0.75))
+                                })
                                 .group("markdown-block")
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
@@ -235,8 +238,13 @@ impl MarkdownPreviewView {
 
                                     container.child(
                                         div()
+                                            .debug_below()
                                             .relative()
-                                            .child(div().pl_4().child(rendered_block))
+                                            .child(
+                                                div()
+                                                    .p(render_cx.scaled_rems(1.0))
+                                                    .child(rendered_block),
+                                            )
                                             .child(indicator.absolute().left_0().top_0()),
                                     )
                                 })
@@ -508,7 +516,6 @@ impl Render for MarkdownPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let buffer_line_height = ThemeSettings::get_global(cx).buffer_line_height;
-        dbg!(("frame", buffer_size));
         v_flex()
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")

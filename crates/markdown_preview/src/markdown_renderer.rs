@@ -19,7 +19,7 @@ use std::{
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
     ButtonCommon, Checkbox, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels,
+    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
     StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
     h_flex, relative, tooltip_container, v_flex,
 };
@@ -58,7 +58,6 @@ impl RenderContext {
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
         buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
-        dbg!(("ctx_new", settings.buffer_font_size(cx)));
 
         RenderContext {
             workspace,
@@ -92,6 +91,26 @@ impl RenderContext {
         ElementId::from(SharedString::from(id))
     }
 
+    /// HACK: used to have rems relative to buffer font size, so that things scale appropriately as
+    /// buffer font size changes. The callees of this function should be reimplemented to use real
+    /// relative sizing once that is implemented in GPUI
+    pub fn scaled_rems(&self, rems: f32) -> Rems {
+        return self
+            .buffer_text_style
+            .font_size
+            .to_rems(self.window_rem_size)
+            .mul(rems);
+    }
+
+    pub fn scaled_px(&self, px: f32) -> Pixels {
+        return (self
+            .buffer_text_style
+            .font_size
+            .to_pixels(self.window_rem_size)
+            / self.window_rem_size.0)
+            .mul(px);
+    }
+
     /// This ensures that children inside of block quotes
     /// have padding between them.
     ///
@@ -107,7 +126,7 @@ impl RenderContext {
     /// and "And this is the next paragraph."
     fn with_common_p(&self, element: Div) -> Div {
         if self.indent > 0 {
-            element.pb_3()
+            element.pb(self.scaled_rems(0.75))
         } else {
             element
         }
@@ -148,25 +167,24 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         HeadingLevel::H1 => 2.,
         HeadingLevel::H2 => 1.5,
         HeadingLevel::H3 => 1.25,
-        HeadingLevel::H4 => 1., //ui_font_size -> window::set_rem_size() -> Causes this to change
+        HeadingLevel::H4 => 1.,
         HeadingLevel::H5 => 0.875,
         HeadingLevel::H6 => 0.85,
     };
 
-    let buffer_text_size = cx.buffer_text_style.font_size;
-
-    let text_size = buffer_text_size.to_rems(cx.window_rem_size).mul(size);
+    let text_size = cx.scaled_rems(size);
 
     // was `DefiniteLength::from(text_size.mul(1.25))`
     // let line_height = DefiniteLength::from(text_size.mul(1.25));
-    let line_height = relative(1.25);
+    let line_height = text_size * 1.25;
 
     // was `rems(0.15)`
-    // let padding_top = rems(0.15);
-    let padding_top = cx.window_rem_size.mul(0.15);
+    // let padding_top = cx.scaled_rems(0.15);
+    let padding_top = rems(0.15);
 
     // was `.pb_1()` = `rems(0.25)`
-    let padding_bottom = cx.window_rem_size.mul(0.25);
+    // let padding_bottom = cx.scaled_rems(0.25);
+    let padding_bottom = rems(0.25);
 
     let color = match parsed.level {
         HeadingLevel::H6 => cx.text_muted_color,
@@ -183,72 +201,20 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .into_any()
 }
 
-fn render_markdown_heading_2(parsed: &ParsedMarkdownHeading, cx: &mut RenderContext) -> AnyElement {
-    let size = match parsed.level {
-        HeadingLevel::H1 => 2.,
-        HeadingLevel::H2 => 1.5,
-        HeadingLevel::H3 => 1.25,
-        HeadingLevel::H4 => 1., //ui_font_size -> window::set_rem_size() -> Causes this to change
-        HeadingLevel::H5 => 0.875,
-        HeadingLevel::H6 => 0.85,
-    };
-
-    let color = match parsed.level {
-        HeadingLevel::H6 => cx.text_muted_color,
-        _ => cx.text_color,
-    };
-    let line_height = DefiniteLength::from(rems(size).mul(1.25));
-    let children = render_markdown_text(&parsed.contents, cx);
-    canvas(
-        move |bounds, window, cx| {
-            let text_style = window.text_style(); // We're in the paint phase, the upper elements have added things to the stack
-            // A fake em unit
-            let font_size = text_style.font_size.to_pixels(window.rem_size()) * size;
-            // let line_height = text_style
-            //     .line_height
-            //     .to_pixels(AbsoluteLength::from(font_size * 1.25), window.rem_size())
-            //     * size;
-
-            let mut element = div()
-                .line_height(line_height)
-                .text_size(font_size) // Setting up the size to be added to the TextStyleRefinement stack in the window
-                .text_color(color) // But because we haven't started painting, the size isn't yet in the window
-                .pt(rems(0.15))
-                .pb_1()
-                .children(children)
-                .whitespace_normal();
-            let (layout_id, mut request_layout_state) = element.request_layout(None, window, cx);
-            let hitbox = element.prepaint(None, bounds, &mut request_layout_state, window, cx);
-            (element, request_layout_state, hitbox)
-        },
-        |bounds, (mut element, mut request_layout_state, mut hitbox), window, cx| {
-            element.paint(
-                None,
-                bounds,
-                &mut request_layout_state,
-                &mut hitbox,
-                window,
-                cx,
-            )
-        },
-    )
-    .into_any()
-}
-
 fn render_markdown_list_item(
     parsed: &ParsedMarkdownListItem,
     cx: &mut RenderContext,
 ) -> AnyElement {
     use ParsedMarkdownListItemType::*;
 
-    let padding = rems((parsed.depth - 1) as f32);
+    let padding = cx.scaled_rems((parsed.depth - 1) as f32);
 
     let bullet = match &parsed.item_type {
         Ordered(order) => format!("{}.", order).into_any_element(),
         Unordered => "•".into_any_element(),
         Task(checked, range) => div()
             .id(cx.next_id(range))
-            .mt(px(3.))
+            .mt(cx.scaled_px(3.))
             .child(
                 Checkbox::new(
                     "checkbox",
@@ -284,7 +250,7 @@ fn render_markdown_list_item(
             })
             .into_any_element(),
     };
-    let bullet = div().mr_2().child(bullet);
+    let bullet = div().mr(cx.scaled_rems(0.5)).child(bullet);
 
     let contents: Vec<AnyElement> = parsed
         .content
@@ -295,7 +261,10 @@ fn render_markdown_list_item(
     let item = h_flex()
         .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
         .items_start()
-        .children(vec![bullet, div().children(contents).pr_4().w_full()]);
+        .children(vec![
+            bullet,
+            div().children(contents).pr(cx.scaled_rems(1.0)).w_full(),
+        ]);
 
     cx.with_common_p(item).into_any()
 }
@@ -646,8 +615,8 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
 }
 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
-    let rule = div().w_full().h(px(2.)).bg(cx.border_color);
-    div().pt_3().pb_3().child(rule).into_any()
+    let rule = div().w_full().h(cx.scaled_rems(0.125)).bg(cx.border_color);
+    div().py(cx.scaled_rems(0.5)).child(rule).into_any()
 }
 
 struct InteractiveMarkdownElementTooltip {
