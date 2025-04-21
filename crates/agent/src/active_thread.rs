@@ -1512,9 +1512,7 @@ impl ActiveThread {
             .map(|(_, state)| state.editor.clone());
 
         let colors = cx.theme().colors();
-        let active_color = colors.element_active;
         let editor_bg_color = colors.editor_background;
-        let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
         let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::FileCode)
             .shape(ui::IconButtonShape::Square)
@@ -1738,35 +1736,19 @@ impl ActiveThread {
                 .pb_4()
                 .child(
                     v_flex()
-                        .bg(colors.editor_background)
+                        .bg(editor_bg_color)
                         .rounded_lg()
                         .border_1()
                         .border_color(colors.border)
                         .shadow_md()
+                        .child(div().p_2().children(message_content))
                         .child(
                             h_flex()
                                 .py_1()
-                                .pl_2()
-                                .pr_1()
-                                .bg(bg_user_message_header)
-                                .border_b_1()
-                                .border_color(colors.border)
-                                .justify_between()
-                                .rounded_t_md()
-                                .child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .child(
-                                            Icon::new(IconName::PersonCircle)
-                                                .size(IconSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new("You")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
-                                )
+                                .px_2()
+                                .border_t_1()
+                                .border_color(colors.border_variant)
+                                .justify_end()
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -1819,8 +1801,12 @@ impl ActiveThread {
                                             edit_message_editor.is_none() && allow_editing_message,
                                             |this| {
                                                 this.child(
-                                                    Button::new("edit-message", "Edit")
+                                                    Button::new("edit-message", "Edit Message")
                                                         .label_size(LabelSize::Small)
+                                                        .icon(IconName::Pencil)
+                                                        .icon_size(IconSize::XSmall)
+                                                        .icon_color(Color::Muted)
+                                                        .icon_position(IconPosition::Start)
                                                         .on_click(cx.listener({
                                                             let message_segments =
                                                                 message.segments.clone();
@@ -1837,8 +1823,7 @@ impl ActiveThread {
                                             },
                                         ),
                                 ),
-                        )
-                        .child(div().p_2().children(message_content)),
+                        ),
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
