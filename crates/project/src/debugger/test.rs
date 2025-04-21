@@ -22,8 +22,8 @@ pub fn intercept_debug_sessions<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
                 dbg!(&event);
                 if matches!(event, SessionStateEvent::Running) {
                     let client = session.adapter_client().unwrap();
-                    configure(&client);
                     register_default_handlers(session, &client, cx);
+                    configure(&client);
                     cx.background_spawn(async move {
                         client
                             .fake_event(dap::messages::Events::Initialized(

@@ -640,10 +640,11 @@ pub enum SessionEvent {
     StackTrace,
     Variables,
     Threads,
+    CapabilitiesLoaded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SessionStateEvent {
+pub enum SessionStateEvent {
     Running,
     Shutdown,
     Restart,
@@ -862,7 +863,7 @@ impl Session {
 
                 cx.spawn(async move |this, cx| {
                     let capabilities = capabilities.await?;
-                    this.update(cx, |session, _| {
+                    this.update(cx, |session, cx| {
                         session.capabilities = capabilities;
                         let filters = session
                             .capabilities
@@ -876,6 +877,7 @@ impl Session {
                                 .entry(filter.filter.clone())
                                 .or_insert_with(|| (filter, default));
                         }
+                        cx.emit(SessionEvent::CapabilitiesLoaded);
                     })?;
                     Ok(())
                 })

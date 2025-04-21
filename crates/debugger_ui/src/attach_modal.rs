@@ -228,15 +228,16 @@ impl PickerDelegate for AttachModalDelegate {
         }
 
         let definition = self.debug_config.clone();
-        self.workspace
-            .update(cx, |workspace, cx| {
-                if let Some(panel) = workspace.panel::<DebugPanel>(cx) {
-                    panel.update(cx, |panel, cx| {
-                        panel.start_session(definition, window, cx);
-                    })
-                }
-            })
-            .ok();
+        let panel = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
+            .ok()
+            .flatten();
+        if let Some(panel) = panel {
+            panel.update(cx, |panel, cx| {
+                panel.start_session(definition, window, cx);
+            });
+        }
         cx.emit(DismissEvent);
     }
 

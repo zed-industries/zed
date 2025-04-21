@@ -133,7 +133,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         let version_path = adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version));
 
         let adapter_dir = version_path.join("extension").join("adapter");
-        let command = adapter_dir.join("codelldb");
+        let command = adapter_dir.join("codelldb-fail"); // todo!();
         let command = command
             .to_str()
             .map(ToOwned::to_owned)

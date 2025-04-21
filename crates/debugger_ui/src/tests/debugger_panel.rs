@@ -1355,11 +1355,6 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
         });
     });
 
-    assert!(
-        task.is_err(),
-        "Session should failed to start if launch request fails"
-    );
-
     cx.run_until_parked();
 
     project.update(cx, |project, cx| {

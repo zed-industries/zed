@@ -418,6 +418,19 @@ impl RunningState {
                         let threads = this.session.update(cx, |this, cx| this.threads(cx));
                         this.select_current_thread(&threads, cx);
                     }
+                    SessionEvent::CapabilitiesLoaded => {
+                        let capabilities = this.capabilities(cx);
+                        if !capabilities.supports_modules_request.unwrap_or(false) {
+                            this.remove_pane_item(DebuggerPaneItem::Modules, window, cx);
+                        }
+                        if !capabilities
+                            .supports_loaded_sources_request
+                            .unwrap_or(false)
+                        {
+                            this.remove_pane_item(DebuggerPaneItem::LoadedSources, window, cx);
+                        }
+                    }
+
                     _ => {}
                 }
                 cx.notify()
@@ -447,35 +460,14 @@ impl RunningState {
             workspace::PaneGroup::with_root(root)
         } else {
             pane_close_subscriptions.clear();
-            let module_list = if session
-                .read(cx)
-                .capabilities()
-                .supports_modules_request
-                .unwrap_or(false)
-            {
-                Some(&module_list)
-            } else {
-                None
-            };
-
-            let loaded_source_list = if session
-                .read(cx)
-                .capabilities()
-                .supports_loaded_sources_request
-                .unwrap_or(false)
-            {
-                Some(&loaded_source_list)
-            } else {
-                None
-            };
 
             let root = Self::default_pane_layout(
                 project,
                 &workspace,
                 &stack_frame_list,
                 &variable_list,
-                module_list,
-                loaded_source_list,
+                &module_list,
+                &loaded_source_list,
                 &console,
                 &breakpoint_list,
                 &mut pane_close_subscriptions,
@@ -512,11 +504,6 @@ impl RunningState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        debug_assert!(
-            item_kind.is_supported(self.session.read(cx).capabilities()),
-            "We should only allow removing supported item kinds"
-        );
-
         if let Some((pane, item_id)) = self.panes.panes().iter().find_map(|pane| {
             Some(pane).zip(
                 pane.read(cx)
@@ -948,8 +935,8 @@ impl RunningState {
         workspace: &WeakEntity<Workspace>,
         stack_frame_list: &Entity<StackFrameList>,
         variable_list: &Entity<VariableList>,
-        module_list: Option<&Entity<ModuleList>>,
-        loaded_source_list: Option<&Entity<LoadedSourceList>>,
+        module_list: &Entity<ModuleList>,
+        loaded_source_list: &Entity<LoadedSourceList>,
         console: &Entity<Console>,
         breakpoints: &Entity<BreakpointList>,
         subscriptions: &mut HashMap<EntityId, Subscription>,
@@ -1005,41 +992,37 @@ impl RunningState {
                 window,
                 cx,
             );
-            if let Some(module_list) = module_list {
-                this.add_item(
-                    Box::new(SubView::new(
-                        module_list.focus_handle(cx),
-                        module_list.clone().into(),
-                        DebuggerPaneItem::Modules,
-                        None,
-                        cx,
-                    )),
-                    false,
-                    false,
+            this.add_item(
+                Box::new(SubView::new(
+                    module_list.focus_handle(cx),
+                    module_list.clone().into(),
+                    DebuggerPaneItem::Modules,
                     None,
-                    window,
                     cx,
-                );
-                this.activate_item(0, false, false, window, cx);
-            }
+                )),
+                false,
+                false,
+                None,
+                window,
+                cx,
+            );
+            this.activate_item(0, false, false, window, cx);
 
-            if let Some(loaded_source_list) = loaded_source_list {
-                this.add_item(
-                    Box::new(SubView::new(
-                        loaded_source_list.focus_handle(cx),
-                        loaded_source_list.clone().into(),
-                        DebuggerPaneItem::LoadedSources,
-                        None,
-                        cx,
-                    )),
-                    false,
-                    false,
+            this.add_item(
+                Box::new(SubView::new(
+                    loaded_source_list.focus_handle(cx),
+                    loaded_source_list.clone().into(),
+                    DebuggerPaneItem::LoadedSources,
                     None,
-                    window,
                     cx,
-                );
-                this.activate_item(1, false, false, window, cx);
-            }
+                )),
+                false,
+                false,
+                None,
+                window,
+                cx,
+            );
+            this.activate_item(1, false, false, window, cx);
         });
 
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
