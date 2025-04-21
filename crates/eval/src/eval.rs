@@ -138,10 +138,10 @@ fn main() {
         cx.spawn(async move |cx| {
             authenticate_task.await.unwrap();
 
-            std::fs::create_dir_all(REPOS_DIR)?;
-            std::fs::create_dir_all(WORKTREES_DIR)?;
+            std::fs::create_dir_all(&repos_dir)?;
+            std::fs::create_dir_all(&worktrees_dir)?;
 
-            let run_dir = Path::new(RUNS_DIR).join(args.cohort_id.clone().unwrap_or_else(|| {
+            let run_dir = runs_dir.join(args.cohort_id.clone().unwrap_or_else(|| {
                 format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"))
             }));
             std::fs::create_dir_all(&run_dir)?;
@@ -636,10 +636,16 @@ mod tests {
             cohort_id: Some(custom_cohort_id.to_string()),
         };
 
-        let expected_run_dir = PathBuf::from(RUNS_DIR).join(custom_cohort_id);
+        let runs_dir = PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("crates/eval/runs");
+        let expected_run_dir = runs_dir.join(custom_cohort_id);
 
         let actual_run_dir =
-            PathBuf::from(RUNS_DIR).join(args.cohort_id.clone().unwrap_or_else(|| {
+            runs_dir.join(args.cohort_id.clone().unwrap_or_else(|| {
                 format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"))
             }));
 
@@ -656,14 +662,14 @@ mod tests {
         };
 
         let default_run_dir =
-            PathBuf::from(RUNS_DIR).join(args_without_cohort_id.cohort_id.clone().unwrap_or_else(
+            runs_dir.join(args_without_cohort_id.cohort_id.clone().unwrap_or_else(
                 || format!("{}", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")),
             ));
 
-        assert_ne!(PathBuf::from(RUNS_DIR), default_run_dir);
+        assert_ne!(runs_dir, default_run_dir);
         assert!(
             default_run_dir.to_string_lossy().len()
-                > PathBuf::from(RUNS_DIR).to_string_lossy().len()
+                > runs_dir.to_string_lossy().len()
         );
     }
 }
