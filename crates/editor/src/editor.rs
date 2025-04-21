@@ -12583,6 +12583,45 @@ impl Editor {
             .iter()
             .map(|selection| {
                 let old_range = selection.start..selection.end;
+
+                if let Some((node, _)) = buffer.syntax_ancestor(old_range.clone()) {
+                    // manually select word at selection
+                    if ["string_content", "inline"].contains(&node.kind()) {
+                        let word_range = {
+                            let display_point = buffer
+                                .offset_to_point(old_range.start)
+                                .to_display_point(&display_map);
+                            let Range { start, end } =
+                                movement::surrounding_word(&display_map, display_point);
+                            start.to_point(&display_map).to_offset(&buffer)
+                                ..end.to_point(&display_map).to_offset(&buffer)
+                        };
+                        // ignore if word is already selected
+                        if !word_range.is_empty() && old_range != word_range {
+                            let last_word_range = {
+                                let display_point = buffer
+                                    .offset_to_point(old_range.end)
+                                    .to_display_point(&display_map);
+                                let Range { start, end } =
+                                    movement::surrounding_word(&display_map, display_point);
+                                start.to_point(&display_map).to_offset(&buffer)
+                                    ..end.to_point(&display_map).to_offset(&buffer)
+                            };
+                            // only select word if start and end point belongs to same word
+                            if word_range == last_word_range {
+                                selected_larger_node = true;
+                                return Selection {
+                                    id: selection.id,
+                                    start: word_range.start,
+                                    end: word_range.end,
+                                    goal: SelectionGoal::None,
+                                    reversed: selection.reversed,
+                                };
+                            }
+                        }
+                    }
+                }
+
                 let mut new_range = old_range.clone();
                 let mut new_node = None;
                 while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
