@@ -1548,7 +1548,7 @@ impl Terminal {
     }
 
     // this logic is from mouse_down
-    pub fn select_word_at_event_position(&mut self, e: &MouseDownEvent){
+    pub fn select_word_at_event_position(&mut self, e: &MouseDownEvent) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         let (point, side) = grid_point_and_side(
             position,
@@ -1556,8 +1556,8 @@ impl Terminal {
             self.last_content.display_offset,
         );
         let selection_type = Some(SelectionType::Semantic);
-        let selection = selection_type
-            .map(|selection_type| Selection::new(selection_type, point, side));
+        let selection = 
+            selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
         if let Some(sel) = selection {
             self.events

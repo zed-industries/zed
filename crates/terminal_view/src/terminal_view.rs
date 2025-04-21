@@ -836,7 +836,6 @@ impl TerminalView {
     fn expand_selection_around_cursor(
         &mut self,
         e: &MouseDownEvent,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.terminal.update(cx, |terminal, _| {
@@ -1291,7 +1290,7 @@ impl Render for TerminalView {
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
                         if this.terminal.read(cx).last_content.selection.is_none() {
-                            this.expand_selection_around_cursor(event, window, cx);
+                            this.expand_selection_around_cursor(event, cx);
                         };
                         this.deploy_context_menu(event.position, window, cx);
                         cx.notify();
