@@ -11,6 +11,8 @@ use gpui::{
     list,
 };
 use language::LanguageRegistry;
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
@@ -504,6 +506,7 @@ impl Item for MarkdownPreviewView {
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         v_flex()
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
@@ -511,6 +514,7 @@ impl Render for MarkdownPreviewView {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
+            .text_size(buffer_size)
             .child(
                 div()
                     .flex_grow()

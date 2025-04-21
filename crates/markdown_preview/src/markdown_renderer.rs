@@ -8,7 +8,7 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
     Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img, px, rems,
+    StyledText, TextStyle, WeakEntity, Window, canvas, div, img, px, rems,
 };
 use settings::Settings;
 use std::{
@@ -141,12 +141,12 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
 
 fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContext) -> AnyElement {
     let size = match parsed.level {
-        HeadingLevel::H1 => rems(2.),
-        HeadingLevel::H2 => rems(1.5),
-        HeadingLevel::H3 => rems(1.25),
-        HeadingLevel::H4 => rems(1.),
-        HeadingLevel::H5 => rems(0.875),
-        HeadingLevel::H6 => rems(0.85),
+        HeadingLevel::H1 => 2.,
+        HeadingLevel::H2 => 1.5,
+        HeadingLevel::H3 => 1.25,
+        HeadingLevel::H4 => 1., //ui_font_size -> window::set_rem_size() -> Causes this to change
+        HeadingLevel::H5 => 0.875,
+        HeadingLevel::H6 => 0.85,
     };
 
     let color = match parsed.level {
@@ -156,15 +156,25 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
 
     let line_height = DefiniteLength::from(size.mul(1.25));
 
-    div()
-        .line_height(line_height)
-        .text_size(size)
-        .text_color(color)
-        .pt(rems(0.15))
-        .pb_1()
-        .children(render_markdown_text(&parsed.contents, cx))
-        .whitespace_normal()
-        .into_any()
+    canvas(
+        |bounds, window, app| {
+            let text_style = window.text_style(); // We're in the paint phase, the upper elements have added things to the stack
+            // A fake em unit
+            let font_size = text_style.font_size.to_pixels(window.rem_size()) * size;
+
+            let element = div()
+                .line_height(line_height)
+                .text_size(font_size) // Setting up the size to be added to the TextStyleRefinement stack in the window
+                .text_color(color) // But because we haven't started painting, the size isn't yet in the window
+                .pt(rems(0.15))
+                .pb_1()
+                .children(render_markdown_text(&parsed.contents, cx))
+                .whitespace_normal()
+                .into_any();
+            element
+        },
+        |bounds, element, window, cx| element.paint(window, cx),
+    );
 }
 
 fn render_markdown_list_item(
