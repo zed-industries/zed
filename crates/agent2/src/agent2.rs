@@ -91,15 +91,15 @@ impl Agent {
                         serde_json::to_string_pretty(&request).unwrap()
                     );
 
+                    // Stream events, appending to messages and collecting up tool uses.
                     let mut events = model.stream_completion(request, cx).await?;
-                    let mut pending_tool_results = Vec::new();
+                    let mut tool_uses = Vec::new();
                     while let Some(event) = events.next().await {
                         match event {
                             Ok(event) => {
                                 thread
                                     .update(cx, |thread, cx| {
-                                        pending_tool_results.extend(thread.handle_response_event(
-                                            &model,
+                                        tool_uses.extend(thread.handle_response_event(
                                             event,
                                             events_tx.clone(),
                                             cx,
@@ -114,14 +114,15 @@ impl Agent {
                         }
                     }
 
-                    // If there are no pending tool results, the turn is done.
-                    if pending_tool_results.is_empty() {
+                    // If there are no tool uses, the turn is done.
+                    if tool_uses.is_empty() {
                         break;
                     }
 
-                    // If there are pending tool results, wait for them all to complete,
-                    // then send them together in a single message on the next loop iteration.
-                    let tool_results = future::join_all(pending_tool_results).await;
+                    // If there are tool uses, wait for their results to be
+                    // computed, then send them together in a single message on
+                    // the next loop iteration.
+                    let tool_results = future::join_all(tool_uses).await;
                     thread
                         .update(cx, |thread, _cx| {
                             thread.messages.push(AgentMessage {
@@ -145,7 +146,6 @@ impl Agent {
 
     fn handle_response_event(
         &mut self,
-        model: &Arc<dyn LanguageModel>,
         event: LanguageModelCompletionEvent,
         events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent>>,
         cx: &mut Context<Self>,
@@ -157,7 +157,7 @@ impl Agent {
             Text(new_text) => self.handle_text_event(new_text, cx),
             Thinking { text, signature } => {}
             ToolUse(tool_use) => {
-                return Some(self.handle_tool_use_event(model.clone(), tool_use, events_tx, cx));
+                return Some(self.handle_tool_use_event(tool_use, cx));
             }
             StartMessage { message_id, role } => {
                 self.messages.push(AgentMessage {
@@ -176,7 +176,6 @@ impl Agent {
         match stop_reason {
             StopReason::EndTurn | StopReason::ToolUse => {}
             StopReason::MaxTokens => todo!(),
-            StopReason::ToolUse => todo!(),
         }
     }
 
@@ -197,9 +196,7 @@ impl Agent {
 
     fn handle_tool_use_event(
         &mut self,
-        model: Arc<dyn LanguageModel>,
         tool_use: LanguageModelToolUse,
-        events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent>>,
         cx: &mut Context<Self>,
     ) -> Task<LanguageModelToolResult> {
         if let Some(last_message) = self.messages.last_mut() {
