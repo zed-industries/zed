@@ -1,5 +1,6 @@
 mod example;
 mod ids;
+mod threads;
 mod tool_metrics;
 
 pub(crate) use example::*;
@@ -34,9 +35,9 @@ pub const RUNS_DIR: &str = "./crates/eval/runs";
 #[derive(Parser, Debug)]
 #[command(name = "eval", disable_version_flag = true)]
 struct Args {
-    /// Runs all examples that contain these substrings. If unspecified, all examples are run.
+    /// Runs all examples and threads that contain these substrings. If unspecified, all examples and threads are run.
     #[arg(value_name = "EXAMPLE_SUBSTRING")]
-    examples: Vec<String>,
+    filter: Vec<String>,
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
@@ -65,9 +66,9 @@ fn main() {
         .iter()
         .filter_map(|example_path| {
             let name = example_path.file_name()?.to_string_lossy();
-            if args.examples.is_empty()
+            if args.filter.is_empty()
                 || args
-                    .examples
+                    .filter
                     .iter()
                     .any(|name_substring| name.contains(name_substring))
             {
@@ -77,6 +78,8 @@ fn main() {
             }
         })
         .collect::<Vec<_>>();
+
+    let threads = vec![threads::file_search::Thread];
 
     let http_client = Arc::new(ReqwestClient::new());
     let app = Application::headless().with_http_client(http_client.clone());

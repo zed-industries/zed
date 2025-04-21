@@ -55,6 +55,8 @@ use crate::symbol_info_tool::SymbolInfoTool;
 use crate::terminal_tool::TerminalTool;
 use crate::thinking_tool::ThinkingTool;
 
+pub use path_search_tool::PathSearchToolInput;
+
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
 
