@@ -1290,7 +1290,9 @@ impl Render for TerminalView {
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
                         if this.terminal.read(cx).last_content.selection.is_none() {
-                            this.expand_selection_around_cursor(event, cx);
+                            this.terminal.update(cx, |terminal, _| {
+                                terminal.select_word_at_event_position(event);
+                            });
                         };
                         this.deploy_context_menu(event.position, window, cx);
                         cx.notify();
