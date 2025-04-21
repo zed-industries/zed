@@ -79,6 +79,7 @@ fn main() {
     std::fs::create_dir_all(&repos_dir).unwrap();
     std::fs::create_dir_all(&worktrees_dir).unwrap();
     std::fs::create_dir_all(&examples_dir).unwrap();
+    std::fs::create_dir_all(&paths::config_dir()).unwrap();
 
     let zed_commit_sha = commit_sha_for_path(root_dir);
     let zed_branch_name = git_branch_for_path(root_dir);
