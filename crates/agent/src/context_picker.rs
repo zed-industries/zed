@@ -1,6 +1,7 @@
 mod completion_provider;
 mod fetch_context_picker;
 mod file_context_picker;
+mod rules_context_picker;
 mod symbol_context_picker;
 mod thread_context_picker;
 
@@ -18,17 +19,22 @@ use gpui::{
 };
 use multi_buffer::MultiBufferRow;
 use project::{Entry, ProjectPath};
+use prompt_store::UserPromptId;
+use rules_context_picker::RulesContextEntry;
 use symbol_context_picker::SymbolContextPicker;
 use thread_context_picker::{ThreadContextEntry, render_thread_context_entry};
 use ui::{
     ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor, prelude::*,
 };
+use uuid::Uuid;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::AssistantPanel;
+use crate::context::RULES_ICON;
 pub use crate::context_picker::completion_provider::ContextPickerCompletionProvider;
 use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
+use crate::context_picker::rules_context_picker::RulesContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::ThreadId;
@@ -40,6 +46,7 @@ enum ContextPickerMode {
     Symbol,
     Fetch,
     Thread,
+    Rules,
 }
 
 impl TryFrom<&str> for ContextPickerMode {
@@ -51,6 +58,7 @@ impl TryFrom<&str> for ContextPickerMode {
             "symbol" => Ok(Self::Symbol),
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
+            "rules" => Ok(Self::Rules),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -63,6 +71,7 @@ impl ContextPickerMode {
             Self::Symbol => "symbol",
             Self::Fetch => "fetch",
             Self::Thread => "thread",
+            Self::Rules => "rules",
         }
     }
 
@@ -72,6 +81,7 @@ impl ContextPickerMode {
             Self::Symbol => "Symbols",
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
+            Self::Rules => "Rules",
         }
     }
 
@@ -81,6 +91,7 @@ impl ContextPickerMode {
             Self::Symbol => IconName::Code,
             Self::Fetch => IconName::Globe,
             Self::Thread => IconName::MessageBubbles,
+            Self::Rules => RULES_ICON,
         }
     }
 }
@@ -92,6 +103,7 @@ enum ContextPickerState {
     Symbol(Entity<SymbolContextPicker>),
     Fetch(Entity<FetchContextPicker>),
     Thread(Entity<ThreadContextPicker>),
+    Rules(Entity<RulesContextPicker>),
 }
 
 pub(super) struct ContextPicker {
@@ -253,6 +265,19 @@ impl ContextPicker {
                     }));
                 }
             }
+            ContextPickerMode::Rules => {
+                if let Some(thread_store) = self.thread_store.as_ref() {
+                    self.mode = ContextPickerState::Rules(cx.new(|cx| {
+                        RulesContextPicker::new(
+                            thread_store.clone(),
+                            context_picker.clone(),
+                            self.context_store.clone(),
+                            window,
+                            cx,
+                        )
+                    }));
+                }
+            }
         }
 
         cx.notify();
@@ -381,6 +406,7 @@ impl ContextPicker {
             ContextPickerState::Symbol(entity) => entity.update(cx, |_, cx| cx.notify()),
             ContextPickerState::Fetch(entity) => entity.update(cx, |_, cx| cx.notify()),
             ContextPickerState::Thread(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::Rules(entity) => entity.update(cx, |_, cx| cx.notify()),
         }
     }
 }
@@ -395,6 +421,7 @@ impl Focusable for ContextPicker {
             ContextPickerState::Symbol(symbol_picker) => symbol_picker.focus_handle(cx),
             ContextPickerState::Fetch(fetch_picker) => fetch_picker.focus_handle(cx),
             ContextPickerState::Thread(thread_picker) => thread_picker.focus_handle(cx),
+            ContextPickerState::Rules(user_rules_picker) => user_rules_picker.focus_handle(cx),
         }
     }
 }
@@ -410,6 +437,9 @@ impl Render for ContextPicker {
                 ContextPickerState::Symbol(symbol_picker) => parent.child(symbol_picker.clone()),
                 ContextPickerState::Fetch(fetch_picker) => parent.child(fetch_picker.clone()),
                 ContextPickerState::Thread(thread_picker) => parent.child(thread_picker.clone()),
+                ContextPickerState::Rules(user_rules_picker) => {
+                    parent.child(user_rules_picker.clone())
+                }
             })
     }
 }
@@ -431,6 +461,7 @@ fn supported_context_picker_modes(
     ];
     if thread_store.is_some() {
         modes.push(ContextPickerMode::Thread);
+        modes.push(ContextPickerMode::Rules);
     }
     modes
 }
@@ -626,6 +657,7 @@ pub enum MentionLink {
     Symbol(ProjectPath, String),
     Fetch(String),
     Thread(ThreadId),
+    Rules(UserPromptId),
 }
 
 impl MentionLink {
@@ -633,14 +665,16 @@ impl MentionLink {
     const SYMBOL: &str = "@symbol";
     const THREAD: &str = "@thread";
     const FETCH: &str = "@fetch";
+    const RULES: &str = "@rules";
 
     const SEPARATOR: &str = ":";
 
     pub fn is_valid(url: &str) -> bool {
         url.starts_with(Self::FILE)
             || url.starts_with(Self::SYMBOL)
-            || url.starts_with(Self::FETCH)
             || url.starts_with(Self::THREAD)
+            || url.starts_with(Self::FETCH)
+            || url.starts_with(Self::RULES)
     }
 
     pub fn for_file(file_name: &str, full_path: &str) -> String {
@@ -657,12 +691,16 @@ impl MentionLink {
         )
     }
 
+    pub fn for_thread(thread: &ThreadContextEntry) -> String {
+        format!("[@{}]({}:{})", thread.summary, Self::THREAD, thread.id)
+    }
+
     pub fn for_fetch(url: &str) -> String {
         format!("[@{}]({}:{})", url, Self::FETCH, url)
     }
 
-    pub fn for_thread(thread: &ThreadContextEntry) -> String {
-        format!("[@{}]({}:{})", thread.summary, Self::THREAD, thread.id)
+    pub fn for_rules(rules: &RulesContextEntry) -> String {
+        format!("[@{}]({}:{})", rules.title, Self::RULES, rules.prompt_id.0)
     }
 
     pub fn try_parse(link: &str, workspace: &Entity<Workspace>, cx: &App) -> Option<Self> {
@@ -706,6 +744,10 @@ impl MentionLink {
                 Some(MentionLink::Thread(thread_id))
             }
             Self::FETCH => Some(MentionLink::Fetch(argument.to_string())),
+            Self::RULES => {
+                let prompt_id = UserPromptId(Uuid::try_parse(argument).ok()?);
+                Some(MentionLink::Rules(prompt_id))
+            }
             _ => None,
         }
     }
