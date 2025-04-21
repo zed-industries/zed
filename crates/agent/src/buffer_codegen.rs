@@ -131,7 +131,12 @@ impl BufferCodegen {
         cx.notify();
     }
 
-    pub fn start(&mut self, user_prompt: String, cx: &mut Context<Self>) -> Result<()> {
+    pub fn start(
+        &mut self,
+        primary_model: Arc<dyn LanguageModel>,
+        user_prompt: String,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         let alternative_models = LanguageModelRegistry::read_global(cx)
             .inline_alternative_models()
             .to_vec();
@@ -154,11 +159,6 @@ impl BufferCodegen {
                 )
             }));
         }
-
-        let primary_model = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .context("no active model")?
-            .model;
 
         for (model, alternative) in iter::once(primary_model)
             .chain(alternative_models)
