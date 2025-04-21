@@ -712,22 +712,22 @@ impl CompletionsMenu {
                 // Strong matches are the ones with a high fuzzy-matcher score (the "obvious" matches)
                 // and the Weak matches are the rest.
                 //
-                // For the strong matches, we sort by our fuzzy-finder score first and for the weak
-                // matches, we prefer language-server sort_text first.
+                // For the strong matches, we sort by the language-servers score first and for the weak
+                // matches, we prefer our fuzzy finder first.
                 //
-                // The thinking behind that: we want to show strong matches first in order of relevance(fuzzy score).
-                // Rest of the matches(weak) can be sorted as language-server expects.
+                // The thinking behind that: it's useless to take the sort_text the language-server gives
+                // us into account when it's obviously a bad match.
 
                 #[derive(PartialEq, Eq, PartialOrd, Ord)]
                 enum MatchScore<'a> {
                     Strong {
-                        score: Reverse<OrderedFloat<f64>>,
                         sort_text: Option<&'a str>,
+                        score: Reverse<OrderedFloat<f64>>,
                         sort_key: (usize, &'a str),
                     },
                     Weak {
-                        sort_text: Option<&'a str>,
                         score: Reverse<OrderedFloat<f64>>,
+                        sort_text: Option<&'a str>,
                         sort_key: (usize, &'a str),
                     },
                 }
