@@ -1503,6 +1503,11 @@ impl ActiveThread {
             return Empty.into_any();
         }
 
+        let message_is_empty = message.should_display_content();
+        if message_is_empty && context.is_empty() {
+            return Empty.into_any();
+        }
+
         let allow_editing_message = message.role == Role::User;
 
         let edit_message_editor = self
@@ -1635,11 +1640,9 @@ impl ActiveThread {
                 .into_any_element(),
         };
 
-        let message_is_empty = message.should_display_content();
-        let has_content = !message_is_empty || !context.is_empty();
-
+        let message_has_content = !message_is_empty || !context.is_empty();
         let message_content =
-            has_content.then(|| {
+            message_has_content.then(|| {
                 v_flex()
                     .gap_1p5()
                     .when(!message_is_empty, |parent| {
