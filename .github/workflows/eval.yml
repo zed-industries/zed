@@ -13,6 +13,8 @@ on:
   pull_request:
     branches:
       - "**"
+    types: [opened, synchronize, reopened, labeled]
+
   workflow_dispatch:
 
 concurrency:
@@ -32,7 +34,9 @@ jobs:
   run_eval:
     timeout-minutes: 60
     name: Run Agent Eval
-    if: github.repository_owner == 'zed-industries'
+    if: >
+      github.repository_owner == 'zed-industries' &&
+      (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'agent-eval'))
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
