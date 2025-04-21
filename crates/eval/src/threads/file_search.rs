@@ -1,22 +1,28 @@
+use anyhow::Result;
 use assistant_tools::PathSearchToolInput;
+use async_trait::async_trait;
 use regex::Regex;
 
-use super::{EvalThread, EvalThreadMetadata, ThreadContext};
+use crate::thread::{EvalThread, EvalThreadMetadata, LanguageServer, ThreadContext};
 
 pub struct Thread;
 
+#[async_trait]
 impl EvalThread for Thread {
-    fn meta() -> EvalThreadMetadata {
+    fn meta(&self) -> EvalThreadMetadata {
         EvalThreadMetadata {
             name: "test path_search",
             url: "https://github.com/zed-industries/zed.git",
             revision: "03ecb88fe30794873f191ddb728f597935b3101c",
-            lang: "rs",
+            language_server: Some(LanguageServer {
+                file_extension: "rs",
+                allow_preexisting_diagnostics: false,
+            }),
             max_assertions: 4,
         }
     }
 
-    async fn run(cx: &mut ThreadContext) -> anyhow::Result<()> {
+    async fn run(&self, cx: &mut ThreadContext) -> Result<()> {
         const FILENAME: &str = "find_replace_file_tool.rs";
         cx.push_user_message(format!(
                 r#"

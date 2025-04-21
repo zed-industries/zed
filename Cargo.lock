@@ -4892,6 +4892,7 @@ dependencies = [
  "anyhow",
  "assistant_tool",
  "assistant_tools",
+ "async-trait",
  "async-watch",
  "chrono",
  "clap",

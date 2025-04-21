@@ -8,6 +8,7 @@ edition.workspace = true
 agent.workspace = true
 anyhow.workspace = true
 async-watch.workspace = true
+async-trait.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
 chrono.workspace = true

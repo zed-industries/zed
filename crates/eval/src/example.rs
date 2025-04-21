@@ -35,9 +35,9 @@ pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
 pub const REPOS_DIR: &str = "./crates/eval/repos";
 pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
 
-const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
-const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
+pub const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExampleBase {
@@ -651,7 +651,7 @@ impl Example {
     }
 }
 
-fn wait_for_lang_server(
+pub fn wait_for_lang_server(
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,
     log_prefix: String,
@@ -734,7 +734,7 @@ fn wait_for_lang_server(
     })
 }
 
-async fn query_lsp_diagnostics(
+pub async fn query_lsp_diagnostics(
     project: Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Result<Option<String>> {
@@ -868,13 +868,13 @@ pub async fn send_language_model_request(
     }
 }
 
-struct RequestMarkdown {
-    tools: String,
-    messages: String,
+pub struct RequestMarkdown {
+    pub tools: String,
+    pub messages: String,
 }
 
 impl RequestMarkdown {
-    fn new(request: &LanguageModelRequest) -> Self {
+    pub fn new(request: &LanguageModelRequest) -> Self {
         let mut tools = String::new();
         let mut messages = String::new();
         let mut assistant_message_number: u32 = 1;
@@ -955,7 +955,7 @@ impl RequestMarkdown {
     }
 }
 
-fn response_events_to_markdown(
+pub fn response_events_to_markdown(
     response_events: &[std::result::Result<LanguageModelCompletionEvent, String>],
 ) -> String {
     let mut response = String::new();
