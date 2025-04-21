@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, VecDeque},
-    hash::{DefaultHasher, Hasher},
     sync::{
         OnceLock, RwLock,
         atomic::{AtomicU8, Ordering},
@@ -13,11 +12,7 @@ use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config
 use log;
 
 static ENV_FILTER: OnceLock<env_config::EnvFilter> = OnceLock::new();
-static SCOPE_MAP: RwLock<Option<GlobalScopeMap>> = RwLock::new(None);
-struct GlobalScopeMap {
-    map: ScopeMap,
-    hash: u64,
-}
+static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
 
 const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
 /// The maximum log level of verbosity that is enabled by default.
@@ -73,7 +68,7 @@ pub fn is_scope_enabled(scope: &Scope, level: log::Level) -> bool {
         return err.into_inner();
     });
 
-    let Some(GlobalScopeMap { map, .. }) = global_scope_map.as_ref() else {
+    let Some(map) = global_scope_map.as_ref() else {
         // on failure, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
         return false;
     };
@@ -91,36 +86,11 @@ pub fn is_scope_enabled(scope: &Scope, level: log::Level) -> bool {
     };
 }
 
-fn hash_scope_map_settings(map: &HashMap<String, String>) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    let mut items = map.iter().collect::<Vec<_>>();
-    items.sort();
-    for (key, value) in items {
-        Hasher::write(&mut hasher, key.as_bytes());
-        Hasher::write(&mut hasher, value.as_bytes());
-    }
-    return hasher.finish();
-}
-
 pub(crate) fn refresh() {
     refresh_from_settings(&HashMap::default());
 }
 
 pub fn refresh_from_settings(settings: &HashMap<String, String>) {
-    let hash_old = {
-        SCOPE_MAP
-            .read()
-            .unwrap_or_else(|err| {
-                SCOPE_MAP.clear_poison();
-                err.into_inner()
-            })
-            .as_ref()
-            .map(|scope_map| scope_map.hash)
-    };
-    let hash_new = hash_scope_map_settings(settings);
-    if hash_old == Some(hash_new) {
-        return;
-    }
     let env_config = ENV_FILTER.get();
     let map_new = ScopeMap::new_from_settings_and_env(settings, env_config);
     let mut level_enabled_max = unsafe { LEVEL_ENABLED_MAX_STATIC };
@@ -131,14 +101,14 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     }
     LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max as u8, Ordering::Release);
 
-    let mut global_map = SCOPE_MAP.write().unwrap_or_else(|err| {
-        SCOPE_MAP.clear_poison();
-        err.into_inner()
-    });
-    global_map.replace(GlobalScopeMap {
-        map: map_new,
-        hash: hash_new,
-    });
+    {
+        let mut global_map = SCOPE_MAP.write().unwrap_or_else(|err| {
+            SCOPE_MAP.clear_poison();
+            err.into_inner()
+        });
+        global_map.replace(map_new);
+    }
+    log::trace!("Log configuration updated");
 }
 
 fn level_from_level_str(level_str: &String) -> Option<log::Level> {
