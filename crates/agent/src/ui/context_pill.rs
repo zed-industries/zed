@@ -121,8 +121,14 @@ impl RenderOnce for ContextPill {
                 focused,
                 on_click,
             } => base_pill
-                .bg(color.element_background)
-                .border_color(if *focused {
+                .bg(if matches!(context.status, ContextStatus::Error { .. }) {
+                    cx.theme().status().error_background
+                } else {
+                    color.element_background
+                })
+                .border_color(if matches!(context.status, ContextStatus::Error { .. }) {
+                    cx.theme().status().error_border
+                } else if *focused {
                     color.border_focused
                 } else {
                     color.border.opacity(0.5)
@@ -183,6 +189,9 @@ impl RenderOnce for ContextPill {
                             |label, delta| label.opacity(delta),
                         )
                         .into_any_element(),
+                    ContextStatus::Error { message } => element
+                        .tooltip(ui::Tooltip::text(message.clone()))
+                        .into_any_element(),
                     ContextStatus::Ready => element.into_any(),
                 }),
             ContextPill::Suggested {
@@ -227,6 +236,7 @@ impl RenderOnce for ContextPill {
 pub enum ContextStatus {
     Ready,
     Loading { message: SharedString },
+    Error { message: SharedString },
 }
 
 pub struct AddedContext {
@@ -374,6 +384,10 @@ impl AddedContext {
                 status: if image_context.is_loading() {
                     ContextStatus::Loading {
                         message: "Loading…".into(),
+                    }
+                } else if image_context.is_error() {
+                    ContextStatus::Error {
+                        message: "Failed to load image".into(),
                     }
                 } else {
                     ContextStatus::Ready

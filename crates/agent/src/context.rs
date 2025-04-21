@@ -139,6 +139,14 @@ impl ImageContext {
     pub fn is_loading(&self) -> bool {
         self.image_task.clone().now_or_never().is_none()
     }
+
+    pub fn is_error(&self) -> bool {
+        self.image_task
+            .clone()
+            .now_or_never()
+            .map(|result| result.is_none())
+            .unwrap_or(false)
+    }
 }
 
 #[derive(Clone)]
