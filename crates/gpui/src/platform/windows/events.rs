@@ -155,9 +155,10 @@ fn handle_get_min_max_info_msg(
             minmax_info.ptMinTrackSize.x = min_size.width.scale(scale_factor).0 as i32;
             minmax_info.ptMinTrackSize.y = min_size.height.scale(scale_factor).0 as i32;
         }
+        Some(0)
+    } else {
+        None
     }
-
-    Some(0)
 }
 
 fn handle_size_msg(
