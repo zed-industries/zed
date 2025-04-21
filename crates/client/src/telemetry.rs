@@ -290,6 +290,10 @@ impl Telemetry {
         paths::logs_dir().join("telemetry.log")
     }
 
+    pub fn has_checksum_seed(&self) -> bool {
+        ZED_CLIENT_CHECKSUM_SEED.is_some()
+    }
+
     pub fn start(
         self: &Arc<Self>,
         system_id: Option<String>,

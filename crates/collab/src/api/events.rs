@@ -744,9 +744,11 @@ fn for_snowflake(
         // NOTE: most amplitude user properties are read out of our event_properties
         // dictionary. See https://app.amplitude.com/data/zed/Zed/sources/detail/production/falcon%3A159998
         // for how that is configured.
-        let user_properties = Some(serde_json::json!({
-            "is_staff": body.is_staff,
-        }));
+        let user_properties = body.is_staff.map(|is_staff| {
+            serde_json::json!({
+                "is_staff": is_staff,
+            })
+        });
 
         Some(SnowflakeRow {
             time: timestamp,

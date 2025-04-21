@@ -110,10 +110,20 @@ fn main() {
     app.run(move |cx| {
         let app_state = init(cx);
 
-        app_state
-            .client
-            .telemetry()
-            .start(system_id, installation_id, session_id, cx);
+        let telemetry = app_state.client.telemetry();
+        telemetry.start(system_id, installation_id, session_id, cx);
+
+        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
+            && telemetry.has_checksum_seed();
+        if enable_telemetry {
+            println!("Telemetry enabled");
+            telemetry::event!(
+                "Agent Eval Started",
+                zed_commit_sha = zed_commit_sha,
+                zed_branch_name = zed_branch_name,
+                run_id = run_id,
+            );
+        }
 
         let mut cumulative_tool_metrics = ToolMetrics::default();
 
@@ -281,6 +291,7 @@ fn main() {
                                 &run_id,
                                 &run_output,
                                 round,
+                                enable_telemetry,
                                 cx,
                             )
                         });
@@ -572,6 +583,7 @@ async fn run_judge_repetition(
     run_id: &str,
     run_output: &RunOutput,
     round: u32,
+    enable_telemetry: bool,
     cx: &AsyncApp,
 ) -> Result<JudgeOutput> {
     let judge_output = example.judge(model.clone(), &run_output, round, cx).await;
@@ -586,7 +598,6 @@ async fn run_judge_repetition(
         thread_diff_evaluation = None;
     }
 
-    let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1");
     if enable_telemetry {
         telemetry::event!(
             "Agent Example Evaluated",
