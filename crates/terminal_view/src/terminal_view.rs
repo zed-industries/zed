@@ -1278,6 +1278,11 @@ impl Render for TerminalView {
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
+                        if this.terminal.read(cx).last_content.selection.is_none() {
+                            this.terminal.update(cx, |terminal, _| {
+                                terminal.select_word_at_event_position(event);
+                            });
+                        };
                         this.deploy_context_menu(event.position, window, cx);
                         cx.notify();
                     }
