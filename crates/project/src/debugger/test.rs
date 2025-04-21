@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 use dap::{DebugRequest, client::DebugAdapterClient};
-use gpui::{App, AppContext, Entity, Subscription, Task};
+use gpui::{App, AppContext, Entity, Subscription};
 use task::DebugTaskDefinition;
 
 use crate::Project;
@@ -33,21 +33,16 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     cx: &mut gpui::TestAppContext,
     config: DebugTaskDefinition,
     configure: T,
-) -> Task<Result<Entity<Session>>> {
-    let subscription = intercept_debug_sessions(cx, configure);
-    let task = project.update(cx, |project, cx| project.start_debug_session(config, cx));
-    cx.spawn(async move |_| {
-        let result = task.await;
-        drop(subscription);
-        result
-    })
+) -> Result<Entity<Session>> {
+    let _subscription = intercept_debug_sessions(cx, configure);
+    project.update(cx, |project, cx| project.start_debug_session(config, cx))
 }
 
 pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     project: &Entity<Project>,
     cx: &mut gpui::TestAppContext,
     configure: T,
-) -> Task<Result<Entity<Session>>> {
+) -> Result<Entity<Session>> {
     start_debug_session_with(
         project,
         cx,

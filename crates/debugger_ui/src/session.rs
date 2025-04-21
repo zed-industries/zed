@@ -115,13 +115,7 @@ impl DebugSession {
         };
 
         self.label
-            .get_or_init(|| {
-                session
-                    .read(cx)
-                    .as_local()
-                    .expect("Remote Debug Sessions are not implemented yet")
-                    .label()
-            })
+            .get_or_init(|| session.read(cx).label())
             .to_owned()
     }
 

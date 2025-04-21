@@ -39,10 +39,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{
-    adapters::{DebugAdapterBinary, TcpArguments},
-    client::DebugAdapterClient,
-};
+use dap::client::DebugAdapterClient;
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -97,7 +94,6 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    net::Ipv4Addr,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -107,7 +103,7 @@ use std::{
 };
 
 use task_store::TaskStore;
-use terminals::{SshCommand, Terminals, wrap_for_ssh};
+use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
@@ -1469,63 +1465,10 @@ impl Project {
         &mut self,
         definition: DebugTaskDefinition,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Session>>> {
-        self.dap_store.update(cx, |dap_stpo)
-        let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
-        };
-
-        let ssh_client = self.ssh_client().clone();
-
-        let result = cx.spawn(async move |this, cx| {
-            let mut binary = this
-                .update(cx, |this, cx| {
-                    this.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.get_debug_adapter_binary(definition.clone(), cx)
-                    })
-                })?
-                .await?;
-
-            if let Some(ssh_client) = ssh_client {
-                let mut ssh_command = ssh_client.update(cx, |ssh, _| {
-                    anyhow::Ok(SshCommand {
-                        arguments: ssh
-                            .ssh_args()
-                            .ok_or_else(|| anyhow!("SSH arguments not found"))?,
-                    })
-                })??;
-
-                let mut connection = None;
-                if let Some(c) = binary.connection {
-                    let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
-                    let port = dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
-                    std::thread::sleep(Duration::from_millis(100));
-
-                    ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
-                    connection = Some(TcpArguments {
-                        port: c.port,
-                        host: local_bind_addr,
-                        timeout: c.timeout,
-                    })
-                }
-
-                let (program, args) = wrap_for_ssh(
-                    &ssh_command,
-                    Some((&binary.command, &binary.arguments)),
-                    binary.cwd.as_deref(),
-                    binary.envs,
-                    None,
-                );
-            };
-
-            let ret = this.update(cx, |project, cx| {
-                project.dap_store.update(cx, |dap_store, cx| {
-                    dap_store.start_session(definition, None, cx)
-                })
-            })?;
-            ret
-        });
-        result
+    ) -> Result<Entity<Session>> {
+        self.dap_store.update(cx, |dap_store, cx| {
+            dap_store.start_session(definition, None, cx)
+        })
     }
 
     #[cfg(any(test, feature = "test-support"))]

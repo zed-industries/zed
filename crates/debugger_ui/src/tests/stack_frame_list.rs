@@ -50,9 +50,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
     client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
 
@@ -229,9 +227,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     });
 
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<Threads, _>(move |_, _| {
@@ -495,9 +491,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<Threads, _>(move |_, _| {

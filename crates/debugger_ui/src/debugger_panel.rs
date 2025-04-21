@@ -33,7 +33,6 @@ use std::sync::Arc;
 use task::{DebugTaskDefinition, DebugTaskTemplate};
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
-use util::debug_panic;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -268,8 +267,9 @@ impl DebugPanel {
             return;
         };
         let dap_store = project.read(cx).dap_store().clone();
+        let adapter_name = definition.adapter.clone();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let task_context = if let Some(task) = task_contexts {
                 task.await
                     .active_worktree_context
@@ -278,23 +278,59 @@ impl DebugPanel {
                 task::TaskContext::default()
             };
 
-            dap_store
-                .update(cx, |dap_store, cx| {
-                    let template = DebugTaskTemplate {
-                        locator: None,
-                        definition: definition.clone(),
-                    };
-                    if let Some(debug_config) = template
-                        .to_zed_format()
-                        .resolve_task("debug_task", &task_context)
-                        .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
-                    {
-                        dap_store.start_session(debug_config.definition, None, cx)
-                    } else {
-                        dap_store.start_session(definition, None, cx)
-                    }
-                })?
-                .await
+            let session = dap_store.update(cx, |dap_store, cx| {
+                let template = DebugTaskTemplate {
+                    locator: None,
+                    definition: definition.clone(),
+                };
+                if let Some(debug_config) = template
+                    .to_zed_format()
+                    .resolve_task("debug_task", &task_context)
+                    .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
+                {
+                    dap_store.start_session(debug_config.definition, None, cx)
+                } else {
+                    dap_store.start_session(definition, None, cx)
+                }
+            })??;
+
+            let serialized_layout = persistence::get_serialized_pane_layout(adapter_name).await;
+
+            let workspace = this.update_in(cx, |this, window, cx| {
+                this.sessions.retain(|session| {
+                    session
+                        .read(cx)
+                        .mode()
+                        .as_running()
+                        .map_or(false, |running_state| {
+                            !running_state.read(cx).session().read(cx).is_terminated()
+                        })
+                });
+
+                let session_item = DebugSession::running(
+                    project,
+                    this.workspace.clone(),
+                    session,
+                    cx.weak_entity(),
+                    serialized_layout,
+                    window,
+                    cx,
+                );
+
+                if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
+                    // We might want to make this an event subscription and only notify when a new thread is selected
+                    // This is used to filter the command menu correctly
+                    cx.observe(&running, |_, _, cx| cx.notify()).detach();
+                }
+
+                this.sessions.push(session_item.clone());
+                this.activate_session(session_item, window, cx);
+                this.workspace.clone()
+            })?;
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.focus_panel::<Self>(window, cx)
+            })
         })
         .detach_and_log_err(cx);
     }
@@ -305,75 +341,12 @@ impl DebugPanel {
 
     fn handle_dap_store_event(
         &mut self,
-        dap_store: &Entity<DapStore>,
+        _dap_store: &Entity<DapStore>,
         event: &dap_store::DapStoreEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            dap_store::DapStoreEvent::DebugSessionInitialized(session_id) => {
-                let Some(session) = dap_store.read(cx).session_by_id(session_id) else {
-                    return log::error!(
-                        "Couldn't get session with id: {session_id:?} from DebugClientStarted event"
-                    );
-                };
-
-                let adapter_name = session.read(cx).adapter_name();
-
-                let session_id = *session_id;
-                cx.spawn_in(window, async move |this, cx| {
-                    let serialized_layout =
-                        persistence::get_serialized_pane_layout(adapter_name).await;
-
-                    this.update_in(cx, |this, window, cx| {
-                        let Some(project) = this.project.upgrade() else {
-                            return log::error!(
-                                "Debug Panel out lived it's weak reference to Project"
-                            );
-                        };
-
-                        if this
-                            .sessions
-                            .iter()
-                            .any(|item| item.read(cx).session_id(cx) == session_id)
-                        {
-                            // We already have an item for this session.
-                            debug_panic!("We should never reuse session ids");
-                            return;
-                        }
-
-                        this.sessions.retain(|session| {
-                            session
-                                .read(cx)
-                                .mode()
-                                .as_running()
-                                .map_or(false, |running_state| {
-                                    !running_state.read(cx).session().read(cx).is_terminated()
-                                })
-                        });
-
-                        let session_item = DebugSession::running(
-                            project,
-                            this.workspace.clone(),
-                            session,
-                            cx.weak_entity(),
-                            serialized_layout,
-                            window,
-                            cx,
-                        );
-
-                        if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
-                            // We might want to make this an event subscription and only notify when a new thread is selected
-                            // This is used to filter the command menu correctly
-                            cx.observe(&running, |_, _, cx| cx.notify()).detach();
-                        }
-
-                        this.sessions.push(session_item.clone());
-                        this.activate_session(session_item, window, cx);
-                    })
-                })
-                .detach();
-            }
             dap_store::DapStoreEvent::RunInTerminal {
                 title,
                 cwd,
@@ -429,7 +402,7 @@ impl DebugPanel {
                         cwd,
                         title,
                     },
-                    task::RevealStrategy::Always,
+                    task::RevealStrategy::Never,
                     window,
                     cx,
                 );
@@ -1065,8 +1038,10 @@ struct DebuggerProvider(Entity<DebugPanel>);
 
 impl workspace::DebuggerProvider for DebuggerProvider {
     fn start_session(&self, definition: DebugTaskDefinition, window: &mut Window, cx: &mut App) {
-        self.0.update(cx, |this, cx| {
-            this.start_session(definition, window, cx);
+        self.0.update(cx, |_, cx| {
+            cx.defer_in(window, |this, window, cx| {
+                this.start_session(definition, window, cx);
+            })
         })
     }
 }

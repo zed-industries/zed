@@ -114,8 +114,6 @@ impl From<dap::Thread> for Thread {
     }
 }
 
-type UpstreamProjectId = u64;
-
 enum Mode {
     Building,
     Running(LocalMode),
@@ -128,7 +126,6 @@ pub struct LocalMode {
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
-    _background_tasks: Vec<Task<()>>,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -154,7 +151,6 @@ impl LocalMode {
         breakpoint_store: Entity<BreakpointStore>,
         binary: DebugAdapterBinary,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
-        background_tasks: Vec<Task<()>>,
         cx: AsyncApp,
     ) -> Result<Self> {
         let message_handler = Box::new(move |message| {
@@ -182,7 +178,6 @@ impl LocalMode {
             worktree,
             tmp_breakpoint: None,
             binary,
-            _background_tasks: background_tasks,
         })
     }
 
@@ -364,9 +359,9 @@ impl LocalMode {
         let supports_exception_filters = capabilities
             .supports_exception_filter_options
             .unwrap_or_default();
+        let this = self.clone();
+        let worktree = self.worktree().clone();
         let configuration_sequence = cx.spawn({
-            let this = self.clone();
-            let worktree = self.worktree().clone();
             async move |cx| {
                 initialized_rx.await?;
                 let errors_by_path = cx
@@ -453,7 +448,6 @@ impl LocalMode {
 impl Mode {
     fn request_dap<R: DapCommand>(
         &self,
-        session_id: SessionId,
         request: R,
         cx: &mut Context<Session>,
     ) -> Task<Result<R::Response>>
@@ -561,7 +555,7 @@ pub struct Session {
     requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
-    _background_tasks: Vec<Task<()>>,
+    background_tasks: Vec<Task<()>>,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -659,8 +653,6 @@ impl EventEmitter<SessionStateEvent> for Session {}
 impl Session {
     pub(crate) fn new(
         breakpoint_store: Entity<BreakpointStore>,
-        dap_store: WeakEntity<DapStore>,
-        worktree: WeakEntity<Worktree>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         template: DebugTaskDefinition,
@@ -707,7 +699,7 @@ impl Session {
                 modules: Vec::default(),
                 loaded_sources: Vec::default(),
                 threads: IndexMap::default(),
-                _background_tasks: Vec::default(),
+                background_tasks: Vec::default(),
                 locations: Default::default(),
                 is_session_terminated: false,
                 exception_breakpoints: Default::default(),
@@ -722,16 +714,14 @@ impl Session {
     pub fn boot(
         &mut self,
         binary: DebugAdapterBinary,
-        definition: DebugTaskDefinition,
         worktree: Entity<Worktree>,
         breakpoint_store: Entity<BreakpointStore>,
         dap_store: WeakEntity<DapStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let (message_tx, message_rx) = futures::channel::mpsc::unbounded();
+        let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
         let (initialized_tx, initialized_rx) = futures::channel::oneshot::channel();
-        let sesion_id = self.session_id();
-        let session = cx.entity();
+        let session_id = self.session_id();
 
         let background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
             let mut initialized_tx = Some(initialized_tx);
@@ -749,29 +739,31 @@ impl Session {
                         };
                     }
                 } else {
-                    let Ok(_) = self
-                        .start_debugging_requests_tx
-                        .unbounded_send((session_id, message))
-                    else {
+                    let Ok(Ok(_)) = this.update(cx, |this, _| {
+                        this.start_debugging_requests_tx
+                            .unbounded_send((session_id, message))
+                    }) else {
                         break;
                     };
                 }
             }
         })];
+        self.background_tasks = background_tasks;
+        let id = self.id;
+        let parent_session = self.parent_session.clone();
 
         cx.spawn(async move |this, cx| {
             let mode = LocalMode::new(
-                self.id,
-                self.parent_session.clone(),
+                id,
+                parent_session,
                 worktree.downgrade(),
                 breakpoint_store.clone(),
                 binary,
                 message_tx,
-                background_tasks,
                 cx.clone(),
             )
             .await?;
-            this.update(cx, |this, cx| this.mode = Mode::Running(mode));
+            this.update(cx, |this, _| this.mode = Mode::Running(mode))?;
 
             this.update(cx, |session, cx| session.request_initialize(cx))?
                 .await?;
@@ -818,6 +810,10 @@ impl Session {
 
     pub fn adapter_name(&self) -> SharedString {
         self.definition.adapter.clone().into()
+    }
+
+    pub fn label(&self) -> String {
+        self.definition.label.clone()
     }
 
     pub fn definition(&self) -> DebugTaskDefinition {
@@ -961,13 +957,13 @@ impl Session {
         body: Option<serde_json::Value>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(local_session) = self.as_local().cloned() else {
+        let Some(local_session) = self.as_local() else {
             unreachable!("Cannot respond to remote client");
         };
+        let client = local_session.client.clone();
 
         cx.background_spawn(async move {
-            local_session
-                .client
+            client
                 .send_message(Message::Response(Response {
                     body,
                     success,
@@ -1156,7 +1152,6 @@ impl Session {
 
             let task = Self::request_inner::<Arc<T>>(
                 &self.capabilities,
-                self.id,
                 &self.mode,
                 command,
                 process_result,
@@ -1177,7 +1172,6 @@ impl Session {
 
     fn request_inner<T: DapCommand + PartialEq + Eq + Hash>(
         capabilities: &Capabilities,
-        session_id: SessionId,
         mode: &Mode,
         request: T,
         process_result: impl FnOnce(
@@ -1203,7 +1197,7 @@ impl Session {
             });
         }
 
-        let request = mode.request_dap(session_id, request, cx);
+        let request = mode.request_dap(request, cx);
         cx.spawn(async move |this, cx| {
             let result = request.await;
             this.update(cx, |this, cx| process_result(this, result, cx))
@@ -1223,14 +1217,7 @@ impl Session {
         + 'static,
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
-        Self::request_inner(
-            &self.capabilities,
-            self.id,
-            &self.mode,
-            request,
-            process_result,
-            cx,
-        )
+        Self::request_inner(&self.capabilities, &self.mode, request, process_result, cx)
     }
 
     fn invalidate_command_type<Command: DapCommand>(&mut self) {

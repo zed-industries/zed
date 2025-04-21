@@ -4,7 +4,7 @@ use super::{
     session::{self, Session, SessionStateEvent},
 };
 use crate::{
-    ProjectEnvironment, debugger,
+    ProjectEnvironment,
     project_settings::ProjectSettings,
     terminals::{SshCommand, wrap_for_ssh},
     worktree_store::WorktreeStore,
@@ -13,9 +13,8 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
-    Source, StartDebuggingRequestArguments,
+    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, EvaluateArguments,
+    EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments, Source,
     adapters::{DapStatus, DebugAdapterBinary, DebugAdapterName, TcpArguments},
     client::SessionId,
     messages::Message,
@@ -23,12 +22,10 @@ use dap::{
 };
 use fs::Fs;
 use futures::{
-    channel::{mpsc, oneshot},
+    channel::mpsc,
     future::{Shared, join_all},
 };
-use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
-};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
@@ -226,7 +223,7 @@ impl DapStore {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
         };
         match &self.mode {
-            DapStoreMode::Local(local) => {
+            DapStoreMode::Local(_) => {
                 let Some(adapter) = DapRegistry::global(cx).adapter(&definition.adapter) else {
                     return Task::ready(Err(anyhow!("Failed to find a debug adapter")));
                 };
@@ -387,8 +384,6 @@ impl DapStore {
 
         let session = Session::new(
             self.breakpoint_store.clone(),
-            cx.entity().downgrade(),
-            worktree.downgrade(),
             session_id,
             parent_session,
             template.clone(),
@@ -401,16 +396,12 @@ impl DapStore {
         cx.notify();
 
         cx.subscribe(&session, {
-            let worktree = worktree.clone();
+            let template = template.clone();
             move |this: &mut DapStore, session, event: &SessionStateEvent, cx| match event {
                 SessionStateEvent::Shutdown => {
                     this.shutdown_session(session_id, cx).detach_and_log_err(cx);
                 }
                 SessionStateEvent::Restart => {
-                    let (config, binary) = session.read_with(cx, |session, _| {
-                        (session.definition(), session.binary().clone())
-                    });
-
                     let mut curr_session = session;
                     while let Some(parent_id) = curr_session.read(cx).parent_id(cx) {
                         if let Some(parent_session) = this.sessions.get(&parent_id).cloned() {
@@ -425,18 +416,14 @@ impl DapStore {
 
                     let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
 
-                    let worktree = worktree.clone();
+                    let template = template.clone();
                     cx.spawn(async move |this, cx| {
                         task.await;
 
                         this.update(cx, |this, cx| {
                             this.sessions.remove(&session_id);
-                            this.new_session(binary, config, worktree.downgrade(), None, cx)
-                        })?
-                        .1
-                        .await?;
-
-                        anyhow::Ok(())
+                            this.start_session(template, None, cx)
+                        })
                     })
                     .detach_and_log_err(cx);
                 }
@@ -450,7 +437,8 @@ impl DapStore {
             self.breakpoint_store.clone(),
             session.clone(),
             cx,
-        );
+        )
+        .detach();
         Ok(session)
     }
 
@@ -460,7 +448,7 @@ impl DapStore {
         breakpoint_store: Entity<BreakpointStore>,
         session: Entity<Session>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<()> {
         let session_id = session.read(cx).session_id();
         let dap_store = cx.weak_entity();
 
@@ -475,14 +463,7 @@ impl DapStore {
 
                 session
                     .update(cx, |session, cx| {
-                        session.boot(
-                            binary,
-                            definition,
-                            worktree,
-                            breakpoint_store,
-                            dap_store,
-                            cx,
-                        )
+                        session.boot(binary, worktree, breakpoint_store, dap_store, cx)
                     })?
                     .await
             }
@@ -503,7 +484,7 @@ impl DapStore {
                     .update(cx, |_, cx| cx.emit(SessionStateEvent::Shutdown))
                     .ok();
             }
-        });
+        })
     }
 
     pub fn session_by_id(
@@ -584,56 +565,22 @@ impl DapStore {
             return Task::ready(Err(anyhow!("Session not found")));
         };
 
-        let Some(worktree) = parent_session
-            .read(cx)
-            .as_local()
-            .map(|local| local.worktree().clone())
-        else {
-            return Task::ready(Err(anyhow!(
-                "Cannot handle start debugging request from remote end"
-            )));
-        };
+        let mut definition = parent_session.read(cx).definition().clone();
+        definition.initialize_args = request.arguments;
 
-        let args = serde_json::from_value::<StartDebuggingRequestArguments>(
-            request.arguments.unwrap_or_default(),
-        )
-        .expect("To parse StartDebuggingRequestArguments");
-        let mut binary = parent_session.read(cx).binary().clone();
-        let config = parent_session.read(cx).definition().clone();
-        binary.request_args = args;
-
-        todo!();
-        let new_session_task = self
-            .start_session(binary, config, worktree, Some(parent_session.clone()), cx)
-            .1;
+        if let Err(err) = self.start_session(definition, Some(parent_session.clone()), cx) {
+            return Task::ready(Err(err));
+        }
 
         let request_seq = request.seq;
         cx.spawn(async move |_, cx| {
-            let (success, body) = match new_session_task.await {
-                Ok(_) => (true, None),
-                Err(error) => (
-                    false,
-                    Some(serde_json::to_value(ErrorResponse {
-                        error: Some(dap::Message {
-                            id: request_seq,
-                            format: error.to_string(),
-                            variables: None,
-                            send_telemetry: None,
-                            show_user: None,
-                            url: None,
-                            url_label: None,
-                        }),
-                    })?),
-                ),
-            };
-
             parent_session
                 .update(cx, |session, cx| {
                     session.respond_to_client(
                         request_seq,
-                        success,
+                        true,
                         StartDebugging::COMMAND.to_string(),
-                        body,
+                        None,
                         cx,
                     )
                 })?
@@ -963,110 +910,6 @@ impl DapStore {
         Ok(binary.to_proto())
     }
 }
-
-// fn create_new_session(
-//     session_id: SessionId,
-//     initialized_rx: oneshot::Receiver<()>,
-//     start_client_task: Task<Result<Entity<Session>, anyhow::Error>>,
-//     worktree: WeakEntity<Worktree>,
-//     cx: &mut Context<DapStore>,
-// ) -> Task<Result<Entity<Session>>> {
-//     let task = cx.spawn(async move |this, cx| {
-//         let session = match start_client_task.await {
-//             Ok(session) => session,
-//             Err(error) => {
-//                 this.update(cx, |_, cx| {
-//                     cx.emit(DapStoreEvent::Notification(error.to_string()));
-//                 })
-//                 .log_err();
-
-//                 return Err(error);
-//             }
-//         };
-
-//         // we have to insert the session early, so we can handle reverse requests
-//         // that need the session to be available
-//         this.update(cx, |store, cx| {
-//             store.sessions.insert(session_id, session.clone());
-//             cx.emit(DapStoreEvent::DebugClientStarted(session_id));
-//             cx.notify();
-//         })?;
-//         let seq_result = async || {
-//             session
-//                 .update(cx, |session, cx| session.request_initialize(cx))?
-//                 .await?;
-
-//             session
-//                 .update(cx, |session, cx| {
-//                     session.initialize_sequence(initialized_rx, this.clone(), cx)
-//                 })?
-//                 .await
-//         };
-//         match seq_result().await {
-//             Ok(_) => {}
-//             Err(error) => {
-//                 this.update(cx, |this, cx| {
-//                     cx.emit(DapStoreEvent::Notification(error.to_string()));
-//                     this.shutdown_session(session_id, cx)
-//                 })?
-//                 .await
-//                 .log_err();
-
-//                 return Err(error);
-//             }
-//         }
-
-//         this.update(cx, |_, cx| {
-//             cx.subscribe(
-//                 &session,
-//                 move |this: &mut DapStore, session, event: &SessionStateEvent, cx| match event {
-//                     SessionStateEvent::Shutdown => {
-//                         this.shutdown_session(session_id, cx).detach_and_log_err(cx);
-//                     }
-//                     SessionStateEvent::Restart => {
-//                         let (config, binary) = session.read_with(cx, |session, _| {
-//                             (session.definition(), session.binary().clone())
-//                         });
-
-//                         let mut curr_session = session;
-//                         while let Some(parent_id) = curr_session.read(cx).parent_id(cx) {
-//                             if let Some(parent_session) = this.sessions.get(&parent_id).cloned() {
-//                                 curr_session = parent_session;
-//                             } else {
-//                                 log::error!("Failed to get parent session from parent session id");
-//                                 break;
-//                             }
-//                         }
-
-//                         let session_id = curr_session.read(cx).session_id();
-
-//                         let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
-
-//                         let worktree = worktree.clone();
-//                         cx.spawn(async move |this, cx| {
-//                             task.await;
-
-//                             this.update(cx, |this, cx| {
-//                                 this.sessions.remove(&session_id);
-//                                 this.new_session(binary, config, worktree, None, cx)
-//                             })?
-//                             .1
-//                             .await?;
-
-//                             anyhow::Ok(())
-//                         })
-//                         .detach_and_log_err(cx);
-//                     }
-//                 },
-//             )
-//             .detach();
-//             cx.emit(DapStoreEvent::DebugSessionInitialized(session_id));
-//         })?;
-
-//         Ok(session)
-//     });
-//     task
-// }
 
 #[derive(Clone)]
 pub struct DapAdapterDelegate {

@@ -54,9 +54,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
         })
         .unwrap();
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
@@ -266,9 +264,7 @@ async fn test_fetch_variables_for_multiple_scopes(
         .unwrap();
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
@@ -528,9 +524,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
         })
         .unwrap();
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
@@ -1313,9 +1307,7 @@ async fn test_variable_list_only_sends_requests_when_rendering(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
@@ -1560,9 +1552,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
         .unwrap();
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = debugger::test::start_debug_session(&project, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
