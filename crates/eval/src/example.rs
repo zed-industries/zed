@@ -1,8 +1,8 @@
+use crate::{AgentAppState, ToolMetrics};
 use agent::{ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
-use collections::HashMap;
 use dap::DapRegistry;
 use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
@@ -31,8 +31,6 @@ use util::ResultExt as _;
 use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 use util::serde::default_true;
-
-use crate::AgentAppState;
 
 pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
 pub const REPOS_DIR: &str = "./crates/eval/repos";
@@ -88,7 +86,7 @@ pub struct RunOutput {
     pub diagnostics_after: Option<String>,
     pub response_count: usize,
     pub token_usage: TokenUsage,
-    pub tool_use_counts: HashMap<Arc<str>, u32>,
+    pub tool_metrics: ToolMetrics,
     pub last_request: LanguageModelRequest,
 }
 
@@ -351,8 +349,7 @@ impl Example {
                 });
             })?;
 
-            let tool_use_counts: Arc<Mutex<HashMap<Arc<str>, u32>>> =
-                Mutex::new(HashMap::default()).into();
+            let tool_metrics = Arc::new(Mutex::new(ToolMetrics::default()));
 
             let (thread_event_tx, mut thread_event_rx) = mpsc::unbounded();
 
@@ -362,7 +359,7 @@ impl Example {
 
             let event_handler_task = cx.spawn({
                 let log_prefix = this.log_prefix.clone();
-                let tool_use_counts = tool_use_counts.clone();
+                let tool_metrics = tool_metrics.clone();
                 let thread = thread.downgrade();
                 async move |cx| {
                     loop {
@@ -405,6 +402,7 @@ impl Example {
                             } => {
                                 thread.update(cx, |thread, _cx| {
                                     if let Some(tool_use) = pending_tool_use {
+                                        let mut tool_metrics = tool_metrics.lock().unwrap();
                                         if let Some(tool_result) = thread.tool_result(&tool_use_id) {
                                             let message = if tool_result.is_error {
                                                 format!("TOOL FAILED: {}", tool_use.name)
@@ -412,13 +410,11 @@ impl Example {
                                                 format!("TOOL FINISHED: {}", tool_use.name)
                                             };
                                             println!("{log_prefix}{message}");
-                                            let mut tool_use_counts = tool_use_counts.lock().unwrap();
-                                            *tool_use_counts
-                                                .entry(tool_result.tool_name.clone())
-                                                .or_insert(0) += 1;
+                                            tool_metrics.insert(tool_result.tool_name.clone(), !tool_result.is_error);
                                         } else {
                                             let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
                                             println!("{log_prefix}{message}");
+                                            tool_metrics.insert(tool_use.name.clone(), true);
                                         }
                                     }
                                 })?;
@@ -501,7 +497,7 @@ impl Example {
                     diagnostics_after,
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
-                    tool_use_counts: tool_use_counts.lock().unwrap().clone(),
+                    tool_metrics: tool_metrics.lock().unwrap().clone(),
                     last_request,
                 }
             })
