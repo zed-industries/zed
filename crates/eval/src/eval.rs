@@ -81,6 +81,7 @@ fn main() {
     std::fs::create_dir_all(&examples_dir).unwrap();
 
     let zed_commit_sha = commit_sha_for_path(root_dir);
+    let zed_branch_name = git_branch_for_path(root_dir);
     let args = Args::parse();
     let all_available_examples = list_all_examples(&examples_dir).unwrap();
     let languages = args.languages.unwrap_or_else(|| vec!["rs".to_string()]);
@@ -263,6 +264,7 @@ fn main() {
                 let model = model.clone();
                 let example = example.clone();
                 let zed_commit_sha = zed_commit_sha.clone();
+                let zed_branch_name = zed_branch_name.clone();
                 let run_id = run_id.clone();
                 cx.spawn(async move |cx| {
                     let result = async {
@@ -274,6 +276,7 @@ fn main() {
                                 example.clone(),
                                 model.clone(),
                                 &zed_commit_sha,
+                                &zed_branch_name,
                                 &run_id,
                                 &run_output,
                                 round,
@@ -555,10 +558,15 @@ pub fn commit_sha_for_path(repo_path: &Path) -> String {
     futures::executor::block_on(run_git(repo_path, &["rev-parse", "HEAD"])).unwrap()
 }
 
+pub fn git_branch_for_path(repo_path: &Path) -> String {
+    futures::executor::block_on(run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"])).unwrap_or_else(|_| "unknown".to_string())
+}
+
 async fn run_judge_repetition(
     example: Example,
     model: Arc<dyn LanguageModel>,
     zed_commit_sha: &str,
+    zed_branch_name: &str,
     run_id: &str,
     run_output: &RunOutput,
     round: u32,
@@ -581,6 +589,7 @@ async fn run_judge_repetition(
         telemetry::event!(
             "Agent Example Evaluated",
             zed_commit_sha = zed_commit_sha,
+            zed_branch_name = zed_branch_name,
             run_id = run_id,
             example_name = example.name.clone(),
             round = round,
