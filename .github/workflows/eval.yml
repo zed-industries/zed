@@ -3,6 +3,7 @@ name: Run Agent Eval
 on:
   schedule:
     - cron: "0 * * * *"
+  workflow_dispatch:
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
