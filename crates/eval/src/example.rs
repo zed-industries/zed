@@ -32,10 +32,6 @@ use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 use util::serde::default_true;
 
-pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
-pub const REPOS_DIR: &str = "./crates/eval/repos";
-pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
-
 const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
 #[derive(Clone, Debug, Deserialize)]
@@ -76,6 +72,7 @@ pub struct Example {
     pub run_directory_path: PathBuf,
     /// Prefix used for logging that identifies this example
     pub log_prefix: String,
+    pub worktree_path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -121,7 +118,11 @@ pub struct JudgeOutput {
 
 impl Example {
     /// Load an example from a directory containing base.toml, prompt.md, and criteria.md
-    pub fn load_from_directory(dir_path: &Path, run_dir: &Path) -> Result<Self> {
+    pub fn load_from_directory(
+        dir_path: &Path,
+        run_dir: &Path,
+        worktrees_dir: &Path,
+    ) -> Result<Self> {
         let name = Self::name_from_path(dir_path);
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
@@ -133,9 +134,17 @@ impl Example {
             None
         };
 
+        let base = toml::from_str(&fs::read_to_string(&base_path)?)?;
+
+        let worktree_path = worktrees_dir
+            .canonicalize()
+            .unwrap()
+            .join(&name)
+            .join(&base);
+
         Ok(Example {
             name: name.clone(),
-            base: toml::from_str(&fs::read_to_string(&base_path)?)?,
+            base,
             prompt: fs::read_to_string(prompt_path.clone())?,
             thread_criteria,
             diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
@@ -167,15 +176,6 @@ impl Example {
         path.file_name().unwrap().to_string_lossy().to_string()
     }
 
-    pub fn worktree_path(&self) -> PathBuf {
-        Path::new(WORKTREES_DIR)
-            .canonicalize()
-            .context(format!("No such directory {WORKTREES_DIR}"))
-            .unwrap()
-            .join(&self.name)
-            .join(self.base.repo_name())
-    }
-
     /// Set up the example by checking out the specified Git revision
     pub async fn setup(&mut self) -> Result<()> {
         let repo_path = repo_path_for_url(&self.base.url);
@@ -199,20 +199,18 @@ impl Example {
             .await?;
         }
 
-        let worktree_path = self.worktree_path();
-
-        if worktree_path.is_dir() {
+        if self.worktree_path.is_dir() {
             println!("{}Resetting existing worktree", self.log_prefix);
 
             // TODO: consider including "-x" to remove ignored files. The downside of this is that
             // it will also remove build artifacts, and so prevent incremental reuse there.
-            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
-            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&worktree_path, &["checkout", &self.base.revision]).await?;
+            run_git(&self.worktree_path, &["clean", "--force", "-d"]).await?;
+            run_git(&self.worktree_path, &["reset", "--hard", "HEAD"]).await?;
+            run_git(&self.worktree_path, &["checkout", &self.base.revision]).await?;
         } else {
             println!("{}Creating worktree", self.log_prefix);
 
-            let worktree_path_string = worktree_path.to_string_lossy().to_string();
+            let worktree_path_string = self.worktree_path.to_string_lossy().to_string();
 
             run_git(
                 &repo_path,
@@ -800,13 +798,13 @@ fn get_tag(name: &'static str, response: &str) -> Result<String> {
     anyhow::Ok(content)
 }
 
-pub fn repo_path_for_url(repo_url: &str) -> PathBuf {
+pub fn repo_path_for_url(repos_dir: &Path, repo_url: &str) -> PathBuf {
     let repo_name = repo_url
         .trim_start_matches("https://")
         .replace(|c: char| !c.is_alphanumeric(), "-");
-    Path::new(REPOS_DIR)
+    Path::new(repos_dir)
         .canonicalize()
-        .context(format!("No such directory {REPOS_DIR}"))
+        .context(format!("No such directory {}", repos_dir.display()))
         .unwrap()
         .join(repo_name)
 }
