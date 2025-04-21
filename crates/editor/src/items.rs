@@ -928,9 +928,17 @@ impl Item for Editor {
         &mut self,
         workspace: &mut Workspace,
         _window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
+        if let Some(workspace) = &workspace.weak_handle().upgrade() {
+            cx.subscribe(&workspace, |editor, _, event: &workspace::Event, _cx| {
+                if matches!(event, workspace::Event::ModalOpened) {
+                    editor.mouse_context_menu.take();
+                }
+            })
+            .detach();
+        }
     }
 
     fn to_item_events(event: &EditorEvent, mut f: impl FnMut(ItemEvent)) {
