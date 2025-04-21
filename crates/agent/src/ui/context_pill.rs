@@ -1,11 +1,13 @@
 use std::{rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
-use gpui::ClickEvent;
+use futures::FutureExt;
 use gpui::{Animation, AnimationExt as _, pulsating_between};
+use gpui::{ClickEvent, Task};
+use language_model::LanguageModelImage;
 use ui::{IconButtonShape, Tooltip, prelude::*};
 
-use crate::context::{AssistantContext, ContextId, ContextKind};
+use crate::context::{AssistantContext, ContextId, ContextKind, ImageContext};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -239,6 +241,7 @@ pub enum ContextStatus {
     Error { message: SharedString },
 }
 
+#[derive(RegisterComponent)]
 pub struct AddedContext {
     pub id: ContextId,
     pub kind: ContextKind,
@@ -394,5 +397,71 @@ impl AddedContext {
                 },
             },
         }
+    }
+}
+
+impl Component for AddedContext {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+
+    fn sort_name() -> &'static str {
+        "AddedContext"
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let image_ready = (
+            "Ready",
+            AddedContext::new(
+                &AssistantContext::Image(ImageContext {
+                    id: ContextId(0),
+                    image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
+                }),
+                cx,
+            ),
+        );
+
+        let image_loading = (
+            "Loading",
+            AddedContext::new(
+                &AssistantContext::Image(ImageContext {
+                    id: ContextId(0),
+                    image_task: cx
+                        .background_spawn(async move {
+                            smol::Timer::after(Duration::from_secs(60 * 5)).await;
+                            Some(LanguageModelImage::empty())
+                        })
+                        .shared(),
+                }),
+                cx,
+            ),
+        );
+
+        let image_error = (
+            "Error",
+            AddedContext::new(
+                &AssistantContext::Image(ImageContext {
+                    id: ContextId(0),
+                    image_task: Task::ready(None).shared(),
+                }),
+                cx,
+            ),
+        );
+
+        Some(
+            v_flex()
+                .gap_6()
+                .children(
+                    vec![image_ready, image_loading, image_error]
+                        .into_iter()
+                        .map(|(text, context)| {
+                            single_example(
+                                text,
+                                ContextPill::added(context, false, false, None).into_any_element(),
+                            )
+                        }),
+                )
+                .into_any(),
+        )
     }
 }

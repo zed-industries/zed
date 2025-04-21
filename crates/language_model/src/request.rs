@@ -32,6 +32,13 @@ impl std::fmt::Debug for LanguageModelImage {
 const ANTHROPIC_SIZE_LIMT: f32 = 1568.;
 
 impl LanguageModelImage {
+    pub fn empty() -> Self {
+        Self {
+            source: "".into(),
+            size: size(DevicePixels(0), DevicePixels(0)),
+        }
+    }
+
     pub fn from_image(data: Image, cx: &mut App) -> Task<Option<Self>> {
         cx.background_spawn(async move {
             match data.format() {
