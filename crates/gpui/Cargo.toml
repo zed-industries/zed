@@ -66,7 +66,7 @@ x11 = [
     "x11-clipboard",
     "filedescriptor",
     "open",
-    "scap"
+    "scap",
 ]
 
 
@@ -220,6 +220,7 @@ rand.workspace = true
 windows.workspace = true
 windows-core = "0.61"
 windows-numerics = "0.2"
+windows-registry = "0.5"
 
 [dev-dependencies]
 backtrace = "0.3"

@@ -27,7 +27,7 @@ language.workspace = true
 language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
-languages.workspace = true
+languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true

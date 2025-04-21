@@ -753,11 +753,6 @@ impl Element for MarkdownElement {
                                             }
                                         });
 
-                                    // Apply border if required
-                                    // Usage examples:
-                                    // CodeBlockRenderer::Default { copy_button: true, border: true } - Both copy button and border
-                                    // CodeBlockRenderer::Default { copy_button: false, border: true } - Border only
-                                    // CodeBlockRenderer::Default { copy_button: true, border: false } - Copy button only (default)
                                     if let CodeBlockRenderer::Default { border: true, .. } =
                                         &self.code_block_renderer
                                     {

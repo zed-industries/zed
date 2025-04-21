@@ -3682,7 +3682,7 @@ impl Project {
             .filter(|buffer| {
                 let b = buffer.read(cx);
                 if let Some(file) = b.file() {
-                    if !search_query.file_matches(file.path()) {
+                    if !search_query.match_path(file.path()) {
                         return false;
                     }
                     if let Some(entry) = b

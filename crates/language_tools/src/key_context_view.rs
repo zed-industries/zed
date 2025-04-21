@@ -173,7 +173,7 @@ impl Item for KeyContextView {
 impl Render for KeyContextView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         use itertools::Itertools;
-        let key_equivalents = get_key_equivalents(cx.keyboard_layout());
+        let key_equivalents = get_key_equivalents(cx.keyboard_layout().id());
         v_flex()
             .id("key-context-view")
             .overflow_scroll()

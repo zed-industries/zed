@@ -1521,18 +1521,7 @@ impl ShellExec {
             process.stdin(Stdio::null());
         };
 
-        // https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
-        //
-        // safety: code in pre_exec should be signal safe.
-        // https://man7.org/linux/man-pages/man7/signal-safety.7.html
-        #[cfg(not(target_os = "windows"))]
-        unsafe {
-            use std::os::unix::process::CommandExt;
-            process.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        };
+        util::set_pre_exec_to_start_new_session(&mut process);
         let is_read = self.is_read;
 
         let task = cx.spawn_in(window, async move |vim, cx| {

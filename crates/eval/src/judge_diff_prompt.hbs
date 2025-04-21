@@ -10,6 +10,28 @@ Use the following criteria to score the above changes.
 {{criteria}}
 </criteria>
 
+{{#if ran_diagnostics_check}}
+Take into account the diagnostics before and after applying the change:
+
+<diagnostics_before>
+{{#if diagnostics_before}}
+{{{diagnostics_before}}}
+{{else}}
+No diagnostics before applying the edits.
+{{/if}}
+</diagnostics_before>
+
+<diagnostics_after>
+{{#if diagnostics_after}}
+{{{diagnostics_after}}}
+{{else}}
+No diagnostics after applying the edits.
+{{/if}}
+</diagnostics_after>
+{{else}}
+No diagnostic checks were performed.
+{{/if}}
+
 Based on these criteria, give the test output a score between 0 and 5.
 The output score should ONLY INCLUDE whole numbers. DO NOT return decimals or floats.
 
