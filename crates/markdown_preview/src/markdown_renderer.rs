@@ -156,7 +156,17 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
     let buffer_text_size = cx.buffer_text_style.font_size;
 
     let text_size = buffer_text_size.to_rems(cx.window_rem_size).mul(size);
-    let line_height = DefiniteLength::from(text_size.mul(1.25));
+
+    // was `DefiniteLength::from(text_size.mul(1.25))`
+    // let line_height = DefiniteLength::from(text_size.mul(1.25));
+    let line_height = relative(1.25);
+
+    // was `rems(0.15)`
+    // let padding_top = rems(0.15);
+    let padding_top = cx.window_rem_size.mul(0.15);
+
+    // was `.pb_1()` = `rems(0.25)`
+    let padding_bottom = cx.window_rem_size.mul(0.25);
 
     let color = match parsed.level {
         HeadingLevel::H6 => cx.text_muted_color,
@@ -166,8 +176,8 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .line_height(line_height)
         .text_size(text_size)
         .text_color(color)
-        .pt(rems(0.15).mul(size)) // fixme: This helps spacing, but it still seems to bunched when zoomed in, and too spread when zoomed out
-        .pb_1()
+        .pt(padding_top)
+        .pb(padding_bottom)
         .children(render_markdown_text(&parsed.contents, cx))
         .whitespace_normal()
         .into_any()

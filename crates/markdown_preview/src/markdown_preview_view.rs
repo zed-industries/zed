@@ -507,6 +507,7 @@ impl Item for MarkdownPreviewView {
 impl Render for MarkdownPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
+        let buffer_line_height = ThemeSettings::get_global(cx).buffer_line_height;
         dbg!(("frame", buffer_size));
         v_flex()
             .id("MarkdownPreview")
@@ -516,6 +517,7 @@ impl Render for MarkdownPreviewView {
             .bg(cx.theme().colors().editor_background)
             .p_4()
             .text_size(buffer_size)
+            .line_height(relative(buffer_line_height.value()))
             .child(
                 div()
                     .flex_grow()
