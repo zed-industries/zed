@@ -25,7 +25,7 @@ use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::{PromptBuilder, PromptId};
+use prompt_store::{PromptBuilder, PromptId, UserPromptId};
 use proto::Plan;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
@@ -79,11 +79,11 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                .register_action(|workspace, action: &OpenPromptLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(&OpenPromptLibrary::default(), window, cx)
+                            panel.deploy_prompt_library(action, window, cx)
                         });
                     }
                 })
@@ -502,7 +502,9 @@ impl AssistantPanel {
                     None,
                 ))
             }),
-            action.prompt_to_focus.map(|uuid| PromptId::User { uuid }),
+            action.prompt_to_select.map(|uuid| PromptId::User {
+                uuid: UserPromptId(uuid),
+            }),
             cx,
         )
         .detach_and_log_err(cx);
