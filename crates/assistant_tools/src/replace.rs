@@ -59,10 +59,8 @@ pub fn replace_with_flexible_indent(old: &str, new: &str, buffer: &BufferSnapsho
 
     let max_row = buffer.max_point().row;
 
-    'windows: for start_row in 0..max_row.saturating_sub(old_lines.len() as u32 - 1) {
-        let mut common_leading = None;
-
-        let end_row = start_row + old_lines.len() as u32 - 1;
+    'windows: for start_row in 0..max_row + 1 {
+        let end_row = start_row + old_lines.len().saturating_sub(1) as u32;
 
         if end_row > max_row {
             // The buffer ends before fully matching the pattern
@@ -77,6 +75,14 @@ pub fn replace_with_flexible_indent(old: &str, new: &str, buffer: &BufferSnapsho
         let mut window_lines = window_text.lines();
         let mut old_lines_iter = old_lines.iter();
 
+        let mut common_mismatch = None;
+
+        #[derive(Eq, PartialEq)]
+        enum Mismatch {
+            OverIndented(String),
+            UnderIndented(String),
+        }
+
         while let (Some(window_line), Some(old_line)) = (window_lines.next(), old_lines_iter.next())
         {
             let line_trimmed = window_line.trim_start();
@@ -89,18 +95,24 @@ pub fn replace_with_flexible_indent(old: &str, new: &str, buffer: &BufferSnapsho
                 continue;
             }
 
-            let line_leading = &window_line[..window_line.len() - old_line.len()];
+            let line_mismatch = if window_line.len() > old_line.len() {
+                let prefix = window_line[..window_line.len() - old_line.len()].to_string();
+                Mismatch::UnderIndented(prefix)
+            } else {
+                let prefix = old_line[..old_line.len() - window_line.len()].to_string();
+                Mismatch::OverIndented(prefix)
+            };
 
-            match &common_leading {
-                Some(common_leading) if common_leading != line_leading => {
+            match &common_mismatch {
+                Some(common_mismatch) if common_mismatch != &line_mismatch => {
                     continue 'windows;
                 }
                 Some(_) => (),
-                None => common_leading = Some(line_leading.to_string()),
+                None => common_mismatch = Some(line_mismatch),
             }
         }
 
-        if let Some(common_leading) = common_leading {
+        if let Some(common_mismatch) = &common_mismatch {
             let line_ending = buffer.line_ending();
             let replacement = new_lines
                 .iter()
@@ -108,7 +120,13 @@ pub fn replace_with_flexible_indent(old: &str, new: &str, buffer: &BufferSnapsho
                     if new_line.trim().is_empty() {
                         new_line.to_string()
                     } else {
-                        common_leading.to_string() + new_line
+                        match common_mismatch {
+                            Mismatch::UnderIndented(prefix) => prefix.to_string() + new_line,
+                            Mismatch::OverIndented(prefix) => new_line
+                                .strip_prefix(prefix)
+                                .unwrap_or(new_line)
+                                .to_string(),
+                        }
                     }
                 })
                 .collect::<Vec<_>>()
@@ -150,14 +168,38 @@ fn lines_with_min_indent(input: &str) -> (Vec<&str>, usize) {
 }
 
 #[cfg(test)]
-mod tests {
+mod flexible_indent_tests {
     use super::*;
     use gpui::TestAppContext;
     use gpui::prelude::*;
     use unindent::Unindent;
 
     #[gpui::test]
-    fn test_replace_consistent_indentation(cx: &mut TestAppContext) {
+    fn test_underindented_single_line(cx: &mut TestAppContext) {
+        let cur = "        let a = 41;".to_string();
+        let old = "    let a = 41;".to_string();
+        let new = "    let a = 42;".to_string();
+        let exp = "        let a = 42;".to_string();
+
+        let result = test_replace_with_flexible_indent(cx, &cur, &old, &new);
+
+        assert_eq!(result, Some(exp.to_string()))
+    }
+
+    #[gpui::test]
+    fn test_overindented_single_line(cx: &mut TestAppContext) {
+        let cur = "    let a = 41;".to_string();
+        let old = "        let a = 41;".to_string();
+        let new = "        let a = 42;".to_string();
+        let exp = "    let a = 42;".to_string();
+
+        let result = test_replace_with_flexible_indent(cx, &cur, &old, &new);
+
+        assert_eq!(result, Some(exp.to_string()))
+    }
+
+    #[gpui::test]
+    fn test_underindented_multi_line(cx: &mut TestAppContext) {
         let whole = r#"
             fn test() {
                 let x = 5;
@@ -192,6 +234,33 @@ mod tests {
             test_replace_with_flexible_indent(cx, &whole, &old, &new),
             Some(expected.to_string())
         );
+    }
+
+    #[gpui::test]
+    fn test_overindented_multi_line(cx: &mut TestAppContext) {
+        let cur = r#"
+            fn foo() {
+                let a = 41;
+                let b = 3.13;
+            }
+        "#
+        .unindent();
+
+        // 6 space indent instead of 4
+        let old = "      let a = 41;\n      let b = 3.13;";
+        let new = "      let a = 42;\n      let b = 3.14;";
+
+        let expected = r#"
+            fn foo() {
+                let a = 42;
+                let b = 3.14;
+            }
+        "#
+        .unindent();
+
+        let result = test_replace_with_flexible_indent(cx, &cur, &old, &new);
+
+        assert_eq!(result, Some(expected.to_string()))
     }
 
     #[gpui::test]
@@ -266,7 +335,6 @@ mod tests {
 
     #[gpui::test]
     fn test_replace_no_match(cx: &mut TestAppContext) {
-        // Test with no match
         let whole = r#"
             fn test() {
                 let x = 5;
@@ -311,6 +379,71 @@ mod tests {
         .unindent();
 
         // Should return None because whole doesn't fully contain the old text
+        assert_eq!(
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
+            None
+        );
+    }
+
+    #[gpui::test]
+    fn test_replace_whole_is_shorter_than_old(cx: &mut TestAppContext) {
+        let whole = r#"
+            let x = 5;
+        "#
+        .unindent();
+
+        let old = r#"
+            let x = 5;
+            let y = 10;
+        "#
+        .unindent();
+
+        let new = r#"
+            let x = 5;
+            let y = 20;
+        "#
+        .unindent();
+
+        assert_eq!(
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
+            None
+        );
+    }
+
+    #[gpui::test]
+    fn test_replace_old_is_empty(cx: &mut TestAppContext) {
+        let whole = r#"
+            fn test() {
+                let x = 5;
+            }
+        "#
+        .unindent();
+
+        let old = "";
+        let new = r#"
+            let y = 10;
+        "#
+        .unindent();
+
+        assert_eq!(
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
+            None
+        );
+    }
+
+    #[gpui::test]
+    fn test_replace_whole_is_empty(cx: &mut TestAppContext) {
+        let whole = "";
+        let old = r#"
+            let x = 5;
+        "#
+        .unindent();
+
+        let new = r#"
+            let x = 10;
+        "#
+        .unindent();
+
         assert_eq!(
             test_replace_with_flexible_indent(cx, &whole, &old, &new),
             None
