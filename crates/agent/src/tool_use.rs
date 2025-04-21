@@ -7,13 +7,13 @@ use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, Entity, SharedString, Task};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModel, LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolResult,
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
 };
 use ui::IconName;
 use util::truncate_lines_to_byte_limit;
 
-use crate::thread::MessageId;
+use crate::thread::{MessageId, PromptId, ThreadId};
 use crate::thread_store::SerializedMessage;
 
 #[derive(Debug)]
@@ -36,6 +36,7 @@ pub struct ToolUseState {
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
     tool_result_cards: HashMap<LanguageModelToolUseId, AnyToolCard>,
+    tool_use_metadata_by_id: HashMap<LanguageModelToolUseId, ToolUseMetadata>,
 }
 
 impl ToolUseState {
@@ -47,6 +48,7 @@ impl ToolUseState {
             tool_results: HashMap::default(),
             pending_tool_uses_by_id: HashMap::default(),
             tool_result_cards: HashMap::default(),
+            tool_use_metadata_by_id: HashMap::default(),
         }
     }
 
@@ -268,6 +270,7 @@ impl ToolUseState {
         &mut self,
         assistant_message_id: MessageId,
         tool_use: LanguageModelToolUse,
+        metadata: ToolUseMetadata,
         cx: &App,
     ) -> Arc<str> {
         let tool_uses = self
@@ -289,6 +292,9 @@ impl ToolUseState {
         }
 
         let status = if tool_use.is_input_complete {
+            self.tool_use_metadata_by_id
+                .insert(tool_use.id.clone(), metadata);
+
             // The tool use is being requested by the Assistant, so we want to
             // attach the tool results to the next user message.
             let next_user_message_id = MessageId(assistant_message_id.0 + 1);
@@ -369,7 +375,21 @@ impl ToolUseState {
         output: Result<String>,
         cx: &App,
     ) -> Option<PendingToolUse> {
-        telemetry::event!("Agent Tool Finished", tool_name, success = output.is_ok());
+        let metadata = self.tool_use_metadata_by_id.remove(&tool_use_id);
+
+        telemetry::event!(
+            "Agent Tool Finished",
+            model = metadata
+                .as_ref()
+                .map(|metadata| metadata.model.telemetry_id()),
+            model_provider = metadata
+                .as_ref()
+                .map(|metadata| metadata.model.provider_id().to_string()),
+            thread_id = metadata.as_ref().map(|metadata| metadata.thread_id.clone()),
+            prompt_id = metadata.as_ref().map(|metadata| metadata.prompt_id.clone()),
+            tool_name,
+            success = output.is_ok()
+        );
 
         match output {
             Ok(tool_result) => {
@@ -538,4 +558,11 @@ impl PendingToolUseStatus {
     pub fn needs_confirmation(&self) -> bool {
         matches!(self, PendingToolUseStatus::NeedsConfirmation { .. })
     }
+}
+
+#[derive(Clone)]
+pub struct ToolUseMetadata {
+    pub model: Arc<dyn LanguageModel>,
+    pub thread_id: ThreadId,
+    pub prompt_id: PromptId,
 }

@@ -34,7 +34,7 @@ use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::{ContextStore, refresh_context_store_text};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
-use crate::thread::{RequestKind, Thread, TokenUsageRatio};
+use crate::thread::{Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
@@ -234,7 +234,7 @@ impl MessageEditor {
         }
 
         self.set_editor_is_expanded(false, cx);
-        self.send_to_model(RequestKind::Chat, window, cx);
+        self.send_to_model(window, cx);
 
         cx.notify();
     }
@@ -249,12 +249,7 @@ impl MessageEditor {
             .is_some()
     }
 
-    fn send_to_model(
-        &mut self,
-        request_kind: RequestKind,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(ConfiguredModel { model, provider }) = model_registry.default_model() else {
             return;
@@ -331,7 +326,7 @@ impl MessageEditor {
             thread
                 .update(cx, |thread, cx| {
                     thread.advance_prompt_id();
-                    thread.send_to_model(model, request_kind, cx);
+                    thread.send_to_model(model, cx);
                 })
                 .log_err();
         })
@@ -345,7 +340,7 @@ impl MessageEditor {
 
         if cancelled {
             self.set_editor_is_expanded(false, cx);
-            self.send_to_model(RequestKind::Chat, window, cx);
+            self.send_to_model(window, cx);
         }
     }
 

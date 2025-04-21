@@ -1,19 +1,18 @@
-use agent::{RequestKind, ThreadEvent, ThreadStore};
+use crate::{AgentAppState, ToolMetrics};
+use agent::{ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
-use collections::HashMap;
-use dap::DapRegistry;
 use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
-use language::{DiagnosticSeverity, OffsetRangeExt};
+use language::{Buffer, DiagnosticSeverity, OffsetRangeExt};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role, StopReason, TokenUsage,
 };
-use project::{LspStore, Project, ProjectPath};
+use project::{Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -29,15 +28,16 @@ use std::{
 use unindent::Unindent as _;
 use util::ResultExt as _;
 use util::command::new_smol_command;
+use util::markdown::MarkdownString;
 use util::serde::default_true;
-
-use crate::AgentAppState;
 
 pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
 pub const REPOS_DIR: &str = "./crates/eval/repos";
 pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
 
 const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+
+const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExampleBase {
@@ -87,7 +87,7 @@ pub struct RunOutput {
     pub diagnostics_after: Option<String>,
     pub response_count: usize,
     pub token_usage: TokenUsage,
-    pub tool_use_counts: HashMap<Arc<str>, u32>,
+    pub tool_metrics: ToolMetrics,
     pub last_request: LanguageModelRequest,
 }
 
@@ -228,6 +228,10 @@ impl Example {
             .await?;
         }
 
+        if self.base.url == ZED_REPO_URL {
+            std::fs::write(worktree_path.join(".rules"), std::fs::read(".rules")?)?;
+        }
+
         std::fs::create_dir_all(self.example_output_directory())?;
 
         Ok(())
@@ -244,7 +248,6 @@ impl Example {
             app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
-            Arc::new(DapRegistry::default()),
             app_state.fs.clone(),
             None,
             cx,
@@ -270,7 +273,7 @@ impl Example {
                 })?
                 .await;
 
-            let lsp_open_handle_and_store = if this.base.require_lsp {
+            let lsp = if this.base.require_lsp {
                 let language_extension = this.base.language_extension.as_deref().context(
                     "language_extension field is required in base.toml when `require_lsp == true`",
                 )?;
@@ -300,39 +303,13 @@ impl Example {
 
                 let language_file_buffer = open_language_file_buffer_task.await?;
 
-                let (lsp_open_handle, lsp_store) = project.update(cx, |project, cx| {
-                    (
-                        project.register_buffer_with_language_servers(&language_file_buffer, cx),
-                        project.lsp_store().clone(),
-                    )
+                let lsp_open_handle = project.update(cx, |project, cx| {
+                    project.register_buffer_with_language_servers(&language_file_buffer, cx)
                 })?;
 
-                // TODO: remove this once the diagnostics tool waits for new diagnostics
-                cx.background_executor().timer(Duration::new(5, 0)).await;
-                wait_for_lang_server(&lsp_store, this.log_prefix.clone(), cx).await?;
+                wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
 
-                lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_open_handle.update(cx, |buffer, cx| {
-                        buffer.update(cx, |buffer, cx| {
-                            let has_language_server = lsp_store
-                                .language_servers_for_local_buffer(buffer, cx)
-                                .next()
-                                .is_some();
-                            if has_language_server {
-                                Ok(())
-                            } else {
-                                Err(anyhow!(
-                                    "`{:?}` was opened to cause the language server to start, \
-                                    but no language servers are registered for its buffer. \
-                                    Set `require_lsp = false` in `base.toml` to skip this.",
-                                    language_file
-                                ))
-                            }
-                        })
-                    })
-                })??;
-
-                Some((lsp_open_handle, lsp_store))
+                Some((lsp_open_handle, language_file_buffer))
             } else {
                 None
             };
@@ -376,8 +353,7 @@ impl Example {
                 });
             })?;
 
-            let tool_use_counts: Arc<Mutex<HashMap<Arc<str>, u32>>> =
-                Mutex::new(HashMap::default()).into();
+            let tool_metrics = Arc::new(Mutex::new(ToolMetrics::default()));
 
             let (thread_event_tx, mut thread_event_rx) = mpsc::unbounded();
 
@@ -387,7 +363,7 @@ impl Example {
 
             let event_handler_task = cx.spawn({
                 let log_prefix = this.log_prefix.clone();
-                let tool_use_counts = tool_use_counts.clone();
+                let tool_metrics = tool_metrics.clone();
                 let thread = thread.downgrade();
                 async move |cx| {
                     loop {
@@ -430,6 +406,7 @@ impl Example {
                             } => {
                                 thread.update(cx, |thread, _cx| {
                                     if let Some(tool_use) = pending_tool_use {
+                                        let mut tool_metrics = tool_metrics.lock().unwrap();
                                         if let Some(tool_result) = thread.tool_result(&tool_use_id) {
                                             let message = if tool_result.is_error {
                                                 format!("TOOL FAILED: {}", tool_use.name)
@@ -437,13 +414,11 @@ impl Example {
                                                 format!("TOOL FINISHED: {}", tool_use.name)
                                             };
                                             println!("{log_prefix}{message}");
-                                            let mut tool_use_counts = tool_use_counts.lock().unwrap();
-                                            *tool_use_counts
-                                                .entry(tool_result.tool_name.clone())
-                                                .or_insert(0) += 1;
+                                            tool_metrics.insert(tool_result.tool_name.clone(), !tool_result.is_error);
                                         } else {
                                             let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
                                             println!("{log_prefix}{message}");
+                                            tool_metrics.insert(tool_use.name.clone(), true);
                                         }
                                     }
                                 })?;
@@ -472,15 +447,15 @@ impl Example {
             thread.update(cx, |thread, cx| {
                 let context = vec![];
                 thread.insert_user_message(this.prompt.clone(), context, None, cx);
-                thread.send_to_model(model, RequestKind::Chat, cx);
+                thread.send_to_model(model, cx);
             })?;
 
             event_handler_task.await?;
 
             println!("{}Stopped", this.log_prefix);
 
-            if let Some((_, lsp_store)) = lsp_open_handle_and_store.as_ref() {
-                wait_for_lang_server(lsp_store, this.log_prefix.clone(), cx).await?;
+            if let Some((_, language_file_buffer)) = lsp.as_ref() {
+                wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
             }
 
             println!("{}Getting repository diff", this.log_prefix);
@@ -504,7 +479,7 @@ impl Example {
             };
 
             drop(subscription);
-            drop(lsp_open_handle_and_store);
+            drop(lsp);
 
             if let Some(diagnostics_before) = &diagnostics_before {
                 fs::write(example_output_dir.join("diagnostics_before.txt"), diagnostics_before)?;
@@ -527,7 +502,7 @@ impl Example {
                     diagnostics_after,
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
-                    tool_use_counts: tool_use_counts.lock().unwrap().clone(),
+                    tool_metrics: tool_metrics.lock().unwrap().clone(),
                     last_request,
                 }
             })
@@ -669,32 +644,51 @@ impl Example {
     async fn repository_diff(&self) -> Result<String> {
         let worktree_path = self.worktree_path();
         run_git(&worktree_path, &["add", "."]).await?;
-        run_git(&worktree_path, &["diff", "--staged"]).await
+        let mut diff_args = vec!["diff", "--staged"];
+        if self.base.url == ZED_REPO_URL {
+            diff_args.push(":(exclude).rules");
+        }
+        run_git(&worktree_path, &diff_args).await
     }
 }
 
 fn wait_for_lang_server(
-    lsp_store: &Entity<LspStore>,
+    project: &Entity<Project>,
+    buffer: &Entity<Buffer>,
     log_prefix: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
-    if cx
-        .update(|cx| !has_pending_lang_server_work(lsp_store, cx))
-        .unwrap()
-        || std::env::var("ZED_EVAL_SKIP_LS_WAIT").is_ok()
-    {
-        return Task::ready(anyhow::Ok(()));
-    }
-
     println!("{}⏵ Waiting for language server", log_prefix);
 
     let (mut tx, mut rx) = mpsc::channel(1);
 
-    let subscription =
-        cx.subscribe(&lsp_store, {
-            let log_prefix = log_prefix.clone();
-            move |lsp_store, event, cx| {
-                match event {
+    let lsp_store = project
+        .update(cx, |project, _| project.lsp_store())
+        .unwrap();
+
+    let has_lang_server = buffer
+        .update(cx, |buffer, cx| {
+            lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store
+                    .language_servers_for_local_buffer(&buffer, cx)
+                    .next()
+                    .is_some()
+            })
+        })
+        .unwrap_or(false);
+
+    if has_lang_server {
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .unwrap()
+            .detach();
+    }
+
+    let subscriptions =
+        [
+            cx.subscribe(&lsp_store, {
+                let log_prefix = log_prefix.clone();
+                move |_, event, _| match event {
                     project::LspStoreEvent::LanguageServerUpdate {
                         message:
                             client::proto::update_language_server::Variant::WorkProgress(
@@ -707,12 +701,23 @@ fn wait_for_lang_server(
                     } => println!("{}⟲ {message}", log_prefix),
                     _ => {}
                 }
-
-                if !has_pending_lang_server_work(&lsp_store, cx) {
-                    tx.try_send(()).ok();
+            }),
+            cx.subscribe(&project, {
+                let buffer = buffer.clone();
+                move |project, event, cx| match event {
+                    project::Event::LanguageServerAdded(_, _, _) => {
+                        let buffer = buffer.clone();
+                        project
+                            .update(cx, |project, cx| project.save_buffer(buffer, cx))
+                            .detach();
+                    }
+                    project::Event::DiskBasedDiagnosticsFinished { .. } => {
+                        tx.try_send(()).ok();
+                    }
+                    _ => {}
                 }
-            }
-        });
+            }),
+        ];
 
     cx.spawn(async move |cx| {
         let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
@@ -725,16 +730,9 @@ fn wait_for_lang_server(
                 Err(anyhow!("LSP wait timed out after 5 minutes"))
             }
         };
-        drop(subscription);
+        drop(subscriptions);
         result
     })
-}
-
-fn has_pending_lang_server_work(lsp_store: &Entity<LspStore>, cx: &App) -> bool {
-    lsp_store
-        .read(cx)
-        .language_server_statuses()
-        .any(|(_, status)| !status.pending_work.is_empty())
 }
 
 async fn query_lsp_diagnostics(
@@ -880,6 +878,7 @@ impl RequestMarkdown {
     fn new(request: &LanguageModelRequest) -> Self {
         let mut tools = String::new();
         let mut messages = String::new();
+        let mut assistant_message_number: u32 = 1;
 
         // Print the tools
         if !request.tools.is_empty() {
@@ -888,8 +887,8 @@ impl RequestMarkdown {
                 write!(&mut tools, "{}\n\n", tool.description).unwrap();
                 write!(
                     &mut tools,
-                    "```json\n{}\n```\n\n",
-                    serde_json::to_string_pretty(&tool.input_schema).unwrap_or_default()
+                    "{}\n",
+                    MarkdownString::code_block("json", &format!("{:#}", tool.input_schema))
                 )
                 .unwrap();
             }
@@ -897,13 +896,14 @@ impl RequestMarkdown {
 
         // Print the messages
         for message in &request.messages {
-            let role_str = match message.role {
-                Role::User => "👤 USER",
-                Role::Assistant => "🤖 ASSISTANT",
-                Role::System => "⚙️ SYSTEM",
+            match message.role {
+                Role::System => messages.push_str("# ⚙️ SYSTEM\n\n"),
+                Role::User => messages.push_str("# 👤 USER\n\n"),
+                Role::Assistant => {
+                    messages.push_str(&format!("# 🤖 ASSISTANT {assistant_message_number}\n\n"));
+                    assistant_message_number += 1;
+                }
             };
-
-            messages.push_str(&format!("# {}\n\n", role_str));
 
             for content in &message.content {
                 match content {
@@ -914,12 +914,29 @@ impl RequestMarkdown {
                     MessageContent::Image(_) => {
                         messages.push_str("[IMAGE DATA]\n\n");
                     }
+                    MessageContent::Thinking { text, signature } => {
+                        messages.push_str("**Thinking**:\n\n");
+                        if let Some(sig) = signature {
+                            messages.push_str(&format!("Signature: {}\n\n", sig));
+                        }
+                        messages.push_str(text);
+                        messages.push_str("\n");
+                    }
+                    MessageContent::RedactedThinking(items) => {
+                        messages.push_str(&format!(
+                            "**Redacted Thinking**: {} item(s)\n\n",
+                            items.len()
+                        ));
+                    }
                     MessageContent::ToolUse(tool_use) => {
                         messages.push_str(&format!(
                             "**Tool Use**: {} (ID: {})\n",
                             tool_use.name, tool_use.id
                         ));
-                        messages.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
+                        messages.push_str(&format!(
+                            "{}\n",
+                            MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                        ));
                     }
                     MessageContent::ToolResult(tool_result) => {
                         messages.push_str(&format!(
@@ -929,7 +946,7 @@ impl RequestMarkdown {
                         if tool_result.is_error {
                             messages.push_str("**ERROR:**\n");
                         }
-                        messages.push_str(&format!("{}\n", tool_result.content));
+                        messages.push_str(&format!("{}\n\n", tool_result.content));
                     }
                 }
             }
@@ -965,7 +982,7 @@ fn response_events_to_markdown(
             Ok(LanguageModelCompletionEvent::Text(text)) => {
                 text_buffer.push_str(text);
             }
-            Ok(LanguageModelCompletionEvent::Thinking(text)) => {
+            Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
                 thinking_buffer.push_str(text);
             }
             Ok(LanguageModelCompletionEvent::Stop(reason)) => {
@@ -978,7 +995,10 @@ fn response_events_to_markdown(
                     "**Tool Use**: {} (ID: {})\n",
                     tool_use.name, tool_use.id
                 ));
-                response.push_str(&format!("```json\n{}\n```\n\n", tool_use.input));
+                response.push_str(&format!(
+                    "{}\n",
+                    MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                ));
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)

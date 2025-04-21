@@ -61,6 +61,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::Claude3_7Sonnet
+    }
+
     pub fn uses_streaming(&self) -> bool {
         match self {
             Self::Gpt4o
