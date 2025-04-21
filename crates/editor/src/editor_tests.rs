@@ -11290,7 +11290,7 @@ async fn test_completion_sort(cx: &mut TestAppContext) {
                 },
                 lsp::CompletionItem {
                     label: "r".into(),
-                    sort_text: Some("b".into()),
+                    kind: Some(lsp::CompletionItemKind::SNIPPET),
                     ..Default::default()
                 },
                 lsp::CompletionItem {
@@ -14061,7 +14061,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
         {
             assert_eq!(
                 completion_menu_entries(&menu),
-                &["bg-red", "bg-blue", "bg-yellow"]
+                &["bg-blue", "bg-red", "bg-yellow"]
             );
         } else {
             panic!("expected completion menu to be open");
