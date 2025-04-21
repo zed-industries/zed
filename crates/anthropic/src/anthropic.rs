@@ -416,6 +416,7 @@ pub async fn stream_completion_with_rate_limit_info(
     let beta_headers = Model::from_id(&request.base.model)
         .map(|model| model.beta_headers())
         .unwrap_or_else(|_err| Model::DEFAULT_BETA_HEADERS.join(","));
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
@@ -423,6 +424,7 @@ pub async fn stream_completion_with_rate_limit_info(
         .header("Anthropic-Beta", beta_headers)
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
+
     let serialized_request =
         serde_json::to_string(&request).context("failed to serialize request")?;
     let request = request_builder
