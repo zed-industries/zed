@@ -548,62 +548,47 @@ async fn run_judge_repetition(
     round: u32,
     cx: &AsyncApp,
 ) -> Result<JudgeOutput> {
-    let judge_result = example.judge(model.clone(), &run_output, round, cx).await;
+    let judge_output = example.judge(model.clone(), &run_output, round, cx).await;
 
-    if let Ok(judge_output) = &judge_result {
-        let cohort_id = example
-            .run_directory_path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
+    let cohort_id = example
+        .run_directory_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
 
-        let path = std::path::Path::new(".");
-        let commit_id = get_current_commit_id(path).await.unwrap_or_default();
+    let path = std::path::Path::new(".");
+    let commit_id = get_current_commit_id(path).await.unwrap_or_default();
 
-        if let Some(thread) = &judge_output.thread {
-            telemetry::event!(
-                "Agent Eval Completed",
-                cohort_id = cohort_id,
-                example_name = example.name.clone(),
-                round = round,
-                diff_score = judge_output.diff.score,
-                diff_analysis = judge_output.diff.analysis,
-                thread_score = thread.score,
-                thread_analysis = thread.analysis,
-                tool_metrics = run_output.tool_metrics,
-                response_count = run_output.response_count,
-                token_usage = run_output.token_usage,
-                model = model.telemetry_id(),
-                model_provider = model.provider_id().to_string(),
-                repository_url = example.base.url.clone(),
-                repository_revision = example.base.revision.clone(),
-                diagnostics_before = run_output.diagnostics_before,
-                diagnostics_after = run_output.diagnostics_after,
-                commit_id = commit_id
-            );
-        } else {
-            telemetry::event!(
-                "Agent Eval Completed",
-                cohort_id = cohort_id,
-                example_name = example.name.clone(),
-                round = round,
-                diff_score = judge_output.diff.score,
-                diff_analysis = judge_output.diff.analysis,
-                tool_metrics = run_output.tool_metrics,
-                response_count = run_output.response_count,
-                token_usage = run_output.token_usage,
-                model = model.telemetry_id(),
-                model_provider = model.provider_id().to_string(),
-                repository_url = example.base.url.clone(),
-                repository_revision = example.base.revision.clone(),
-                diagnostics_before = run_output.diagnostics_before,
-                diagnostics_after = run_output.diagnostics_after,
-                commit_id = commit_id
-            );
-        }
+    let diff_evaluation;
+    let thread_diff_evaluation;
+    if let Ok(output) = judge_output.as_ref() {
+        diff_evaluation = Some(output.diff.clone());
+        thread_diff_evaluation = Some(output.thread.clone());
+    } else {
+        diff_evaluation = None;
+        thread_diff_evaluation = None;
     }
 
-    judge_result
+    telemetry::event!(
+        "Agent Eval Completed",
+        cohort_id = cohort_id,
+        example_name = example.name.clone(),
+        round = round,
+        diff_evaluation = diff_evaluation,
+        thread_evaluation = thread_diff_evaluation,
+        tool_metrics = run_output.tool_metrics,
+        response_count = run_output.response_count,
+        token_usage = run_output.token_usage,
+        model = model.telemetry_id(),
+        model_provider = model.provider_id().to_string(),
+        repository_url = example.base.url.clone(),
+        repository_revision = example.base.revision.clone(),
+        diagnostics_before = run_output.diagnostics_before,
+        diagnostics_after = run_output.diagnostics_after,
+        commit_id = commit_id
+    );
+
+    judge_output
 }
 
 fn print_header(header: &str) {
