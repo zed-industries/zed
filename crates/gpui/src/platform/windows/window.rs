@@ -1031,8 +1031,8 @@ type Color = (u8, u8, u8, u8);
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct WindowBorderOffset {
-    width_offset: i32,
-    height_offset: i32,
+    pub(crate) width_offset: i32,
+    pub(crate) height_offset: i32,
 }
 
 impl WindowBorderOffset {
