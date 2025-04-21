@@ -4920,6 +4920,7 @@ dependencies = [
  "serde",
  "settings",
  "shellexpand 2.1.2",
+ "smol",
  "telemetry",
  "toml 0.8.20",
  "unindent",
