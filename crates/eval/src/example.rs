@@ -3,7 +3,6 @@ use agent::{ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
-use dap::DapRegistry;
 use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
@@ -33,6 +32,8 @@ use util::markdown::MarkdownString;
 use util::serde::default_true;
 
 const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+
+const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExampleBase {
@@ -229,6 +230,10 @@ impl Example {
             .await?;
         }
 
+        if self.base.url == ZED_REPO_URL {
+            std::fs::write(self.worktree_path.join(".rules"), std::fs::read(".rules")?)?;
+        }
+
         std::fs::create_dir_all(self.example_output_directory())?;
 
         Ok(())
@@ -245,7 +250,6 @@ impl Example {
             app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
-            Arc::new(DapRegistry::default()),
             app_state.fs.clone(),
             None,
             cx,
@@ -639,7 +643,11 @@ impl Example {
 
     async fn repository_diff(&self) -> Result<String> {
         run_git(&self.worktree_path, &["add", "."]).await?;
-        run_git(&self.worktree_path, &["diff", "--staged"]).await
+        let mut diff_args = vec!["diff", "--staged"];
+        if self.base.url == ZED_REPO_URL {
+            diff_args.push(":(exclude).rules");
+        }
+        run_git(&self.worktree_path, &diff_args).await
     }
 }
 

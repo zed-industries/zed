@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
-use dap::{DebugRequestType, client::DebugAdapterClient};
+use dap::{DebugRequest, client::DebugAdapterClient};
 use gpui::{App, AppContext, Entity, Subscription, Task};
 use task::DebugTaskDefinition;
 
@@ -53,11 +53,10 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
         cx,
         DebugTaskDefinition {
             adapter: "fake-adapter".to_string(),
-            request: DebugRequestType::Launch(Default::default()),
+            request: DebugRequest::Launch(Default::default()),
             label: "test".to_string(),
             initialize_args: None,
             tcp_connection: None,
-            locator: None,
             stop_on_entry: None,
         },
         configure,
