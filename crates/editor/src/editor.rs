@@ -1723,6 +1723,7 @@ impl Editor {
                                 new_anchor.offset,
                             );
                         });
+                        editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
                     }
                 }
                 EditorEvent::Edited { .. } => {
