@@ -13,7 +13,7 @@ use crate::{
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, size, transparent_black,
+    point, prelude::*, px, rgb, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -602,6 +602,8 @@ pub struct Window {
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     rem_size: Pixels,
+    pub(crate) show_devtools: bool,
+    pub(crate) devtools_width: Pixels,
     /// The stack of override values for the window's rem size.
     ///
     /// This is used by `with_rem_size` to allow rendering an element tree with
@@ -712,6 +714,7 @@ impl Window {
             show,
             kind,
             is_movable,
+            show_devtools,
             display_id,
             window_background,
             app_id,
@@ -933,6 +936,8 @@ impl Window {
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
+            show_devtools,
+            devtools_width: px(200.0), // Default width for devtools panel
         })
     }
 
@@ -1639,6 +1644,26 @@ impl Window {
     fn draw_roots(&mut self, cx: &mut App) {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
+        let original_viewport_size = self.viewport_size;
+        
+        // Fixed width for the DevTools panel when shown
+        let devtools_width = px(200.0);
+        self.devtools_width = devtools_width; // Store width for later use
+        
+        // Calculate main content width: full width minus DevTools panel width when shown
+        let main_content_width = if self.show_devtools {
+            original_viewport_size.width - devtools_width
+        } else {
+            original_viewport_size.width
+        };
+
+        // Temporarily adjust viewport size for main content rendering
+        if self.show_devtools {
+            self.viewport_size = Size {
+                width: main_content_width,
+                height: self.viewport_size.height,
+            };
+        }
 
         // Layout all root elements.
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
@@ -1674,6 +1699,100 @@ impl Window {
         root_element.paint(self, cx);
 
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
+
+        // Restore original viewport size if DevTools are enabled
+        if self.show_devtools {
+            self.viewport_size = original_viewport_size;
+
+            // Draw DevTools panel using our previously calculated width
+            let devtools_bounds = Bounds {
+                origin: Point {
+                    x: main_content_width,
+                    y: px(0.0),
+                },
+                size: Size {
+                    width: self.devtools_width,
+                    height: original_viewport_size.height,
+                },
+            };
+
+            // Paint DevTools background
+            self.paint_quad(PaintQuad {
+                bounds: devtools_bounds,
+                corner_radii: Default::default(),
+                background: rgb(0xf0f0f0).into(), // Light grey background
+                border_widths: Default::default(),
+                border_color: Default::default(),
+                border_style: Default::default(),
+            });
+
+            // Draw a separator line
+            self.paint_quad(PaintQuad {
+                bounds: Bounds {
+                    origin: Point {
+                        x: main_content_width,
+                        y: px(0.0),
+                    },
+                    size: Size {
+                        width: px(1.0),
+                        height: original_viewport_size.height,
+                    },
+                },
+                corner_radii: Default::default(),
+                background: rgb(0xdddddd).into(), // Border color
+                border_widths: Default::default(),
+                border_color: Default::default(),
+                border_style: Default::default(),
+            });
+
+            // Here we would render actual DevTools content
+            // For now, just adding a placeholder text label
+            // In a full implementation, this would be a proper View
+            let text_bounds = Bounds {
+                origin: Point {
+                    x: main_content_width + px(10.0),
+                    y: px(10.0),
+                },
+                size: Size {
+                    width: devtools_width - px(20.0),
+                    height: px(20.0),
+                },
+            };
+            
+            // Add a visible text label for the DevTools panel
+            self.paint_quad(PaintQuad {
+                bounds: text_bounds,
+                corner_radii: Default::default(),
+                background: rgb(0xffffff).into(),
+                border_widths: Default::default(),
+                border_color: Default::default(),
+                border_style: Default::default(),
+            });
+            
+            // Display DevTools panel title
+            let title_text = "DevTools Panel";
+            
+            let toggle_button_bounds = Bounds {
+                origin: Point {
+                    x: main_content_width + px(10.0),
+                    y: px(40.0),
+                },
+                size: Size {
+                    width: px(80.0),
+                    height: px(20.0),
+                },
+            };
+            
+            // Add a button-like element
+            self.paint_quad(PaintQuad {
+                bounds: toggle_button_bounds,
+                corner_radii: Default::default(),
+                background: rgb(0xdddddd).into(),
+                border_widths: Default::default(),
+                border_color: Default::default(),
+                border_style: Default::default(),
+            });
+        }
 
         if let Some(mut prompt_element) = prompt_element {
             prompt_element.paint(self, cx);
@@ -3574,6 +3693,12 @@ impl Window {
     /// Toggle full screen status on the current window at the platform level.
     pub fn toggle_fullscreen(&self) {
         self.platform_window.toggle_fullscreen();
+    }
+
+    /// Toggle the visibility of the DevTools panel
+    pub fn toggle_devtools(&mut self) {
+        self.show_devtools = !self.show_devtools;
+        self.refresh();
     }
 
     /// Updates the IME panel position suggestions for languages like japanese, chinese.

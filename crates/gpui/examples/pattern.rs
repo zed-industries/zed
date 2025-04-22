@@ -12,7 +12,7 @@ impl Render for PatternExample {
             .flex_col()
             .gap_3()
             .bg(rgb(0xffffff))
-            .size(px(600.0))
+            .size(px(600.0))  // This sets both width and height to 600px
             .justify_center()
             .items_center()
             .shadow_lg()
@@ -100,10 +100,13 @@ impl Render for PatternExample {
 
 fn main() {
     Application::new().run(|cx: &mut App| {
+        // Make window large enough to fit content with DevTools
+        // The main view will get (600px - 200px) = 400px width when DevTools are on
         let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                show_devtools: true, // Enable DevTools panel
                 ..Default::default()
             },
             |_window, cx| cx.new(|_cx| PatternExample),

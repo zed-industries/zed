@@ -95,9 +95,10 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
 
     eprintln!("{message}: {error_details}");
     Application::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
-            cx.new(|_| gpui::Empty)
-        }) {
+        let mut window_options = gpui::WindowOptions::default();
+        window_options.show_devtools = true;
+
+        if let Ok(window) = cx.open_window(window_options, |_, cx| cx.new(|_| gpui::Empty)) {
             window
                 .update(cx, |_, window, cx| {
                     let response = window.prompt(

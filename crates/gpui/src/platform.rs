@@ -1027,6 +1027,9 @@ pub struct WindowOptions {
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
+    /// Whether to show a devtools panel on the right side
+    pub show_devtools: bool,
+
     /// The display to create the window on, if this is None,
     /// the window will be created on the main display
     pub display_id: Option<DisplayId>,
@@ -1124,6 +1127,7 @@ impl Default for WindowOptions {
             show: true,
             kind: WindowKind::Normal,
             is_movable: true,
+            show_devtools: false,
             display_id: None,
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,
