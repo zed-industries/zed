@@ -202,19 +202,7 @@ impl Render for WelcomePage {
                                                 ), cx);
                                             })),
                                     )
-                                    .child(
-                                        Button::new("import vscode settings", "Import VsCode Settings")
-                                            .icon(IconName::Settings)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("VsCode Settings Imported");
-                                                window.dispatch_action(Box::new(
-                                                    settings_ui::ImportVsCodeSettings { skip_prompt: true }
-                                                ), cx);
-                                            })),
-                                    ),
+
                             )
                             .child(
                                 v_flex()
