@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use anyhow::Result;
 use dap::{DebugRequest, client::DebugAdapterClient};
 use gpui::{App, AppContext, Entity, Subscription, Task};
-use task::DebugTaskDefinition;
+use task::DebugScenario;
 
 use crate::Project;
 
@@ -31,7 +31,7 @@ pub fn intercept_debug_sessions<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
 pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     project: &Entity<Project>,
     cx: &mut gpui::TestAppContext,
-    config: DebugTaskDefinition,
+    config: DebugScenario,
     configure: T,
 ) -> Task<Result<Entity<Session>>> {
     let subscription = intercept_debug_sessions(cx, configure);
@@ -51,7 +51,7 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     start_debug_session_with(
         project,
         cx,
-        DebugTaskDefinition {
+        DebugScenario {
             adapter: "fake-adapter".to_string(),
             request: DebugRequest::Launch(Default::default()),
             label: "test".to_string(),

@@ -1,5 +1,5 @@
 use dap::DebugRequest;
-use dap::adapters::DebugScenario;
+use dap::adapters::DebugTaskDefinition;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
@@ -24,14 +24,14 @@ pub(crate) struct AttachModalDelegate {
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
     project: Entity<project::Project>,
-    pub(crate) scenario: DebugScenario,
+    pub(crate) scenario: DebugTaskDefinition,
     candidates: Arc<[Candidate]>,
 }
 
 impl AttachModalDelegate {
     fn new(
         project: Entity<project::Project>,
-        scenario: DebugScenario,
+        scenario: DebugTaskDefinition,
         candidates: Arc<[Candidate]>,
     ) -> Self {
         Self {
@@ -53,7 +53,7 @@ pub struct AttachModal {
 impl AttachModal {
     pub fn new(
         project: Entity<project::Project>,
-        scenario: DebugScenario,
+        scenario: DebugTaskDefinition,
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -81,7 +81,7 @@ impl AttachModal {
 
     pub(super) fn with_processes(
         project: Entity<project::Project>,
-        scenario: DebugScenario,
+        scenario: DebugTaskDefinition,
         processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,

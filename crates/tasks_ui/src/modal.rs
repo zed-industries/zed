@@ -11,8 +11,7 @@ use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
 use task::{
-    DebugRequest, DebugTaskDefinition, ResolvedTask, RevealTarget, TaskContext, TaskModal,
-    TaskTemplate,
+    DebugRequest, DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskModal, TaskTemplate,
 };
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,
@@ -187,7 +186,7 @@ impl Render for TasksModal {
 }
 
 pub struct ShowAttachModal {
-    pub debug_config: DebugTaskDefinition,
+    pub debug_config: DebugScenario,
 }
 
 impl EventEmitter<DismissEvent> for TasksModal {}

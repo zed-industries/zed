@@ -2,9 +2,9 @@ use std::{collections::HashMap, ffi::OsStr};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use dap::{StartDebuggingRequestArguments, adapters::DebugScenario};
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use task::{DebugRequest, DebugTaskDefinition};
+use task::{DebugRequest, DebugScenario};
 
 use crate::*;
 
@@ -14,7 +14,7 @@ pub(crate) struct GdbDebugAdapter;
 impl GdbDebugAdapter {
     const ADAPTER_NAME: &'static str = "GDB";
 
-    fn request_args(&self, config: &DebugScenario) -> StartDebuggingRequestArguments {
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         let mut args = json!({
             "request": match config.request {
                 DebugRequest::Launch(_) => "launch",
@@ -62,7 +62,7 @@ impl DebugAdapter for GdbDebugAdapter {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugScenario,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<std::path::PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -106,7 +106,7 @@ impl DebugAdapter for GdbDebugAdapter {
     async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugScenario,
+        _: &DebugTaskDefinition,
         _: Option<std::path::PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

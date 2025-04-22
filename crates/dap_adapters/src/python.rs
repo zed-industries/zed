@@ -1,8 +1,8 @@
 use crate::*;
-use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugScenario};
+use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
-use task::DebugTaskDefinition;
+use task::DebugScenario;
 
 #[derive(Default)]
 pub(crate) struct PythonDebugAdapter;
@@ -13,7 +13,7 @@ impl PythonDebugAdapter {
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
     const LANGUAGE_NAME: &'static str = "Python";
 
-    fn request_args(&self, config: &DebugScenario) -> StartDebuggingRequestArguments {
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         let mut args = json!({
             "request": match config.request {
                 DebugRequest::Launch(_) => "launch",
@@ -96,7 +96,7 @@ impl DebugAdapter for PythonDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugScenario,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

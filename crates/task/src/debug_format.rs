@@ -134,7 +134,7 @@ pub enum DebugeeDefinition {
 /// This struct represent a user created debug task
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
-pub struct DebugTaskDefinition {
+pub struct DebugScenario {
     pub adapter: String,
     /// Name of the debug task
     pub label: String,
@@ -157,7 +157,7 @@ pub struct DebugTaskDefinition {
     pub stop_on_entry: Option<bool>,
 }
 
-impl DebugTaskDefinition {
+impl DebugScenario {
     pub fn cwd(&self) -> Option<&Path> {
         if let DebugeeDefinition::Launch(config) = &self.debugee {
             config.cwd.as_ref().map(Path::new)
@@ -170,7 +170,7 @@ impl DebugTaskDefinition {
 /// A group of Debug Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
-pub struct DebugTaskFile(pub Vec<DebugTaskDefinition>);
+pub struct DebugTaskFile(pub Vec<DebugScenario>);
 
 impl DebugTaskFile {
     /// Generates JSON schema of Tasks JSON template format.

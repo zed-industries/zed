@@ -1,8 +1,8 @@
 use adapters::latest_github_release;
-use dap::adapters::{DebugScenario, TcpArguments};
+use dap::adapters::{DebugTaskDefinition, TcpArguments};
 use gpui::AsyncApp;
 use std::{collections::HashMap, path::PathBuf};
-use task::DebugTaskDefinition;
+use task::DebugScenario;
 
 use crate::*;
 
@@ -14,7 +14,10 @@ impl PhpDebugAdapter {
     const ADAPTER_PACKAGE_NAME: &'static str = "vscode-php-debug";
     const ADAPTER_PATH: &'static str = "extension/out/phpDebug.js";
 
-    fn request_args(&self, config: &DebugScenario) -> Result<dap::StartDebuggingRequestArguments> {
+    fn request_args(
+        &self,
+        config: &DebugTaskDefinition,
+    ) -> Result<dap::StartDebuggingRequestArguments> {
         match &config.request {
             dap::DebugRequest::Attach(_) => {
                 anyhow::bail!("php adapter does not support attaching")
@@ -67,7 +70,7 @@ impl DebugAdapter for PhpDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugScenario,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

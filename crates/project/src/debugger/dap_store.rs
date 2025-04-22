@@ -13,7 +13,7 @@ use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
     Source, StartDebuggingRequestArguments,
-    adapters::{DapStatus, DebugAdapterBinary, DebugAdapterName, DebugScenario},
+    adapters::{DapStatus, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition},
     client::SessionId,
     messages::Message,
     requests::{Completions, Evaluate, Request as _, RunInTerminal, StartDebugging},
@@ -45,7 +45,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{DebugTaskDefinition, TaskTemplate};
+use task::{DebugScenario, TaskTemplate};
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -208,7 +208,7 @@ impl DapStore {
 
     pub fn get_debug_adapter_binary(
         &mut self,
-        definition: DebugScenario,
+        definition: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugAdapterBinary>> {
         match &self.mode {
@@ -422,7 +422,7 @@ impl DapStore {
     pub fn new_session(
         &mut self,
         binary: DebugAdapterBinary,
-        config: DebugScenario,
+        config: DebugTaskDefinition,
         worktree: WeakEntity<Worktree>,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
@@ -839,7 +839,7 @@ impl DapStore {
         envelope: TypedEnvelope<proto::GetDebugAdapterBinary>,
         mut cx: AsyncApp,
     ) -> Result<proto::DebugAdapterBinary> {
-        let scenario = DebugScenario::from_proto(
+        let scenario = DebugTaskDefinition::from_proto(
             envelope
                 .payload
                 .scenario

@@ -12,7 +12,7 @@ use super::dap_command::{
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
-use dap::adapters::{DebugAdapterBinary, DebugScenario};
+use dap::adapters::{DebugAdapterBinary, DebugTaskDefinition};
 use dap::messages::Response;
 use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
@@ -41,7 +41,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use task::DebugTaskDefinition;
+use task::DebugScenario;
 use text::{PointUtf16, ToPointUtf16};
 use util::{ResultExt, merge_json_value_into};
 use worktree::Worktree;
@@ -162,7 +162,7 @@ enum Mode {
 #[derive(Clone)]
 pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
-    definition: DebugScenario,
+    definition: DebugTaskDefinition,
     binary: DebugAdapterBinary,
     root_binary: Option<Arc<DebugAdapterBinary>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
@@ -191,7 +191,7 @@ impl LocalMode {
         parent_session: Option<Entity<Session>>,
         worktree: WeakEntity<Worktree>,
         breakpoint_store: Entity<BreakpointStore>,
-        config: DebugScenario,
+        config: DebugTaskDefinition,
         binary: DebugAdapterBinary,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         cx: AsyncApp,
@@ -728,7 +728,7 @@ impl Session {
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         binary: DebugAdapterBinary,
-        config: DebugScenario,
+        config: DebugTaskDefinition,
         start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
         initialized_tx: oneshot::Sender<()>,
         cx: &mut App,
@@ -844,7 +844,7 @@ impl Session {
         }
     }
 
-    pub fn configuration(&self) -> Option<DebugScenario> {
+    pub fn configuration(&self) -> Option<DebugTaskDefinition> {
         if let Mode::Local(local_mode) = &self.mode {
             Some(local_mode.definition.clone())
         } else {

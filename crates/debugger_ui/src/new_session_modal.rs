@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use dap::{DapRegistry, DebugRequest, adapters::DebugScenario};
+use dap::{DapRegistry, DebugRequest, adapters::DebugTaskDefinition};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
@@ -13,7 +13,7 @@ use gpui::{
 };
 use project::Project;
 use settings::Settings;
-use task::{DebugTaskDefinition, DebugeeDefinition, LaunchRequest, TaskTemplate};
+use task::{DebugScenario, DebugeeDefinition, LaunchRequest, TaskTemplate};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -56,7 +56,7 @@ fn suggested_label(request: &DebugRequest, debugger: &str) -> String {
 
 impl NewSessionModal {
     pub(super) fn new(
-        past_debug_definition: Option<DebugScenario>,
+        past_debug_definition: Option<DebugTaskDefinition>,
         debug_panel: WeakEntity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -88,7 +88,7 @@ impl NewSessionModal {
         }
     }
 
-    fn debug_config(&self, cx: &App) -> Option<DebugTaskDefinition> {
+    fn debug_config(&self, cx: &App) -> Option<DebugScenario> {
         let request = self.mode.debug_task(cx);
         let label = suggested_label(&request, self.debugger.as_deref()?);
         let debugee = match request {
@@ -108,7 +108,7 @@ impl NewSessionModal {
                 DebugeeDefinition::Attach(attach_request.process_id)
             }
         };
-        Some(DebugTaskDefinition {
+        Some(DebugScenario {
             adapter: self.debugger.clone()?.into(),
             build: None,
             label,
@@ -149,7 +149,7 @@ impl NewSessionModal {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
 
             let task = project.update(cx, |this, cx| {
-                let template = DebugScenario {
+                let template = DebugTaskDefinition {
                     locator: None,
                     definition: config.clone(),
                 };
@@ -253,7 +253,7 @@ impl NewSessionModal {
             "debug-config-menu",
             last_profile.unwrap_or_else(|| SELECT_SCENARIO_LABEL.clone()),
             ContextMenu::build(window, cx, move |mut menu, _, cx| {
-                let setter_for_name = |task: DebugTaskDefinition| {
+                let setter_for_name = |task: DebugScenario| {
                     let weak = weak.clone();
                     move |window: &mut Window, cx: &mut App| {
                         weak.update(cx, |this, cx| {
@@ -296,7 +296,7 @@ impl NewSessionModal {
                     }
                 };
 
-                let available_tasks: Vec<DebugTaskDefinition> = workspace
+                let available_tasks: Vec<DebugScenario> = workspace
                     .update(cx, |this, cx| {
                         this.project()
                             .read(cx)
@@ -369,7 +369,7 @@ impl LaunchMode {
 
 #[derive(Clone)]
 struct AttachMode {
-    scenario: DebugScenario,
+    scenario: DebugTaskDefinition,
     attach_picker: Entity<AttachModal>,
 }
 
@@ -380,7 +380,7 @@ impl AttachMode {
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Entity<Self> {
-        let debug_definition = DebugScenario {
+        let debug_definition = DebugTaskDefinition {
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
             tcp_connection: None,

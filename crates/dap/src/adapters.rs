@@ -24,7 +24,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{AttachRequest, DebugRequest, DebugTaskDefinition, LaunchRequest, TcpArgumentsTemplate};
+use task::{AttachRequest, DebugRequest, DebugScenario, LaunchRequest, TcpArgumentsTemplate};
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,7 +122,7 @@ impl TcpArguments {
 /// an optional build step is completed, we turn it's result into a DebugScenario by running a locator (or using a user-provided task).
 /// Finally, a [DebugScenario] has to be turned into a concrete debugger invokation.
 #[derive(Clone, Debug)]
-pub struct DebugScenario {
+pub struct DebugTaskDefinition {
     pub label: String,
     pub adapter: SharedString,
     pub request: DebugRequest,
@@ -138,7 +138,7 @@ pub struct DebugScenario {
     pub stop_on_entry: Option<bool>,
 }
 
-impl DebugScenario {
+impl DebugTaskDefinition {
     pub fn from_proto(payload: proto::DebugScenario) -> Result<Self> {
         let Some(request) = payload.request else {
             return Err(anyhow!("Missing request in debug scenario"));
@@ -187,10 +187,10 @@ impl DebugScenario {
     }
 }
 
-impl TryFrom<DebugTaskDefinition> for DebugScenario {
+impl TryFrom<DebugScenario> for DebugTaskDefinition {
     type Error = anyhow::Error;
 
-    fn try_from(value: DebugTaskDefinition) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: DebugScenario) -> std::result::Result<Self, Self::Error> {
         let request = match value.debugee {
             task::DebugeeDefinition::Locator(_) => {
                 return Err(anyhow!(
@@ -400,7 +400,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugScenario,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -478,7 +478,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugScenario,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
@@ -494,7 +494,7 @@ impl FakeAdapter {
         Self {}
     }
 
-    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+    fn request_args(&self, config: &DebugScenario) -> StartDebuggingRequestArguments {
         use serde_json::json;
         use task::DebugRequest;
 
@@ -530,7 +530,7 @@ impl DebugAdapter for FakeAdapter {
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: &DebugScenario,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -562,7 +562,7 @@ impl DebugAdapter for FakeAdapter {
     async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugTaskDefinition,
+        _: &DebugScenario,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

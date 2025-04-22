@@ -25,7 +25,7 @@ mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git_store::{Repository, RepositoryId};
-use task::DebugTaskDefinition;
+use task::DebugScenario;
 pub mod search_history;
 mod yarn;
 
@@ -40,7 +40,7 @@ use client::{
 use clock::ReplicaId;
 
 use dap::{
-    adapters::{DebugAdapterBinary, DebugScenario, TcpArguments},
+    adapters::{DebugAdapterBinary, DebugTaskDefinition, TcpArguments},
     client::DebugAdapterClient,
 };
 
@@ -1465,7 +1465,7 @@ impl Project {
 
     pub fn start_debug_session(
         &mut self,
-        definition: DebugScenario,
+        definition: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
         let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {

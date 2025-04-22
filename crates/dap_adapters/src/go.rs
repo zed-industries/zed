@@ -1,7 +1,7 @@
-use dap::{StartDebuggingRequestArguments, adapters::DebugScenario};
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
-use task::DebugTaskDefinition;
+use task::DebugScenario;
 
 use crate::*;
 
@@ -10,7 +10,7 @@ pub(crate) struct GoDebugAdapter;
 
 impl GoDebugAdapter {
     const ADAPTER_NAME: &'static str = "Delve";
-    fn request_args(&self, config: &DebugScenario) -> StartDebuggingRequestArguments {
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         let mut args = match &config.request {
             dap::DebugRequest::Attach(attach_config) => {
                 json!({
@@ -46,7 +46,7 @@ impl DebugAdapter for GoDebugAdapter {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugScenario,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -79,7 +79,7 @@ impl DebugAdapter for GoDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugScenario,
+        config: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

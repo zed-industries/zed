@@ -6,7 +6,7 @@ use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
-use task::{DebugTaskDefinition, TaskTemplate};
+use task::{DebugScenario, TaskTemplate};
 
 pub(crate) struct CargoLocator;
 
