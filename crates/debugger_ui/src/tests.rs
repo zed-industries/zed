@@ -13,6 +13,7 @@ use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
 mod attach_modal;
 mod console;
+mod dap_logger;
 mod debugger_panel;
 mod module_list;
 mod stack_frame_list;

@@ -56,6 +56,7 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
+debugger_tools = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

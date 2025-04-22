@@ -41,7 +41,7 @@ struct DapLogView {
     _subscriptions: Vec<Subscription>,
 }
 
-struct LogStore {
+pub struct LogStore {
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     debug_clients: HashMap<SessionId, DebugAdapterState>,
     rpc_tx: UnboundedSender<(SessionId, IoKind, String)>,
@@ -101,7 +101,7 @@ impl DebugAdapterState {
 }
 
 impl LogStore {
-    fn new(cx: &Context<Self>) -> Self {
+    pub fn new(cx: &Context<Self>) -> Self {
         let (rpc_tx, mut rpc_rx) = unbounded::<(SessionId, IoKind, String)>();
         cx.spawn(async move |this, cx| {
             while let Some((client_id, io_kind, message)) = rpc_rx.next().await {
