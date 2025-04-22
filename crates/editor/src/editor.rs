@@ -16150,7 +16150,7 @@ impl Editor {
         self.show_scrollbars = show_scrollbars;
         cx.notify();
     }
-    
+
     pub fn set_allow_scrolling(&mut self, allow_scrolling: bool, cx: &mut Context<Self>) {
         self.allow_scrolling = allow_scrolling;
         cx.notify();

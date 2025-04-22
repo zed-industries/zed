@@ -135,13 +135,7 @@ impl Tool for EditFileTool {
             window
                 .update(cx, |_, window, cx| {
                     cx.new(|cx| {
-                        EditFileToolCard::new(
-                            input.path.clone(),
-                            input.display_description.clone(),
-                            project.clone(),
-                            window,
-                            cx,
-                        )
+                        EditFileToolCard::new(input.path.clone(), project.clone(), window, cx)
                     })
                 })
                 .ok()
@@ -268,13 +262,12 @@ impl Tool for EditFileTool {
 
 pub struct EditFileToolCard {
     path: PathBuf,
-    description: String,
     editor: Entity<Editor>,
     multibuffer: Entity<MultiBuffer>,
     project: Entity<Project>,
     diff_task: Option<Task<Result<()>>>,
-    preview: bool,
-    full_height: bool,
+    preview_expanded: bool,
+    full_height_expanded: bool,
     index: usize,
 }
 
@@ -292,13 +285,7 @@ impl EditFileToolCard {
         })
     }
 
-    fn new(
-        path: PathBuf,
-        description: String,
-        project: Entity<Project>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Self {
+    fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
         let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
@@ -325,13 +312,12 @@ impl EditFileToolCard {
         });
         Self {
             path,
-            description,
             project,
             editor,
             multibuffer,
             diff_task: None,
-            preview: true,
-            full_height: false,
+            preview_expanded: true,
+            full_height_expanded: false,
             index: Self::next_index(),
         }
     }
@@ -382,7 +368,7 @@ impl ToolCard for EditFileToolCard {
         let failed = matches!(status, ToolUseStatus::Error(_));
 
         let path_label_button = h_flex()
-            .id(("code-block-header-label", self.index))
+            .id(Uuid::new_v4())
             .w_full()
             .max_w_full()
             .px_1()
@@ -410,6 +396,7 @@ impl ToolCard for EditFileToolCard {
                             .color(Color::Ignored),
                     ),
             )
+            .on_click({ move |_, window, cx| {} })
             .into_any_element();
 
         let codeblock_header_bg = cx
@@ -425,11 +412,6 @@ impl ToolCard for EditFileToolCard {
             .justify_between()
             .rounded_t_md()
             .when(!failed, |header| header.bg(codeblock_header_bg))
-            .when(!failed && self.preview, |header| {
-                header
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border.opacity(0.6))
-            })
             .child(path_label_button)
             .map(|container| {
                 if failed {
@@ -440,12 +422,17 @@ impl ToolCard for EditFileToolCard {
                     )
                 } else {
                     container.child(
-                        Disclosure::new(("edit-file-disclosure", self.index), self.preview)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown)
-                            .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                this.preview = !this.preview;
-                            })),
+                        Disclosure::new(
+                            ("edit-file-disclosure", self.index),
+                            self.preview_expanded,
+                        )
+                        .opened_icon(IconName::ChevronUp)
+                        .closed_icon(IconName::ChevronDown)
+                        .on_click(cx.listener(
+                            move |this, _event, _window, _cx| {
+                                this.preview_expanded = !this.preview_expanded;
+                            },
+                        )),
                     )
                 }
             });
@@ -462,28 +449,33 @@ impl ToolCard for EditFileToolCard {
             .rounded_lg()
             .overflow_hidden()
             .child(codeblock_header)
-            .when(!failed && self.preview, |card| {
+            .when(!failed && self.preview_expanded, |card| {
                 card.child(
                     div()
+                        .px_1()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border.opacity(0.6))
+                        .bg(cx.theme().colors().editor_background)
                         .relative()
                         .map(|buffer_container| {
-                            if self.full_height {
+                            if self.full_height_expanded {
                                 buffer_container.h_full()
                             } else {
                                 buffer_container.max_h_64()
                             }
                         })
-                        .child(editor)
+                        .child(div().pl_1().child(editor))
                         .child(
                             h_flex()
                                 .id("full_height_button")
-                                .absolute()
-                                .bottom_0()
+                                .when(!self.full_height_expanded, |button| {
+                                    button.absolute().bottom_0()
+                                })
                                 .h_4()
                                 .w_full()
                                 .justify_center()
                                 .rounded_b_md()
-                                .bg(cx.theme().colors().editor_background.opacity(0.8))
+                                .bg(cx.theme().colors().editor_background.opacity(0.95))
                                 .hover(|style| style.bg(cx.theme().colors().editor_background))
                                 .cursor_pointer()
                                 .child(
@@ -492,7 +484,7 @@ impl ToolCard for EditFileToolCard {
                                         .color(Color::Muted),
                                 )
                                 .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                    this.full_height = !this.full_height;
+                                    this.full_height_expanded = !this.full_height_expanded;
                                 })),
                         ),
                 )
