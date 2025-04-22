@@ -789,6 +789,7 @@ pub struct Editor {
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_scrollbars: bool,
+    allow_scrolling: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -1565,6 +1566,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             show_scrollbars: true,
+            allow_scrolling: true,
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
@@ -16146,6 +16148,11 @@ impl Editor {
 
     pub fn set_show_scrollbars(&mut self, show_scrollbars: bool, cx: &mut Context<Self>) {
         self.show_scrollbars = show_scrollbars;
+        cx.notify();
+    }
+    
+    pub fn set_allow_scrolling(&mut self, allow_scrolling: bool, cx: &mut Context<Self>) {
+        self.allow_scrolling = allow_scrolling;
         cx.notify();
     }
 

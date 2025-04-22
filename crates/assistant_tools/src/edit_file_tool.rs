@@ -314,6 +314,7 @@ impl EditFileToolCard {
             );
             editor.set_show_scrollbars(false, cx);
             editor.set_show_expand_excerpt_buttons(false, cx);
+            editor.set_allow_scrolling(false, cx);
             editor.set_show_gutter(false, cx);
             editor.disable_inline_diagnostics();
             editor.set_show_breakpoints(false, cx);
