@@ -848,49 +848,22 @@ async fn handle_customer_subscription_event(
             .clone()
             .ok_or_else(|| anyhow!("LLM DB not initialized"))?;
 
-        dbg!(&existing_subscription.kind);
+        let new_period_start_at =
+            chrono::DateTime::from_timestamp(subscription.current_period_start, 0)
+                .ok_or_else(|| anyhow!("No subscription period start"))?;
+        let new_period_end_at =
+            chrono::DateTime::from_timestamp(subscription.current_period_end, 0)
+                .ok_or_else(|| anyhow!("No subscription period end"))?;
 
-        match existing_subscription.kind {
-            Some(SubscriptionKind::ZedProTrial) => {
-                let trial_period_start_at = existing_subscription
-                    .current_period_start_at()
-                    .ok_or_else(|| anyhow!("No trial subscription period start"))?;
-                let trial_period_end_at = existing_subscription
-                    .current_period_end_at()
-                    .ok_or_else(|| anyhow!("No trial subscription period end"))?;
-
-                let new_period_start_at =
-                    chrono::DateTime::from_timestamp(subscription.current_period_start, 0)
-                        .ok_or_else(|| anyhow!("No subscription period start"))?;
-                let new_period_end_at =
-                    chrono::DateTime::from_timestamp(subscription.current_period_end, 0)
-                        .ok_or_else(|| anyhow!("No subscription period end"))?;
-
-                dbg!(&trial_period_start_at, &trial_period_end_at);
-                dbg!(&new_period_start_at, &new_period_end_at);
-                let existing_usage = llm_db
-                    .get_subscription_usage_for_period(
-                        billing_customer.user_id,
-                        trial_period_start_at,
-                        trial_period_end_at,
-                    )
-                    .await?;
-                dbg!(&existing_usage);
-                if let Some(existing_usage) = existing_usage {
-                    llm_db
-                        .create_subscription_usage(
-                            billing_customer.user_id,
-                            new_period_start_at,
-                            new_period_end_at,
-                            subscription_kind.unwrap_or(existing_usage.plan),
-                            existing_usage.model_requests,
-                            existing_usage.edit_predictions,
-                        )
-                        .await?;
-                }
-            }
-            _ => {}
-        };
+        llm_db
+            .transfer_existing_subscription_usage(
+                billing_customer.user_id,
+                &existing_subscription,
+                subscription_kind,
+                new_period_start_at,
+                new_period_end_at,
+            )
+            .await?;
 
         app.db
             .update_billing_subscription(
