@@ -164,6 +164,32 @@ impl RenderOnce for ContextPill {
                             })
                             .when_some(context.tooltip.as_ref(), |element, tooltip| {
                                 element.tooltip(Tooltip::text(tooltip.clone()))
+                            })
+                            .map(|element| match &context.status {
+                                ContextStatus::Ready => element
+                                    .when_some(
+                                        context.show_preview.as_ref(),
+                                        |element, show_preview| {
+                                            element.hoverable_tooltip({
+                                                let show_preview = show_preview.clone();
+                                                move |window, cx| show_preview(window, cx)
+                                            })
+                                        },
+                                    )
+                                    .into_any(),
+                                ContextStatus::Loading { message } => element
+                                    .tooltip(ui::Tooltip::text(message.clone()))
+                                    .with_animation(
+                                        "pulsating-ctx-pill",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.4, 0.8)),
+                                        |label, delta| label.opacity(delta),
+                                    )
+                                    .into_any_element(),
+                                ContextStatus::Error { message } => element
+                                    .tooltip(ui::Tooltip::text(message.clone()))
+                                    .into_any_element(),
                             }),
                     )
                     .when_some(on_remove.as_ref(), |element, on_remove| {
@@ -184,29 +210,7 @@ impl RenderOnce for ContextPill {
                             .cursor_pointer()
                             .on_click(move |event, window, cx| on_click(event, window, cx))
                     })
-                    .map(|element| match &context.status {
-                        ContextStatus::Ready => element
-                            .when_some(context.show_preview.as_ref(), |element, show_preview| {
-                                element.hoverable_tooltip({
-                                    let show_preview = show_preview.clone();
-                                    move |window, cx| show_preview(window, cx)
-                                })
-                            })
-                            .into_any(),
-                        ContextStatus::Loading { message } => element
-                            .tooltip(ui::Tooltip::text(message.clone()))
-                            .with_animation(
-                                "pulsating-ctx-pill",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.opacity(delta),
-                            )
-                            .into_any_element(),
-                        ContextStatus::Error { message } => element
-                            .tooltip(ui::Tooltip::text(message.clone()))
-                            .into_any_element(),
-                    })
+                    .into_any_element()
             }
             ContextPill::Suggested {
                 name,
