@@ -10,9 +10,10 @@ use smallvec::SmallVec;
 use std::{collections::HashMap, fmt, sync::Arc};
 
 /// An image cache element, all its child img elements will use the cache specified by this element.
-pub fn image_cache<I: ImageCache>(image_cache: &Entity<I>) -> ImageCacheElement {
+/// Note that this could as simple as passing an `Entity<T: ImageCache>`
+pub fn image_cache(image_cache_provider: impl ImageCacheProvider) -> ImageCacheElement {
     ImageCacheElement {
-        image_cache: image_cache.clone().into(),
+        image_cache_provider: Box::new(image_cache_provider),
         style: StyleRefinement::default(),
         children: SmallVec::default(),
     }
@@ -68,7 +69,7 @@ mod any_image_cache {
 
 /// An image cache element.
 pub struct ImageCacheElement {
-    image_cache: AnyImageCache,
+    image_cache_provider: Box<dyn ImageCacheProvider>,
     style: StyleRefinement,
     children: SmallVec<[AnyElement; 2]>,
 }
@@ -107,7 +108,8 @@ impl Element for ImageCacheElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        window.with_image_cache(self.image_cache.clone(), |window| {
+        let image_cache = self.image_cache_provider.provide(window, cx);
+        window.with_image_cache(image_cache, |window| {
             let child_layout_ids = self
                 .children
                 .iter_mut()
@@ -142,7 +144,8 @@ impl Element for ImageCacheElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        window.with_image_cache(self.image_cache.clone(), |window| {
+        let image_cache = self.image_cache_provider.provide(window, cx);
+        window.with_image_cache(image_cache, |window| {
             for child in &mut self.children {
                 child.paint(window, cx);
             }
@@ -150,22 +153,39 @@ impl Element for ImageCacheElement {
     }
 }
 
-type ImageLoadingTask = Shared<Task<Result<Arc<RenderImage>, ImageCacheError>>>;
+/// An image loading task associated with an image cache.
+pub type ImageLoadingTask = Shared<Task<Result<Arc<RenderImage>, ImageCacheError>>>;
 
-enum CacheItem {
+/// An image cache item
+pub enum ImageCacheItem {
+    /// The associated image is currently loading
     Loading(ImageLoadingTask),
+    /// This item has loaded an image.
     Loaded(Result<Arc<RenderImage>, ImageCacheError>),
 }
 
-impl CacheItem {
-    fn get(&mut self) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+impl std::fmt::Debug for ImageCacheItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let status = match self {
+            ImageCacheItem::Loading(_) => &"Loading...".to_string(),
+            ImageCacheItem::Loaded(render_image) => &format!("{:?}", render_image),
+        };
+        f.debug_struct("ImageCacheItem")
+            .field("status", status)
+            .finish()
+    }
+}
+
+impl ImageCacheItem {
+    /// Attempt to get the image from the cache item.
+    pub fn get(&mut self) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            CacheItem::Loading(task) => {
+            ImageCacheItem::Loading(task) => {
                 let res = task.now_or_never()?;
-                *self = CacheItem::Loaded(res.clone());
+                *self = ImageCacheItem::Loaded(res.clone());
                 Some(res)
             }
-            CacheItem::Loaded(res) => Some(res.clone()),
+            ImageCacheItem::Loaded(res) => Some(res.clone()),
         }
     }
 }
@@ -183,8 +203,21 @@ pub trait ImageCache: 'static {
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>>;
 }
 
+/// An object that can create an ImageCache during the render phase.
+/// See the ImageCache trait for more information.
+pub trait ImageCacheProvider: 'static {
+    /// Called during the request_layout phase to create an ImageCache.
+    fn provide(&mut self, _window: &mut Window, _cx: &mut App) -> AnyImageCache;
+}
+
+impl<T: ImageCache> ImageCacheProvider for Entity<T> {
+    fn provide(&mut self, _window: &mut Window, _cx: &mut App) -> AnyImageCache {
+        self.clone().into()
+    }
+}
+
 /// An implementation of ImageCache, that uses an LRU caching strategy to unload images when the cache is full
-pub struct HashMapImageCache(HashMap<u64, CacheItem>);
+pub struct HashMapImageCache(HashMap<u64, ImageCacheItem>);
 
 impl fmt::Debug for HashMapImageCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -227,7 +260,7 @@ impl HashMapImageCache {
 
         let fut = AssetLogger::<ImageAssetLoader>::load(source.clone(), cx);
         let task = cx.background_executor().spawn(fut).shared();
-        self.0.insert(hash, CacheItem::Loading(task.clone()));
+        self.0.insert(hash, ImageCacheItem::Loading(task.clone()));
 
         let entity = window.current_view();
         window
