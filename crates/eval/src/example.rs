@@ -287,9 +287,9 @@ impl Example {
                     "language_extension field is required in base.toml when `require_lsp == true`",
                 )?;
 
-                // Open a file that matches the language to cause LSP to start.
-                let language_file = worktree.read_with(cx, |worktree, _cx| {
-                    worktree
+                // Try to find a file with the specified language extension
+                let language_file = worktree.read_with(cx, |worktree, _cx| -> Result<ProjectPath> {
+                    let existing_file = worktree
                         .files(false, 0)
                         .find_map(|e| {
                             if e.path.clone().extension().and_then(|ext| ext.to_str())
@@ -302,8 +302,28 @@ impl Example {
                             } else {
                                 None
                             }
+                        });
+                    
+                    if let Some(file) = existing_file {
+                        Ok(file)
+                    } else {
+                        // Create a temporary file to trigger the LSP
+                        let temp_file_path = format!("temp_file_for_lsp.{}", language_extension);
+                        println!("{} Creating temporary file {} to start language server", this.log_prefix, temp_file_path);
+                        
+                        let path = std::path::Path::new(&temp_file_path).to_path_buf();
+                        let worktree_path = worktree.as_local().unwrap().abs_path().join(&path);
+                        std::fs::write(&worktree_path, "// Temporary file to initialize language server").context(format!("Failed to create temporary file at {}", worktree_path.display()))?;
+                        
+                        // We don't need to manually trigger a rescan - the file system watcher
+                        // will detect the new file automatically. Just give it a moment.
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        
+                        Ok(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: Arc::from(path),
                         })
-                        .context("Failed to find a file for example language")
+                    }
                 })??;
 
                 let open_language_file_buffer_task = project.update(cx, |project, cx| {
@@ -317,6 +337,11 @@ impl Example {
                 })?;
 
                 wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
+
+                // Note: We don't delete the temporary file here because:
+                // 1. It might be useful for debugging
+                // 2. The worktree is ephemeral and will be cleaned up anyway
+                // 3. Removing it could cause issues with the LSP
 
                 Some((lsp_open_handle, language_file_buffer))
             } else {
