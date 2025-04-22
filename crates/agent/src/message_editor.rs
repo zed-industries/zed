@@ -269,8 +269,11 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
+        // TODO: Limit refresh based on which buffers have changed since the last refresh. Using
+        // `None` here causes all context to be refreshed.
+        let changed_buffers = None;
         let refresh_task =
-            refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
+            refresh_context_store_text(self.context_store.clone(), changed_buffers, cx);
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();

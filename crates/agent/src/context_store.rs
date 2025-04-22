@@ -864,7 +864,7 @@ fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
 
 pub fn refresh_context_store_text(
     context_store: Entity<ContextStore>,
-    changed_buffers: &HashSet<Entity<Buffer>>,
+    changed_buffers: Option<&HashSet<Entity<Buffer>>>,
     cx: &App,
 ) -> impl Future<Output = Vec<ContextId>> + use<> {
     let mut tasks = Vec::new();
@@ -875,22 +875,23 @@ pub fn refresh_context_store_text(
         let task = maybe!({
             match context {
                 AssistantContext::File(file_context) => {
-                    if changed_buffers.is_empty()
-                        || changed_buffers.contains(&file_context.context_buffer.buffer)
-                    {
+                    if changed_buffers.map_or(true, |changed_buffers| {
+                        changed_buffers.contains(&file_context.context_buffer.buffer)
+                    }) {
                         let context_store = context_store.clone();
                         return refresh_file_text(context_store, file_context, cx);
                     }
                 }
                 AssistantContext::Directory(directory_context) => {
                     let directory_path = directory_context.project_path(cx);
-                    let should_refresh = changed_buffers.is_empty()
-                        || changed_buffers.iter().any(|buffer| {
+                    let should_refresh = changed_buffers.map_or(true, |changed_buffers| {
+                        changed_buffers.iter().any(|buffer| {
                             let Some(buffer_path) = buffer.read(cx).project_path(cx) else {
                                 return false;
                             };
                             buffer_path.starts_with(&directory_path)
-                        });
+                        })
+                    });
 
                     if should_refresh {
                         let context_store = context_store.clone();
@@ -898,26 +899,24 @@ pub fn refresh_context_store_text(
                     }
                 }
                 AssistantContext::Symbol(symbol_context) => {
-                    if changed_buffers.is_empty()
-                        || changed_buffers.contains(&symbol_context.context_symbol.buffer)
-                    {
+                    if changed_buffers.map_or(true, |changed_buffers| {
+                        changed_buffers.contains(&symbol_context.context_symbol.buffer)
+                    }) {
                         let context_store = context_store.clone();
                         return refresh_symbol_text(context_store, symbol_context, cx);
                     }
                 }
                 AssistantContext::Excerpt(excerpt_context) => {
-                    if changed_buffers.is_empty()
-                        || changed_buffers.contains(&excerpt_context.context_buffer.buffer)
-                    {
+                    if changed_buffers.map_or(true, |changed_buffers| {
+                        changed_buffers.contains(&excerpt_context.context_buffer.buffer)
+                    }) {
                         let context_store = context_store.clone();
                         return refresh_excerpt_text(context_store, excerpt_context, cx);
                     }
                 }
                 AssistantContext::Thread(thread_context) => {
-                    if changed_buffers.is_empty() {
-                        let context_store = context_store.clone();
-                        return Some(refresh_thread_text(context_store, thread_context, cx));
-                    }
+                    let context_store = context_store.clone();
+                    return Some(refresh_thread_text(context_store, thread_context, cx));
                 }
                 // Intentionally omit refreshing fetched URLs as it doesn't seem all that useful,
                 // and doing the caching properly could be tricky (unless it's already handled by
