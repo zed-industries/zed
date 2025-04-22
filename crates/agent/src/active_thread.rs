@@ -1696,7 +1696,7 @@ impl ActiveThread {
         let message_content =
             has_content.then(|| {
                 v_flex()
-                    .gap_1p5()
+                    .gap_1()
                     .when(!message_is_empty, |parent| {
                         parent.child(
                             if let Some(edit_message_editor) = edit_message_editor.clone() {
@@ -1719,7 +1719,6 @@ impl ActiveThread {
                                     .on_action(cx.listener(Self::cancel_editing_message))
                                     .on_action(cx.listener(Self::confirm_editing_message))
                                     .min_h_6()
-                                    .pt_1()
                                     .child(EditorElement::new(
                                         &edit_message_editor,
                                         EditorStyle {
@@ -1797,7 +1796,7 @@ impl ActiveThread {
                         .border_1()
                         .border_color(colors.border)
                         .shadow_md()
-                        .child(div().py_2().px_2p5().children(message_content))
+                        .child(div().p_2().children(message_content))
                         .child(
                             h_flex()
                                 .p_1()
@@ -2529,7 +2528,7 @@ impl ActiveThread {
             .upgrade()
             .map(|workspace| workspace.read(cx).app_state().fs.clone());
         let needs_confirmation = matches!(&tool_use.status, ToolUseStatus::NeedsConfirmation);
-        let edit_tools = tool_use.needs_confirmation;
+        let needs_confirmation_tools = tool_use.needs_confirmation;
 
         let status_icons = div().child(match &tool_use.status {
             ToolUseStatus::NeedsConfirmation => {
@@ -2627,33 +2626,33 @@ impl ActiveThread {
                         )),
                 ),
                 ToolUseStatus::InputStillStreaming | ToolUseStatus::Running => container.child(
-                    results_content_container().child(
-                        h_flex()
-                            .gap_1()
-                            .pb_1()
-                            .border_t_1()
-                            .border_color(self.tool_card_border_color(cx))
-                            .child(
-                                Icon::new(IconName::ArrowCircle)
-                                    .size(IconSize::Small)
-                                    .color(Color::Accent)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(Transformation::rotate(percentage(
-                                                delta,
-                                            )))
-                                        },
-                                    ),
-                            )
-                            .child(
-                                Label::new("Running…")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted)
-                                    .buffer_font(cx),
-                            ),
-                    ),
+                    results_content_container()
+                        .border_t_1()
+                        .border_color(self.tool_card_border_color(cx))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Accent)
+                                        .with_animation(
+                                            "arrow-circle",
+                                            Animation::new(Duration::from_secs(2)).repeat(),
+                                            |icon, delta| {
+                                                icon.transform(Transformation::rotate(percentage(
+                                                    delta,
+                                                )))
+                                            },
+                                        ),
+                                )
+                                .child(
+                                    Label::new("Running…")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted)
+                                        .buffer_font(cx),
+                                ),
+                        ),
                 ),
                 ToolUseStatus::Error(_) => container.child(
                     results_content_container()
@@ -2717,8 +2716,8 @@ impl ActiveThread {
                 ))
         };
 
-        v_flex().gap_1().mb_3().map(|element| {
-            if !edit_tools {
+        v_flex().gap_1().mb_2().map(|element| {
+            if !needs_confirmation_tools {
                 element.child(
                     v_flex()
                         .child(
