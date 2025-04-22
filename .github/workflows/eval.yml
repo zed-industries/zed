@@ -62,6 +62,9 @@ jobs:
           mkdir -p ./../.cargo
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
+      - name: Compile eval
+        run: cargo build --package=eval
+
       - name: Run eval
         run: cargo run --package=eval
 
