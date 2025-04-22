@@ -1,4 +1,4 @@
-use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent};
+use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
@@ -8,8 +8,8 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Subscription, Task, WeakEntity, Window, prelude::*,
+    Action, AnyElement, AnyView, App, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 use language::{Capability, DiskState, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
@@ -650,6 +650,11 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
+
+    if agent_diff.read(cx).thread.read(cx).is_generating() {
+        return Empty.into_any();
+    }
+
     h_flex()
         .h(line_height)
         .mr_0p5()
@@ -857,8 +862,12 @@ impl Render for AgentDiffToolbar {
             None => return div(),
         };
 
-        let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
+        let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
+        if is_generating {
+            return div().w_24().child(AnimatedLabel::new("Generating"));
+        }
 
+        let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
         if is_empty {
             return div();
         }
