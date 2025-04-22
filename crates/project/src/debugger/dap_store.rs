@@ -9,7 +9,7 @@ use crate::{
     terminals::{SshCommand, wrap_for_ssh},
     worktree_store::WorktreeStore,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
@@ -95,14 +95,12 @@ pub struct LocalDapStore {
 
 pub struct SshDapStore {
     upstream_client: AnyProtoClient,
-    ssh_client: Entity<SshRemoteClient>,
     upstream_project_id: u64,
 }
 
 pub struct DapStore {
     mode: DapStoreMode,
     downstream_client: Option<(AnyProtoClient, u64)>,
-    worktree_store: Entity<WorktreeStore>,
     breakpoint_store: Entity<BreakpointStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
     next_session_id: u32,
@@ -208,7 +206,6 @@ impl DapStore {
             start_debugging_tx,
             next_session_id: 0,
             downstream_client: None,
-            worktree_store,
             breakpoint_store,
             sessions: Default::default(),
         }
@@ -324,70 +321,23 @@ impl DapStore {
         }
     }
 
-    pub fn add_remote_client(
-        &mut self,
-        definition: DebugTaskDefinition,
-        cx: &mut Context<Self>,
-    ) {
-        if let DapStoreMode::Ssh(remote) = &self.mode {
-            self.sessions.insert(
-                session_id,
-                cx.new(|_| {
-                    debugger::session::Session::remote(
-                        session_id,
-                        remote.upstream_client.clone(),
-                        remote.upstream_project_id,
-                        ignore.unwrap_or(false),
-                    )
-                }),
-            );
-        } else {
-            debug_assert!(false);
-        }
-    }
-
-    pub fn run_debug_locator(
-        &mut self,
-        template: DebugTaskTemplate,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<DebugTaskDefinition>> {
-        let Some(locator_name) = template.locator else {
-            return Task::ready(Ok(template.definition));
-        };
-
-        match &self.mode {
-            DapStoreMode::Local(local) => {
-                if let Some(locator) = local.locators.get(&locator_name).cloned() {
-                    cx.background_spawn(
-                        async move { locator.run_locator(template.definition).await },
-                    )
-                } else {
-                    Task::ready(Err(anyhow!("Couldn't find locator {}", locator_name)))
-                }
-            }
-            DapStoreMode::Ssh(ssh) => {
-                let request = ssh.upstream_client.request(proto::RunDebugLocator {
-                    project_id: ssh.upstream_project_id,
-                    locator: locator_name,
-                    task: Some(template.definition.to_proto()),
-                });
-                cx.background_spawn(async move {
-                    let response = request.await?;
-                    DebugTaskDefinition::from_proto(response)
-                })
-            }
-            DapStoreMode::Collab => {
-                Task::ready(Err(anyhow!("Debugging is not yet supported via collab")))
-            }
-        }
-    }
-
-    fn as_local(&self) -> Option<&LocalDapStore> {
-        match &self.mode {
-            DapStoreMode::Local(local_dap_store) => Some(local_dap_store),
-            _ => None,
-        }
-    }
+    // pub fn add_remote_client(&mut self, definition: DebugTaskDefinition, cx: &mut Context<Self>) {
+    //     if let DapStoreMode::Ssh(remote) = &self.mode {
+    //         self.sessions.insert(
+    //             session_id,
+    //             cx.new(|_| {
+    //                 debugger::session::Session::remote(
+    //                     session_id,
+    //                     remote.upstream_client.clone(),
+    //                     remote.upstream_project_id,
+    //                     ignore.unwrap_or(false),
+    //                 )
+    //             }),
+    //         );
+    //     } else {
+    //         debug_assert!(false);
+    //     }
+    // }
 
     pub fn start_session(
         &mut self,
@@ -395,7 +345,11 @@ impl DapStore {
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> Result<Entity<Session>> {
-        let Some(worktree) = self.worktree_store.read(cx).visible_worktrees(cx).next() else {
+        let Some(local) = self.as_local() else {
+            bail!("Can't start a session from non local dap store");
+        };
+
+        let Some(worktree) = local.worktree_store.read(cx).visible_worktrees(cx).next() else {
             return Err(anyhow!("Failed to find a worktree"));
         };
         let session_id = SessionId(util::post_inc(&mut self.next_session_id));
@@ -937,142 +891,6 @@ impl DapStore {
             .await?;
         Ok(binary.to_proto())
     }
-}
-
-    async fn handle_run_debug_locator(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::RunDebugLocator>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::DebugTaskDefinition> {
-        let template = DebugTaskTemplate {
-            locator: Some(envelope.payload.locator),
-            definition: DebugTaskDefinition::from_proto(
-                envelope
-                    .payload
-                    .task
-                    .ok_or_else(|| anyhow!("missing definition"))?,
-            )?,
-        };
-        let definition = this
-            .update(&mut cx, |this, cx| this.run_debug_locator(template, cx))?
-            .await?;
-        Ok(definition.to_proto())
-    }
-
-<<<<<<< HEAD
-    async fn handle_get_debug_adapter_binary(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GetDebugAdapterBinary>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::DebugAdapterBinary> {
-        let definition = DebugTaskDefinition::from_proto(
-            envelope
-                .payload
-                .task
-                .ok_or_else(|| anyhow!("missing definition"))?,
-        )?;
-        let binary = this
-            .update(&mut cx, |this, cx| {
-                this.get_debug_adapter_binary(definition, cx)
-            })?
-            .await?;
-        Ok(binary.to_proto())
-    }
-=======
-        // we have to insert the session early, so we can handle reverse requests
-        // that need the session to be available
-        this.update(cx, |store, cx| {
-            store.sessions.insert(session_id, session.clone());
-            cx.emit(DapStoreEvent::DebugClientStarted(session_id));
-            cx.notify();
-        })?;
-        let seq_result = async || {
-            session
-                .update(cx, |session, cx| session.request_initialize(cx))?
-                .await?;
-
-            session
-                .update(cx, |session, cx| {
-                    session.initialize_sequence(initialized_rx, this.clone(), cx)
-                })?
-                .await
-        };
-        match seq_result().await {
-            Ok(_) => {}
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    cx.emit(DapStoreEvent::Notification(error.to_string()));
-                    this.shutdown_session(session_id, cx)
-                })?
-                .await
-                .log_err();
-
-                return Err(error);
-            }
-        }
-
-        this.update(cx, |_, cx| {
-            cx.subscribe(
-                &session,
-                move |this: &mut DapStore, session, event: &SessionStateEvent, cx| match event {
-                    SessionStateEvent::Shutdown => {
-                        this.shutdown_session(session_id, cx).detach_and_log_err(cx);
-                    }
-                    SessionStateEvent::Restart => {
-                        let mut curr_session = session;
-                        while let Some(parent_id) = curr_session.read(cx).parent_id() {
-                            if let Some(parent_session) = this.sessions.get(&parent_id).cloned() {
-                                curr_session = parent_session;
-                            } else {
-                                log::error!("Failed to get parent session from parent session id");
-                                break;
-                            }
-                        }
-
-                        let Some((config, binary)) = curr_session.read_with(cx, |session, _| {
-                            session
-                                .configuration()
-                                .map(|config| (config, session.root_binary().clone()))
-                        }) else {
-                            log::error!("Failed to get debug config from session");
-                            return;
-                        };
-
-                        let session_id = curr_session.read(cx).session_id();
-
-                        let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
-
-                        let worktree = worktree.clone();
-                        cx.spawn(async move |this, cx| {
-                            task.await;
-
-                            this.update(cx, |this, cx| {
-                                this.sessions.remove(&session_id);
-                                this.new_session(
-                                    binary.as_ref().clone(),
-                                    config,
-                                    worktree,
-                                    None,
-                                    cx,
-                                )
-                            })?
-                            .1
-                            .await?;
-
-                            anyhow::Ok(())
-                        })
-                        .detach_and_log_err(cx);
-                    }
-                },
-            )
-            .detach();
-            cx.emit(DapStoreEvent::DebugSessionInitialized(session_id));
-        })?;
-
-        Ok(session)
-    });
-    task
->>>>>>> origin/main
 }
 
 #[derive(Clone)]

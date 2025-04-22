@@ -108,11 +108,7 @@ impl NewSessionModal {
             return;
         };
         let config = self.debug_config(cx, debugger);
-
-        let _ = self.debug_panel.update(cx, |panel, cx| {
-            panel.past_debug_definition = Some(config.clone());
-            panel.start_session(config, window, cx)
-        });
+        let workspace = self.workspace.clone();
 
         let task_contexts = workspace
             .update(cx, |workspace, cx| {
@@ -120,7 +116,7 @@ impl NewSessionModal {
             })
             .ok();
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let task_context = if let Some(task) = task_contexts {
                 task.await
                     .active_worktree_context
@@ -128,9 +124,8 @@ impl NewSessionModal {
             } else {
                 task::TaskContext::default()
             };
-            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
 
-            let task = project.update(cx, |this, cx| {
+            workspace.update_in(cx, |this, window, cx| {
                 let template = DebugTaskTemplate {
                     locator: None,
                     definition: config.clone(),
@@ -140,23 +135,18 @@ impl NewSessionModal {
                     .resolve_task("debug_task", &task_context)
                     .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
                 {
-                    this.start_debug_session(debug_config.definition, cx)
+                    this.start_debug_session(debug_config.definition, window, cx)
                 } else {
-                    this.start_debug_session(config, cx)
+                    this.start_debug_session(config, window, cx)
                 }
             })?;
-            let spawn_result = task.await;
-            if spawn_result.is_ok() {
-                this.update(cx, |_, cx| {
-                    cx.emit(DismissEvent);
-                })
-                .ok();
-            }
-            spawn_result?;
+            this.update(cx, |_, cx| {
+                cx.emit(DismissEvent);
+            })
+            .ok();
             anyhow::Result::<_, anyhow::Error>::Ok(())
         })
         .detach_and_log_err(cx);
-        Ok(())
     }
 
     fn update_attach_picker(

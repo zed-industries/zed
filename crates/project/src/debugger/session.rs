@@ -153,11 +153,16 @@ impl LocalMode {
         binary: DebugAdapterBinary,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         cx: AsyncApp,
-<<<<<<< HEAD
     ) -> Result<Self> {
         let message_handler = Box::new(move |message| {
             messages_tx.unbounded_send(message).ok();
         });
+
+        let root_binary = if let Some(parent_session) = parent_session.as_ref() {
+            Some(parent_session.read_with(&cx, |session, _| session.root_binary().clone())?)
+        } else {
+            None
+        };
 
         let client = Arc::new(
             if let Some(client) = parent_session
@@ -169,58 +174,18 @@ impl LocalMode {
                     .await?
             } else {
                 DebugAdapterClient::start(session_id, binary.clone(), message_handler, cx.clone())
-=======
-    ) -> Task<Result<Self>> {
-        cx.spawn(async move |cx| {
-            let message_handler = Box::new(move |message| {
-                messages_tx.unbounded_send(message).ok();
-            });
-
-            let root_binary = if let Some(parent_session) = parent_session.as_ref() {
-                Some(parent_session.read_with(cx, |session, _| session.root_binary().clone())?)
-            } else {
-                None
-            };
-
-            let client = Arc::new(
-                if let Some(client) = parent_session
-                    .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
-                    .flatten()
-                {
-                    client
-                        .reconnect(session_id, binary.clone(), message_handler, cx.clone())
-                        .await?
-                } else {
-                    DebugAdapterClient::start(
-                        session_id,
-                        binary.clone(),
-                        message_handler,
-                        cx.clone(),
-                    )
->>>>>>> origin/main
                     .await
                     .with_context(|| "Failed to start communication with debug adapter")?
             },
         );
 
-<<<<<<< HEAD
         Ok(Self {
             client,
             breakpoint_store,
             worktree,
             tmp_breakpoint: None,
+            root_binary,
             binary,
-=======
-            Ok(Self {
-                client,
-                breakpoint_store,
-                worktree,
-                tmp_breakpoint: None,
-                definition: config,
-                root_binary,
-                binary,
-            })
->>>>>>> origin/main
         })
     }
 
@@ -857,13 +822,16 @@ impl Session {
     }
 
     pub(crate) fn root_binary(&self) -> Arc<DebugAdapterBinary> {
-        let Mode::Local(local_mode) = &self.mode else {
-            panic!("Session is not local");
-        };
-        local_mode
-            .root_binary
-            .clone()
-            .unwrap_or_else(|| Arc::new(local_mode.binary.clone()))
+        match &self.mode {
+            Mode::Building => {
+                // todo(debugger): Implement root_binary for building mode
+                unimplemented!()
+            }
+            Mode::Running(running) => running
+                .root_binary
+                .clone()
+                .unwrap_or_else(|| Arc::new(running.binary.clone())),
+        }
     }
 
     pub fn binary(&self) -> &DebugAdapterBinary {
