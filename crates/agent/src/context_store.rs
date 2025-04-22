@@ -8,7 +8,7 @@ use futures::future::join_all;
 use futures::{self, Future, FutureExt, future};
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, File};
-use project::{Project, ProjectItem, ProjectPath, Worktree};
+use project::{Project, ProjectEntryId, ProjectItem, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::{Point, Rope};
 use text::{Anchor, BufferId, OffsetRangeExt};
@@ -162,6 +162,14 @@ impl ContextStore {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
+        let Some(entry_id) = project
+            .read(cx)
+            .entry_for_path(&project_path, cx)
+            .map(|entry| entry.id)
+        else {
+            return Task::ready(Err(anyhow!("no entry found for directory context")));
+        };
+
         let already_included = match self.includes_directory(&project_path) {
             Some(FileInclusion::Direct(context_id)) => {
                 if remove_if_exists {
@@ -231,7 +239,7 @@ impl ContextStore {
             }
 
             this.update(cx, |this, cx| {
-                this.insert_directory(worktree, project_path, context_buffers, cx);
+                this.insert_directory(worktree, entry_id, project_path, context_buffers, cx);
             })?;
 
             anyhow::Ok(())
@@ -241,19 +249,21 @@ impl ContextStore {
     fn insert_directory(
         &mut self,
         worktree: Entity<Worktree>,
+        entry_id: ProjectEntryId,
         project_path: ProjectPath,
         context_buffers: Vec<ContextBuffer>,
         cx: &mut Context<Self>,
     ) {
         let id = self.next_context_id.post_inc();
-        let path = project_path.path.clone();
+        let last_path = project_path.path.clone();
         self.directories.insert(project_path, id);
 
         self.context
             .push(AssistantContext::Directory(DirectoryContext {
                 id,
                 worktree,
-                path,
+                entry_id,
+                last_path,
                 context_buffers,
             }));
         cx.notify();
@@ -875,6 +885,7 @@ pub fn refresh_context_store_text(
         let task = maybe!({
             match context {
                 AssistantContext::File(file_context) => {
+                    // TODO: Should refresh if the path has changed, as it's in the text.
                     if changed_buffers.is_empty()
                         || changed_buffers.contains(&file_context.context_buffer.buffer)
                     {
@@ -883,8 +894,9 @@ pub fn refresh_context_store_text(
                     }
                 }
                 AssistantContext::Directory(directory_context) => {
-                    let directory_path = directory_context.project_path(cx);
-                    let should_refresh = changed_buffers.is_empty()
+                    let directory_path = directory_context.project_path(cx)?;
+                    let should_refresh = directory_path.path != directory_context.last_path
+                        || changed_buffers.is_empty()
                         || changed_buffers.iter().any(|buffer| {
                             let Some(buffer_path) = buffer.read(cx).project_path(cx) else {
                                 return false;
@@ -894,10 +906,16 @@ pub fn refresh_context_store_text(
 
                     if should_refresh {
                         let context_store = context_store.clone();
-                        return refresh_directory_text(context_store, directory_context, cx);
+                        return refresh_directory_text(
+                            context_store,
+                            directory_context,
+                            directory_path,
+                            cx,
+                        );
                     }
                 }
                 AssistantContext::Symbol(symbol_context) => {
+                    // TODO: Should refresh if the path has changed, as it's in the text.
                     if changed_buffers.is_empty()
                         || changed_buffers.contains(&symbol_context.context_symbol.buffer)
                     {
@@ -906,6 +924,7 @@ pub fn refresh_context_store_text(
                     }
                 }
                 AssistantContext::Excerpt(excerpt_context) => {
+                    // TODO: Should refresh if the path has changed, as it's in the text.
                     if changed_buffers.is_empty()
                         || changed_buffers.contains(&excerpt_context.context_buffer.buffer)
                     {
@@ -965,6 +984,7 @@ fn refresh_file_text(
 fn refresh_directory_text(
     context_store: Entity<ContextStore>,
     directory_context: &DirectoryContext,
+    directory_path: ProjectPath,
     cx: &App,
 ) -> Option<Task<()>> {
     let mut stale = false;
@@ -989,7 +1009,8 @@ fn refresh_directory_text(
 
     let id = directory_context.id;
     let worktree = directory_context.worktree.clone();
-    let path = directory_context.path.clone();
+    let entry_id = directory_context.entry_id;
+    let last_path = directory_path.path;
     Some(cx.spawn(async move |cx| {
         let context_buffers = context_buffers.await;
         context_store
@@ -997,7 +1018,8 @@ fn refresh_directory_text(
                 let new_directory_context = DirectoryContext {
                     id,
                     worktree,
-                    path,
+                    entry_id,
+                    last_path,
                     context_buffers,
                 };
                 context_store.replace_context(AssistantContext::Directory(new_directory_context));

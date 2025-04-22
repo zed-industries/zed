@@ -3,7 +3,7 @@ use std::{ops::Range, path::Path, sync::Arc};
 use gpui::{App, Entity, SharedString};
 use language::{Buffer, File};
 use language_model::LanguageModelRequestMessage;
-use project::{ProjectPath, Worktree};
+use project::{ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::Point;
 use serde::{Deserialize, Serialize};
@@ -83,17 +83,25 @@ pub struct FileContext {
 pub struct DirectoryContext {
     pub id: ContextId,
     pub worktree: Entity<Worktree>,
-    pub path: Arc<Path>,
+    pub entry_id: ProjectEntryId,
+    pub last_path: Arc<Path>,
     /// Buffers of the files within the directory.
     pub context_buffers: Vec<ContextBuffer>,
 }
 
 impl DirectoryContext {
-    pub fn project_path(&self, cx: &App) -> ProjectPath {
-        ProjectPath {
-            worktree_id: self.worktree.read(cx).id(),
-            path: self.path.clone(),
-        }
+    pub fn entry<'a>(&self, cx: &'a App) -> Option<&'a project::Entry> {
+        self.worktree.read(cx).entry_for_id(self.entry_id)
+    }
+
+    pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let worktree = self.worktree.read(cx);
+        worktree
+            .entry_for_id(self.entry_id)
+            .map(|entry| ProjectPath {
+                worktree_id: worktree.id(),
+                path: entry.path.clone(),
+            })
     }
 }
 
@@ -131,7 +139,7 @@ impl ThreadContext {
 #[derive(Clone)]
 pub struct ContextBuffer {
     pub id: BufferId,
-    // TODO: Entity<Buffer> holds onto the thread even if the thread is deleted. Should probably be
+    // TODO: Entity<Buffer> holds onto the buffer even if the buffer is deleted. Should probably be
     // a WeakEntity and handle removal from the UI when it has dropped.
     pub buffer: Entity<Buffer>,
     pub file: Arc<dyn File>,
