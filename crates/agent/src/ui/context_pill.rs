@@ -273,7 +273,7 @@ impl AddedContext {
     pub fn new(context: &AssistantContext, cx: &App) -> AddedContext {
         match context {
             AssistantContext::File(file_context) => {
-                let full_path = file_context.context_buffer.file.full_path(cx);
+                let full_path = file_context.context_buffer.full_path(cx);
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path
@@ -297,10 +297,14 @@ impl AddedContext {
             }
 
             AssistantContext::Directory(directory_context) => {
-                let full_path = directory_context
-                    .worktree
-                    .read(cx)
-                    .full_path(&directory_context.path);
+                let worktree = directory_context.worktree.read(cx);
+                // If the directory no longer exists, use its last known path.
+                let full_path = worktree
+                    .entry_for_id(directory_context.entry_id)
+                    .map_or_else(
+                        || directory_context.last_path.clone(),
+                        |entry| worktree.full_path(&entry.path).into(),
+                    );
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path
@@ -335,7 +339,7 @@ impl AddedContext {
             },
 
             AssistantContext::Excerpt(excerpt_context) => {
-                let full_path = excerpt_context.context_buffer.file.full_path(cx);
+                let full_path = excerpt_context.context_buffer.full_path(cx);
                 let mut full_path_string = full_path.to_string_lossy().into_owned();
                 let mut name = full_path
                     .file_name()

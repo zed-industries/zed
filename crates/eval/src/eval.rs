@@ -24,12 +24,10 @@ use prompt_store::PromptBuilder;
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::usize;
 use util::ResultExt as _;
-
-pub const RUNS_DIR: &str = "./crates/eval/runs";
 
 #[derive(Parser, Debug)]
 #[command(name = "eval", disable_version_flag = true)]
@@ -40,8 +38,8 @@ struct Args {
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
-    #[arg(long, value_delimiter = ',')]
-    languages: Option<Vec<String>>,
+    #[arg(long, value_delimiter = ',', default_value = "rs,ts")]
+    languages: Vec<String>,
     /// How many times to run each example. Note that this is currently not very efficient as N
     /// worktrees will be created for the examples.
     #[arg(long, default_value = "1")]
@@ -57,9 +55,36 @@ struct Args {
 fn main() {
     env_logger::init();
 
+    let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
+    let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let run_timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+    let run_id = match env::var("GITHUB_RUN_ID") {
+        Ok(run_id) => format!("github/{}", run_id),
+        Err(_) => format!("local/{}", run_timestamp),
+    };
+
+    let root_dir = Path::new(std::env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let eval_crate_dir = root_dir.join("crates/eval");
+    let repos_dir = eval_crate_dir.join("repos");
+    let worktrees_dir = eval_crate_dir.join("worktrees");
+    let examples_dir = eval_crate_dir.join("examples");
+    let runs_dir = eval_crate_dir.join("runs");
+    let run_dir = runs_dir.join(format!("{}", run_timestamp));
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::create_dir_all(&repos_dir).unwrap();
+    std::fs::create_dir_all(&worktrees_dir).unwrap();
+    std::fs::create_dir_all(&examples_dir).unwrap();
+    std::fs::create_dir_all(&paths::config_dir()).unwrap();
+
+    let zed_commit_sha = commit_sha_for_path(root_dir);
+    let zed_branch_name = git_branch_for_path(root_dir);
     let args = Args::parse();
-    let all_available_examples = list_all_examples().unwrap();
-    let languages = args.languages.unwrap_or_else(|| vec!["rs".to_string()]);
+    let all_available_examples = list_all_examples(&examples_dir).unwrap();
 
     let example_paths = all_available_examples
         .iter()
@@ -84,14 +109,20 @@ fn main() {
     app.run(move |cx| {
         let app_state = init(cx);
 
-        let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
-        let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
-        let session_id = uuid::Uuid::new_v4().to_string();
+        let telemetry = app_state.client.telemetry();
+        telemetry.start(system_id, installation_id, session_id, cx);
 
-        app_state
-            .client
-            .telemetry()
-            .start(system_id, installation_id, session_id, cx);
+        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
+            && telemetry.has_checksum_seed();
+        if enable_telemetry {
+            println!("Telemetry enabled");
+            telemetry::event!(
+                "Agent Eval Started",
+                zed_commit_sha = zed_commit_sha,
+                zed_branch_name = zed_branch_name,
+                run_id = run_id,
+            );
+        }
 
         let mut cumulative_tool_metrics = ToolMetrics::default();
 
@@ -115,15 +146,6 @@ fn main() {
         cx.spawn(async move |cx| {
             authenticate_task.await.unwrap();
 
-            std::fs::create_dir_all(REPOS_DIR)?;
-            std::fs::create_dir_all(WORKTREES_DIR)?;
-
-            let run_dir = Path::new(RUNS_DIR).join(format!(
-                "{}",
-                chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
-            ));
-            std::fs::create_dir_all(&run_dir)?;
-
             let mut examples = Vec::new();
 
             const COLORS: [&str; 12] = [
@@ -145,13 +167,18 @@ fn main() {
             let mut skipped = Vec::new();
 
             for example_path in &example_paths {
-                let example = Example::load_from_directory(example_path, &run_dir)?;
+                let example = Example::load_from_directory(
+                    example_path,
+                    &run_dir,
+                    &worktrees_dir,
+                    &repos_dir,
+                )?;
 
                 if !example
                     .base
                     .language_extension
                     .as_ref()
-                    .map_or(false, |lang| languages.contains(lang))
+                    .map_or(false, |lang| args.languages.contains(lang))
                 {
                     skipped.push(example.name);
                     continue;
@@ -195,7 +222,7 @@ fn main() {
 
                 let repo_url = example.base.url.clone();
                 if repo_urls.insert(repo_url.clone()) {
-                    let repo_path = repo_path_for_url(&repo_url);
+                    let repo_path = example.repo_path.clone();
 
                     if !repo_path.join(".git").is_dir() {
                         println!(
@@ -246,6 +273,9 @@ fn main() {
                 let app_state = app_state.clone();
                 let model = model.clone();
                 let example = example.clone();
+                let zed_commit_sha = zed_commit_sha.clone();
+                let zed_branch_name = zed_branch_name.clone();
+                let run_id = run_id.clone();
                 cx.spawn(async move |cx| {
                     let result = async {
                         let run_output = cx
@@ -255,8 +285,12 @@ fn main() {
                             run_judge_repetition(
                                 example.clone(),
                                 model.clone(),
+                                &zed_commit_sha,
+                                &zed_branch_name,
+                                &run_id,
                                 &run_output,
                                 round,
+                                enable_telemetry,
                                 cx,
                             )
                         });
@@ -368,9 +402,7 @@ fn main() {
             print_header("CUMULATIVE TOOL METRICS");
             println!("{}", cumulative_tool_metrics);
 
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            app_state.client.telemetry().flush_events();
+            app_state.client.telemetry().flush_events().await;
 
             cx.update(|cx| cx.quit())
         })
@@ -378,8 +410,8 @@ fn main() {
     });
 }
 
-fn list_all_examples() -> Result<Vec<PathBuf>> {
-    let path = std::fs::canonicalize(EXAMPLES_DIR).unwrap();
+fn list_all_examples(examples_dir: &Path) -> Result<Vec<PathBuf>> {
+    let path = std::fs::canonicalize(examples_dir).unwrap();
     let entries = std::fs::read_dir(path).unwrap();
     let mut result_paths = Vec::new();
     for entry in entries {
@@ -533,79 +565,66 @@ pub fn find_model(
     Ok(model)
 }
 
-pub async fn get_current_commit_id(repo_path: &Path) -> Option<String> {
-    (run_git(repo_path, &["rev-parse", "HEAD"]).await).ok()
+pub fn commit_sha_for_path(repo_path: &Path) -> String {
+    futures::executor::block_on(run_git(repo_path, &["rev-parse", "HEAD"])).unwrap()
 }
 
-pub fn get_current_commit_id_sync(repo_path: &Path) -> String {
-    futures::executor::block_on(async {
-        get_current_commit_id(repo_path).await.unwrap_or_default()
-    })
+pub fn git_branch_for_path(repo_path: &Path) -> String {
+    match std::env::var("GITHUB_REF_NAME") {
+        Ok(branch) => branch,
+        Err(_) => {
+            futures::executor::block_on(run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]))
+                .unwrap_or_else(|_| "unknown".to_string())
+        }
+    }
 }
 
 async fn run_judge_repetition(
     example: Example,
     model: Arc<dyn LanguageModel>,
+    zed_commit_sha: &str,
+    zed_branch_name: &str,
+    run_id: &str,
     run_output: &RunOutput,
     round: u32,
+    enable_telemetry: bool,
     cx: &AsyncApp,
 ) -> Result<JudgeOutput> {
-    let judge_result = example.judge(model.clone(), &run_output, round, cx).await;
+    let judge_output = example.judge(model.clone(), &run_output, round, cx).await;
 
-    if let Ok(judge_output) = &judge_result {
-        let cohort_id = example
-            .run_directory_path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
-
-        let path = std::path::Path::new(".");
-        let commit_id = get_current_commit_id(path).await.unwrap_or_default();
-
-        if let Some(thread) = &judge_output.thread {
-            telemetry::event!(
-                "Agent Eval Completed",
-                cohort_id = cohort_id,
-                example_name = example.name.clone(),
-                round = round,
-                diff_score = judge_output.diff.score,
-                diff_analysis = judge_output.diff.analysis,
-                thread_score = thread.score,
-                thread_analysis = thread.analysis,
-                tool_metrics = run_output.tool_metrics,
-                response_count = run_output.response_count,
-                token_usage = run_output.token_usage,
-                model = model.telemetry_id(),
-                model_provider = model.provider_id().to_string(),
-                repository_url = example.base.url.clone(),
-                repository_revision = example.base.revision.clone(),
-                diagnostics_before = run_output.diagnostics_before,
-                diagnostics_after = run_output.diagnostics_after,
-                commit_id = commit_id
-            );
-        } else {
-            telemetry::event!(
-                "Agent Eval Completed",
-                cohort_id = cohort_id,
-                example_name = example.name.clone(),
-                round = round,
-                diff_score = judge_output.diff.score,
-                diff_analysis = judge_output.diff.analysis,
-                tool_metrics = run_output.tool_metrics,
-                response_count = run_output.response_count,
-                token_usage = run_output.token_usage,
-                model = model.telemetry_id(),
-                model_provider = model.provider_id().to_string(),
-                repository_url = example.base.url.clone(),
-                repository_revision = example.base.revision.clone(),
-                diagnostics_before = run_output.diagnostics_before,
-                diagnostics_after = run_output.diagnostics_after,
-                commit_id = commit_id
-            );
-        }
+    let diff_evaluation;
+    let thread_diff_evaluation;
+    if let Ok(output) = judge_output.as_ref() {
+        diff_evaluation = Some(output.diff.clone());
+        thread_diff_evaluation = output.thread.clone();
+    } else {
+        diff_evaluation = None;
+        thread_diff_evaluation = None;
     }
 
-    judge_result
+    if enable_telemetry {
+        telemetry::event!(
+            "Agent Example Evaluated",
+            zed_commit_sha = zed_commit_sha,
+            zed_branch_name = zed_branch_name,
+            run_id = run_id,
+            example_name = example.name.clone(),
+            round = round,
+            diff_evaluation = diff_evaluation,
+            thread_evaluation = thread_diff_evaluation,
+            tool_metrics = run_output.tool_metrics,
+            response_count = run_output.response_count,
+            token_usage = run_output.token_usage,
+            model = model.telemetry_id(),
+            model_provider = model.provider_id().to_string(),
+            repository_url = example.base.url.clone(),
+            repository_revision = example.base.revision.clone(),
+            diagnostics_before = run_output.diagnostics_before,
+            diagnostics_after = run_output.diagnostics_after,
+        );
+    }
+
+    judge_output
 }
 
 fn print_header(header: &str) {

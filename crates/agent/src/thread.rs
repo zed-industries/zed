@@ -38,7 +38,7 @@ use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse, SharedProjectContext,
 };
-use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState, USING_TOOL_MARKER};
+use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -168,12 +168,9 @@ pub enum MessageSegment {
 
 impl MessageSegment {
     pub fn should_display(&self) -> bool {
-        // We add USING_TOOL_MARKER when making a request that includes tool uses
-        // without non-whitespace text around them, and this can cause the model
-        // to mimic the pattern, so we consider those segments not displayable.
         match self {
-            Self::Text(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
-            Self::Thinking { text, .. } => text.is_empty() || text.trim() == USING_TOOL_MARKER,
+            Self::Text(text) => text.is_empty(),
+            Self::Thinking { text, .. } => text.is_empty(),
             Self::RedactedThinking(_) => false,
         }
     }
@@ -1266,6 +1263,7 @@ impl Thread {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
+                                cx.emit(ThreadEvent::ReceivedTextChunk);
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
                                         last_message.push_text(&chunk);
@@ -1325,12 +1323,27 @@ impl Thread {
                                         thread.insert_message(Role::Assistant, vec![], cx)
                                     });
 
-                                thread.tool_use.request_tool_use(
+                                let tool_use_id = tool_use.id.clone();
+                                let streamed_input = if tool_use.is_input_complete {
+                                    None
+                                } else {
+                                    Some((&tool_use.input).clone())
+                                };
+
+                                let ui_text = thread.tool_use.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
                                     tool_use_metadata.clone(),
                                     cx,
                                 );
+
+                                if let Some(input) = streamed_input {
+                                    cx.emit(ThreadEvent::StreamedToolUse {
+                                        tool_use_id,
+                                        ui_text,
+                                        input,
+                                    });
+                                }
                             }
                         }
 
@@ -1800,7 +1813,7 @@ impl Thread {
                 thread_data,
                 final_project_snapshot
             );
-            client.telemetry().flush_events();
+            client.telemetry().flush_events().await;
 
             Ok(())
         })
@@ -1845,7 +1858,7 @@ impl Thread {
                     thread_data,
                     final_project_snapshot
                 );
-                client.telemetry().flush_events();
+                client.telemetry().flush_events().await;
 
                 Ok(())
             })
@@ -2101,7 +2114,7 @@ impl Thread {
                             github_login = github_login
                         );
 
-                        client.telemetry().flush_events();
+                        client.telemetry().flush_events().await;
                     }
                 }
             })
@@ -2219,8 +2232,14 @@ pub enum ThreadEvent {
     ShowError(ThreadError),
     UsageUpdated(RequestUsage),
     StreamedCompletion,
+    ReceivedTextChunk,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
+    StreamedToolUse {
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: Arc<str>,
+        input: serde_json::Value,
+    },
     Stopped(Result<StopReason, Arc<anyhow::Error>>),
     MessageAdded(MessageId),
     MessageEdited(MessageId),

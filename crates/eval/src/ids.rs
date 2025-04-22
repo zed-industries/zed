@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -11,6 +11,7 @@ pub fn get_or_create_id(path: &Path) -> Result<String> {
         }
     }
     let new_id = Uuid::new_v4().to_string();
+    fs::create_dir_all(path.parent().ok_or_else(|| anyhow!("invalid id path"))?)?;
     fs::write(path, &new_id)?;
     Ok(new_id)
 }
