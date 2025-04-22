@@ -814,6 +814,10 @@ impl Session {
             .map(|session| session.read(cx).id)
     }
 
+    pub fn parent_session(&self) -> Option<&Entity<Self>> {
+        self.parent_session.as_ref()
+    }
+
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }

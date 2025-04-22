@@ -17,6 +17,7 @@ use gpui::{
     actions, anchored, deferred,
 };
 
+use project::debugger::session::SessionStateEvent;
 use project::{
     Project,
     debugger::{
@@ -290,9 +291,42 @@ impl DebugPanel {
                 {
                     dap_store.start_session(debug_config.definition, None, cx)
                 } else {
-                    dap_store.start_session(definition, None, cx)
+                    dap_store.start_session(definition.clone(), None, cx)
                 }
             })??;
+
+            this.update_in(cx, |_, window, cx| {
+                let definition = definition.clone();
+                cx.subscribe_in(
+                    &session,
+                    window,
+                    move |_, session, event: &SessionStateEvent, window, cx| match event {
+                        SessionStateEvent::Restart => {
+                            let mut curr_session = session.clone();
+                            while let Some(parent_session) = curr_session
+                                .read_with(cx, |session, _| session.parent_session().cloned())
+                            {
+                                curr_session = parent_session;
+                            }
+
+                            let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
+
+                            let definition = definition.clone();
+                            cx.spawn_in(window, async move |this, cx| {
+                                task.await;
+
+                                this.update_in(cx, |this, window, cx| {
+                                    this.start_session(definition, window, cx)
+                                })
+                            })
+                            .detach_and_log_err(cx);
+                        }
+                        _ => {}
+                    },
+                )
+                .detach();
+            })
+            .ok();
 
             let serialized_layout = persistence::get_serialized_pane_layout(adapter_name).await;
 

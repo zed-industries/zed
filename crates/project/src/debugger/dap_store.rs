@@ -347,37 +347,11 @@ impl DapStore {
         cx.notify();
 
         cx.subscribe(&session, {
-            let template = template.clone();
-            move |this: &mut DapStore, session, event: &SessionStateEvent, cx| match event {
+            move |this: &mut DapStore, _, event: &SessionStateEvent, cx| match event {
                 SessionStateEvent::Shutdown => {
                     this.shutdown_session(session_id, cx).detach_and_log_err(cx);
                 }
-                SessionStateEvent::Restart => {
-                    let mut curr_session = session;
-                    while let Some(parent_id) = curr_session.read(cx).parent_id(cx) {
-                        if let Some(parent_session) = this.sessions.get(&parent_id).cloned() {
-                            curr_session = parent_session;
-                        } else {
-                            log::error!("Failed to get parent session from parent session id");
-                            break;
-                        }
-                    }
-
-                    let session_id = curr_session.read(cx).session_id();
-
-                    let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
-
-                    let template = template.clone();
-                    cx.spawn(async move |this, cx| {
-                        task.await;
-
-                        this.update(cx, |this, cx| {
-                            this.sessions.remove(&session_id);
-                            this.start_session(template, None, cx)
-                        })
-                    })
-                    .detach_and_log_err(cx);
-                }
+                SessionStateEvent::Restart => {}
                 SessionStateEvent::Running => {
                     cx.emit(DapStoreEvent::DebugClientStarted(session_id));
                 }
