@@ -12,9 +12,10 @@ use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
         NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard, NSScreen,
-        NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial, NSVisualEffectState,
-        NSVisualEffectView, NSWindow, NSWindowButton, NSWindowCollectionBehavior, NSWindowOcclusionState,
-        NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
+        NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
+        NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
+        NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -1051,8 +1052,9 @@ impl PlatformWindow for MacWindow {
                 // On macOS Catalina/Big Sur `NSVisualEffectView` doesn’t own concrete sublayers
                 // but uses a `CAProxyLayer`. Use the legacy WindowServer API.
                 let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
-                    30  // The same as an `NSVisualEffectView`.
-                    // However, `CGSSetWindowBackgroundBlurRadius` will clamp it to about 15.
+                    // The same as an `NSVisualEffectView`. However,
+                    // `CGSSetWindowBackgroundBlurRadius` will clamp it to about 15.
+                    30
                 } else {
                     0
                 };
@@ -2131,7 +2133,7 @@ unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
 extern "C" fn blurred_view_init_with_frame(this: &Object, _: Sel, frame: NSRect) -> id {
     unsafe {
         let view = msg_send![super(this, class!(NSVisualEffectView)), initWithFrame: frame];
-        #[allow(deprecated)]  //  This material is tested to hove no desktop tinting effect.
+        #[allow(deprecated)] //  This material is tested to hove no desktop tinting effect.
         NSVisualEffectView::setMaterial_(view, NSVisualEffectMaterial::Light);
         NSVisualEffectView::setState_(view, NSVisualEffectState::Active);
         view
