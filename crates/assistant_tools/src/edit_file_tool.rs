@@ -299,7 +299,7 @@ impl EditFileToolCard {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadOnly));
+        let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
                 EditorMode::Full {
@@ -346,7 +346,6 @@ impl EditFileToolCard {
         self.diff_task = Some(cx.spawn(async move |this, cx| {
             let buffer = build_buffer(new_text, path.clone(), &language_registry, cx).await?;
             let buffer_diff = build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
-            let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id())?;
 
             this.update(cx, |this, cx| {
                 this.multibuffer.update(cx, |multibuffer, cx| {
@@ -365,10 +364,6 @@ impl EditFileToolCard {
                     );
                     debug_assert!(is_newly_added);
                     multibuffer.add_diff(buffer_diff, cx);
-                });
-                this.editor.update(cx, |editor, cx| {
-                    editor.disable_header_for_buffer(buffer_id, cx);
-                    // editor.fold_buffer(buffer_id, cx); // TODO: THIS SHOULDN'T BE NECESSARY!
                 });
                 cx.notify();
             })
