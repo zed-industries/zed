@@ -335,7 +335,9 @@ impl ContextPickerCompletionProvider {
                                         let crease = super::crease_for_mention(
                                             format!(
                                                 "{} ({}-{})",
-                                                file_name, line_range.start.row, line_range.end.row
+                                                file_name,
+                                                line_range.start.row + 1,
+                                                line_range.end.row + 1
                                             )
                                             .into(),
                                             IconName::Context.path().into(),
