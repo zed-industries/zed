@@ -105,7 +105,7 @@ impl ThreadContext {
 
     pub fn assert(&mut self, expected: bool, message: impl ToString) -> Result<()> {
         let message = message.to_string();
-        self.assertion_result(
+        self.log_assertion(
             if expected {
                 Ok(())
             } else {
@@ -117,7 +117,7 @@ impl ThreadContext {
 
     pub fn assert_some<T>(&mut self, option: Option<T>, message: impl ToString) -> Result<T> {
         let message = message.to_string();
-        self.assertion_result(
+        self.log_assertion(
             match option {
                 Some(value) => Ok(value),
                 None => Err(anyhow::Error::from(FailedAssertion(message.clone()))),
@@ -134,7 +134,7 @@ impl ThreadContext {
         message: impl ToString,
     ) -> Result<()> {
         let message = message.to_string();
-        self.assertion_result(
+        self.log_assertion(
             if left == right {
                 Ok(())
             } else {
@@ -145,7 +145,7 @@ impl ThreadContext {
         )
     }
 
-    fn assertion_result<T>(&mut self, result: Result<T>, message: String) -> Result<T> {
+    fn log_assertion<T>(&mut self, result: Result<T>, message: String) -> Result<T> {
         if let Some(max) = self.meta.max_assertions {
             let run = self.assertions.failure.len() + self.assertions.success.len();
 
@@ -286,6 +286,6 @@ impl ToolUse {
     {
         let result =
             serde_json::from_value::<Input>(self.value.clone()).map_err(|err| anyhow!(err));
-        cx.assertion_result(result, format!("{} input", &self.name))
+        cx.log_assertion(result, format!("valid `{}` input", &self.name))
     }
 }

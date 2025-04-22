@@ -17,17 +17,19 @@ impl Assertions {
         }
     }
 
-    pub fn total(&self) -> usize {
-        self.max
-            .unwrap_or(0)
-            .max(self.success.len() + self.failure.len())
+    pub fn total_count(&self) -> usize {
+        self.run_count().max(self.max.unwrap_or(0))
+    }
+
+    pub fn run_count(&self) -> usize {
+        self.success.len() + self.failure.len()
     }
 
     pub fn success_percentage(&self) -> f32 {
-        if self.total() == 0 {
+        if self.total_count() == 0 {
             0.0
         } else {
-            (self.success.len() as f32 / self.total() as f32) * 100.0
+            (self.success.len() as f32 / self.total_count() as f32) * 100.0
         }
     }
 }
@@ -38,7 +40,7 @@ const RESULTS_WIDTH: usize = 8;
 impl Display for Assertions {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         // Do nothing if no assertions
-        if self.total() == 0 {
+        if self.total_count() == 0 {
             return Ok(());
         }
 
@@ -100,8 +102,16 @@ impl Display for Assertions {
             self.failure.len(),
             if self.failure.len() == 1 { "" } else { "s" },
             self.success.len(),
-            self.success_percentage().round()
+            self.success_percentage().round(),
         )?;
+
+        if let Some(max) = self.max {
+            let missing = max - self.run_count();
+
+            if missing > 0 {
+                writeln!(f, "\n{} assertions didn't run.", missing)?;
+            }
+        }
 
         Ok(())
     }

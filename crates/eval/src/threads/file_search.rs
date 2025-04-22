@@ -38,7 +38,7 @@ impl EvalThread for Thread {
         let glob = input.glob;
         cx.assert(
             glob.ends_with(FILENAME),
-            format!("glob ends with {FILENAME:?}"),
+            format!("glob ends with `{FILENAME}`"),
         )?;
 
         let without_filename = glob.replace(FILENAME, "");
@@ -46,7 +46,7 @@ impl EvalThread for Thread {
             .unwrap()
             .is_match(&without_filename);
 
-        cx.assert(matches, "glob starts with either \"**/\" or \"zed/\"")?;
+        cx.assert(matches, "glob starts with either `**` or `zed`")?;
 
         Ok(())
     }

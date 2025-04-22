@@ -266,8 +266,7 @@ fn main() {
                 .collect::<Vec<_>>()
                 .await;
 
-            println!("\n\n");
-            print_header("EVAL RESULTS");
+            print_h1("EVAL RESULTS");
 
             let mut diff_scores = Vec::new();
             let mut thread_scores = Vec::new();
@@ -275,7 +274,7 @@ fn main() {
             let mut error_count = 0;
 
             for (instance, result) in results {
-                print_header(&instance.name);
+                print_h2(&instance.name);
 
                 match result {
                     Err(err) => {
@@ -340,14 +339,16 @@ fn main() {
 
                         println!("{}", run_output.tool_metrics);
 
-                        if !run_output.assertions.total() > 0 {
+                        if !run_output.assertions.total_count() > 0 {
                             println!("{}", run_output.assertions);
                             assertion_stats.push(run_output.assertions.success_percentage())
                         }
                     }
                 }
-                println!("\n> {}", instance.run_directory.display());
+                println!("> {}", instance.run_directory.display());
             }
+
+            print_h2("AGGREGATE");
 
             let assertion_stats_count = assertion_stats.len();
             let avg_assertion_success_pct = assertion_stats
@@ -390,7 +391,7 @@ fn main() {
                 }
             }
 
-            print_header("CUMULATIVE TOOL METRICS");
+            print_h1("CUMULATIVE TOOL METRICS");
             println!("{}", cumulative_tool_metrics);
 
             std::thread::sleep(std::time::Duration::from_secs(2));
@@ -593,8 +594,16 @@ async fn run_judge_repetition(
     judge_result
 }
 
-fn print_header(header: &str) {
-    println!("\n========================================");
-    println!("{:^40}", header);
-    println!("========================================\n");
+const HEADER_WIDTH: usize = 65;
+
+fn print_h1(header: &str) {
+    println!("\n\n{:=^HEADER_WIDTH$}", "");
+    println!("{:^HEADER_WIDTH$}", header);
+    println!("{:=^HEADER_WIDTH$}\n", "");
+}
+
+fn print_h2(header: &str) {
+    println!("\n{:-^HEADER_WIDTH$}", "");
+    println!("{:^HEADER_WIDTH$}", header);
+    println!("{:-^HEADER_WIDTH$}\n", "");
 }
