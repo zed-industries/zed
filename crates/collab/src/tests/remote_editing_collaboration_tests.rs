@@ -26,6 +26,7 @@ use project::{
 };
 use remote::SshRemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
+use rpc::proto;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
@@ -630,7 +631,7 @@ async fn test_remote_server_debugger(cx_a: &mut TestAppContext, server_cx: &mut 
         command_palette_hooks::init(cx);
     });
     let (project_a, _) = client_a
-        .build_ssh_project(path!("/code"), client_ssh, cx_a)
+        .build_ssh_project(path!("/code"), client_ssh.clone(), cx_a)
         .await;
 
     let (workspace, cx_a) = client_a.build_workspace(&project_a, cx_a);
@@ -664,10 +665,22 @@ async fn test_remote_server_debugger(cx_a: &mut TestAppContext, server_cx: &mut 
             session
         )
     });
-    session
-        .update(cx_a, |session, cx| {
-            assert_eq!(session.binary().command, "ssh");
-            session.shutdown(cx)
+
+    session.update(cx_a, |session, _| {
+        assert_eq!(session.binary().command, "ssh");
+    });
+
+    let shutdown_session = workspace.update(cx_a, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.dap_store().update(cx, |dap_store, cx| {
+                dap_store.shutdown_session(session.read(cx).session_id(), cx)
+            })
         })
-        .await;
+    });
+
+    client_ssh.update(cx_a, |a, _| {
+        a.shutdown_processes(Some(proto::ShutdownRemoteServer {}))
+    });
+
+    shutdown_session.await.unwrap();
 }
