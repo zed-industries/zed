@@ -1,4 +1,5 @@
 use anyhow::Result;
+use gpui::SharedString;
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -118,64 +119,29 @@ impl From<AttachRequest> for DebugRequest {
 //     }
 // }
 
-impl DebugTaskTemplate {
-    /// Translate from debug definition to a task template
-    pub fn to_zed_format(self) -> TaskTemplate {
-        let (command, cwd, request) = match self.definition.request {
-            DebugRequest::Launch(launch_config) => (
-                launch_config.program,
-                launch_config
-                    .cwd
-                    .map(|cwd| cwd.to_string_lossy().to_string()),
-                crate::task_template::DebugArgsRequest::Launch,
-            ),
-            DebugRequest::Attach(attach_config) => (
-                "".to_owned(),
-                None,
-                crate::task_template::DebugArgsRequest::Attach(attach_config),
-            ),
-        };
-
-        // let task_type = TaskType::Debug(DebugArgs {
-        //     adapter: self.definition.adapter,
-        //     request,
-        //     initialize_args: self.definition.initialize_args,
-        //     locator: self.locator,
-        //     tcp_connection: self.definition.tcp_connection,
-        //     stop_on_entry: self.definition.stop_on_entry,
-        // });
-
-        let label = self.definition.label.clone();
-
-        TaskTemplate {
-            label,
-            command,
-            args: vec![],
-            cwd,
-            ..Default::default()
-        }
-    }
-}
-
+/// Defines how to find a debug target
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
-pub struct DebugTaskTemplate {
-    pub locator: Option<String>,
-    #[serde(flatten)]
-    pub definition: DebugTaskDefinition,
+pub enum DebugeeDefinition {
+    /// Find a debugee by running a locator with a given name
+    Locator(SharedString),
+    /// Use a given task template as a debugee
+    Launch(TaskTemplate),
+    /// Attach to a running process with a given PID
+    Attach(Option<u32>),
 }
 
 /// This struct represent a user created debug task
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugTaskDefinition {
-    /// The adapter to run
     pub adapter: String,
-    /// The type of request that should be called on the debug adapter
-    #[serde(flatten)]
-    pub request: DebugRequest,
     /// Name of the debug task
     pub label: String,
+    /// A task to run prior to spawning the debugee
+    pub build: Option<TaskTemplate>,
+    #[serde(flatten)]
+    pub debugee: DebugeeDefinition,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
     /// Optional TCP connection information
@@ -190,8 +156,8 @@ pub struct DebugTaskDefinition {
 
 impl DebugTaskDefinition {
     pub fn cwd(&self) -> Option<&Path> {
-        if let DebugRequest::Launch(config) = &self.request {
-            config.cwd.as_deref()
+        if let DebugeeDefinition::Launch(config) = &self.debugee {
+            config.cwd.as_ref().map(Path::new)
         } else {
             None
         }
@@ -199,23 +165,24 @@ impl DebugTaskDefinition {
     pub fn to_proto(&self) -> proto::DebugTaskDefinition {
         proto::DebugTaskDefinition {
             adapter: self.adapter.clone(),
-            request: Some(match &self.request {
-                DebugRequest::Launch(config) => {
+            request: Some(match &self.debugee {
+                DebugeeDefinition::Launch(config) => {
                     proto::debug_task_definition::Request::DebugLaunchRequest(
                         proto::DebugLaunchRequest {
-                            program: config.program.clone(),
-                            cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
+                            program: config.command.clone(),
+                            cwd: config.cwd.as_ref().map(ToOwned::to_owned),
                             args: config.args.clone(),
                         },
                     )
                 }
-                DebugRequest::Attach(attach_request) => {
+                DebugeeDefinition::Attach(attach_request) => {
                     proto::debug_task_definition::Request::DebugAttachRequest(
                         proto::DebugAttachRequest {
-                            process_id: attach_request.process_id.unwrap_or_default(),
+                            process_id: attach_request.unwrap_or_default(),
                         },
                     )
                 }
+                _ => todo!(),
             }),
             label: self.label.clone(),
             initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
@@ -237,21 +204,16 @@ impl DebugTaskDefinition {
                 .transpose()?,
             stop_on_entry: proto.stop_on_entry,
             adapter: proto.adapter.clone(),
-            request: match request {
+            debugee: match request {
                 proto::debug_task_definition::Request::DebugAttachRequest(config) => {
-                    DebugRequest::Attach(AttachRequest {
-                        process_id: Some(config.process_id),
-                    })
+                    DebugeeDefinition::Attach(Some(config.process_id))
                 }
 
                 proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
-                    DebugRequest::Launch(LaunchRequest {
-                        program: config.program,
-                        cwd: config.cwd.map(|cwd| cwd.into()),
-                        args: config.args,
-                    })
+                    DebugeeDefinition::Launch(todo!())
                 }
             },
+            build: todo!(),
         })
     }
 }
@@ -259,7 +221,7 @@ impl DebugTaskDefinition {
 /// A group of Debug Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
-pub struct DebugTaskFile(pub Vec<DebugTaskTemplate>);
+pub struct DebugTaskFile(pub Vec<DebugTaskDefinition>);
 
 impl DebugTaskFile {
     /// Generates JSON schema of Tasks JSON template format.

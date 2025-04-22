@@ -2,9 +2,9 @@ use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use dap::adapters::latest_github_release;
+use dap::adapters::{DebugScenario, latest_github_release};
 use gpui::AsyncApp;
-use task::{DebugRequest, DebugTaskDefinition};
+use task::{DebugRequest, DebugTaskDefinition, DebugeeDefinition};
 
 use crate::*;
 
@@ -16,7 +16,7 @@ pub(crate) struct CodeLldbDebugAdapter {
 impl CodeLldbDebugAdapter {
     const ADAPTER_NAME: &'static str = "CodeLLDB";
 
-    fn request_args(&self, config: &DebugTaskDefinition) -> dap::StartDebuggingRequestArguments {
+    fn request_args(&self, config: &DebugScenario) -> dap::StartDebuggingRequestArguments {
         let mut configuration = json!({
             "request": match config.request {
                 DebugRequest::Launch(_) => "launch",
@@ -122,7 +122,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
     async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: &DebugScenario,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

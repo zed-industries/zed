@@ -20,8 +20,7 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::task_file_name;
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugTaskTemplate, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
-    TaskVariables, VariableName,
+    ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_inc};

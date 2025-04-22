@@ -17,7 +17,7 @@ use std::{
     borrow::Borrow, collections::HashSet, ffi::OsStr, fmt::Debug, net::Ipv4Addr, ops::Deref,
     path::PathBuf, sync::Arc,
 };
-use task::{DebugTaskDefinition, TcpArgumentsTemplate};
+use task::{DebugRequest, DebugTaskDefinition, TcpArgumentsTemplate};
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,6 +109,51 @@ impl TcpArguments {
     }
 }
 
+pub struct DebugScenario {
+    pub label: String,
+    pub request: DebugRequest,
+    /// Additional initialization arguments to be sent on DAP initialization
+    pub initialize_args: Option<serde_json::Value>,
+    /// Optional TCP connection information
+    ///
+    /// If provided, this will be used to connect to the debug adapter instead of
+    /// spawning a new process. This is useful for connecting to a debug adapter
+    /// that is already running or is started by another process.
+    pub tcp_connection: Option<TcpArgumentsTemplate>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
+}
+
+impl TryFrom<DebugTaskDefinition> for DebugScenario {
+    type Error = anyhow::Error;
+
+    fn try_from(value: DebugTaskDefinition) -> std::result::Result<Self, Self::Error> {
+        let request = match value.debugee {
+            task::DebugeeDefinition::Locator(_) => {
+                return Err(anyhow!(
+                    "DebugScenario cannot be created from unresolved locator"
+                ));
+            }
+            task::DebugeeDefinition::Launch(task_template) => {
+                DebugRequest::Launch(task::LaunchRequest {
+                    program: task_template.command,
+                    cwd: task_template.cwd.map(PathBuf::from),
+                    args: task_template.args,
+                })
+            }
+            task::DebugeeDefinition::Attach(process_id) => {
+                DebugRequest::Attach(task::AttachRequest { process_id })
+            }
+        };
+        Ok(Self {
+            request,
+            label: value.label,
+            stop_on_entry: value.stop_on_entry,
+            initialize_args: value.initialize_args,
+            tcp_connection: value.tcp_connection,
+        })
+    }
+}
 #[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
     pub command: String,
@@ -291,7 +336,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: &DebugScenario,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -369,7 +414,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: &DebugScenario,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;

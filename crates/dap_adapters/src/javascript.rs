@@ -1,5 +1,5 @@
 use adapters::latest_github_release;
-use dap::StartDebuggingRequestArguments;
+use dap::{StartDebuggingRequestArguments, adapters::DebugScenario};
 use gpui::AsyncApp;
 use std::{collections::HashMap, path::PathBuf};
 use task::{DebugRequest, DebugTaskDefinition};
@@ -14,7 +14,7 @@ impl JsDebugAdapter {
     const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
     const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
 
-    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+    fn request_args(&self, config: &DebugScenario) -> StartDebuggingRequestArguments {
         let mut args = json!({
             "type": "pwa-node",
             "request": match config.request {
@@ -84,7 +84,7 @@ impl DebugAdapter for JsDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: &DebugScenario,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

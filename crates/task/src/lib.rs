@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub use debug_format::{
-    AttachRequest, DebugRequest, DebugTaskDefinition, DebugTaskFile, DebugTaskTemplate,
+    AttachRequest, DebugRequest, DebugTaskDefinition, DebugTaskFile, DebugeeDefinition,
     LaunchRequest, TcpArgumentsTemplate,
 };
 pub use task_template::{
@@ -94,58 +94,6 @@ impl ResolvedTask {
     /// A task template before the resolution.
     pub fn original_task(&self) -> &TaskTemplate {
         &self.original_task
-    }
-
-    /// Get the configuration for the debug adapter that should be used for this task.
-    pub fn resolved_debug_adapter_config(&self) -> Option<DebugTaskTemplate> {
-        todo!()
-        // match self.original_task.task_type.clone() {
-        //     TaskType::Debug(debug_args) if self.resolved.is_some() => {
-        //         let resolved = self
-        //             .resolved
-        //             .as_ref()
-        //             .expect("We just checked if this was some");
-
-        //         let args = resolved
-        //             .args
-        //             .iter()
-        //             .cloned()
-        //             .map(|arg| {
-        //                 if arg.starts_with("$") {
-        //                     arg.strip_prefix("$")
-        //                         .and_then(|arg| resolved.env.get(arg).map(ToOwned::to_owned))
-        //                         .unwrap_or_else(|| arg)
-        //                 } else {
-        //                     arg
-        //                 }
-        //             })
-        //             .collect();
-
-        //         Some(DebugTaskTemplate {
-        //             locator: debug_args.locator.clone(),
-        //             definition: DebugTaskDefinition {
-        //                 label: resolved.label.clone(),
-        //                 adapter: debug_args.adapter.clone(),
-        //                 request: match debug_args.request {
-        //                     crate::task_template::DebugArgsRequest::Launch => {
-        //                         DebugRequest::Launch(LaunchRequest {
-        //                             program: resolved.command.clone(),
-        //                             cwd: resolved.cwd.clone(),
-        //                             args,
-        //                         })
-        //                     }
-        //                     crate::task_template::DebugArgsRequest::Attach(attach_config) => {
-        //                         DebugRequest::Attach(attach_config)
-        //                     }
-        //                 },
-        //                 initialize_args: debug_args.initialize_args,
-        //                 tcp_connection: debug_args.tcp_connection,
-        //                 stop_on_entry: debug_args.stop_on_entry,
-        //             },
-        //         })
-        //     }
-        //     _ => None,
-        // }
     }
 
     /// Variables that were substituted during the task template resolution.

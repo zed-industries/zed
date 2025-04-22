@@ -45,7 +45,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{DebugTaskDefinition, DebugTaskTemplate};
+use task::{DebugTaskDefinition, TaskTemplate};
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -233,8 +233,9 @@ impl DapStore {
                     .into();
 
                 cx.spawn(async move |this, cx| {
+                    let scenario = definition.try_into()?;
                     let mut binary = adapter
-                        .get_binary(&delegate, &definition, user_installed_path, cx)
+                        .get_binary(&delegate, &scenario, user_installed_path, cx)
                         .await?;
 
                     let env = this
@@ -275,16 +276,13 @@ impl DapStore {
 
     pub fn run_debug_locator(
         &mut self,
-        template: DebugTaskTemplate,
+        locator_name: SharedString,
+        template: TaskTemplate,
         cx: &mut Context<Self>,
-    ) -> Task<Result<DebugTaskDefinition>> {
-        let Some(locator_name) = template.locator else {
-            return Task::ready(Ok(template.definition));
-        };
-
+    ) -> Task<Result<TaskTemplate>> {
         match &self.mode {
             DapStoreMode::Local(local) => {
-                if let Some(locator) = local.locators.get(&locator_name).cloned() {
+                if let Some(locator) = local.locators.get(locator_name.as_ref()).cloned() {
                     cx.background_spawn(
                         async move { locator.run_locator(template.definition).await },
                     )
@@ -295,7 +293,7 @@ impl DapStore {
             DapStoreMode::Ssh(ssh) => {
                 let request = ssh.upstream_client.request(proto::RunDebugLocator {
                     project_id: ssh.upstream_project_id,
-                    locator: locator_name,
+                    locator: locator_name.into(),
                     task: Some(template.definition.to_proto()),
                 });
                 cx.background_spawn(async move {
@@ -807,17 +805,16 @@ impl DapStore {
         envelope: TypedEnvelope<proto::RunDebugLocator>,
         mut cx: AsyncApp,
     ) -> Result<proto::DebugTaskDefinition> {
-        let template = DebugTaskTemplate {
-            locator: Some(envelope.payload.locator),
-            definition: DebugTaskDefinition::from_proto(
-                envelope
-                    .payload
-                    .task
-                    .ok_or_else(|| anyhow!("missing definition"))?,
-            )?,
-        };
+        let build_task = TaskTemplate::from_proto(
+            envelope
+                .payload
+                .task
+                .ok_or_else(|| anyhow!("missing definition"))?,
+        )?;
         let definition = this
-            .update(&mut cx, |this, cx| this.run_debug_locator(template, cx))?
+            .update(&mut cx, |this, cx| {
+                this.run_debug_locator(SharedString::from(envelope.payload.locator), build_task, cx)
+            })?
             .await?;
         Ok(definition.to_proto())
     }
