@@ -1,15 +1,15 @@
-use agent::{ThreadEvent, ThreadStore};
+use agent::ThreadStore;
 use anyhow::{Context, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
 use futures::channel::mpsc;
-use futures::{FutureExt as _, StreamExt as _, select_biased};
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    MessageContent, Role, StopReason, TokenUsage,
+    MessageContent, Role, TokenUsage,
 };
 use project::lsp_store::OpenLspBufferHandle;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -22,7 +22,7 @@ use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use unindent::Unindent as _;
 use util::ResultExt as _;
@@ -32,8 +32,6 @@ use util::markdown::MarkdownString;
 use crate::assertions::Assertions;
 use crate::thread::{EvalThread, FailedAssertion, ThreadContext};
 use crate::{AgentAppState, ToolMetrics};
-
-pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
 pub const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
@@ -358,95 +356,14 @@ impl ThreadInstance {
                 });
             })?;
 
-            let tool_metrics = Arc::new(Mutex::new(ToolMetrics::default()));
-
-            let subscription = cx.subscribe(&thread, {
-                let log_prefix = this.log_prefix.clone();
-                let tool_metrics = tool_metrics.clone();
-                let thread = thread.clone();
-
-                move |_thread, event: &ThreadEvent, cx| {
-                match event {
-                    ThreadEvent::Stopped(reason) => match reason {
-                        Ok(StopReason::EndTurn) => {
-                            if std::env::var("ZED_EVAL_DEBUG").is_ok() {
-                                println!("{}StopReason: End turn", log_prefix);
-                            }
-                        }
-                        Ok(StopReason::ToolUse) => {
-                            if std::env::var("ZED_EVAL_DEBUG").is_ok() {
-                                println!("{}StopReason: Tool use", log_prefix);
-                            }
-                        }
-                        Ok(StopReason::MaxTokens) | Err(_) => {
-                            if std::env::var("ZED_EVAL_DEBUG").is_ok() {
-                                println!("{}Event: {:#?}", log_prefix, event);
-                            }
-                        }
-                    },
-                    ThreadEvent::StreamedAssistantText(_, _)| ThreadEvent::StreamedAssistantThinking(_, _) | ThreadEvent::UsePendingTools { .. } => {
-                    }
-                    ThreadEvent::ToolFinished {
-                        tool_use_id,
-                        pending_tool_use,
-                        ..
-                    } => {
-                        thread.update(cx, |thread, _cx| {
-                            if let Some(tool_use) = pending_tool_use {
-                                let mut tool_metrics = tool_metrics.lock().unwrap();
-                                if let Some(tool_result) = thread.tool_result(&tool_use_id) {
-                                    let message = if tool_result.is_error {
-                                        format!("TOOL FAILED: {}", tool_use.name)
-                                    } else {
-                                        format!("TOOL FINISHED: {}", tool_use.name)
-                                    };
-                                    println!("{log_prefix}{message}");
-                                    tool_metrics.insert(tool_result.tool_name.clone(), !tool_result.is_error);
-                                } else {
-                                    let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
-                                    println!("{log_prefix}{message}");
-                                    tool_metrics.insert(tool_use.name.clone(), true);
-                                }
-                            }
-                        });
-                    }
-                    ThreadEvent::ToolConfirmationNeeded => {
-                        panic!("{}Bug: Tool confirmation should not be required in eval", log_prefix);
-                    },
-                    ThreadEvent::StreamedCompletion |
-                    ThreadEvent::MessageAdded(_) |
-                    ThreadEvent::MessageEdited(_) |
-                    ThreadEvent::MessageDeleted(_) |
-                    ThreadEvent::SummaryChanged |
-                    ThreadEvent::SummaryGenerated |
-                    ThreadEvent::ReceivedTextChunk |
-                    ThreadEvent::StreamedToolUse { .. } |
-                    ThreadEvent::CheckpointChanged |
-                    ThreadEvent::UsageUpdated(_) |
-                    ThreadEvent::ShowError(_) => {
-                        if std::env::var("ZED_EVAL_DEBUG").is_ok() {
-                            println!("{}Event: {:#?}", log_prefix, event);
-                        }
-                    }
-                }
-            }});
-
             let mut thread_cx = ThreadContext::new(meta.clone(), this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
+            let result = this.thread.conversation(&mut thread_cx).await;
 
-            let assertions = select_biased! {
-                result = this.thread.conversation(&mut thread_cx).fuse() => {
-                    if let Err(err) = result {
-                        if !err.is::<FailedAssertion>() {
-                            return Err(err);
-                        }
-                    }
-
-                    thread_cx.report()
-                },
-                _ = cx.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
-                    return Err(anyhow!("Agentic loop stalled - waited {:?} without any events", THREAD_EVENT_TIMEOUT));
+            if let Err(err) = result {
+                if !err.is::<FailedAssertion>() {
+                    return Err(err);
                 }
-            };
+            }
 
             println!("{}Stopped", this.log_prefix);
 
@@ -481,8 +398,6 @@ impl ThreadInstance {
                 return Err(anyhow!("No requests ran."));
             };
 
-            drop(subscription);
-
             if let Some(diagnostics_before) = &diagnostics_before {
                 fs::write(this.run_directory.join("diagnostics_before.txt"), diagnostics_before)?;
             }
@@ -490,7 +405,6 @@ impl ThreadInstance {
             if let Some(diagnostics_after) = &diagnostics_after {
                 fs::write(this.run_directory.join("diagnostics_after.txt"), diagnostics_after)?;
             }
-
 
             thread.update(cx, |thread, _cx| {
                 let response_count = thread
@@ -505,9 +419,9 @@ impl ThreadInstance {
                     diagnostics_after,
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
-                    tool_metrics: tool_metrics.lock().unwrap().clone(),
+                    tool_metrics: thread_cx.tool_metrics.lock().unwrap().clone(),
                     last_request,
-                    assertions,
+                    assertions: thread_cx.assertions,
                 }
             })
         })

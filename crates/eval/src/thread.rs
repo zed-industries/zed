@@ -1,16 +1,19 @@
 use std::{
     error::Error,
     fmt::{self, Debug},
-    sync::Arc,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 
-use crate::assertions::Assertions;
+use crate::{ToolMetrics, assertions::Assertions};
 use agent::ThreadEvent;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use futures::{StreamExt, channel::mpsc};
+use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
+
+pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
 #[async_trait(?Send)]
 pub trait EvalThread {
@@ -70,9 +73,10 @@ pub struct ThreadContext {
     meta: EvalThreadMetadata,
     log_prefix: String,
     agent_thread: Entity<agent::Thread>,
-    assertions: Assertions,
     app: AsyncApp,
     model: Arc<dyn LanguageModel>,
+    pub assertions: Assertions,
+    pub tool_metrics: Arc<Mutex<ToolMetrics>>,
 }
 
 impl ThreadContext {
@@ -92,6 +96,7 @@ impl ThreadContext {
             assertions,
             model,
             app,
+            tool_metrics: Arc::new(Mutex::new(ToolMetrics::default())),
         }
     }
 
@@ -182,24 +187,80 @@ impl ThreadContext {
     pub async fn run_turns(&mut self, iterations: u32) -> Result<Response> {
         let (mut tx, mut rx) = mpsc::channel(1);
 
+        let tool_metrics = self.tool_metrics.clone();
+        let log_prefix = self.log_prefix.clone();
         let _subscription = self.app.subscribe(
             &self.agent_thread,
             move |thread, event: &ThreadEvent, cx| match event {
-                ThreadEvent::Stopped(Ok(StopReason::EndTurn)) => {
-                    tx.try_send(Ok(())).ok();
-                }
-                ThreadEvent::Stopped(Ok(StopReason::ToolUse)) => {
-                    if thread.read(cx).remaining_turns() == 0 {
-                        tx.try_send(Ok(())).ok();
-                    }
-                }
-                ThreadEvent::Stopped(Ok(StopReason::MaxTokens)) => {
-                    tx.try_send(Err(anyhow!("Exceeded maximum tokens"))).ok();
-                }
                 ThreadEvent::ShowError(thread_error) => {
                     tx.try_send(Err(anyhow!(thread_error.clone()))).ok();
                 }
-                _ => {}
+                ThreadEvent::Stopped(reason) => match reason {
+                    Ok(StopReason::EndTurn) => {
+                        tx.close_channel();
+                    }
+                    Ok(StopReason::ToolUse) => {
+                        if thread.read(cx).remaining_turns() == 0 {
+                            tx.close_channel();
+                        }
+                    }
+                    Ok(StopReason::MaxTokens) => {
+                        tx.try_send(Err(anyhow!("Exceeded maximum tokens"))).ok();
+                    }
+                    Err(err) => {
+                        tx.try_send(Err(anyhow!(err.clone()))).ok();
+                    }
+                },
+                ThreadEvent::StreamedAssistantText(_, _)
+                | ThreadEvent::StreamedAssistantThinking(_, _)
+                | ThreadEvent::UsePendingTools { .. } => {}
+                ThreadEvent::ToolFinished {
+                    tool_use_id,
+                    pending_tool_use,
+                    ..
+                } => {
+                    thread.update(cx, |thread, _cx| {
+                        if let Some(tool_use) = pending_tool_use {
+                            let mut tool_metrics = tool_metrics.lock().unwrap();
+                            if let Some(tool_result) = thread.tool_result(&tool_use_id) {
+                                let message = if tool_result.is_error {
+                                    format!("TOOL FAILED: {}", tool_use.name)
+                                } else {
+                                    format!("TOOL FINISHED: {}", tool_use.name)
+                                };
+                                println!("{log_prefix}{message}");
+                                tool_metrics
+                                    .insert(tool_result.tool_name.clone(), !tool_result.is_error);
+                            } else {
+                                let message =
+                                    format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
+                                println!("{log_prefix}{message}");
+                                tool_metrics.insert(tool_use.name.clone(), true);
+                            }
+                        }
+                    });
+                }
+                ThreadEvent::ToolConfirmationNeeded => {
+                    panic!(
+                        "{}Bug: Tool confirmation should not be required in eval",
+                        log_prefix
+                    );
+                }
+                ThreadEvent::StreamedCompletion
+                | ThreadEvent::MessageAdded(_)
+                | ThreadEvent::MessageEdited(_)
+                | ThreadEvent::MessageDeleted(_)
+                | ThreadEvent::SummaryChanged
+                | ThreadEvent::SummaryGenerated
+                | ThreadEvent::ReceivedTextChunk
+                | ThreadEvent::StreamedToolUse { .. }
+                | ThreadEvent::CheckpointChanged
+                | ThreadEvent::UsageUpdated(_) => {
+                    tx.try_send(Ok(())).ok();
+                    if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                        println!("{}Event: {:#?}", log_prefix, event);
+                    }
+                }
             },
         );
 
@@ -211,7 +272,20 @@ impl ThreadContext {
             thread.messages().len()
         })?;
 
-        rx.next().await.context("Failed to read from channel.")??;
+        loop {
+            select_biased! {
+                result = rx.next() => {
+                    if let Some(result) = result {
+                        result?;
+                    } else {
+                        break;
+                    }
+                }
+                _ = self.app.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
+                    return Err(anyhow!("Agentic loop stalled - waited {:?} without any events", THREAD_EVENT_TIMEOUT));
+                }
+            }
+        }
 
         let messages = self.app.read_entity(&self.agent_thread, |thread, cx| {
             let mut messages = Vec::new();
@@ -235,10 +309,6 @@ impl ThreadContext {
         let response = Response::new(messages);
 
         Ok(response)
-    }
-
-    pub fn report(self) -> Assertions {
-        self.assertions
     }
 }
 

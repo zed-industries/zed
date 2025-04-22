@@ -157,7 +157,8 @@ fn main() {
 
             for thread in all_threads {
                 let meta = thread.meta();
-                if !args.filter.iter().any(|sub| meta.name.contains(sub)) {
+                if !args.filter.is_empty() && !args.filter.iter().any(|sub| meta.name.contains(sub))
+                {
                     skipped.push(meta.name);
                     continue;
                 }
@@ -310,7 +311,7 @@ fn main() {
             let mut error_count = 0;
 
             for (example_name, results) in results_by_example_name.lock().iter_mut() {
-                print_h1(&example_name);
+                print_h2(&example_name);
 
                 results.sort_unstable_by_key(|(example, _)| example.repetition);
                 let mut example_cumulative_tool_metrics = ToolMetrics::default();
