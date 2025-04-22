@@ -538,7 +538,12 @@ impl EnvVariableReplacer {
         shellexpand::env_with_context_no_errors(&input, |var: &str| {
             // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
             let colon_position = var.find(':').unwrap_or(var.len());
-            let (variable_name, default) = var.split_at(colon_position);
+            let (left, right) = var.split_at(colon_position);
+            if left == "env" && !right.is_empty() {
+                let variable_name = &right[1..];
+                return Some(format!("${{{variable_name}}}"));
+            }
+            let (variable_name, default) = (left, right);
             let append_previous_default = |ret: &mut String| {
                 if !default.is_empty() {
                     ret.push_str(default);
