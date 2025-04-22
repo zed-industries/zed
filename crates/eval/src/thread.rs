@@ -1,4 +1,8 @@
-use std::{error::Error, fmt, sync::Arc};
+use std::{
+    error::Error,
+    fmt::{self, Debug},
+    sync::Arc,
+};
 
 use agent::ThreadEvent;
 use anyhow::{Context as _, Result, anyhow};
@@ -6,6 +10,7 @@ use async_trait::async_trait;
 use futures::{StreamExt, channel::mpsc};
 use gpui::{AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
+use serde::{Deserialize, Serialize};
 
 #[async_trait(?Send)]
 pub trait EvalThread {
@@ -49,7 +54,7 @@ pub struct FailedAssertion(pub String);
 
 impl fmt::Debug for FailedAssertion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Assertion failed: {}", self.0)
+        write!(f, "Assertion failure: {}", self.0)
     }
 }
 
@@ -63,9 +68,9 @@ impl Error for FailedAssertion {}
 
 pub struct ThreadContext {
     meta: EvalThreadMetadata,
+    log_prefix: String,
     agent_thread: Entity<agent::Thread>,
-    successful_assertions: u32,
-    assertions_run: u32,
+    assertions: Assertions,
     app: AsyncApp,
     model: Arc<dyn LanguageModel>,
 }
@@ -73,15 +78,16 @@ pub struct ThreadContext {
 impl ThreadContext {
     pub fn new(
         meta: EvalThreadMetadata,
+        log_prefix: String,
         agent_thread: Entity<agent::Thread>,
         model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
         Self {
             meta,
+            log_prefix,
             agent_thread,
-            successful_assertions: 0,
-            assertions_run: 0,
+            assertions: Assertions::default(),
             model,
             app,
         }
@@ -96,25 +102,52 @@ impl ThreadContext {
     }
 
     pub fn assert(&mut self, expected: bool, message: impl ToString) -> Result<()> {
-        self.assertion_result(if expected {
-            Ok(())
-        } else {
-            Err(anyhow::Error::from(FailedAssertion(message.to_string())))
-        })
+        let message = message.to_string();
+        self.assertion_result(
+            if expected {
+                Ok(())
+            } else {
+                Err(anyhow::Error::from(FailedAssertion(message.clone())))
+            },
+            message,
+        )
     }
 
     pub fn assert_some<T>(&mut self, option: Option<T>, message: impl ToString) -> Result<T> {
-        self.assertion_result(match option {
-            Some(value) => Ok(value),
-            None => Err(anyhow::Error::from(FailedAssertion(message.to_string()))),
-        })
+        let message = message.to_string();
+        self.assertion_result(
+            match option {
+                Some(value) => Ok(value),
+                None => Err(anyhow::Error::from(FailedAssertion(message.clone()))),
+            },
+            message,
+        )
     }
 
-    fn assertion_result<T>(&mut self, result: Result<T>) -> Result<T> {
-        self.assertions_run += 1;
+    pub fn assert_eq<T: PartialEq + Debug>(
+        &mut self,
+        left: T,
+        right: T,
+        message: impl ToString,
+    ) -> Result<()> {
+        let message = message.to_string();
+        self.assertion_result(
+            if left == right {
+                Ok(())
+            } else {
+                println!("{}{:#?} != {:#?}", self.log_prefix, left, right);
+                Err(anyhow::Error::from(FailedAssertion(message.clone())))
+            },
+            message,
+        )
+    }
 
+    fn assertion_result<T>(&mut self, result: Result<T>, message: String) -> Result<T> {
         if let Some(max) = self.meta.max_assertions {
-            if self.assertions_run > max {
+            let run =
+                self.assertions.failure.len() as u32 + self.assertions.success.len() as u32 + 1;
+
+            if run > max {
                 return Err(anyhow!(
                     "More assertions were run than the stated max_assertions of {}",
                     max
@@ -124,10 +157,15 @@ impl ThreadContext {
 
         match result {
             Ok(value) => {
-                self.successful_assertions += 1;
+                self.assertions.success.push(message.clone());
+                println!("{}✅: {}", self.log_prefix, message);
                 Ok(value)
             }
-            Err(err) => Err(err),
+            Err(err) => {
+                self.assertions.failure.push(message);
+                println!("{}❌: {}", self.log_prefix, err);
+                Err(err)
+            }
         }
     }
 
@@ -171,7 +209,7 @@ impl ThreadContext {
             thread.messages().len()
         })?;
 
-        rx.next().await.context("Failed to read from channel")??;
+        rx.next().await.context("Failed to read from channel.")??;
 
         let messages = self.app.read_entity(&self.agent_thread, |thread, cx| {
             let mut messages = Vec::new();
@@ -197,9 +235,15 @@ impl ThreadContext {
         Ok(response)
     }
 
-    pub fn report(&self) -> String {
-        format!("{}/{}", self.successful_assertions, self.assertions_run)
+    pub fn report(self) -> Assertions {
+        self.assertions
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct Assertions {
+    pub success: Vec<String>,
+    pub failure: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -222,7 +266,7 @@ impl Response {
                 }
             })
         });
-        cx.assert_some(result, format!("No tool calls for {}", tool_name))
+        cx.assert_some(result, format!("Has `{}` tool calls", tool_name))
     }
 
     fn extend(&mut self, other: Response) {
@@ -250,6 +294,6 @@ impl ToolUse {
     {
         let result =
             serde_json::from_value::<Input>(self.value.clone()).map_err(|err| anyhow!(err));
-        cx.assertion_result(result)
+        cx.assertion_result(result, format!("{} input", &self.name))
     }
 }

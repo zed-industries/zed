@@ -283,46 +283,90 @@ fn main() {
                     Ok((run_output, judge_results)) => {
                         cumulative_tool_metrics.merge(&run_output.tool_metrics);
 
-                        println!("┌───────┬──────┬────────┐");
-                        println!("│ Judge │ Diff │ Thread │");
-                        println!("├───────┼──────┼────────┤");
+                        let any_judge_results = judge_results.iter().any(|result| {
+                            result
+                                .iter()
+                                .any(|output| output.diff.is_some() || output.thread.is_some())
+                        });
 
-                        for (i, judge_result) in judge_results.iter().enumerate() {
-                            match judge_result {
-                                Ok(judge_output) => {
-                                    let diff_display =
-                                        if let Some(diff) = judge_output.diff.as_ref() {
-                                            diff_scores.push(diff.score);
-                                            format!("{}", diff.score)
-                                        } else {
-                                            "N/A".to_string()
-                                        };
+                        if any_judge_results {
+                            println!("┌───────┬──────┬────────┐");
+                            println!("│ Judge │ Diff │ Thread │");
+                            println!("├───────┼──────┼────────┤");
 
-                                    let thread_display =
-                                        if let Some(instance) = &judge_output.thread {
-                                            let thread_score = instance.score;
-                                            thread_scores.push(thread_score);
-                                            format!("{}", thread_score)
-                                        } else {
-                                            "N/A".to_string()
-                                        };
+                            for (i, judge_result) in judge_results.iter().enumerate() {
+                                match judge_result {
+                                    Ok(judge_output) => {
+                                        let diff_display =
+                                            if let Some(diff) = judge_output.diff.as_ref() {
+                                                diff_scores.push(diff.score);
+                                                format!("{}", diff.score)
+                                            } else {
+                                                "N/A".to_string()
+                                            };
 
-                                    println!(
-                                        "|{:^7}│{:^6}│{:^8}│",
-                                        i + 1,
-                                        diff_display,
-                                        thread_display
-                                    );
-                                }
-                                Err(err) => {
-                                    println!("|{:^7}│{:^6}│{:^8}│{:?}", i + 1, "N/A", "N/A", err);
+                                        let thread_display =
+                                            if let Some(instance) = &judge_output.thread {
+                                                let thread_score = instance.score;
+                                                thread_scores.push(thread_score);
+                                                format!("{}", thread_score)
+                                            } else {
+                                                "N/A".to_string()
+                                            };
+
+                                        println!(
+                                            "|{:^7}│{:^6}│{:^8}│",
+                                            i + 1,
+                                            diff_display,
+                                            thread_display
+                                        );
+                                    }
+                                    Err(err) => {
+                                        println!(
+                                            "|{:^7}│{:^6}│{:^8}│{:?}",
+                                            i + 1,
+                                            "N/A",
+                                            "N/A",
+                                            err
+                                        );
+                                    }
                                 }
                             }
+
+                            println!("└───────┴──────┴────────┘");
                         }
 
-                        println!("└───────┴──────┴────────┘");
-
                         println!("{}", run_output.tool_metrics);
+
+                        if !run_output.assertions.success.is_empty()
+                            || !run_output.assertions.failure.is_empty()
+                        {
+                            println!("\n┌──────────────────────────────────────────┐");
+                            println!("│             Assertions Report            │");
+                            println!("├───────────────────────────────────────────┤");
+                            println!("│ Assertion                    │ Status    │");
+                            println!("├───────────────────────────────────────────┤");
+
+                            // Print successful assertions
+                            for assertion in &run_output.assertions.success {
+                                println!(
+                                    "│ {:<27} │ {:<10}│",
+                                    truncate_assertion(assertion),
+                                    "\x1b[32m✔︎ Passed\x1b[0m"
+                                );
+                            }
+
+                            // Print failed assertions
+                            for assertion in &run_output.assertions.failure {
+                                println!(
+                                    "│ {:<27} │ {:<10}│",
+                                    truncate_assertion(assertion),
+                                    "\x1b[31m✗ Failed\x1b[0m"
+                                );
+                            }
+
+                            println!("└───────────────────────────────────────────┘");
+                        }
                     }
                 }
                 println!(
@@ -518,6 +562,15 @@ pub fn find_model(
 
 pub async fn get_current_commit_id(repo_path: &Path) -> Option<String> {
     (run_git(repo_path, &["rev-parse", "HEAD"]).await).ok()
+}
+
+fn truncate_assertion(assertion: &str) -> String {
+    const MAX_WIDTH: usize = 27;
+    if assertion.len() <= MAX_WIDTH {
+        assertion.to_string()
+    } else {
+        format!("{}...", &assertion[..MAX_WIDTH - 3])
+    }
 }
 
 pub fn get_current_commit_id_sync(repo_path: &Path) -> String {

@@ -35,14 +35,13 @@ impl EvalThread for Thread {
         ));
 
         let response = cx.run_turn().await?;
-        println!("after run turn");
         let tool_use = response.expect_tool("path_search", cx)?;
         let input = tool_use.expect_input::<PathSearchToolInput>(cx)?;
 
         let glob = input.glob;
         cx.assert(
             glob.ends_with(FILENAME),
-            "Expected path_search glob to end with {FILENAME:?}, but glob was {glob:?}",
+            "path_search glob ends with {FILENAME:?}",
         )?;
 
         let without_filename = glob.replace(FILENAME, "");

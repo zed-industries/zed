@@ -28,7 +28,7 @@ use util::ResultExt as _;
 use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
-use crate::thread::{EvalThread, ThreadContext};
+use crate::thread::{Assertions, EvalThread, ThreadContext};
 use crate::{AgentAppState, ToolMetrics};
 
 pub const REPOS_DIR: &str = "./crates/eval/repos";
@@ -56,6 +56,7 @@ pub struct RunOutput {
     pub token_usage: TokenUsage,
     pub tool_metrics: ToolMetrics,
     pub last_request: LanguageModelRequest,
+    pub assertions: Assertions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -373,12 +374,12 @@ impl ThreadInstance {
                 }
             }});
 
-            let mut thread_cx = ThreadContext::new(meta.clone(), thread.clone(), model.clone(), cx.clone());
+            let mut thread_cx = ThreadContext::new(meta.clone(), this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
 
-            select_biased! {
+            let assertions = select_biased! {
                 result = this.thread.conversation(&mut thread_cx).fuse() => {
                     result?;
-                    dbg!(thread_cx.report());
+                    thread_cx.report()
                 },
                 _ = cx.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
                     return Err(anyhow!("Agentic loop stalled - waited {:?} without any events", THREAD_EVENT_TIMEOUT));
@@ -439,6 +440,7 @@ impl ThreadInstance {
                     token_usage: thread.cumulative_token_usage(),
                     tool_metrics: tool_metrics.lock().unwrap().clone(),
                     last_request,
+                    assertions,
                 }
             })
         })
