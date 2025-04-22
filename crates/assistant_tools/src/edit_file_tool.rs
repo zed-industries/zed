@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{IconName, Tooltip, Window, prelude::*};
+use ui::{Disclosure, IconName, Tooltip, Window, prelude::*};
 use util::ResultExt;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -273,6 +273,7 @@ pub struct EditFileToolCard {
     multibuffer: Entity<MultiBuffer>,
     project: Entity<Project>,
     diff_task: Option<Task<Result<()>>>,
+    expanded: bool,
 }
 
 impl EditFileToolCard {
@@ -287,7 +288,13 @@ impl EditFileToolCard {
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
+            editor.set_show_scrollbars(false, cx);
+            editor.set_show_expand_excerpt_buttons(false, cx);
+            editor.set_show_gutter(false, cx);
             editor.disable_inline_diagnostics();
+            editor.set_show_breakpoints(false, cx);
+            editor.set_show_code_actions(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor
         });
@@ -298,6 +305,7 @@ impl EditFileToolCard {
             editor,
             multibuffer,
             diff_task: None,
+            expanded: false,
         }
     }
 
@@ -334,7 +342,7 @@ impl EditFileToolCard {
                 });
                 this.editor.update(cx, |editor, cx| {
                     editor.disable_header_for_buffer(buffer_id, cx);
-                    editor.fold_buffer(buffer_id, cx); // TODO: THIS SHOULDN'T BE NECESSARY!
+                    // editor.fold_buffer(buffer_id, cx); // TODO: THIS SHOULDN'T BE NECESSARY!
                 });
                 cx.notify();
             })
@@ -349,27 +357,7 @@ impl ToolCard for EditFileToolCard {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let header = h_flex()
-            .id("tool-label-container")
-            .gap_1p5()
-            .max_w_full()
-            .overflow_x_scroll()
-            .child(
-                Icon::new(IconName::Pencil)
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted),
-            )
-            .child(Label::new("Edit ").size(LabelSize::Small))
-            .child(
-                div()
-                    .size(px(3.))
-                    .rounded_full()
-                    .bg(cx.theme().colors().text),
-            )
-            .child(Label::new(self.path.display().to_string()).size(LabelSize::Small))
-            .into_any_element();
-
-        let header2 = h_flex()
+        let header_label = h_flex()
             .id("code-block-header-label")
             .w_full()
             .max_w_full()
@@ -378,22 +366,71 @@ impl ToolCard for EditFileToolCard {
             .cursor_pointer()
             .rounded_sm()
             .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
-            .tooltip(Tooltip::text("Jump to File"));
+            .tooltip(Tooltip::text("Jump to File"))
+            .child(
+                h_flex()
+                    .child(
+                        Icon::new(IconName::Pencil)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(self.path.display().to_string())
+                            .size(LabelSize::Small)
+                            .ml_1p5()
+                            .mr_0p5(),
+                    )
+                    .child(
+                        Icon::new(IconName::ArrowUpRight)
+                            .size(IconSize::XSmall)
+                            .color(Color::Ignored),
+                    ),
+            )
+            .into_any_element();
 
-        // let editor = EditorElement::new(&self.editor, EditorStyle::default());
+        let codeblock_header_bg = cx
+            .theme()
+            .colors()
+            .element_background
+            .blend(cx.theme().colors().editor_foreground.opacity(0.01));
+
+        let codeblock_header = h_flex()
+            .p_1()
+            .gap_1()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border.opacity(0.6))
+            .bg(codeblock_header_bg)
+            .rounded_t_md()
+            .child(header_label)
+            .child(
+                Disclosure::new("path-search-disclosure", self.expanded)
+                    .opened_icon(IconName::ChevronUp)
+                    .closed_icon(IconName::ChevronDown)
+                    // .disabled(self.paths.is_empty()) // TODO: disable if the code editor is small and there is no reason to expand??
+                    .on_click(cx.listener(move |this, _event, _window, _cx| {
+                        this.expanded = !this.expanded;
+                    })),
+            );
+
         let editor = self.editor.update(cx, |editor, cx| {
             editor.render(window, cx).into_any_element()
         });
 
         v_flex()
-            .my_2()
+            .mb_2()
             .border_1()
-            .border_color(cx.theme().colors().border)
-            .rounded_sm()
-            .gap_1()
-            .h_full()
-            .min_h(px(500.0)) // meh! bad
-            // .child(header)
+            .border_color(cx.theme().colors().border.opacity(0.6))
+            .rounded_lg()
+            .overflow_hidden()
+            .map(|container| {
+                if self.expanded {
+                    container.h_full()
+                } else {
+                    container.h_96()
+                }
+            })
+            .child(codeblock_header)
             .child(editor)
     }
 }
