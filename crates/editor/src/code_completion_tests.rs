@@ -535,3 +535,420 @@ fn test_sort_matches_variable_and_constants_over_function(_cx: &mut TestAppConte
         "Match order not expected"
     );
 }
+
+#[gpui::test]
+fn test_sort_matches_jsx_event_handler(_cx: &mut TestAppContext) {
+    // Case 1: "on"
+    let query: Option<&str> = Some("on");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.3333333333333333,
+                positions: vec![],
+                string: "onCut?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onCut?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.2857142857142857,
+                positions: vec![],
+                string: "onPlay?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onPlay?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.25,
+                positions: vec![],
+                string: "color?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "color?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.25,
+                positions: vec![],
+                string: "defaultValue?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "defaultValue?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.25,
+                positions: vec![],
+                string: "style?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "style?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.20,
+                positions: vec![],
+                string: "className?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "className?"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query);
+    assert_eq!(
+        matches[0].string_match.string, "onCut?",
+        "Match order not expected"
+    );
+    assert_eq!(
+        matches[1].string_match.string, "onPlay?",
+        "Match order not expected"
+    );
+
+    // Case 2: "ona"
+    let query: Option<&str> = Some("ona");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.375,
+                positions: vec![],
+                string: "onAbort?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onAbort?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.2727272727272727,
+                positions: vec![],
+                string: "onAuxClick?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onAuxClick?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.23571428571428565,
+                positions: vec![],
+                string: "onPlay?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onPlay?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.23571428571428565,
+                positions: vec![],
+                string: "onLoad?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onLoad?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.23571428571428565,
+                positions: vec![],
+                string: "onDrag?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onDrag?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.22499999999999998,
+                positions: vec![],
+                string: "onPause?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onPause?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.22499999999999998,
+                positions: vec![],
+                string: "onPaste?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onPaste?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.2,
+                positions: vec![],
+                string: "onAnimationEnd?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onAnimationEnd?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.2,
+                positions: vec![],
+                string: "onAbortCapture?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onAbortCapture?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.1833333333333333,
+                positions: vec![],
+                string: "onChange?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onChange?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.18,
+                positions: vec![],
+                string: "onWaiting?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onWaiting?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.18,
+                positions: vec![],
+                string: "onCanPlay?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onCanPlay?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.1764705882352941,
+                positions: vec![],
+                string: "onAnimationStart?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onAnimationStart?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.16666666666666666,
+                positions: vec![],
+                string: "onAuxClickCapture?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onAuxClickCapture?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.16499999999999998,
+                positions: vec![],
+                string: "onStalled?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onStalled?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.16499999999999998,
+                positions: vec![],
+                string: "onPlaying?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onPlaying?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.16499999999999998,
+                positions: vec![],
+                string: "onDragEnd?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onDragEnd?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.15000000000000002,
+                positions: vec![],
+                string: "onInvalid?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onInvalid?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.15,
+                positions: vec![],
+                string: "onDragOver?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onDragOver?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.15,
+                positions: vec![],
+                string: "onDragExit?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onDragExit?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.14285714285714285,
+                positions: vec![],
+                string: "onAnimationIteration?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onAnimationIteration?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.13846153846153847,
+                positions: vec![],
+                string: "onRateChange?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onRateChange?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.13749999999999996,
+                positions: vec![],
+                string: "onLoadStart?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onLoadStart?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.13749999999999996,
+                positions: vec![],
+                string: "onDragStart?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onDragStart?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.13749999999999996,
+                positions: vec![],
+                string: "onDragLeave?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onDragLeave?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.13749999999999996,
+                positions: vec![],
+                string: "onDragEnter?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onDragEnter?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.13636363636363635,
+                positions: vec![],
+                string: "onAnimationEndCapture?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onAnimationEndCapture?"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.12692307692307692,
+                positions: vec![],
+                string: "onLoadedData?".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("12"),
+            sort_key: (3, "onLoadedData?"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query);
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string_match.string.as_str())
+            .collect::<Vec<&str>>(),
+        vec![
+            "onAbort?",
+            "onAuxClick?",
+            "onAbortCapture?",
+            "onAnimationEnd?",
+            "onAnimationStart?",
+            "onAuxClickCapture?",
+            "onCanPlay?",
+            "onChange?",
+            "onDrag?",
+            "onDragEnd?",
+            "onDragExit?",
+            "onDragOver?",
+        ]
+    );
+}
