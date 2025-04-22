@@ -10,7 +10,7 @@ use ::fs::RealFs;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use client::{Client, ProxySettings, UserStore};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
 use gpui::http_client::{Uri, read_proxy_from_env};
@@ -44,7 +44,7 @@ struct Args {
     languages: Vec<String>,
     /// How many times to run each example.
     #[arg(long, default_value = "1")]
-    repetitions: u32,
+    repetitions: usize,
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "10")]
     concurrency: usize,
@@ -161,7 +161,6 @@ fn main() {
                 "\x1b[96m", // Bright Cyan
             ];
 
-            let mut max_name_width = 0;
             let mut skipped = Vec::new();
 
             for example_path in &example_paths {
@@ -182,11 +181,7 @@ fn main() {
                     continue;
                 }
 
-                let name_len = example.name.len();
-                if name_len > max_name_width {
-                    max_name_width = example.name.len();
-                }
-                examples.push(example);
+                examples.extend(example.repeat(args.repetitions));
             }
 
             println!("Skipped examples: {}\n", skipped.join(", "));
@@ -199,6 +194,11 @@ fn main() {
             let mut repo_urls = HashSet::default();
             let mut clone_tasks = Vec::new();
 
+            let max_name_width = examples
+                .iter()
+                .map(|e| e.repetition_name().len())
+                .max()
+                .unwrap_or(0);
             for (i, example) in examples.iter_mut().enumerate() {
                 let color = COLORS[i % COLORS.len()].to_string();
                 example.set_log_prefix_style(&color, max_name_width);
@@ -206,7 +206,7 @@ fn main() {
                 println!(
                     "{}Logging to: {}",
                     example.log_prefix,
-                    example.example_output_directory().display()
+                    example.run_directory_path().display()
                 );
 
                 let repo_url = example.base.url.clone();
@@ -256,45 +256,45 @@ fn main() {
             }
 
             let examples = Arc::new(Mutex::new(VecDeque::from(examples)));
-            let results = Arc::new(Mutex::new(Vec::new()));
+            let results_by_example_name = Arc::new(Mutex::new(HashMap::default()));
 
             future::join_all((0..args.concurrency).map(|_| {
-                let repetitions = args.repetitions;
                 let app_state = app_state.clone();
                 let model = model.clone();
                 let zed_commit_sha = zed_commit_sha.clone();
                 let zed_branch_name = zed_branch_name.clone();
                 let run_id = run_id.clone();
                 let examples = examples.clone();
-                let results = results.clone();
+                let results = results_by_example_name.clone();
                 cx.spawn(async move |cx| {
                     loop {
                         let Some(mut example) = examples.lock().pop_front() else {
                             break;
                         };
-                        for round in 0..repetitions {
-                            let result = async {
-                                example.setup().await?;
-                                let run_output = cx
-                                    .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
-                                    .await?;
-                                let judge_output = run_judge_repetition(
-                                    example.clone(),
-                                    model.clone(),
-                                    &zed_commit_sha,
-                                    &zed_branch_name,
-                                    &run_id,
-                                    &run_output,
-                                    round,
-                                    enable_telemetry,
-                                    cx,
-                                )
-                                .await;
-                                anyhow::Ok((run_output, judge_output))
-                            }
+                        let result = async {
+                            example.setup().await?;
+                            let run_output = cx
+                                .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
+                                .await?;
+                            let judge_output = judge_example(
+                                example.clone(),
+                                model.clone(),
+                                &zed_commit_sha,
+                                &zed_branch_name,
+                                &run_id,
+                                &run_output,
+                                enable_telemetry,
+                                cx,
+                            )
                             .await;
-                            results.lock().push((example.clone(), result));
+                            anyhow::Ok((run_output, judge_output))
                         }
+                        .await;
+                        results
+                            .lock()
+                            .entry(example.name.clone())
+                            .or_insert(Vec::new())
+                            .push((example.clone(), result));
                     }
                 })
             }))
@@ -307,44 +307,66 @@ fn main() {
             let mut thread_scores = Vec::new();
             let mut error_count = 0;
 
-            for (example, result) in results.lock().iter() {
-                print_header(&example.name);
+            for (example_name, results) in results_by_example_name.lock().iter_mut() {
+                print_header(&example_name);
 
-                match result {
-                    Err(err) => {
-                        println!("💥 {}{:?}", example.log_prefix, err);
-                        error_count += 1;
-                    }
-                    Ok((run_output, judge_result)) => {
-                        cumulative_tool_metrics.merge(&run_output.tool_metrics);
+                results.sort_unstable_by_key(|(example, _)| example.repetition);
+                let mut example_cumulative_tool_metrics = ToolMetrics::default();
 
-                        println!("┌───────┬──────┬────────┐");
-                        println!("│ Round │ Diff │ Thread │");
-                        println!("├───────┼──────┼────────┤");
+                println!("┌───────┬──────┬────────┐");
+                println!("│ Round │ Diff │ Thread │");
+                println!("├───────┼──────┼────────┤");
+                for (example, result) in results {
+                    let run_dir_path = example.run_directory_path();
+                    let relative_run_dir_path = run_dir_path.strip_prefix(root_dir).unwrap();
 
-                        match judge_result {
-                            Ok(judge_output) => {
-                                let diff_score = judge_output.diff.score();
-                                let thread_score = judge_output.thread.score();
-                                diff_scores.push(diff_score);
-                                thread_scores.push(thread_score);
-                                println!("|{:^7}│{:^6}│{:^8}│", 1, diff_score, thread_score);
-                            }
-                            Err(err) => {
-                                println!("|{:^7}│{:^6}│{:^8}│{:?}", 1, "N/A", "N/A", err);
+                    match result {
+                        Err(err) => {
+                            println!(
+                                "|{:^7}│{:^6}│{:^8}│ {:?}{}",
+                                example.repetition,
+                                "N/A",
+                                "N/A",
+                                err,
+                                relative_run_dir_path.display()
+                            );
+                            error_count += 1;
+                        }
+                        Ok((run_output, judge_result)) => {
+                            cumulative_tool_metrics.merge(&run_output.tool_metrics);
+                            example_cumulative_tool_metrics.merge(&run_output.tool_metrics);
+
+                            match judge_result {
+                                Ok(judge_output) => {
+                                    let diff_score = judge_output.diff.score();
+                                    let thread_score = judge_output.thread.score();
+                                    diff_scores.push(diff_score);
+                                    thread_scores.push(thread_score);
+                                    println!(
+                                        "|{:^7}│{:^6}│{:^8}│ {}",
+                                        example.repetition,
+                                        diff_score,
+                                        thread_score,
+                                        relative_run_dir_path.display()
+                                    );
+                                }
+                                Err(err) => {
+                                    println!(
+                                        "|{:^7}│{:^6}│{:^8}│{:?}│ {}",
+                                        example.repetition,
+                                        "N/A",
+                                        "N/A",
+                                        err,
+                                        relative_run_dir_path.display()
+                                    );
+                                }
                             }
                         }
-
-                        println!("└───────┴──────┴────────┘");
-
-                        println!("{}", run_output.tool_metrics);
                     }
                 }
-                println!(
-                    "{}    > {}",
-                    " ".repeat(max_name_width),
-                    example.example_output_directory().display()
-                );
+
+                println!("└───────┴──────┴────────┘");
+                println!("{}", example_cumulative_tool_metrics);
             }
 
             let diff_score_count = diff_scores.len();
@@ -549,18 +571,17 @@ pub fn git_branch_for_path(repo_path: &Path) -> String {
     }
 }
 
-async fn run_judge_repetition(
+async fn judge_example(
     example: Example,
     model: Arc<dyn LanguageModel>,
     zed_commit_sha: &str,
     zed_branch_name: &str,
     run_id: &str,
     run_output: &RunOutput,
-    round: u32,
     enable_telemetry: bool,
     cx: &AsyncApp,
 ) -> Result<JudgeOutput> {
-    let judge_output = example.judge(model.clone(), &run_output, round, cx).await;
+    let judge_output = example.judge(model.clone(), &run_output, cx).await;
 
     let diff_evaluation;
     let thread_evaluation;
@@ -579,7 +600,7 @@ async fn run_judge_repetition(
             zed_branch_name = zed_branch_name,
             run_id = run_id,
             example_name = example.name.clone(),
-            round = round,
+            example_repetition = example.repetition,
             diff_evaluation = diff_evaluation,
             thread_evaluation = thread_evaluation,
             tool_metrics = run_output.tool_metrics,

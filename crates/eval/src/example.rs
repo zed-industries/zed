@@ -69,12 +69,16 @@ pub struct Example {
     pub diff_criteria: String,
     /// Content of `thread_criteria.md`, if that file exists (it's optional)
     pub thread_criteria: String,
-    /// Path to the directory containing the requests and responses for the agentic loop
-    pub run_directory_path: PathBuf,
     /// Prefix used for logging that identifies this example
     pub log_prefix: String,
-    pub worktree_path: PathBuf,
+    /// The repetition number for this example (0-based)
+    /// When running multiple repetitions of the same example, each instance is assigned a unique repetition number.
+    /// This affects the worktree path and log prefix to avoid clobbering results between runs.
+    pub repetition: usize,
     pub repo_path: PathBuf,
+    /// Path to the directory containing the requests and responses for the agentic loop
+    run_dir_path: PathBuf,
+    worktrees_dir: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -122,7 +126,7 @@ impl Example {
         worktrees_dir: &Path,
         repos_dir: &Path,
     ) -> Result<Self> {
-        let name = Self::name_from_path(dir_path);
+        let name = dir_path.file_name().unwrap().to_string_lossy().to_string();
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
         let diff_criteria_path = dir_path.join("diff_criteria.md");
@@ -131,40 +135,53 @@ impl Example {
 
         let repo_path = repo_path_for_url(repos_dir, &base.url);
 
-        let worktree_path = worktrees_dir
-            .canonicalize()
-            .unwrap()
-            .join(&name)
-            .join(&base.repo_name());
-
         Ok(Example {
             name: name.clone(),
             base,
             prompt: fs::read_to_string(prompt_path.clone())?,
             thread_criteria: fs::read_to_string(thread_criteria_path.clone())?,
             diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
-            run_directory_path: run_dir.to_path_buf(),
-            worktree_path,
+            run_dir_path: run_dir.to_path_buf(),
+            worktrees_dir: worktrees_dir.to_path_buf(),
             repo_path,
             log_prefix: name,
+            repetition: 0,
         })
     }
 
-    pub fn example_output_directory(&self) -> PathBuf {
-        self.run_directory_path.join(&self.name)
+    pub fn repetition_name(&self) -> String {
+        format!("{}-{}", self.name, self.repetition)
+    }
+
+    pub fn worktree_path(&self) -> PathBuf {
+        self.worktrees_dir
+            .canonicalize()
+            .unwrap()
+            .join(self.repetition_name())
+            .join(&self.base.repo_name())
+    }
+
+    pub fn run_directory_path(&self) -> PathBuf {
+        self.run_dir_path.join(self.repetition_name())
+    }
+
+    /// Create an iterator that returns copies of this example with different repetition numbers
+    /// Each copy will have a different repetition number and worktree path based on the repetition
+    pub fn repeat(self, repetitions: usize) -> impl Iterator<Item = Self> {
+        (0..repetitions).map(move |repetition| {
+            let mut example = self.clone();
+            example.repetition = repetition;
+            example
+        })
     }
 
     pub fn set_log_prefix_style(&mut self, color: &str, name_width: usize) {
         self.log_prefix = format!(
             "{}{:<width$}\x1b[0m | ",
             color,
-            self.name,
+            self.repetition_name(),
             width = name_width
         );
-    }
-
-    pub fn name_from_path(path: &Path) -> String {
-        path.file_name().unwrap().to_string_lossy().to_string()
     }
 
     /// Set up the example by checking out the specified Git revision
@@ -192,18 +209,19 @@ impl Example {
 
     /// Set up the example by checking out the specified Git revision
     pub async fn setup(&mut self) -> Result<()> {
-        if self.worktree_path.is_dir() {
+        let worktree_path = self.worktree_path();
+        if worktree_path.is_dir() {
             println!("{}Resetting existing worktree", self.log_prefix);
 
             // TODO: consider including "-x" to remove ignored files. The downside of this is that
             // it will also remove build artifacts, and so prevent incremental reuse there.
-            run_git(&self.worktree_path, &["clean", "--force", "-d"]).await?;
-            run_git(&self.worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&self.worktree_path, &["checkout", &self.base.revision]).await?;
+            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
+            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
+            run_git(&worktree_path, &["checkout", &self.base.revision]).await?;
         } else {
             println!("{}Creating worktree", self.log_prefix);
 
-            let worktree_path_string = self.worktree_path.to_string_lossy().to_string();
+            let worktree_path_string = worktree_path.to_string_lossy().to_string();
 
             run_git(
                 &self.repo_path,
@@ -219,10 +237,10 @@ impl Example {
         }
 
         if self.base.url == ZED_REPO_URL {
-            std::fs::write(self.worktree_path.join(".rules"), std::fs::read(".rules")?)?;
+            std::fs::write(worktree_path.join(".rules"), std::fs::read(".rules")?)?;
         }
 
-        std::fs::create_dir_all(self.example_output_directory())?;
+        std::fs::create_dir_all(self.run_directory_path())?;
 
         Ok(())
     }
@@ -244,7 +262,7 @@ impl Example {
         );
 
         let worktree = project.update(cx, |project, cx| {
-            project.create_worktree(&self.worktree_path, true, cx)
+            project.create_worktree(self.worktree_path(), true, cx)
         });
 
         let tools = cx.new(|_| ToolWorkingSet::default());
@@ -312,7 +330,7 @@ impl Example {
                 return Err(anyhow!("Setup only mode"));
             }
 
-            let example_output_dir = this.example_output_directory();
+            let example_output_dir = this.run_directory_path();
             let last_diff_file_path = example_output_dir.join("last.diff");
 
             // Write an empty "last.diff" so that it can be opened in Zed for convenient view of the
@@ -525,7 +543,6 @@ impl Example {
         &self,
         model: Arc<dyn LanguageModel>,
         run_output: &RunOutput,
-        judge_number: u32,
         cx: &AsyncApp,
     ) -> Result<(String, JudgeResponse)> {
         let judge_diff_prompt = include_str!("judge_diff_prompt.hbs");
@@ -558,7 +575,7 @@ impl Example {
         let diff_output = JudgeResponse::parse(&diff_response)?;
 
         println!(
-            "{}Judge #{judge_number} - Diff score: {}",
+            "{}Judge - Diff score: {}",
             self.log_prefix, diff_output.passing_criteria
         );
 
@@ -569,7 +586,6 @@ impl Example {
         &self,
         model: Arc<dyn LanguageModel>,
         run_output: &RunOutput,
-        judge_number: u32,
         cx: &AsyncApp,
     ) -> Result<(String, JudgeResponse)> {
         let judge_thread_prompt = include_str!("judge_thread_prompt.hbs");
@@ -603,7 +619,7 @@ impl Example {
         let thread_output = JudgeResponse::parse(&thread_response)?;
 
         println!(
-            "{}Judge #{judge_number} - Thread score: {}",
+            "{}Judge - Thread score: {}",
             self.log_prefix, thread_output.passing_criteria
         );
 
@@ -614,19 +630,15 @@ impl Example {
         &self,
         model: Arc<dyn LanguageModel>,
         run_output: &RunOutput,
-        judge_number: u32,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
-        let mut output_file = File::create(
-            self.example_output_directory()
-                .join(format!("judge_{}.md", judge_number)),
-        )
-        .expect("failed to create judge.md");
+        let mut output_file = File::create(self.run_directory_path().join("judge.md"))
+            .expect("failed to create judge.md");
 
-        println!("{}Running judge #{judge_number}", self.log_prefix);
+        println!("{}Running judge", self.log_prefix);
 
-        let diff_task = self.judge_diff(model.clone(), &run_output, judge_number, cx);
-        let thread_task = self.judge_thread(model.clone(), &run_output, judge_number, cx);
+        let diff_task = self.judge_diff(model.clone(), &run_output, cx);
+        let thread_task = self.judge_thread(model.clone(), &run_output, cx);
 
         let (diff_result, thread_result) = futures::join!(diff_task, thread_task);
 
@@ -646,12 +658,14 @@ impl Example {
     }
 
     async fn repository_diff(&self) -> Result<String> {
-        run_git(&self.worktree_path, &["add", "."]).await?;
+        let worktree_path = self.worktree_path();
+
+        run_git(&worktree_path, &["add", "."]).await?;
         let mut diff_args = vec!["diff", "--staged"];
         if self.base.url == ZED_REPO_URL {
             diff_args.push(":(exclude).rules");
         }
-        run_git(&self.worktree_path, &diff_args).await
+        run_git(&worktree_path, &diff_args).await
     }
 }
 
