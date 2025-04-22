@@ -1,6 +1,5 @@
 use anyhow::Context as _;
 use blade_graphics as gpu;
-use itertools::Itertools;
 use std::sync::Arc;
 use util::ResultExt;
 
