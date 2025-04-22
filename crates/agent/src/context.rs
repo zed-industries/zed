@@ -4,9 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{App, Entity, SharedString};
+use futures::{FutureExt, future::Shared};
+use gpui::{App, Entity, SharedString, Task};
 use language::Buffer;
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelImage, LanguageModelRequestMessage};
 use project::{ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::Point;
@@ -36,6 +37,7 @@ pub enum ContextKind {
     FetchedUrl,
     Thread,
     Rules,
+    Image,
 }
 
 impl ContextKind {
@@ -48,6 +50,7 @@ impl ContextKind {
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
             ContextKind::Rules => RULES_ICON,
+            ContextKind::Image => IconName::Image,
         }
     }
 }
@@ -61,6 +64,7 @@ pub enum AssistantContext {
     Thread(ThreadContext),
     Excerpt(ExcerptContext),
     Rules(RulesContext),
+    Image(ImageContext),
 }
 
 impl AssistantContext {
@@ -73,6 +77,7 @@ impl AssistantContext {
             Self::Thread(thread) => thread.id,
             Self::Excerpt(excerpt) => excerpt.id,
             Self::Rules(rules) => rules.id,
+            Self::Image(image) => image.id,
         }
     }
 }
@@ -137,6 +142,31 @@ impl ThreadContext {
             .read(cx)
             .summary()
             .unwrap_or("New thread".into())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageContext {
+    pub id: ContextId,
+    pub original_image: Arc<gpui::Image>,
+    pub image_task: Shared<Task<Option<LanguageModelImage>>>,
+}
+
+impl ImageContext {
+    pub fn image(&self) -> Option<LanguageModelImage> {
+        self.image_task.clone().now_or_never().flatten()
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.image_task.clone().now_or_never().is_none()
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.image_task
+            .clone()
+            .now_or_never()
+            .map(|result| result.is_none())
+            .unwrap_or(false)
     }
 }
 
@@ -227,6 +257,7 @@ pub fn format_context_as_string<'a>(
             AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context),
             AssistantContext::Rules(context) => rules_context.push(context),
+            AssistantContext::Image(_) => {}
         }
     }
 

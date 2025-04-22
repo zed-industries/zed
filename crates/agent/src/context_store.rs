@@ -6,8 +6,9 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::future::join_all;
 use futures::{self, Future, FutureExt, future};
-use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, Image, SharedString, Task, WeakEntity};
 use language::Buffer;
+use language_model::LanguageModelImage;
 use project::{Project, ProjectEntryId, ProjectItem, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::{Point, Rope};
@@ -17,7 +18,8 @@ use util::{ResultExt as _, maybe};
 use crate::ThreadStore;
 use crate::context::{
     AssistantContext, ContextBuffer, ContextId, ContextSymbol, ContextSymbolId, DirectoryContext,
-    ExcerptContext, FetchedUrlContext, FileContext, RulesContext, SymbolContext, ThreadContext,
+    ExcerptContext, FetchedUrlContext, FileContext, ImageContext, RulesContext, SymbolContext,
+    ThreadContext,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -448,6 +450,32 @@ impl ContextStore {
         cx.notify();
     }
 
+    pub fn add_image(&mut self, image: Arc<Image>, cx: &mut Context<ContextStore>) {
+        let image_task = LanguageModelImage::from_image(image.clone(), cx).shared();
+        let id = self.next_context_id.post_inc();
+        self.context.push(AssistantContext::Image(ImageContext {
+            id,
+            original_image: image,
+            image_task,
+        }));
+        cx.notify();
+    }
+
+    pub fn wait_for_images(&self, cx: &App) -> Task<()> {
+        let tasks = self
+            .context
+            .iter()
+            .filter_map(|ctx| match ctx {
+                AssistantContext::Image(ctx) => Some(ctx.image_task.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |_cx| {
+            join_all(tasks).await;
+        })
+    }
+
     pub fn add_excerpt(
         &mut self,
         range: Range<Anchor>,
@@ -545,6 +573,7 @@ impl ContextStore {
             AssistantContext::Rules(RulesContext { prompt_id, .. }) => {
                 self.user_rules.remove(&prompt_id);
             }
+            AssistantContext::Image(_) => {}
         }
 
         cx.notify();
@@ -673,7 +702,8 @@ impl ContextStore {
                 | AssistantContext::Excerpt(_)
                 | AssistantContext::FetchedUrl(_)
                 | AssistantContext::Thread(_)
-                | AssistantContext::Rules(_) => None,
+                | AssistantContext::Rules(_)
+                | AssistantContext::Image(_) => None,
             })
             .collect()
     }
@@ -907,6 +937,7 @@ pub fn refresh_context_store_text(
                     let context_store = context_store.clone();
                     return Some(refresh_user_rules(context_store, user_rules_context, cx));
                 }
+                AssistantContext::Image(_) => {}
             }
 
             None
