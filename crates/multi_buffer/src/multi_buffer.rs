@@ -1771,7 +1771,14 @@ impl MultiBuffer {
                 }
                 (Some(_), None) => {
                     added_a_new_excerpt = true;
-                    to_insert.push((next_excerpt_id(), new_iter.next().unwrap()));
+                    let next = new_iter.next().unwrap();
+                    if let Some((_, last)) = to_insert.last_mut() {
+                        if last.context.start <= next.context.end {
+                            last.context.end = next.context.end.max(last.context.end);
+                            continue;
+                        }
+                    }
+                    to_insert.push((next_excerpt_id(), next));
                     continue;
                 }
             };
