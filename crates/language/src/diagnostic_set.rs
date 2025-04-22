@@ -9,7 +9,7 @@ use std::{
     ops::Range,
 };
 use sum_tree::{self, Bias, SumTree};
-use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
+use text::{Anchor, AnchorRangeExt, FromAnchor, PointUtf16, ToOffset, Unclipped};
 
 /// A set of diagnostics associated with a given buffer, provided
 /// by a single language server.
@@ -246,6 +246,12 @@ impl sum_tree::Item for DiagnosticEntry<Anchor> {
 }
 
 impl DiagnosticEntry<Anchor> {
+    pub fn cmp(&self, other: &Self, buffer: &text::BufferSnapshot) -> Ordering {
+        self.range
+            .cmp(&other.range, buffer)
+            .then_with(|| self.diagnostic.cmp(&other.diagnostic))
+    }
+
     /// Converts the [DiagnosticEntry] to a different buffer coordinate type.
     pub fn resolve<O: FromAnchor>(&self, buffer: &text::BufferSnapshot) -> DiagnosticEntry<O> {
         DiagnosticEntry {
@@ -253,6 +259,20 @@ impl DiagnosticEntry<Anchor> {
                 ..O::from_anchor(&self.range.end, buffer),
             diagnostic: self.diagnostic.clone(),
         }
+    }
+}
+
+impl DiagnosticEntry<Unclipped<PointUtf16>> {
+    pub fn cmp(&self, other: &Self) -> Ordering {
+        self.range
+            .start
+            .0
+            .row
+            .cmp(&other.range.start.0.row)
+            .then_with(|| self.range.start.0.column.cmp(&other.range.start.0.column))
+            .then_with(|| self.range.end.0.row.cmp(&other.range.end.0.row))
+            .then_with(|| self.range.end.0.column.cmp(&other.range.end.0.column))
+            .then_with(|| self.diagnostic.cmp(&other.diagnostic))
     }
 }
 

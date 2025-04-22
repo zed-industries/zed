@@ -306,6 +306,7 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    BufferEdited(Entity<Buffer>),
 }
 
 pub enum DebugAdapterClientState {
@@ -2922,7 +2923,7 @@ impl Project {
                         })
                         .ok();
                 }
-
+                cx.emit(Event::BufferEdited(buffer.clone()));
                 self.enqueue_buffer_ordered_message(BufferOrderedMessage::Operation {
                     buffer_id,
                     operation,

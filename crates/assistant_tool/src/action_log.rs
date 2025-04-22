@@ -1,42 +1,123 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
-use collections::BTreeMap;
-use futures::{StreamExt, channel::mpsc};
+use collections::{BTreeMap, HashMap, HashSet};
+use futures::{
+    FutureExt as _, StreamExt,
+    channel::{mpsc, oneshot},
+};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
-use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
-use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
-use std::{cmp, ops::Range, sync::Arc};
-use text::{Edit, Patch, Rope};
+use language::{Anchor, Buffer, BufferEvent, DiagnosticEntry, DiskState, Point, ToPoint};
+use project::{Project, ProjectItem, ProjectPath, lsp_store::OpenLspBufferHandle};
+use std::{
+    cmp::{self, Ordering},
+    ops::Range,
+    sync::Arc,
+    time::Duration,
+};
+use text::{BufferId, Edit, Patch, PointUtf16, Rope, Unclipped};
 use util::RangeExt;
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
     /// Buffers that we want to notify the model about when they change.
     tracked_buffers: BTreeMap<Entity<Buffer>, TrackedBuffer>,
-    /// Has the model edited a file since it last checked diagnostics?
-    edited_since_project_diagnostics_check: bool,
+    paths_with_pre_existing_diagnostics: HashSet<ProjectPath>,
+    edited_since_diagnostics_report: bool,
+    diagnostic_state: DiagnosticState,
+    last_edited_buffer: Option<LastEditedBuffer>,
     /// The project this action log is associated with
     project: Entity<Project>,
+    _project_subscription: Subscription,
+}
+
+#[derive(Clone)]
+pub struct LastEditedBuffer {
+    pub buffer_id: BufferId,
+    pub consecutive_edit_count: usize,
 }
 
 impl ActionLog {
     /// Creates a new, empty action log associated with the given project.
-    pub fn new(project: Entity<Project>) -> Self {
+    pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
+        let pre_existing_diagnostics = project.update(cx, |project, cx| {
+            project
+                .lsp_store()
+                .read(cx)
+                .diagnostic_summaries(true, cx)
+                .map(|(path, _, _)| path.clone())
+                .collect()
+        });
+
+        let _project_subscription = cx.subscribe(&project, |this, _, event, cx| {
+            if let project::Event::BufferEdited(buffer) = event {
+                if let Some(project_path) = buffer.read(cx).project_path(cx) {
+                    this.paths_with_pre_existing_diagnostics
+                        .remove(&project_path);
+                }
+            }
+        });
+
         Self {
             tracked_buffers: BTreeMap::default(),
-            edited_since_project_diagnostics_check: false,
+            paths_with_pre_existing_diagnostics: pre_existing_diagnostics,
+            edited_since_diagnostics_report: false,
+            diagnostic_state: Default::default(),
             project,
+            last_edited_buffer: None,
+            _project_subscription,
         }
     }
 
-    /// Notifies a diagnostics check
-    pub fn checked_project_diagnostics(&mut self) {
-        self.edited_since_project_diagnostics_check = false;
+    pub fn flush_diagnostic_changes(&mut self, cx: &App) -> Option<Vec<DiagnosticChange>> {
+        if !self.edited_since_diagnostics_report {
+            return None;
+        }
+
+        let new_state = self.diagnostic_state(cx);
+        let changes = new_state.compare(&self.diagnostic_state, cx);
+        self.diagnostic_state = new_state;
+        self.edited_since_diagnostics_report = false;
+        Some(changes).filter(|changes| !changes.is_empty())
     }
 
-    /// Returns true if any files have been edited since the last project diagnostics check
-    pub fn has_edited_files_since_project_diagnostics_check(&self) -> bool {
-        self.edited_since_project_diagnostics_check
+    pub fn last_edited_buffer(&self) -> Option<LastEditedBuffer> {
+        self.last_edited_buffer.clone()
+    }
+
+    fn diagnostic_state(&self, cx: &App) -> DiagnosticState {
+        let mut diagnostics_for_open_buffers = HashMap::default();
+        let mut diagnostics_for_non_open_buffers = HashMap::default();
+
+        let project = self.project.read(cx);
+        let all_diagnostics = project.lsp_store().read(cx).all_diagnostics();
+
+        for (project_path, diagnostics) in all_diagnostics {
+            if self
+                .paths_with_pre_existing_diagnostics
+                .contains(&project_path)
+            {
+                continue;
+            }
+            match project.get_open_buffer(&project_path, cx) {
+                Some(buffer) => {
+                    let diagnostics = buffer
+                        .read(cx)
+                        .snapshot()
+                        .diagnostics_in_range(Anchor::MIN..Anchor::MAX, false)
+                        .filter(|entry| entry.diagnostic.is_primary)
+                        .collect();
+                    diagnostics_for_open_buffers.insert(buffer, diagnostics);
+                }
+                None => {
+                    diagnostics_for_non_open_buffers.insert(project_path.clone(), diagnostics);
+                }
+            }
+        }
+
+        DiagnosticState {
+            diagnostics_for_open_buffers,
+            diagnostics_for_non_open_paths: diagnostics_for_non_open_buffers,
+        }
     }
 
     fn track_buffer(
@@ -71,6 +152,12 @@ impl ActionLog {
                     status = TrackedBufferStatus::Modified;
                     unreviewed_changes = Patch::default();
                 }
+
+                if let Some(project_path) = buffer.read(cx).project_path(cx) {
+                    self.paths_with_pre_existing_diagnostics
+                        .remove(&project_path);
+                }
+
                 TrackedBuffer {
                     buffer: buffer.clone(),
                     base_text,
@@ -269,21 +356,88 @@ impl ActionLog {
         self.track_buffer(buffer, false, cx);
     }
 
-    /// Track a buffer as read, so we can notify the model about user edits.
-    pub fn will_create_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+    /// Save and track a new buffer
+    pub fn save_new_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         self.track_buffer(buffer.clone(), true, cx);
-        self.buffer_edited(buffer, cx)
+        self.save_edited_buffer(buffer, cx)
     }
 
-    /// Mark a buffer as edited, so we can refresh it in the context
-    pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.edited_since_project_diagnostics_check = true;
+    /// Save and track an edited buffer
+    pub fn save_edited_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.edited_since_diagnostics_report = true;
+
+        let saved_buffer_id = buffer.read(cx).remote_id();
+        match &mut self.last_edited_buffer {
+            Some(LastEditedBuffer {
+                buffer_id,
+                consecutive_edit_count,
+            }) if *buffer_id == saved_buffer_id => *consecutive_edit_count += 1,
+            _ => {
+                self.last_edited_buffer = Some(LastEditedBuffer {
+                    buffer_id: saved_buffer_id,
+                    consecutive_edit_count: 1,
+                })
+            }
+        }
 
         let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
         tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
+
+        let project = self.project.clone();
+
+        cx.spawn(async move |_this, cx| {
+            let (tx, mut rx) = oneshot::channel();
+            let mut tx = Some(tx);
+
+            let _subscription = cx.subscribe(&project, move |_, event, _| match event {
+                project::Event::DiskBasedDiagnosticsFinished { .. } => {
+                    if let Some(tx) = tx.take() {
+                        tx.send(()).ok();
+                    }
+                }
+                _ => {}
+            });
+
+            project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                .await?;
+
+            let has_lang_server = project.update(cx, |project, cx| {
+                project.lsp_store().update(cx, |lsp_store, cx| {
+                    buffer.update(cx, |buffer, cx| {
+                        lsp_store
+                            .language_servers_for_local_buffer(buffer, cx)
+                            .next()
+                            .is_some()
+                    })
+                })
+            })?;
+
+            if has_lang_server {
+                let timeout = cx.background_executor().timer(Duration::from_secs(30));
+                futures::select! {
+                    _ = rx => Ok(()),
+                    _ = timeout.fuse() => {
+                        log::info!("Did not receive diagnostics update 30s after agent edit");
+                        // We don't want to fail the tool here
+                        Ok(())
+                    }
+                }
+            } else {
+                Ok(())
+            }
+        })
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
@@ -497,6 +651,149 @@ impl ActionLog {
     }
 }
 
+#[derive(Default)]
+struct DiagnosticState {
+    diagnostics_for_open_buffers: HashMap<Entity<Buffer>, Vec<DiagnosticEntry<Anchor>>>,
+    diagnostics_for_non_open_paths:
+        HashMap<ProjectPath, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct DiagnosticChange {
+    pub project_path: ProjectPath,
+    pub fixed_diagnostic_count: usize,
+    pub introduced_diagnostic_count: usize,
+    pub diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+}
+
+impl DiagnosticState {
+    fn compare(&self, old_state: &Self, cx: &App) -> Vec<DiagnosticChange> {
+        let mut changes = Vec::new();
+        let empty = Vec::new();
+
+        for (buffer, new) in &self.diagnostics_for_open_buffers {
+            let old = old_state
+                .diagnostics_for_open_buffers
+                .get(&buffer)
+                .unwrap_or(&empty);
+            let buffer = buffer.read(cx);
+            let Some(project_path) = buffer.project_path(cx) else {
+                continue;
+            };
+
+            let (introduced, fixed) = Self::compare_diagnostics(new, old, |a, b| a.cmp(b, buffer));
+            if introduced > 0 || fixed > 0 {
+                changes.push(DiagnosticChange {
+                    project_path,
+                    fixed_diagnostic_count: fixed,
+                    introduced_diagnostic_count: introduced,
+                    diagnostics: new.into_iter().map(|entry| entry.resolve(buffer)).collect(),
+                });
+            }
+        }
+
+        for (buffer, old) in &old_state.diagnostics_for_open_buffers {
+            if !self.diagnostics_for_open_buffers.contains_key(&buffer) && old.len() > 0 {
+                let buffer = buffer.read(cx);
+                let Some(project_path) = buffer.project_path(cx) else {
+                    continue;
+                };
+                changes.push(DiagnosticChange {
+                    project_path,
+                    fixed_diagnostic_count: old.len(),
+                    introduced_diagnostic_count: 0,
+                    diagnostics: vec![],
+                });
+            }
+        }
+
+        let empty = Vec::new();
+
+        for (project_path, new) in &self.diagnostics_for_non_open_paths {
+            let old = old_state
+                .diagnostics_for_non_open_paths
+                .get(&project_path)
+                .unwrap_or(&empty);
+
+            let (introduced, fixed) = Self::compare_diagnostics(new, old, |a, b| a.cmp(b));
+            if introduced > 0 || fixed > 0 {
+                changes.push(DiagnosticChange {
+                    project_path: project_path.clone(),
+                    fixed_diagnostic_count: fixed,
+                    introduced_diagnostic_count: introduced,
+                    diagnostics: new.clone(),
+                });
+            }
+        }
+
+        for (project_path, old) in &old_state.diagnostics_for_non_open_paths {
+            if !self
+                .diagnostics_for_non_open_paths
+                .contains_key(&project_path)
+                && old.len() > 0
+            {
+                changes.push(DiagnosticChange {
+                    project_path: project_path.clone(),
+                    fixed_diagnostic_count: old.len(),
+                    introduced_diagnostic_count: 0,
+                    diagnostics: vec![],
+                });
+            }
+        }
+
+        changes
+    }
+
+    fn compare_diagnostics<T>(
+        new: &[DiagnosticEntry<T>],
+        old: &[DiagnosticEntry<T>],
+        cmp: impl Fn(&DiagnosticEntry<T>, &DiagnosticEntry<T>) -> Ordering,
+    ) -> (usize, usize) {
+        let mut introduced = 0;
+        let mut fixed = 0;
+
+        let mut old_iter = old.iter().peekable();
+        let mut new_iter = new.iter().peekable();
+
+        loop {
+            match (old_iter.peek(), new_iter.peek()) {
+                (Some(old_entry), Some(new_entry)) => {
+                    match cmp(old_entry, new_entry) {
+                        Ordering::Less => {
+                            // Old entry comes first and isn't in new - it's fixed
+                            fixed += 1;
+                            old_iter.next();
+                        }
+                        Ordering::Greater => {
+                            // New entry comes first and isn't in old - it's introduced
+                            introduced += 1;
+                            new_iter.next();
+                        }
+                        Ordering::Equal => {
+                            // They're the same - just advance both iterators
+                            old_iter.next();
+                            new_iter.next();
+                        }
+                    }
+                }
+                (Some(_), None) => {
+                    // Only old entries left - they're all fixed
+                    old_iter.next();
+                    fixed += 1;
+                }
+                (None, Some(_)) => {
+                    // Only new entries left - they're all introduced
+                    new_iter.next();
+                    introduced += 1;
+                }
+                (None, None) => break,
+            }
+        }
+
+        (introduced, fixed)
+    }
+}
+
 fn apply_non_conflicting_edits(
     patch: &Patch<u32>,
     edits: Vec<Edit<u32>>,
@@ -667,7 +964,7 @@ mod tests {
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
-    use language::Point;
+    use language::{Diagnostic, LanguageServerId, Point};
     use project::{FakeFs, Fs, Project, RemoveOptions};
     use rand::prelude::*;
     use serde_json::json;
@@ -696,7 +993,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
 
         cx.update(|cx| {
@@ -711,8 +1008,10 @@ mod tests {
                     .edit([(Point::new(4, 2)..Point::new(4, 3), "O")], None, cx)
                     .unwrap()
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -766,7 +1065,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno\npqr", cx));
 
         cx.update(|cx| {
@@ -783,8 +1082,10 @@ mod tests {
                     .unwrap();
                 buffer.finalize_last_transaction();
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -840,7 +1141,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
 
         cx.update(|cx| {
@@ -850,8 +1151,10 @@ mod tests {
                     .edit([(Point::new(1, 2)..Point::new(2, 3), "F\nGHI")], None, cx)
                     .unwrap()
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -929,7 +1232,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/dir"), json!({})).await;
@@ -946,12 +1249,10 @@ mod tests {
             .unwrap();
         cx.update(|cx| {
             buffer.update(cx, |buffer, cx| buffer.set_text("lorem", cx));
-            action_log.update(cx, |log, cx| log.will_create_buffer(buffer.clone(), cx));
-        });
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .await
-            .unwrap();
+            action_log.update(cx, |log, cx| log.save_new_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
@@ -1005,7 +1306,7 @@ mod tests {
             .read_with(cx, |project, cx| project.find_project_path("dir/file2", cx))
             .unwrap();
 
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let buffer1 = project
             .update(cx, |project, cx| {
                 project.open_buffer(file1_path.clone(), cx)
@@ -1068,9 +1369,8 @@ mod tests {
             .await
             .unwrap();
         buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
-        action_log.update(cx, |log, cx| log.will_create_buffer(buffer2.clone(), cx));
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer2.clone(), cx))
+        action_log
+            .update(cx, |log, cx| log.save_new_buffer(buffer2.clone(), cx))
             .await
             .unwrap();
 
@@ -1103,7 +1403,7 @@ mod tests {
         fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
             .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let file_path = project
             .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
             .unwrap();
@@ -1124,8 +1424,11 @@ mod tests {
                     .edit([(Point::new(5, 2)..Point::new(5, 3), "O")], None, cx)
                     .unwrap()
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
+
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -1238,7 +1541,7 @@ mod tests {
         fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
             .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let file_path = project
             .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
             .unwrap();
@@ -1259,8 +1562,10 @@ mod tests {
                     .edit([(Point::new(5, 2)..Point::new(5, 3), "O")], None, cx)
                     .unwrap()
             });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -1314,7 +1619,7 @@ mod tests {
         fs.insert_tree(path!("/dir"), json!({"file": "content"}))
             .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let file_path = project
             .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
             .unwrap();
@@ -1369,7 +1674,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let file_path = project
             .read_with(cx, |project, cx| {
                 project.find_project_path("dir/new_file", cx)
@@ -1382,8 +1687,10 @@ mod tests {
             .unwrap();
         cx.update(|cx| {
             buffer.update(cx, |buffer, cx| buffer.set_text("content", cx));
-            action_log.update(cx, |log, cx| log.will_create_buffer(buffer.clone(), cx));
-        });
+            action_log.update(cx, |log, cx| log.save_new_buffer(buffer.clone(), cx))
+        })
+        .await
+        .unwrap();
         project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
             .await
@@ -1417,6 +1724,177 @@ mod tests {
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
+    #[gpui::test]
+    async fn test_track_diagnostics(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "src": {
+                    "one.rs": "fn one(a: B) -> C { d }",
+                    "two.rs": "fn two(e: F) { G::H }",
+                    "three.rs": "fn three() -> { i(); }",
+                }
+            }),
+        )
+        .await;
+
+        let language_server_id = LanguageServerId(0);
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+        let diagnostics_1 = vec![language::DiagnosticEntry {
+            range: Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 11)),
+            diagnostic: Diagnostic {
+                message: "pre-existing error 1".into(),
+                group_id: 0,
+                is_primary: true,
+                ..Default::default()
+            },
+        }];
+        let diagnostics_2 = vec![language::DiagnosticEntry {
+            range: Unclipped(PointUtf16::new(0, 18))..Unclipped(PointUtf16::new(0, 19)),
+            diagnostic: Diagnostic {
+                message: "pre-existing error 2".into(),
+                group_id: 0,
+                is_primary: true,
+                ..Default::default()
+            },
+        }];
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store
+                    .update_diagnostic_entries(
+                        language_server_id,
+                        "/dir/src/one.rs".into(),
+                        None,
+                        diagnostics_1.clone(),
+                        cx,
+                    )
+                    .unwrap();
+                lsp_store
+                    .update_diagnostic_entries(
+                        language_server_id,
+                        "/dir/src/two.rs".into(),
+                        None,
+                        diagnostics_2.clone(),
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/dir/src/one.rs", cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = buffer.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+
+        action_log.update(cx, |action_log, cx| {
+            action_log.track_buffer(buffer.clone(), false, cx);
+        });
+
+        let diagnostic_changes = action_log
+            .update(cx, |action_log, cx| action_log.flush_diagnostic_changes(cx))
+            .unwrap();
+        assert_eq!(
+            diagnostic_changes,
+            vec![DiagnosticChange {
+                project_path: (worktree_id, "src/one.rs").into(),
+                fixed_diagnostic_count: 0,
+                introduced_diagnostic_count: 1,
+                diagnostics: diagnostics_1
+            },]
+        );
+
+        let save_task = action_log.update(cx, |action_log, cx| {
+            action_log.save_edited_buffer(buffer.clone(), cx)
+        });
+
+        let diagnostics_1 = vec![
+            language::DiagnosticEntry {
+                range: Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 11)),
+                diagnostic: Diagnostic {
+                    message: "pre-existing error 1".into(),
+                    group_id: 0,
+                    is_primary: true,
+                    ..Default::default()
+                },
+            },
+            language::DiagnosticEntry {
+                range: Unclipped(PointUtf16::new(0, 20))..Unclipped(PointUtf16::new(0, 21)),
+                diagnostic: Diagnostic {
+                    message: "new error".into(),
+                    group_id: 0,
+                    is_primary: true,
+                    ..Default::default()
+                },
+            },
+        ];
+        let diagnostics_3 = vec![language::DiagnosticEntry {
+            range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 0)),
+            diagnostic: Diagnostic {
+                message: "new error 3".into(),
+                group_id: 0,
+                is_primary: true,
+                ..Default::default()
+            },
+        }];
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store
+                    .update_diagnostic_entries(
+                        language_server_id,
+                        "/dir/src/one.rs".into(),
+                        None,
+                        diagnostics_1.clone(),
+                        cx,
+                    )
+                    .unwrap();
+                lsp_store
+                    .update_diagnostic_entries(
+                        language_server_id,
+                        "/dir/src/three.rs".into(),
+                        None,
+                        diagnostics_3.clone(),
+                        cx,
+                    )
+                    .unwrap();
+                lsp_store.disk_based_diagnostics_finished(language_server_id, cx);
+            });
+        });
+
+        save_task.await.unwrap();
+
+        // The diagnostics in the file `two.rs` existed are pre-existing, and
+        // that file has not been edited, so they are not included.
+        let diagnostic_changes = action_log
+            .update(cx, |action_log, cx| action_log.flush_diagnostic_changes(cx))
+            .unwrap();
+        assert_eq!(
+            diagnostic_changes,
+            vec![
+                DiagnosticChange {
+                    project_path: (worktree_id, "src/one.rs").into(),
+                    fixed_diagnostic_count: 0,
+                    introduced_diagnostic_count: 1,
+                    diagnostics: diagnostics_1
+                },
+                DiagnosticChange {
+                    project_path: (worktree_id, "src/three.rs").into(),
+                    fixed_diagnostic_count: 0,
+                    introduced_diagnostic_count: 1,
+                    diagnostics: diagnostics_3
+                }
+            ]
+        );
+    }
+
     #[gpui::test(iterations = 100)]
     async fn test_random_diffs(mut rng: StdRng, cx: &mut TestAppContext) {
         init_test(cx);
@@ -1429,7 +1907,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/dir"), json!({"file": text})).await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let action_log = cx.new(|cx| ActionLog::new(project.clone(), cx));
         let file_path = project
             .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
             .unwrap();
@@ -1469,9 +1947,14 @@ mod tests {
                     cx.update(|cx| {
                         buffer.update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
                         if is_agent_change {
-                            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                            action_log
+                                .update(cx, |log, cx| log.save_edited_buffer(buffer.clone(), cx))
+                        } else {
+                            Task::ready(Ok(()))
                         }
-                    });
+                    })
+                    .await
+                    .unwrap();
                 }
             }
 

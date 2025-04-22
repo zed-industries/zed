@@ -1,11 +1,14 @@
 use crate::{replace::replace_with_flexible_indent, schema::json_schema_for};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
+
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
+
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
 use std::{path::PathBuf, sync::Arc};
 use ui::IconName;
 
@@ -190,24 +193,22 @@ impl Tool for EditFileTool {
                     buffer.finalize_last_transaction();
                     buffer.snapshot()
                 });
-                action_log.update(cx, |log, cx| {
-                    log.buffer_edited(buffer.clone(), cx)
-                });
                 snapshot
             })?;
 
-            project.update( cx, |project, cx| {
-                project.save_buffer(buffer, cx)
+            action_log.update(cx, |log, cx| {
+                log.save_edited_buffer(buffer.clone(), cx)
             })?.await?;
 
-            let diff_str = cx.background_spawn(async move {
-                let new_text = snapshot.text();
-                language::unified_diff(&old_text, &new_text)
+            let diff_str = cx.background_spawn({
+                let snapshot = snapshot.clone();
+                async move {
+                    let new_text = snapshot.text();
+                    language::unified_diff(&old_text, &new_text)
+                }
             }).await;
 
-
             Ok(format!("Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str))
-
         }).into()
     }
 }

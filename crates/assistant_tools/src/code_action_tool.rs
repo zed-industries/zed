@@ -241,13 +241,10 @@ impl Tool for CodeActionTool {
                     format!("Completed code action: {}", title)
                 };
 
-                project
-                    .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
-                    .await?;
 
                 action_log.update(cx, |log, cx| {
-                    log.buffer_edited(buffer.clone(), cx)
-                })?;
+                    log.save_edited_buffer(buffer.clone(), cx)
+                })?.await?;
 
                 Ok(response)
             } else {
