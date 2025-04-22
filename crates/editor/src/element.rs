@@ -2183,6 +2183,16 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Option<(AnyElement, gpui::Point<Pixels>)>> {
+        let show_expand_excerpts_buttons = self
+            .editor
+            .read(cx)
+            .show_expand_excerpt_buttons
+            .unwrap_or(false); // TODO: unwrap_or is wrong here, default is true
+
+        if !show_expand_excerpts_buttons {
+            return vec![];
+        }
+
         let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
 
         let scroll_top = scroll_position.y * line_height;

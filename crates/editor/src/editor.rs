@@ -794,6 +794,7 @@ pub struct Editor {
     show_breakpoints: Option<bool>,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
+    show_expand_excerpt_buttons: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
@@ -1566,6 +1567,7 @@ impl Editor {
             show_gutter: mode.is_full(),
             show_line_numbers: None,
             use_relative_line_numbers: None,
+            show_expand_excerpt_buttons: None,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -16146,6 +16148,15 @@ impl Editor {
 
     pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut Context<Self>) {
         self.show_line_numbers = Some(show_line_numbers);
+        cx.notify();
+    }
+
+    pub fn set_show_expand_excerpt_buttons(
+        &mut self,
+        show_expand_excerpt_buttons: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_expand_excerpt_buttons = Some(show_expand_excerpt_buttons);
         cx.notify();
     }
 
