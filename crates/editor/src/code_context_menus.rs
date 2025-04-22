@@ -690,7 +690,6 @@ impl CompletionsMenu {
                     sort_score_int: Reverse<i32>,
                     sort_snippet: Reverse<i32>,
                     sort_text: Option<String>,
-                    sort_label: Option<String>,
                     sort_key: (usize, &'a str),
                 },
                 OtherMatch {
@@ -736,35 +735,37 @@ impl CompletionsMenu {
                 // makes it behave like sorting by the raw float again. Some what low number offers a balance,
                 // grouping similar scores while still distinguishing clearly better ones.
 
-                let sort_score = Reverse(OrderedFloat(mat.score));
+                let a = {
+                    let sort_score = Reverse(OrderedFloat(mat.score));
 
-                let is_other_match = query_start_lower
-                    .map(|query_char| {
-                        !split_words(&mat.string).any(|word| {
-                            word.chars()
-                                .next()
-                                .and_then(|c| c.to_lowercase().next())
-                                .map_or(false, |word_char| word_char == query_char)
+                    let is_other_match = query_start_lower
+                        .map(|query_char| {
+                            !split_words(&mat.string).any(|word| {
+                                word.chars()
+                                    .next()
+                                    .and_then(|c| c.to_lowercase().next())
+                                    .map_or(false, |word_char| word_char == query_char)
+                            })
                         })
-                    })
-                    .unwrap_or(false);
+                        .unwrap_or(false);
 
-                if is_other_match {
-                    MatchTier::OtherMatch { sort_score }
-                } else {
-                    let sort_score_int = Reverse(map_score_to_int(mat.score, MAX_INT_SCORE));
+                    if is_other_match {
+                        MatchTier::OtherMatch { sort_score }
+                    } else {
+                        let sort_score_int = Reverse(map_score_to_int(mat.score, MAX_INT_SCORE));
 
-                    let completion = &completions[mat.candidate_id];
-                    let sort_snippet = Reverse(match &completion.source {
-                        CompletionSource::Lsp { lsp_completion, .. }
-                            if lsp_completion.kind == Some(CompletionItemKind::SNIPPET) =>
+                        let completion = &completions[mat.candidate_id];
+                        let sort_snippet = Reverse(match &completion.source {
+                            CompletionSource::Lsp { lsp_completion, .. }
+                                if lsp_completion.kind == Some(CompletionItemKind::SNIPPET) =>
+                            {
+                                1
+                            }
+                            _ => 0,
+                        });
+                        let sort_text = if let CompletionSource::Lsp { lsp_completion, .. } =
+                            &completion.source
                         {
-                            1
-                        }
-                        _ => 0,
-                    });
-                    let sort_text =
-                        if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
                             lsp_completion
                                 .sort_text
                                 .as_deref()
@@ -772,22 +773,20 @@ impl CompletionsMenu {
                         } else {
                             None
                         };
-                    let sort_label =
-                        if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
-                            Some(lsp_completion.label.to_lowercase())
-                        } else {
-                            None
-                        };
-                    let sort_key = completion.sort_key();
+                        let sort_key = completion.sort_key();
 
-                    MatchTier::WordStartMatch {
-                        sort_score_int,
-                        sort_snippet,
-                        sort_text,
-                        sort_label,
-                        sort_key,
+                        MatchTier::WordStartMatch {
+                            sort_score_int,
+                            sort_snippet,
+                            sort_text,
+                            sort_key,
+                        }
                     }
-                }
+                };
+
+                dbg!(&a);
+
+                a
             });
             drop(completions);
         }
