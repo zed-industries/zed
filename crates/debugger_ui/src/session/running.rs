@@ -1004,7 +1004,6 @@ impl RunningState {
                 window,
                 cx,
             );
-            this.activate_item(0, false, false, window, cx);
 
             this.add_item(
                 Box::new(SubView::new(
