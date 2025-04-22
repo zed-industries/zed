@@ -25,7 +25,7 @@ use language::{Anchor, Buffer, Capability, LineEnding, OffsetRangeExt, Point, Ro
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath, WorktreeId,
-    git_store::{GitStore, GitStoreEvent, MergeDetails, RepositoryEvent},
+    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
 use std::{
     any::{Any, TypeId},
@@ -70,7 +70,6 @@ struct DiffBuffer {
 /// Pseudo-file providing a multibuffer excerpt at the top of the project diff to describe the merge conflict situation.
 struct ConflictMetadataFile {
     path: Arc<Path>,
-    merge_details: MergeDetails,
     worktree_id: WorktreeId,
 }
 
@@ -80,14 +79,9 @@ const TRACKED_NAMESPACE: u32 = 2;
 const NEW_NAMESPACE: u32 = 3;
 
 impl ConflictMetadataFile {
-    fn new(merge_details: MergeDetails, worktree_id: WorktreeId) -> Self {
+    fn new(worktree_id: WorktreeId) -> Self {
         Self {
-            path: Path::new(&format!(
-                "conflicted merge of {} and {}",
-                merge_details.head.sha, merge_details.merge_head.sha
-            ))
-            .into(),
-            merge_details,
+            path: Path::new("conflicted merge").into(),
             worktree_id,
         }
     }
@@ -535,20 +529,7 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
-            dbg!("");
-            let merge_details = this.update(cx, |this, cx| {
-                let git_store = this.git_store.read(cx);
-                let active_repository = git_store.active_repository()?;
-                if active_repository.read(cx).branch != this.current_branch {
-                    this.current_branch = active_repository.read(cx).branch.clone();
-                    cx.notify();
-                }
-                active_repository.read(cx).merge_details.clone()
-            })?;
-
-            dbg!(&merge_details);
-
-            if let Some(merge_details) = merge_details {
+            if dbg!(false) {
                 this.update(cx, |this, cx| {
                     let Some(worktree_id) = this
                         .project
@@ -559,7 +540,7 @@ impl ProjectDiff {
                     else {
                         return;
                     };
-                    let file = Arc::new(ConflictMetadataFile::new(merge_details, worktree_id));
+                    let file = Arc::new(ConflictMetadataFile::new(worktree_id));
                     let buffer = cx.new(|cx| {
                         let buffer = TextBuffer::new_normalized(
                             0,

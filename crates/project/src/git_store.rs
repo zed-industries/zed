@@ -238,14 +238,7 @@ pub struct RepositorySnapshot {
     pub branch: Option<Branch>,
     pub merge_conflicts: TreeSet<RepoPath>,
     pub merge_head_shas: Vec<SharedString>,
-    pub merge_details: Option<MergeDetails>,
     pub scan_id: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MergeDetails {
-    pub head: CommitDetails,
-    pub merge_head: CommitDetails,
 }
 
 type JobId = u64;
@@ -789,13 +782,10 @@ impl GitStore {
             .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
         let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, is_unmerged, cx));
 
-        self._subscriptions.push(cx.subscribe(
-            &conflict_set,
-            |git_store, conflict_set, event, cx| {
-                //
+        self._subscriptions
+            .push(cx.subscribe(&conflict_set, |_, _, _, cx| {
                 cx.emit(GitStoreEvent::ConflictsUpdated);
-            },
-        ));
+            }));
 
         buffer_git_state.update(cx, |state, cx| {
             state.conflict_set = Some(conflict_set.downgrade());
@@ -2265,28 +2255,11 @@ impl BufferGitState {
 
         if let Some(old_snapshot) = old_snapshot {
             self.conflict_updated_futures.push(tx);
-            let git_store = self.git_store.clone();
             self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
-                let repository = git_store
-                    .update(cx, |git_store, cx| {
-                        git_store.repository_and_path_for_buffer_id(buffer.remote_id(), cx)
-                    })
-                    .ok()
-                    .flatten();
-                // FIXME clean up
-                let (ours, theirs) = repository
-                    .and_then(|(repo, _)| {
-                        repo.update(cx, |repo, _| repo.merge_details.clone()).ok()
-                    })
-                    .flatten()
-                    .map(|details| (details.head, details.merge_head))
-                    .unzip();
                 let (snapshot, changed_range) = cx
                     .background_spawn(async move {
                         // FIXME don't reload conflict stuff unless has_conflict bit changed
-                        let mut new_snapshot = ConflictSet::parse(&buffer);
-                        new_snapshot.ours_info = ours;
-                        new_snapshot.theirs_info = theirs;
+                        let new_snapshot = ConflictSet::parse(&buffer);
                         let changed_range = old_snapshot.compare(&new_snapshot, &buffer);
                         (new_snapshot, changed_range)
                     })
@@ -2593,7 +2566,6 @@ impl RepositorySnapshot {
             merge_conflicts: Default::default(),
             merge_head_shas: Default::default(),
             scan_id: 0,
-            merge_details: None,
         }
     }
 
@@ -4524,13 +4496,6 @@ async fn compute_snapshot(
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
 
-    let head = backend.show("HEAD".into()).await.ok();
-    let merge_head = backend.show("MERGE_HEAD".into()).await.ok();
-    let merge_details = head
-        .zip(merge_head)
-        .map(|(head, merge_head)| MergeDetails { head, merge_head });
-    dbg!(&merge_details);
-
     let snapshot = RepositorySnapshot {
         id,
         merge_message,
@@ -4540,7 +4505,6 @@ async fn compute_snapshot(
         branch,
         merge_conflicts,
         merge_head_shas,
-        merge_details,
     };
 
     Ok((snapshot, events))
