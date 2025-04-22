@@ -150,7 +150,12 @@ impl Render for AgentNotification {
                                                             .size(IconSize::XSmall)
                                                             .color(Color::Muted),
                                                     )
-                                                    .child(div().truncate().child(project_name))
+                                                    .child(
+                                                        div()
+                                                            .max_w_16()
+                                                            .truncate()
+                                                            .child(project_name),
+                                                    )
                                                     .child(
                                                         div().size(px(3.)).rounded_full().bg(cx
                                                             .theme()
