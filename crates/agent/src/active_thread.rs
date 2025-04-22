@@ -1,8 +1,8 @@
-use crate::context::{AssistantContext, ContextId, format_context_as_string};
+use crate::context::{AssistantContext, ContextId, RULES_ICON, format_context_as_string};
 use crate::context_picker::MentionLink;
 use crate::thread::{
-    LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
-    ThreadEvent, ThreadFeedback,
+    LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
+    ThreadFeedback,
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
@@ -42,6 +42,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
+use zed_actions::assistant::OpenPromptLibrary;
 
 use crate::context_store::ContextStore;
 
@@ -132,18 +133,23 @@ impl RenderedMessage {
     }
 
     fn push_segment(&mut self, segment: &MessageSegment, cx: &mut App) {
-        let rendered_segment = match segment {
-            MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
-                content: parse_markdown(text.into(), self.language_registry.clone(), cx),
-                scroll_handle: ScrollHandle::default(),
-            },
-            MessageSegment::Text(text) => RenderedMessageSegment::Text(parse_markdown(
-                text.into(),
-                self.language_registry.clone(),
-                cx,
-            )),
+        match segment {
+            MessageSegment::Thinking { text, .. } => {
+                self.segments.push(RenderedMessageSegment::Thinking {
+                    content: parse_markdown(text.into(), self.language_registry.clone(), cx),
+                    scroll_handle: ScrollHandle::default(),
+                })
+            }
+            MessageSegment::Text(text) => {
+                self.segments
+                    .push(RenderedMessageSegment::Text(parse_markdown(
+                        text.into(),
+                        self.language_registry.clone(),
+                        cx,
+                    )))
+            }
+            MessageSegment::RedactedThinking(_) => {}
         };
-        self.segments.push(rendered_segment);
     }
 }
 
@@ -258,14 +264,6 @@ fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         })),
         ..Default::default()
     }
-}
-
-fn render_tool_use_markdown(
-    text: SharedString,
-    language_registry: Arc<LanguageRegistry>,
-    cx: &mut App,
-) -> Entity<Markdown> {
-    cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
 }
 
 fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
@@ -502,7 +500,6 @@ fn render_markdown_code_block(
         .blend(cx.theme().colors().editor_foreground.opacity(0.01));
 
     let codeblock_header = h_flex()
-        .group("codeblock_header")
         .py_1()
         .pl_1p5()
         .pr_1()
@@ -517,7 +514,7 @@ fn render_markdown_code_block(
             h_flex()
                 .gap_1()
                 .child(
-                    div().visible_on_hover("codeblock_header").child(
+                    div().visible_on_hover("codeblock_container").child(
                         IconButton::new(
                             ("copy-markdown-code", ix),
                             if codeblock_was_copied {
@@ -599,6 +596,7 @@ fn render_markdown_code_block(
         );
 
     v_flex()
+        .group("codeblock_container")
         .my_2()
         .overflow_hidden()
         .rounded_lg()
@@ -702,6 +700,12 @@ fn open_markdown_link(
             }
         }),
         Some(MentionLink::Fetch(url)) => cx.open_url(&url),
+        Some(MentionLink::Rules(prompt_id)) => window.dispatch_action(
+            Box::new(OpenPromptLibrary {
+                prompt_to_select: Some(prompt_id.0),
+            }),
+            cx,
+        ),
         None => cx.open_url(&text),
     }
 }
@@ -875,21 +879,34 @@ impl ActiveThread {
         tool_output: SharedString,
         cx: &mut Context<Self>,
     ) {
-        let rendered = RenderedToolUse {
-            label: render_tool_use_markdown(tool_label.into(), self.language_registry.clone(), cx),
-            input: render_tool_use_markdown(
-                format!(
-                    "```json\n{}\n```",
-                    serde_json::to_string_pretty(tool_input).unwrap_or_default()
-                )
-                .into(),
-                self.language_registry.clone(),
-                cx,
-            ),
-            output: render_tool_use_markdown(tool_output, self.language_registry.clone(), cx),
-        };
-        self.rendered_tool_uses
-            .insert(tool_use_id.clone(), rendered);
+        let rendered = self
+            .rendered_tool_uses
+            .entry(tool_use_id.clone())
+            .or_insert_with(|| RenderedToolUse {
+                label: cx.new(|cx| {
+                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                }),
+                input: cx.new(|cx| {
+                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                }),
+                output: cx.new(|cx| {
+                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                }),
+            });
+
+        rendered.label.update(cx, |this, cx| {
+            this.replace(tool_label, cx);
+        });
+        rendered.input.update(cx, |this, cx| {
+            let input = format!(
+                "```json\n{}\n```",
+                serde_json::to_string_pretty(tool_input).unwrap_or_default()
+            );
+            this.replace(input, cx);
+        });
+        rendered.output.update(cx, |this, cx| {
+            this.replace(tool_output, cx);
+        });
     }
 
     fn handle_thread_event(
@@ -982,6 +999,19 @@ impl ActiveThread {
                     );
                 }
             }
+            ThreadEvent::StreamedToolUse {
+                tool_use_id,
+                ui_text,
+                input,
+            } => {
+                self.render_tool_use_markdown(
+                    tool_use_id.clone(),
+                    ui_text.clone(),
+                    input,
+                    "".into(),
+                    cx,
+                );
+            }
             ThreadEvent::ToolFinished {
                 pending_tool_use, ..
             } => {
@@ -1000,6 +1030,7 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
+            ThreadEvent::ReceivedTextChunk => {}
         }
     }
 
@@ -1231,6 +1262,8 @@ impl ActiveThread {
                 }
 
                 let request = language_model::LanguageModelRequest {
+                    thread_id: None,
+                    prompt_id: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: language_model::Role::User,
                         content: vec![content.into()],
@@ -1296,7 +1329,8 @@ impl ActiveThread {
         }
 
         self.thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.model, RequestKind::Chat, cx)
+            thread.advance_prompt_id();
+            thread.send_to_model(model.model, cx)
         });
         cx.notify();
     }
@@ -2483,13 +2517,15 @@ impl ActiveThread {
         let edit_tools = tool_use.needs_confirmation;
 
         let status_icons = div().child(match &tool_use.status {
-            ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
+            ToolUseStatus::NeedsConfirmation => {
                 let icon = Icon::new(IconName::Warning)
                     .color(Color::Warning)
                     .size(IconSize::Small);
                 icon.into_any_element()
             }
-            ToolUseStatus::Running => {
+            ToolUseStatus::Pending
+            | ToolUseStatus::InputStillStreaming
+            | ToolUseStatus::Running => {
                 let icon = Icon::new(IconName::ArrowCircle)
                     .color(Color::Accent)
                     .size(IconSize::Small);
@@ -2575,7 +2611,7 @@ impl ActiveThread {
                             }),
                         )),
                 ),
-                ToolUseStatus::Running => container.child(
+                ToolUseStatus::InputStillStreaming | ToolUseStatus::Running => container.child(
                     results_content_container().child(
                         h_flex()
                             .gap_1()
@@ -2968,53 +3004,113 @@ impl ActiveThread {
             return div().into_any();
         };
 
+        let user_rules_text = if project_context.user_rules.is_empty() {
+            None
+        } else if project_context.user_rules.len() == 1 {
+            let user_rules = &project_context.user_rules[0];
+
+            match user_rules.title.as_ref() {
+                Some(title) => Some(format!("Using \"{title}\" user rule")),
+                None => Some("Using user rule".into()),
+            }
+        } else {
+            Some(format!(
+                "Using {} user rules",
+                project_context.user_rules.len()
+            ))
+        };
+
+        let first_user_rules_id = project_context
+            .user_rules
+            .first()
+            .map(|user_rules| user_rules.uuid.0);
+
         let rules_files = project_context
             .worktrees
             .iter()
             .filter_map(|worktree| worktree.rules_file.as_ref())
             .collect::<Vec<_>>();
 
-        let label_text = match rules_files.as_slice() {
-            &[] => return div().into_any(),
-            &[rules_file] => {
-                format!("Using {:?} file", rules_file.path_in_worktree)
-            }
-            rules_files => {
-                format!("Using {} rules files", rules_files.len())
-            }
+        let rules_file_text = match rules_files.as_slice() {
+            &[] => None,
+            &[rules_file] => Some(format!(
+                "Using project {:?} file",
+                rules_file.path_in_worktree
+            )),
+            rules_files => Some(format!("Using {} project rules files", rules_files.len())),
         };
 
-        div()
+        if user_rules_text.is_none() && rules_file_text.is_none() {
+            return div().into_any();
+        }
+
+        v_flex()
             .pt_2()
             .px_2p5()
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_0p5()
-                    .child(
-                        h_flex()
-                            .gap_1p5()
-                            .child(
-                                Icon::new(IconName::File)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
-                            .child(
-                                Label::new(label_text)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted)
-                                    .buffer_font(cx),
-                            ),
-                    )
-                    .child(
-                        IconButton::new("open-rule", IconName::ArrowUpRightAlt)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Ignored)
-                            .on_click(cx.listener(Self::handle_open_rules))
-                            .tooltip(Tooltip::text("View Rules")),
-                    ),
-            )
+            .gap_1()
+            .when_some(user_rules_text, |parent, user_rules_text| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .child(
+                            Icon::new(RULES_ICON)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                        .child(
+                            Label::new(user_rules_text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .truncate()
+                                .buffer_font(cx)
+                                .ml_1p5()
+                                .mr_0p5(),
+                        )
+                        .child(
+                            IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
+                                .tooltip(Tooltip::text("View User Rules"))
+                                .on_click(move |_event, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(OpenPromptLibrary {
+                                            prompt_to_select: first_user_rules_id,
+                                        }),
+                                        cx,
+                                    )
+                                }),
+                        ),
+                )
+            })
+            .when_some(rules_file_text, |parent, rules_file_text| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .child(
+                            Icon::new(IconName::File)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                        .child(
+                            Label::new(rules_file_text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .buffer_font(cx)
+                                .ml_1p5()
+                                .mr_0p5(),
+                        )
+                        .child(
+                            IconButton::new("open-rule", IconName::ArrowUpRightAlt)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                .on_click(cx.listener(Self::handle_open_rules))
+                                .tooltip(Tooltip::text("View Rules")),
+                        ),
+                )
+            })
             .into_any()
     }
 
@@ -3207,12 +3303,10 @@ pub(crate) fn open_context(
             }
         }
         AssistantContext::Directory(directory_context) => {
-            let project_path = directory_context.project_path(cx);
+            let entry_id = directory_context.entry_id;
             workspace.update(cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    if let Some(entry) = project.entry_for_path(&project_path, cx) {
-                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
-                    }
+                workspace.project().update(cx, |_project, cx| {
+                    cx.emit(project::Event::RevealInProjectPanel(entry_id));
                 })
             })
         }
@@ -3264,6 +3358,13 @@ pub(crate) fn open_context(
                 }
             })
         }
+        AssistantContext::Rules(rules_context) => window.dispatch_action(
+            Box::new(OpenPromptLibrary {
+                prompt_to_select: Some(rules_context.prompt_id.0),
+            }),
+            cx,
+        ),
+        AssistantContext::Image(_) => {}
     }
 }
 

@@ -1,11 +1,14 @@
+use std::sync::Arc;
 use std::{rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
-use gpui::ClickEvent;
-use gpui::{Animation, AnimationExt as _, pulsating_between};
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use futures::FutureExt;
+use gpui::{Animation, AnimationExt as _, AnyView, Image, MouseButton, pulsating_between};
+use gpui::{ClickEvent, Task};
+use language_model::LanguageModelImage;
+use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
-use crate::context::{AssistantContext, ContextId, ContextKind};
+use crate::context::{AssistantContext, ContextId, ContextKind, ImageContext};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -120,74 +123,95 @@ impl RenderOnce for ContextPill {
                 on_remove,
                 focused,
                 on_click,
-            } => base_pill
-                .bg(color.element_background)
-                .border_color(if *focused {
-                    color.border_focused
-                } else {
-                    color.border.opacity(0.5)
-                })
-                .pr(if on_remove.is_some() { px(2.) } else { px(4.) })
-                .child(
-                    h_flex()
-                        .id("context-data")
-                        .gap_1()
-                        .child(
-                            div().max_w_64().child(
-                                Label::new(context.name.clone())
-                                    .size(LabelSize::Small)
-                                    .truncate(),
-                            ),
-                        )
-                        .when_some(context.parent.as_ref(), |element, parent_name| {
-                            if *dupe_name {
-                                element.child(
-                                    Label::new(parent_name.clone())
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                            } else {
-                                element
-                            }
-                        })
-                        .when_some(context.tooltip.as_ref(), |element, tooltip| {
-                            element.tooltip(Tooltip::text(tooltip.clone()))
-                        }),
-                )
-                .when_some(on_remove.as_ref(), |element, on_remove| {
-                    element.child(
-                        IconButton::new(("remove", context.id.0), IconName::Close)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::XSmall)
-                            .tooltip(Tooltip::text("Remove Context"))
-                            .on_click({
-                                let on_remove = on_remove.clone();
-                                move |event, window, cx| on_remove(event, window, cx)
+            } => {
+                let status_is_error = matches!(context.status, ContextStatus::Error { .. });
+
+                base_pill
+                    .pr(if on_remove.is_some() { px(2.) } else { px(4.) })
+                    .map(|pill| {
+                        if status_is_error {
+                            pill.bg(cx.theme().status().error_background)
+                                .border_color(cx.theme().status().error_border)
+                        } else if *focused {
+                            pill.bg(color.element_background)
+                                .border_color(color.border_focused)
+                        } else {
+                            pill.bg(color.element_background)
+                                .border_color(color.border.opacity(0.5))
+                        }
+                    })
+                    .child(
+                        h_flex()
+                            .id("context-data")
+                            .gap_1()
+                            .child(
+                                div().max_w_64().child(
+                                    Label::new(context.name.clone())
+                                        .size(LabelSize::Small)
+                                        .truncate(),
+                                ),
+                            )
+                            .when_some(context.parent.as_ref(), |element, parent_name| {
+                                if *dupe_name {
+                                    element.child(
+                                        Label::new(parent_name.clone())
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                } else {
+                                    element
+                                }
+                            })
+                            .when_some(context.tooltip.as_ref(), |element, tooltip| {
+                                element.tooltip(Tooltip::text(tooltip.clone()))
+                            })
+                            .map(|element| match &context.status {
+                                ContextStatus::Ready => element
+                                    .when_some(
+                                        context.show_preview.as_ref(),
+                                        |element, show_preview| {
+                                            element.hoverable_tooltip({
+                                                let show_preview = show_preview.clone();
+                                                move |window, cx| show_preview(window, cx)
+                                            })
+                                        },
+                                    )
+                                    .into_any(),
+                                ContextStatus::Loading { message } => element
+                                    .tooltip(ui::Tooltip::text(message.clone()))
+                                    .with_animation(
+                                        "pulsating-ctx-pill",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.4, 0.8)),
+                                        |label, delta| label.opacity(delta),
+                                    )
+                                    .into_any_element(),
+                                ContextStatus::Error { message } => element
+                                    .tooltip(ui::Tooltip::text(message.clone()))
+                                    .into_any_element(),
                             }),
                     )
-                })
-                .when_some(on_click.as_ref(), |element, on_click| {
-                    let on_click = on_click.clone();
-                    element
-                        .cursor_pointer()
-                        .on_click(move |event, window, cx| on_click(event, window, cx))
-                })
-                .map(|element| {
-                    if context.summarizing {
+                    .when_some(on_remove.as_ref(), |element, on_remove| {
+                        element.child(
+                            IconButton::new(("remove", context.id.0), IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .tooltip(Tooltip::text("Remove Context"))
+                                .on_click({
+                                    let on_remove = on_remove.clone();
+                                    move |event, window, cx| on_remove(event, window, cx)
+                                }),
+                        )
+                    })
+                    .when_some(on_click.as_ref(), |element, on_click| {
+                        let on_click = on_click.clone();
                         element
-                            .tooltip(ui::Tooltip::text("Summarizing..."))
-                            .with_animation(
-                                "pulsating-ctx-pill",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.opacity(delta),
-                            )
-                            .into_any_element()
-                    } else {
-                        element.into_any()
-                    }
-                }),
+                            .cursor_pointer()
+                            .on_click(move |event, window, cx| on_click(event, window, cx))
+                    })
+                    .into_any_element()
+            }
             ContextPill::Suggested {
                 name,
                 icon_path: _,
@@ -198,15 +222,15 @@ impl RenderOnce for ContextPill {
                 .cursor_pointer()
                 .pr_1()
                 .border_dashed()
-                .border_color(if *focused {
-                    color.border_focused
-                } else {
-                    color.border
+                .map(|pill| {
+                    if *focused {
+                        pill.border_color(color.border_focused)
+                            .bg(color.element_background.opacity(0.5))
+                    } else {
+                        pill.border_color(color.border)
+                    }
                 })
                 .hover(|style| style.bg(color.element_hover.opacity(0.5)))
-                .when(*focused, |this| {
-                    this.bg(color.element_background.opacity(0.5))
-                })
                 .child(
                     div().max_w_64().child(
                         Label::new(name.clone())
@@ -227,6 +251,13 @@ impl RenderOnce for ContextPill {
     }
 }
 
+pub enum ContextStatus {
+    Ready,
+    Loading { message: SharedString },
+    Error { message: SharedString },
+}
+
+#[derive(RegisterComponent)]
 pub struct AddedContext {
     pub id: ContextId,
     pub kind: ContextKind,
@@ -234,14 +265,15 @@ pub struct AddedContext {
     pub parent: Option<SharedString>,
     pub tooltip: Option<SharedString>,
     pub icon_path: Option<SharedString>,
-    pub summarizing: bool,
+    pub status: ContextStatus,
+    pub show_preview: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
 impl AddedContext {
     pub fn new(context: &AssistantContext, cx: &App) -> AddedContext {
         match context {
             AssistantContext::File(file_context) => {
-                let full_path = file_context.context_buffer.file.full_path(cx);
+                let full_path = file_context.context_buffer.full_path(cx);
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path
@@ -259,15 +291,20 @@ impl AddedContext {
                     parent,
                     tooltip: Some(full_path_string),
                     icon_path: FileIcons::get_icon(&full_path, cx),
-                    summarizing: false,
+                    status: ContextStatus::Ready,
+                    show_preview: None,
                 }
             }
 
             AssistantContext::Directory(directory_context) => {
-                let full_path = directory_context
-                    .worktree
-                    .read(cx)
-                    .full_path(&directory_context.path);
+                let worktree = directory_context.worktree.read(cx);
+                // If the directory no longer exists, use its last known path.
+                let full_path = worktree
+                    .entry_for_id(directory_context.entry_id)
+                    .map_or_else(
+                        || directory_context.last_path.clone(),
+                        |entry| worktree.full_path(&entry.path).into(),
+                    );
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path
@@ -285,7 +322,8 @@ impl AddedContext {
                     parent,
                     tooltip: Some(full_path_string),
                     icon_path: None,
-                    summarizing: false,
+                    status: ContextStatus::Ready,
+                    show_preview: None,
                 }
             }
 
@@ -296,11 +334,12 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
-                summarizing: false,
+                status: ContextStatus::Ready,
+                show_preview: None,
             },
 
             AssistantContext::Excerpt(excerpt_context) => {
-                let full_path = excerpt_context.context_buffer.file.full_path(cx);
+                let full_path = excerpt_context.context_buffer.full_path(cx);
                 let mut full_path_string = full_path.to_string_lossy().into_owned();
                 let mut name = full_path
                     .file_name()
@@ -328,7 +367,8 @@ impl AddedContext {
                     parent,
                     tooltip: Some(full_path_string.into()),
                     icon_path: FileIcons::get_icon(&full_path, cx),
-                    summarizing: false,
+                    status: ContextStatus::Ready,
+                    show_preview: None,
                 }
             }
 
@@ -339,7 +379,8 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
-                summarizing: false,
+                status: ContextStatus::Ready,
+                show_preview: None,
             },
 
             AssistantContext::Thread(thread_context) => AddedContext {
@@ -349,11 +390,143 @@ impl AddedContext {
                 parent: None,
                 tooltip: None,
                 icon_path: None,
-                summarizing: thread_context
+                status: if thread_context
                     .thread
                     .read(cx)
-                    .is_generating_detailed_summary(),
+                    .is_generating_detailed_summary()
+                {
+                    ContextStatus::Loading {
+                        message: "Summarizing…".into(),
+                    }
+                } else {
+                    ContextStatus::Ready
+                },
+                show_preview: None,
+            },
+
+            AssistantContext::Rules(user_rules_context) => AddedContext {
+                id: user_rules_context.id,
+                kind: ContextKind::Rules,
+                name: user_rules_context.title.clone(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                status: ContextStatus::Ready,
+                show_preview: None,
+            },
+
+            AssistantContext::Image(image_context) => AddedContext {
+                id: image_context.id,
+                kind: ContextKind::Image,
+                name: "Image".into(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                status: if image_context.is_loading() {
+                    ContextStatus::Loading {
+                        message: "Loading…".into(),
+                    }
+                } else if image_context.is_error() {
+                    ContextStatus::Error {
+                        message: "Failed to load image".into(),
+                    }
+                } else {
+                    ContextStatus::Ready
+                },
+                show_preview: Some(Rc::new({
+                    let image = image_context.original_image.clone();
+                    move |_, cx| {
+                        cx.new(|_| ImagePreview {
+                            image: image.clone(),
+                        })
+                        .into()
+                    }
+                })),
             },
         }
+    }
+}
+
+struct ImagePreview {
+    image: Arc<Image>,
+}
+
+impl Render for ImagePreview {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(window, cx, move |this, _, _| {
+            this.occlude()
+                .on_mouse_move(|_, _, cx| cx.stop_propagation())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(gpui::img(self.image.clone()).max_w_96().max_h_96())
+        })
+    }
+}
+
+impl Component for AddedContext {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+
+    fn sort_name() -> &'static str {
+        "AddedContext"
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let image_ready = (
+            "Ready",
+            AddedContext::new(
+                &AssistantContext::Image(ImageContext {
+                    id: ContextId(0),
+                    original_image: Arc::new(Image::empty()),
+                    image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
+                }),
+                cx,
+            ),
+        );
+
+        let image_loading = (
+            "Loading",
+            AddedContext::new(
+                &AssistantContext::Image(ImageContext {
+                    id: ContextId(1),
+                    original_image: Arc::new(Image::empty()),
+                    image_task: cx
+                        .background_spawn(async move {
+                            smol::Timer::after(Duration::from_secs(60 * 5)).await;
+                            Some(LanguageModelImage::empty())
+                        })
+                        .shared(),
+                }),
+                cx,
+            ),
+        );
+
+        let image_error = (
+            "Error",
+            AddedContext::new(
+                &AssistantContext::Image(ImageContext {
+                    id: ContextId(2),
+                    original_image: Arc::new(Image::empty()),
+                    image_task: Task::ready(None).shared(),
+                }),
+                cx,
+            ),
+        );
+
+        Some(
+            v_flex()
+                .gap_6()
+                .children(
+                    vec![image_ready, image_loading, image_error]
+                        .into_iter()
+                        .map(|(text, context)| {
+                            single_example(
+                                text,
+                                ContextPill::added(context, false, false, None).into_any_element(),
+                            )
+                        }),
+                )
+                .into_any(),
+        )
     }
 }

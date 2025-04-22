@@ -214,7 +214,7 @@ pub(crate) trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
-    fn keyboard_layout(&self) -> String;
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -1497,6 +1497,15 @@ impl Hash for Image {
 }
 
 impl Image {
+    /// An empty image containing no data
+    pub fn empty() -> Self {
+        Self {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+            id: 0,
+        }
+    }
+
     /// Get this image's ID
     pub fn id(&self) -> u64 {
         self.id
@@ -1633,4 +1642,12 @@ impl From<String> for ClipboardString {
             metadata: None,
         }
     }
+}
+
+/// A trait for platform-specific keyboard layouts
+pub trait PlatformKeyboardLayout {
+    /// Get the keyboard layout ID, which should be unique to the layout
+    fn id(&self) -> &str;
+    /// Get the keyboard layout display name
+    fn name(&self) -> &str;
 }

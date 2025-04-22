@@ -12,8 +12,9 @@ use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use fs::Fs;
-use futures::FutureExt as _;
+use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     App, BackgroundExecutor, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString,
     Subscription, Task, prelude::*,
@@ -22,7 +23,10 @@ use heed::Database;
 use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
-use prompt_store::{ProjectContext, PromptBuilder, RulesFileContext, WorktreeContext};
+use prompt_store::{
+    ProjectContext, PromptBuilder, PromptId, PromptMetadata, PromptStore, PromptsUpdatedEvent,
+    RulesFileContext, UserPromptId, UserRulesContext, WorktreeContext,
+};
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
@@ -58,10 +62,13 @@ pub struct ThreadStore {
     project: Entity<Project>,
     tools: Entity<ToolWorkingSet>,
     prompt_builder: Arc<PromptBuilder>,
+    prompt_store: Option<Entity<PromptStore>>,
     context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
     project_context: SharedProjectContext,
+    reload_system_prompt_tx: mpsc::Sender<()>,
+    _reload_system_prompt_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -77,12 +84,22 @@ impl ThreadStore {
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
-    ) -> Task<Entity<Self>> {
-        let thread_store = cx.new(|cx| Self::new(project, tools, prompt_builder, cx));
-        let reload = thread_store.update(cx, |store, cx| store.reload_system_prompt(cx));
-        cx.foreground_executor().spawn(async move {
-            reload.await;
-            thread_store
+    ) -> Task<Result<Entity<Self>>> {
+        let prompt_store = PromptStore::global(cx);
+        cx.spawn(async move |cx| {
+            let prompt_store = prompt_store.await.ok();
+            let (thread_store, ready_rx) = cx.update(|cx| {
+                let mut option_ready_rx = None;
+                let thread_store = cx.new(|cx| {
+                    let (thread_store, ready_rx) =
+                        Self::new(project, tools, prompt_builder, prompt_store, cx);
+                    option_ready_rx = Some(ready_rx);
+                    thread_store
+                });
+                (thread_store, option_ready_rx.take().unwrap())
+            })?;
+            ready_rx.await?;
+            Ok(thread_store)
         })
     }
 
@@ -90,43 +107,83 @@ impl ThreadStore {
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
+        prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
-    ) -> Self {
+    ) -> (Self, oneshot::Receiver<()>) {
         let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
         let context_server_manager = cx.new(|cx| {
             ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
         });
-        let settings_subscription =
+
+        let mut subscriptions = vec![
             cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
                 this.load_default_profile(cx);
-            });
-        let project_subscription = cx.subscribe(&project, Self::handle_project_event);
+            }),
+            cx.subscribe(&project, Self::handle_project_event),
+        ];
+
+        if let Some(prompt_store) = prompt_store.as_ref() {
+            subscriptions.push(cx.subscribe(
+                prompt_store,
+                |this, _prompt_store, PromptsUpdatedEvent, _cx| {
+                    this.enqueue_system_prompt_reload();
+                },
+            ))
+        }
+
+        // This channel and task prevent concurrent and redundant loading of the system prompt.
+        let (reload_system_prompt_tx, mut reload_system_prompt_rx) = mpsc::channel(1);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let mut ready_tx = Some(ready_tx);
+        let reload_system_prompt_task = cx.spawn({
+            let prompt_store = prompt_store.clone();
+            async move |thread_store, cx| {
+                loop {
+                    let Some(reload_task) = thread_store
+                        .update(cx, |thread_store, cx| {
+                            thread_store.reload_system_prompt(prompt_store.clone(), cx)
+                        })
+                        .ok()
+                    else {
+                        return;
+                    };
+                    reload_task.await;
+                    if let Some(ready_tx) = ready_tx.take() {
+                        ready_tx.send(()).ok();
+                    }
+                    reload_system_prompt_rx.next().await;
+                }
+            }
+        });
 
         let this = Self {
             project,
             tools,
             prompt_builder,
+            prompt_store,
             context_server_manager,
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
             project_context: SharedProjectContext::default(),
-            _subscriptions: vec![settings_subscription, project_subscription],
+            reload_system_prompt_tx,
+            _reload_system_prompt_task: reload_system_prompt_task,
+            _subscriptions: subscriptions,
         };
         this.load_default_profile(cx);
         this.register_context_server_handlers(cx);
         this.reload(cx).detach_and_log_err(cx);
-        this
+        (this, ready_rx)
     }
 
     fn handle_project_event(
         &mut self,
         _project: Entity<Project>,
         event: &project::Event,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         match event {
             project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
-                self.reload_system_prompt(cx).detach();
+                self.enqueue_system_prompt_reload();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
                 if items.iter().any(|(path, _, _)| {
@@ -134,16 +191,25 @@ impl ThreadStore {
                         .iter()
                         .any(|name| path.as_ref() == Path::new(name))
                 }) {
-                    self.reload_system_prompt(cx).detach();
+                    self.enqueue_system_prompt_reload();
                 }
             }
             _ => {}
         }
     }
 
-    pub fn reload_system_prompt(&self, cx: &mut Context<Self>) -> Task<()> {
+    fn enqueue_system_prompt_reload(&mut self) {
+        self.reload_system_prompt_tx.try_send(()).ok();
+    }
+
+    // Note that this should only be called from `reload_system_prompt_task`.
+    fn reload_system_prompt(
+        &self,
+        prompt_store: Option<Entity<PromptStore>>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let project = self.project.read(cx);
-        let tasks = project
+        let worktree_tasks = project
             .visible_worktrees(cx)
             .map(|worktree| {
                 Self::load_worktree_info_for_system_prompt(
@@ -153,10 +219,23 @@ impl ThreadStore {
                 )
             })
             .collect::<Vec<_>>();
+        let default_user_rules_task = match prompt_store {
+            None => Task::ready(vec![]),
+            Some(prompt_store) => prompt_store.read_with(cx, |prompt_store, cx| {
+                let prompts = prompt_store.default_prompt_metadata();
+                let load_tasks = prompts.into_iter().map(|prompt_metadata| {
+                    let contents = prompt_store.load(prompt_metadata.id, cx);
+                    async move { (contents.await, prompt_metadata) }
+                });
+                cx.background_spawn(future::join_all(load_tasks))
+            }),
+        };
 
         cx.spawn(async move |this, cx| {
-            let results = futures::future::join_all(tasks).await;
-            let worktrees = results
+            let (worktrees, default_user_rules) =
+                future::join(future::join_all(worktree_tasks), default_user_rules_task).await;
+
+            let worktrees = worktrees
                 .into_iter()
                 .map(|(worktree, rules_error)| {
                     if let Some(rules_error) = rules_error {
@@ -165,8 +244,33 @@ impl ThreadStore {
                     worktree
                 })
                 .collect::<Vec<_>>();
+
+            let default_user_rules = default_user_rules
+                .into_iter()
+                .flat_map(|(contents, prompt_metadata)| match contents {
+                    Ok(contents) => Some(UserRulesContext {
+                        uuid: match prompt_metadata.id {
+                            PromptId::User { uuid } => uuid,
+                            PromptId::EditWorkflow => return None,
+                        },
+                        title: prompt_metadata.title.map(|title| title.to_string()),
+                        contents,
+                    }),
+                    Err(err) => {
+                        this.update(cx, |_, cx| {
+                            cx.emit(RulesLoadingError {
+                                message: format!("{err:?}").into(),
+                            });
+                        })
+                        .ok();
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
             this.update(cx, |this, _cx| {
-                *this.project_context.0.borrow_mut() = Some(ProjectContext::new(worktrees));
+                *this.project_context.0.borrow_mut() =
+                    Some(ProjectContext::new(worktrees, default_user_rules));
             })
             .ok();
         })
@@ -178,14 +282,12 @@ impl ThreadStore {
         cx: &App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let root_name = worktree.root_name().into();
-        let abs_path = worktree.abs_path();
 
         let rules_task = Self::load_worktree_rules_file(fs, worktree, cx);
         let Some(rules_task) = rules_task else {
             return Task::ready((
                 WorktreeContext {
                     root_name,
-                    abs_path,
                     rules_file: None,
                 },
                 None,
@@ -204,7 +306,6 @@ impl ThreadStore {
             };
             let worktree_info = WorktreeContext {
                 root_name,
-                abs_path,
                 rules_file,
             };
             (worktree_info, rules_file_error)
@@ -246,6 +347,27 @@ impl ThreadStore {
 
     pub fn context_server_manager(&self) -> Entity<ContextServerManager> {
         self.context_server_manager.clone()
+    }
+
+    pub fn prompt_store(&self) -> Option<Entity<PromptStore>> {
+        self.prompt_store.clone()
+    }
+
+    pub fn load_rules(
+        &self,
+        prompt_id: UserPromptId,
+        cx: &App,
+    ) -> Task<Result<(PromptMetadata, String)>> {
+        let prompt_id = PromptId::User { uuid: prompt_id };
+        let Some(prompt_store) = self.prompt_store.as_ref() else {
+            return Task::ready(Err(anyhow!("Prompt store unexpectedly missing.")));
+        };
+        let prompt_store = prompt_store.read(cx);
+        let Some(metadata) = prompt_store.metadata(prompt_id) else {
+            return Task::ready(Err(anyhow!("User rules not found in library.")));
+        };
+        let text_task = prompt_store.load(prompt_id, cx);
+        cx.background_spawn(async move { Ok((metadata, text_task.await?)) })
     }
 
     pub fn tools(&self) -> Entity<ToolWorkingSet> {
@@ -562,9 +684,18 @@ pub struct SerializedMessage {
 #[serde(tag = "type")]
 pub enum SerializedMessageSegment {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+    },
     #[serde(rename = "thinking")]
-    Thinking { text: String },
+    Thinking {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    RedactedThinking {
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

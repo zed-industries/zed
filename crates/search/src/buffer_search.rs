@@ -657,6 +657,16 @@ impl BufferSearchBar {
         registrar.register_handler(ForDeployed(|this, deploy, window, cx| {
             this.deploy(deploy, window, cx);
         }));
+        registrar.register_handler(ForDismissed(|this, deploy, window, cx| {
+            this.deploy(deploy, window, cx);
+        }));
+        registrar.register_handler(ForDeployed(|this, _: &DeployReplace, window, cx| {
+            if this.supported_options(cx).find_in_results {
+                cx.propagate();
+            } else {
+                this.deploy(&Deploy::replace(), window, cx);
+            }
+        }));
         registrar.register_handler(ForDismissed(|this, _: &DeployReplace, window, cx| {
             if this.supported_options(cx).find_in_results {
                 cx.propagate();
@@ -664,9 +674,6 @@ impl BufferSearchBar {
                 this.deploy(&Deploy::replace(), window, cx);
             }
         }));
-        registrar.register_handler(ForDismissed(|this, deploy, window, cx| {
-            this.deploy(deploy, window, cx);
-        }))
     }
 
     pub fn new(
@@ -1245,6 +1252,7 @@ impl BufferSearchBar {
                                 .contains(SearchOptions::ONE_MATCH_PER_LINE),
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -1263,6 +1271,7 @@ impl BufferSearchBar {
                             false,
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),

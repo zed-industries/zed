@@ -4,9 +4,11 @@ use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use futures::FutureExt as _;
-use futures::future::{self, BoxFuture, Shared};
+use futures::future::Shared;
 use fuzzy::StringMatchCandidate;
-use gpui::{App, BackgroundExecutor, Global, ReadGlobal, SharedString, Task};
+use gpui::{
+    App, AppContext, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString, Task,
+};
 use heed::{
     Database, RoTxn,
     types::{SerdeBincode, SerdeJson, Str},
@@ -29,11 +31,16 @@ use uuid::Uuid;
 /// a shared future to a global.
 pub fn init(cx: &mut App) {
     let db_path = paths::prompts_dir().join("prompts-library-db.0.mdb");
-    let prompt_store_future = PromptStore::new(db_path, cx.background_executor().clone())
-        .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
-        .boxed()
+    let prompt_store_task = PromptStore::new(db_path, cx);
+    let prompt_store_entity_task = cx
+        .spawn(async move |cx| {
+            prompt_store_task
+                .await
+                .and_then(|prompt_store| cx.new(|_cx| prompt_store))
+                .map_err(Arc::new)
+        })
         .shared();
-    cx.set_global(GlobalPromptStore(prompt_store_future))
+    cx.set_global(GlobalPromptStore(prompt_store_entity_task))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -47,14 +54,14 @@ pub struct PromptMetadata {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum PromptId {
-    User { uuid: Uuid },
+    User { uuid: UserPromptId },
     EditWorkflow,
 }
 
 impl PromptId {
     pub fn new() -> PromptId {
         PromptId::User {
-            uuid: Uuid::new_v4(),
+            uuid: UserPromptId::new(),
         }
     }
 
@@ -63,13 +70,32 @@ impl PromptId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UserPromptId(pub Uuid);
+
+impl UserPromptId {
+    pub fn new() -> UserPromptId {
+        UserPromptId(Uuid::new_v4())
+    }
+}
+
+impl From<Uuid> for UserPromptId {
+    fn from(uuid: Uuid) -> Self {
+        UserPromptId(uuid)
+    }
+}
+
 pub struct PromptStore {
-    executor: BackgroundExecutor,
     env: heed::Env,
     metadata_cache: RwLock<MetadataCache>,
     metadata: Database<SerdeJson<PromptId>, SerdeJson<PromptMetadata>>,
     bodies: Database<SerdeJson<PromptId>, Str>,
 }
+
+pub struct PromptsUpdatedEvent;
+
+impl EventEmitter<PromptsUpdatedEvent> for PromptStore {}
 
 #[derive(Default)]
 struct MetadataCache {
@@ -117,49 +143,45 @@ impl MetadataCache {
 }
 
 impl PromptStore {
-    pub fn global(cx: &App) -> impl Future<Output = Result<Arc<Self>>> + use<> {
+    pub fn global(cx: &App) -> impl Future<Output = Result<Entity<Self>>> + use<> {
         let store = GlobalPromptStore::global(cx).0.clone();
         async move { store.await.map_err(|err| anyhow!(err)) }
     }
 
-    pub fn new(db_path: PathBuf, executor: BackgroundExecutor) -> Task<Result<Self>> {
-        executor.spawn({
-            let executor = executor.clone();
-            async move {
-                std::fs::create_dir_all(&db_path)?;
+    pub fn new(db_path: PathBuf, cx: &App) -> Task<Result<Self>> {
+        cx.background_spawn(async move {
+            std::fs::create_dir_all(&db_path)?;
 
-                let db_env = unsafe {
-                    heed::EnvOpenOptions::new()
-                        .map_size(1024 * 1024 * 1024) // 1GB
-                        .max_dbs(4) // Metadata and bodies (possibly v1 of both as well)
-                        .open(db_path)?
-                };
+            let db_env = unsafe {
+                heed::EnvOpenOptions::new()
+                    .map_size(1024 * 1024 * 1024) // 1GB
+                    .max_dbs(4) // Metadata and bodies (possibly v1 of both as well)
+                    .open(db_path)?
+            };
 
-                let mut txn = db_env.write_txn()?;
-                let metadata = db_env.create_database(&mut txn, Some("metadata.v2"))?;
-                let bodies = db_env.create_database(&mut txn, Some("bodies.v2"))?;
+            let mut txn = db_env.write_txn()?;
+            let metadata = db_env.create_database(&mut txn, Some("metadata.v2"))?;
+            let bodies = db_env.create_database(&mut txn, Some("bodies.v2"))?;
 
-                // Remove edit workflow prompt, as we decided to opt into it using
-                // a slash command instead.
-                metadata.delete(&mut txn, &PromptId::EditWorkflow).ok();
-                bodies.delete(&mut txn, &PromptId::EditWorkflow).ok();
+            // Remove edit workflow prompt, as we decided to opt into it using
+            // a slash command instead.
+            metadata.delete(&mut txn, &PromptId::EditWorkflow).ok();
+            bodies.delete(&mut txn, &PromptId::EditWorkflow).ok();
 
-                txn.commit()?;
+            txn.commit()?;
 
-                Self::upgrade_dbs(&db_env, metadata, bodies).log_err();
+            Self::upgrade_dbs(&db_env, metadata, bodies).log_err();
 
-                let txn = db_env.read_txn()?;
-                let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
-                txn.commit()?;
+            let txn = db_env.read_txn()?;
+            let metadata_cache = MetadataCache::from_db(metadata, &txn)?;
+            txn.commit()?;
 
-                Ok(PromptStore {
-                    executor,
-                    env: db_env,
-                    metadata_cache: RwLock::new(metadata_cache),
-                    metadata,
-                    bodies,
-                })
-            }
+            Ok(PromptStore {
+                env: db_env,
+                metadata_cache: RwLock::new(metadata_cache),
+                metadata,
+                bodies,
+            })
         })
     }
 
@@ -206,7 +228,7 @@ impl PromptStore {
 
         for (prompt_id_v1, metadata_v1) in metadata_v1 {
             let prompt_id_v2 = PromptId::User {
-                uuid: prompt_id_v1.0,
+                uuid: UserPromptId(prompt_id_v1.0),
             };
             let Some(body_v1) = bodies_v1.remove(&prompt_id_v1) else {
                 continue;
@@ -237,10 +259,10 @@ impl PromptStore {
         Ok(())
     }
 
-    pub fn load(&self, id: PromptId) -> Task<Result<String>> {
+    pub fn load(&self, id: PromptId, cx: &App) -> Task<Result<String>> {
         let env = self.env.clone();
         let bodies = self.bodies;
-        self.executor.spawn(async move {
+        cx.background_spawn(async move {
             let txn = env.read_txn()?;
             let mut prompt = bodies
                 .get(&txn, &id)?
@@ -249,6 +271,10 @@ impl PromptStore {
             LineEnding::normalize(&mut prompt);
             Ok(prompt)
         })
+    }
+
+    pub fn all_prompt_metadata(&self) -> Vec<PromptMetadata> {
+        self.metadata_cache.read().metadata.clone()
     }
 
     pub fn default_prompt_metadata(&self) -> Vec<PromptMetadata> {
@@ -262,21 +288,27 @@ impl PromptStore {
             .collect::<Vec<_>>();
     }
 
-    pub fn delete(&self, id: PromptId) -> Task<Result<()>> {
+    pub fn delete(&self, id: PromptId, cx: &Context<Self>) -> Task<Result<()>> {
         self.metadata_cache.write().remove(id);
 
         let db_connection = self.env.clone();
         let bodies = self.bodies;
         let metadata = self.metadata;
 
-        self.executor.spawn(async move {
+        let task = cx.background_spawn(async move {
             let mut txn = db_connection.write_txn()?;
 
             metadata.delete(&mut txn, &id)?;
             bodies.delete(&mut txn, &id)?;
 
             txn.commit()?;
-            Ok(())
+            anyhow::Ok(())
+        });
+
+        cx.spawn(async move |this, cx| {
+            task.await?;
+            this.update(cx, |_, cx| cx.emit(PromptsUpdatedEvent)).ok();
+            anyhow::Ok(())
         })
     }
 
@@ -302,10 +334,15 @@ impl PromptStore {
         Some(metadata.id)
     }
 
-    pub fn search(&self, query: String) -> Task<Vec<PromptMetadata>> {
+    pub fn search(
+        &self,
+        query: String,
+        cancellation_flag: Arc<AtomicBool>,
+        cx: &App,
+    ) -> Task<Vec<PromptMetadata>> {
         let cached_metadata = self.metadata_cache.read().metadata.clone();
-        let executor = self.executor.clone();
-        self.executor.spawn(async move {
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
             let mut matches = if query.is_empty() {
                 cached_metadata
             } else {
@@ -321,7 +358,7 @@ impl PromptStore {
                     &query,
                     false,
                     100,
-                    &AtomicBool::default(),
+                    &cancellation_flag,
                     executor,
                 )
                 .await;
@@ -341,6 +378,7 @@ impl PromptStore {
         title: Option<SharedString>,
         default: bool,
         body: Rope,
+        cx: &Context<Self>,
     ) -> Task<Result<()>> {
         if id.is_built_in() {
             return Task::ready(Err(anyhow!("built-in prompts cannot be saved")));
@@ -358,7 +396,7 @@ impl PromptStore {
         let bodies = self.bodies;
         let metadata = self.metadata;
 
-        self.executor.spawn(async move {
+        let task = cx.background_spawn(async move {
             let mut txn = db_connection.write_txn()?;
 
             metadata.put(&mut txn, &id, &prompt_metadata)?;
@@ -366,7 +404,13 @@ impl PromptStore {
 
             txn.commit()?;
 
-            Ok(())
+            anyhow::Ok(())
+        });
+
+        cx.spawn(async move |this, cx| {
+            task.await?;
+            this.update(cx, |_, cx| cx.emit(PromptsUpdatedEvent)).ok();
+            anyhow::Ok(())
         })
     }
 
@@ -375,6 +419,7 @@ impl PromptStore {
         id: PromptId,
         mut title: Option<SharedString>,
         default: bool,
+        cx: &Context<Self>,
     ) -> Task<Result<()>> {
         let mut cache = self.metadata_cache.write();
 
@@ -397,19 +442,23 @@ impl PromptStore {
         let db_connection = self.env.clone();
         let metadata = self.metadata;
 
-        self.executor.spawn(async move {
+        let task = cx.background_spawn(async move {
             let mut txn = db_connection.write_txn()?;
             metadata.put(&mut txn, &id, &prompt_metadata)?;
             txn.commit()?;
 
-            Ok(())
+            anyhow::Ok(())
+        });
+
+        cx.spawn(async move |this, cx| {
+            task.await?;
+            this.update(cx, |_, cx| cx.emit(PromptsUpdatedEvent)).ok();
+            anyhow::Ok(())
         })
     }
 }
 
 /// Wraps a shared future to a prompt store so it can be assigned as a context global.
-pub struct GlobalPromptStore(
-    Shared<BoxFuture<'static, Result<Arc<PromptStore>, Arc<anyhow::Error>>>>,
-);
+pub struct GlobalPromptStore(Shared<Task<Result<Entity<PromptStore>, Arc<anyhow::Error>>>>);
 
 impl Global for GlobalPromptStore {}

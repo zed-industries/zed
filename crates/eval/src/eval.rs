@@ -1,23 +1,22 @@
 mod example;
 mod ids;
+mod tool_metrics;
 
-use client::{Client, ProxySettings, UserStore};
 pub(crate) use example::*;
-use telemetry;
+pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
 use anyhow::{Result, anyhow};
 use clap::Parser;
+use client::{Client, ProxySettings, UserStore};
+use collections::HashSet;
 use extension::ExtensionHostProxy;
-use futures::future;
-use futures::stream::StreamExt;
+use futures::{StreamExt, future};
 use gpui::http_client::{Uri, read_proxy_from_env};
-use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, Task, UpdateGlobal};
+use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
-use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
-};
+use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use project::Project;
 use project::project_settings::ProjectSettings;
@@ -25,13 +24,10 @@ use prompt_store::PromptBuilder;
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
-use std::collections::HashSet;
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::usize;
 use util::ResultExt as _;
-
-pub const RUNS_DIR: &str = "./crates/eval/runs";
 
 #[derive(Parser, Debug)]
 #[command(name = "eval", disable_version_flag = true)]
@@ -42,8 +38,8 @@ struct Args {
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
-    #[arg(long, value_delimiter = ',')]
-    languages: Option<Vec<String>>,
+    #[arg(long, value_delimiter = ',', default_value = "rs,ts")]
+    languages: Vec<String>,
     /// How many times to run each example. Note that this is currently not very efficient as N
     /// worktrees will be created for the examples.
     #[arg(long, default_value = "1")]
@@ -59,9 +55,36 @@ struct Args {
 fn main() {
     env_logger::init();
 
+    let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
+    let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let run_timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+    let run_id = match env::var("GITHUB_RUN_ID") {
+        Ok(run_id) => format!("github/{}", run_id),
+        Err(_) => format!("local/{}", run_timestamp),
+    };
+
+    let root_dir = Path::new(std::env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let eval_crate_dir = root_dir.join("crates/eval");
+    let repos_dir = eval_crate_dir.join("repos");
+    let worktrees_dir = eval_crate_dir.join("worktrees");
+    let examples_dir = eval_crate_dir.join("examples");
+    let runs_dir = eval_crate_dir.join("runs");
+    let run_dir = runs_dir.join(format!("{}", run_timestamp));
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::create_dir_all(&repos_dir).unwrap();
+    std::fs::create_dir_all(&worktrees_dir).unwrap();
+    std::fs::create_dir_all(&examples_dir).unwrap();
+    std::fs::create_dir_all(&paths::config_dir()).unwrap();
+
+    let zed_commit_sha = commit_sha_for_path(root_dir);
+    let zed_branch_name = git_branch_for_path(root_dir);
     let args = Args::parse();
-    let all_available_examples = list_all_examples().unwrap();
-    let languages = args.languages.unwrap_or_else(|| vec!["rs".to_string()]);
+    let all_available_examples = list_all_examples(&examples_dir).unwrap();
 
     let example_paths = all_available_examples
         .iter()
@@ -86,36 +109,42 @@ fn main() {
     app.run(move |cx| {
         let app_state = init(cx);
 
-        let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
-        let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
-        let session_id = uuid::Uuid::new_v4().to_string();
+        let telemetry = app_state.client.telemetry();
+        telemetry.start(system_id, installation_id, session_id, cx);
 
-        app_state
-            .client
-            .telemetry()
-            .start(system_id, installation_id, session_id, cx);
+        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
+            && telemetry.has_checksum_seed();
+        if enable_telemetry {
+            println!("Telemetry enabled");
+            telemetry::event!(
+                "Agent Eval Started",
+                zed_commit_sha = zed_commit_sha,
+                zed_branch_name = zed_branch_name,
+                run_id = run_id,
+            );
+        }
 
-        let model = find_model("claude-3-7-sonnet-latest", cx).unwrap();
+        let mut cumulative_tool_metrics = ToolMetrics::default();
+
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let model = find_model("claude-3-7-sonnet-latest", model_registry, cx).unwrap();
+        let model_provider_id = model.provider_id();
+        let model_provider = model_registry.provider(&model_provider_id).unwrap();
 
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_default_model(Some(model.clone()), cx);
+            registry.set_default_model(
+                Some(ConfiguredModel {
+                    provider: model_provider.clone(),
+                    model: model.clone(),
+                }),
+                cx,
+            );
         });
 
-        let model_provider_id = model.provider_id();
-
-        let authenticate = authenticate_model_provider(model_provider_id.clone(), cx);
+        let authenticate_task = model_provider.authenticate(cx);
 
         cx.spawn(async move |cx| {
-            authenticate.await.unwrap();
-
-            std::fs::create_dir_all(REPOS_DIR)?;
-            std::fs::create_dir_all(WORKTREES_DIR)?;
-
-            let run_dir = Path::new(RUNS_DIR).join(format!(
-                "{}",
-                chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
-            ));
-            std::fs::create_dir_all(&run_dir)?;
+            authenticate_task.await.unwrap();
 
             let mut examples = Vec::new();
 
@@ -138,13 +167,18 @@ fn main() {
             let mut skipped = Vec::new();
 
             for example_path in &example_paths {
-                let example = Example::load_from_directory(example_path, &run_dir)?;
+                let example = Example::load_from_directory(
+                    example_path,
+                    &run_dir,
+                    &worktrees_dir,
+                    &repos_dir,
+                )?;
 
                 if !example
                     .base
                     .language_extension
                     .as_ref()
-                    .map_or(false, |lang| languages.contains(lang))
+                    .map_or(false, |lang| args.languages.contains(lang))
                 {
                     skipped.push(example.name);
                     continue;
@@ -173,7 +207,7 @@ fn main() {
                 return cx.update(|cx| cx.quit());
             }
 
-            let mut repo_urls = HashSet::new();
+            let mut repo_urls = HashSet::default();
             let mut clone_tasks = Vec::new();
 
             for (i, example) in examples.iter_mut().enumerate() {
@@ -183,16 +217,16 @@ fn main() {
                 println!(
                     "{}Logging to: {}",
                     example.log_prefix,
-                    example.output_file_path.display()
+                    example.example_output_directory().display()
                 );
 
                 let repo_url = example.base.url.clone();
                 if repo_urls.insert(repo_url.clone()) {
-                    let repo_path = repo_path_for_url(&repo_url);
+                    let repo_path = example.repo_path.clone();
 
                     if !repo_path.join(".git").is_dir() {
                         println!(
-                            "{:<width$}  < {}",
+                            "{:<width$} < {}",
                             "↓ Cloning",
                             repo_url,
                             width = max_name_width
@@ -235,76 +269,140 @@ fn main() {
             let judge_repetitions = args.judge_repetitions;
             let concurrency = args.concurrency;
 
-            let tasks = examples
-                .into_iter()
-                .map(|example| {
-                    let app_state = app_state.clone();
-                    let model = model.clone();
-                    cx.spawn(async move |cx| {
-                        let result =
-                            run_example(&example, model, app_state, judge_repetitions, cx).await;
-                        (result, example)
-                    })
+            let tasks = examples.iter().map(|example| {
+                let app_state = app_state.clone();
+                let model = model.clone();
+                let example = example.clone();
+                let zed_commit_sha = zed_commit_sha.clone();
+                let zed_branch_name = zed_branch_name.clone();
+                let run_id = run_id.clone();
+                cx.spawn(async move |cx| {
+                    let result = async {
+                        let run_output = cx
+                            .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
+                            .await?;
+                        let judge_tasks = (0..judge_repetitions).map(|round| {
+                            run_judge_repetition(
+                                example.clone(),
+                                model.clone(),
+                                &zed_commit_sha,
+                                &zed_branch_name,
+                                &run_id,
+                                &run_output,
+                                round,
+                                enable_telemetry,
+                                cx,
+                            )
+                        });
+                        let judge_outputs = future::join_all(judge_tasks).await;
+                        anyhow::Ok((run_output, judge_outputs))
+                    }
+                    .await;
+                    (example, result)
                 })
-                .collect::<Vec<_>>();
+            });
 
             let results = futures::stream::iter(tasks)
                 .buffer_unordered(concurrency)
-                .collect::<Vec<(Result<Vec<Result<JudgeOutput>>>, Example)>>()
+                .collect::<Vec<_>>()
                 .await;
 
             println!("\n\n");
-            println!("========================================");
-            println!("              EVAL RESULTS              ");
-            println!("========================================");
-            println!("");
+            print_header("EVAL RESULTS");
 
-            let mut judge_scores = Vec::new();
+            let mut diff_scores = Vec::new();
+            let mut thread_scores = Vec::new();
+            let mut error_count = 0;
 
-            for (result, example) in results {
+            for (example, result) in results {
+                print_header(&example.name);
+
                 match result {
                     Err(err) => {
                         println!("💥 {}{:?}", example.log_prefix, err);
+                        error_count += 1;
                     }
-                    Ok(judge_results) => {
-                        for judge_result in judge_results {
+                    Ok((run_output, judge_results)) => {
+                        cumulative_tool_metrics.merge(&run_output.tool_metrics);
+
+                        println!("┌───────┬──────┬────────┐");
+                        println!("│ Judge │ Diff │ Thread │");
+                        println!("├───────┼──────┼────────┤");
+
+                        for (i, judge_result) in judge_results.iter().enumerate() {
                             match judge_result {
                                 Ok(judge_output) => {
-                                    const SCORES: [&str; 6] = ["💀", "😭", "😔", "😐", "🙂", "🤩"];
-                                    let score: u32 = judge_output.score;
-                                    let score_index = (score.min(5)) as usize;
+                                    let diff_score = judge_output.diff.score;
+                                    diff_scores.push(diff_score);
+
+                                    let thread_display = if let Some(thread) = &judge_output.thread
+                                    {
+                                        let thread_score = thread.score;
+                                        thread_scores.push(thread_score);
+                                        format!("{}", thread_score)
+                                    } else {
+                                        "N/A".to_string()
+                                    };
 
                                     println!(
-                                        "{} {}{}",
-                                        SCORES[score_index], example.log_prefix, judge_output.score,
+                                        "|{:^7}│{:^6}│{:^8}│",
+                                        i + 1,
+                                        diff_score,
+                                        thread_display
                                     );
-                                    judge_scores.push(judge_output.score);
                                 }
                                 Err(err) => {
-                                    println!("💥 {}{:?}", example.log_prefix, err);
+                                    println!("|{:^7}│{:^6}│{:^8}│{:?}", i + 1, "N/A", "N/A", err);
                                 }
                             }
                         }
+
+                        println!("└───────┴──────┴────────┘");
+
+                        println!("{}", run_output.tool_metrics);
                     }
                 }
                 println!(
                     "{}    > {}",
                     " ".repeat(max_name_width),
-                    example.output_file_path.display()
+                    example.example_output_directory().display()
                 );
             }
 
-            let score_count = judge_scores.len();
-            let average_score = judge_scores
+            let diff_score_count = diff_scores.len();
+            let average_diff_score = diff_scores
                 .into_iter()
                 .map(|score| score as f32)
                 .sum::<f32>()
-                / (score_count as f32);
-            println!("\nAverage score: {average_score}");
+                / (diff_score_count as f32);
 
-            std::thread::sleep(std::time::Duration::from_secs(2));
+            if error_count > 0 {
+                println!("\n{error_count} examples failed to run!");
+            }
 
-            app_state.client.telemetry().flush_events();
+            if diff_score_count > 0 {
+                println!("\nAverage code diff score: {average_diff_score}");
+            }
+
+            let thread_score_count = thread_scores.len();
+
+            // We might have gotten no thread scores if we weren't asked to judge the thread.
+            if thread_score_count > 0 {
+                let average_thread_score = thread_scores
+                    .into_iter()
+                    .map(|score| score as f32)
+                    .sum::<f32>()
+                    / (thread_score_count as f32);
+
+                if diff_score_count > 0 {
+                    println!("\nAverage thread score: {average_thread_score}");
+                }
+            }
+
+            print_header("CUMULATIVE TOOL METRICS");
+            println!("{}", cumulative_tool_metrics);
+
+            app_state.client.telemetry().flush_events().await;
 
             cx.update(|cx| cx.quit())
         })
@@ -312,63 +410,8 @@ fn main() {
     });
 }
 
-async fn run_example(
-    example: &Example,
-    model: Arc<dyn LanguageModel>,
-    app_state: Arc<AgentAppState>,
-    judge_repetitions: u32,
-    cx: &mut AsyncApp,
-) -> Result<Vec<Result<JudgeOutput>>> {
-    let run_output = cx
-        .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
-        .await?;
-    let diff = example.repository_diff().await?;
-
-    // Run judge for each repetition
-    let mut results = Vec::new();
-    for round in 0..judge_repetitions {
-        let judge_result = example.judge(model.clone(), diff.clone(), round, cx).await;
-
-        if let Ok(judge_output) = &judge_result {
-            let cohort_id = example
-                .output_file_path
-                .parent()
-                .and_then(|p| p.file_name())
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or(chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string());
-
-            let path = std::path::Path::new(".");
-            let commit_id = get_current_commit_id(path).await.unwrap_or_default();
-
-            telemetry::event!(
-                "Agent Eval Completed",
-                cohort_id = cohort_id,
-                example_name = example.name.clone(),
-                round = round,
-                score = judge_output.score,
-                analysis = judge_output.analysis,
-                tool_use_counts = run_output.tool_use_counts,
-                response_count = run_output.response_count,
-                token_usage = run_output.token_usage,
-                model = model.telemetry_id(),
-                model_provider = model.provider_id().to_string(),
-                repository_url = example.base.url.clone(),
-                repository_revision = example.base.revision.clone(),
-                diagnostics_summary = run_output.diagnostics,
-                commit_id = commit_id
-            );
-        }
-
-        results.push(judge_result);
-    }
-
-    app_state.client.telemetry().flush_events();
-
-    Ok(results)
-}
-
-fn list_all_examples() -> Result<Vec<PathBuf>> {
-    let path = std::fs::canonicalize(EXAMPLES_DIR).unwrap();
+fn list_all_examples(examples_dir: &Path) -> Result<Vec<PathBuf>> {
+    let path = std::fs::canonicalize(examples_dir).unwrap();
     let entries = std::fs::read_dir(path).unwrap();
     let mut result_paths = Vec::new();
     for entry in entries {
@@ -478,6 +521,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     languages::init(languages.clone(), node_runtime.clone(), cx);
     assistant_tools::init(client.http_client().clone(), cx);
     context_server::init(cx);
+    prompt_store::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
     agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
@@ -497,8 +541,11 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     })
 }
 
-pub fn find_model(model_name: &str, cx: &App) -> anyhow::Result<Arc<dyn LanguageModel>> {
-    let model_registry = LanguageModelRegistry::read_global(cx);
+pub fn find_model(
+    model_name: &str,
+    model_registry: &LanguageModelRegistry,
+    cx: &App,
+) -> anyhow::Result<Arc<dyn LanguageModel>> {
     let model = model_registry
         .available_models(cx)
         .find(|model| model.id().0 == model_name);
@@ -518,21 +565,70 @@ pub fn find_model(model_name: &str, cx: &App) -> anyhow::Result<Arc<dyn Language
     Ok(model)
 }
 
-pub fn authenticate_model_provider(
-    provider_id: LanguageModelProviderId,
-    cx: &mut App,
-) -> Task<std::result::Result<(), AuthenticateError>> {
-    let model_registry = LanguageModelRegistry::read_global(cx);
-    let model_provider = model_registry.provider(&provider_id).unwrap();
-    model_provider.authenticate(cx)
+pub fn commit_sha_for_path(repo_path: &Path) -> String {
+    futures::executor::block_on(run_git(repo_path, &["rev-parse", "HEAD"])).unwrap()
 }
 
-pub async fn get_current_commit_id(repo_path: &Path) -> Option<String> {
-    (run_git(repo_path, &["rev-parse", "HEAD"]).await).ok()
+pub fn git_branch_for_path(repo_path: &Path) -> String {
+    match std::env::var("GITHUB_REF_NAME") {
+        Ok(branch) => branch,
+        Err(_) => {
+            futures::executor::block_on(run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]))
+                .unwrap_or_else(|_| "unknown".to_string())
+        }
+    }
 }
 
-pub fn get_current_commit_id_sync(repo_path: &Path) -> String {
-    futures::executor::block_on(async {
-        get_current_commit_id(repo_path).await.unwrap_or_default()
-    })
+async fn run_judge_repetition(
+    example: Example,
+    model: Arc<dyn LanguageModel>,
+    zed_commit_sha: &str,
+    zed_branch_name: &str,
+    run_id: &str,
+    run_output: &RunOutput,
+    round: u32,
+    enable_telemetry: bool,
+    cx: &AsyncApp,
+) -> Result<JudgeOutput> {
+    let judge_output = example.judge(model.clone(), &run_output, round, cx).await;
+
+    let diff_evaluation;
+    let thread_diff_evaluation;
+    if let Ok(output) = judge_output.as_ref() {
+        diff_evaluation = Some(output.diff.clone());
+        thread_diff_evaluation = output.thread.clone();
+    } else {
+        diff_evaluation = None;
+        thread_diff_evaluation = None;
+    }
+
+    if enable_telemetry {
+        telemetry::event!(
+            "Agent Example Evaluated",
+            zed_commit_sha = zed_commit_sha,
+            zed_branch_name = zed_branch_name,
+            run_id = run_id,
+            example_name = example.name.clone(),
+            round = round,
+            diff_evaluation = diff_evaluation,
+            thread_evaluation = thread_diff_evaluation,
+            tool_metrics = run_output.tool_metrics,
+            response_count = run_output.response_count,
+            token_usage = run_output.token_usage,
+            model = model.telemetry_id(),
+            model_provider = model.provider_id().to_string(),
+            repository_url = example.base.url.clone(),
+            repository_revision = example.base.revision.clone(),
+            diagnostics_before = run_output.diagnostics_before,
+            diagnostics_after = run_output.diagnostics_after,
+        );
+    }
+
+    judge_output
+}
+
+fn print_header(header: &str) {
+    println!("\n========================================");
+    println!("{:^40}", header);
+    println!("========================================\n");
 }
