@@ -3,7 +3,12 @@ use super::{
     locators::DapLocator,
     session::{self, Session, SessionStateEvent},
 };
-use crate::{ProjectEnvironment, project_settings::ProjectSettings, worktree_store::WorktreeStore};
+use crate::{
+    ProjectEnvironment,
+    project_settings::ProjectSettings,
+    terminals::{SshCommand, wrap_for_ssh},
+    worktree_store::WorktreeStore,
+};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -11,7 +16,7 @@ use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, EvaluateArguments,
     EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments, Source,
     StartDebuggingRequestArguments,
-    adapters::{DapStatus, DebugAdapterBinary, DebugAdapterName},
+    adapters::{DapStatus, DebugAdapterBinary, DebugAdapterName, TcpArguments},
     client::SessionId,
     messages::Message,
     requests::{Completions, Evaluate, Request as _, RunInTerminal, StartDebugging},
@@ -27,6 +32,7 @@ use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
+use remote::SshRemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -38,6 +44,7 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
+    net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -88,6 +95,7 @@ pub struct LocalDapStore {
 }
 
 pub struct SshDapStore {
+    ssh_client: Entity<SshRemoteClient>,
     upstream_client: AnyProtoClient,
     upstream_project_id: u64,
 }
@@ -145,13 +153,14 @@ impl DapStore {
 
     pub fn new_ssh(
         project_id: u64,
-        upstream_client: AnyProtoClient,
+        ssh_client: Entity<SshRemoteClient>,
         breakpoint_store: Entity<BreakpointStore>,
         worktree_store: Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let mode = DapStoreMode::Ssh(SshDapStore {
-            upstream_client,
+            upstream_client: ssh_client.read(cx).proto_client(),
+            ssh_client,
             upstream_project_id: project_id,
         });
 
@@ -264,10 +273,49 @@ impl DapStore {
                     project_id: ssh.upstream_project_id,
                     task: Some(definition.to_proto()),
                 });
+                let ssh_client = ssh.ssh_client.clone();
 
-                cx.background_spawn(async move {
+                cx.spawn(async move |_, cx| {
                     let response = request.await?;
-                    DebugAdapterBinary::from_proto(response)
+                    let binary = DebugAdapterBinary::from_proto(response)?;
+                    let mut ssh_command = ssh_client.update(cx, |ssh, _| {
+                        anyhow::Ok(SshCommand {
+                            arguments: ssh
+                                .ssh_args()
+                                .ok_or_else(|| anyhow!("SSH arguments not found"))?,
+                        })
+                    })??;
+
+                    let mut connection = None;
+                    if let Some(c) = binary.connection {
+                        let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
+                        let port =
+                            dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
+
+                        ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
+                        connection = Some(TcpArguments {
+                            port: c.port,
+                            host: local_bind_addr,
+                            timeout: c.timeout,
+                        })
+                    }
+
+                    let (program, args) = wrap_for_ssh(
+                        &ssh_command,
+                        Some((&binary.command, &binary.arguments)),
+                        binary.cwd.as_deref(),
+                        binary.envs,
+                        None,
+                    );
+
+                    Ok(DebugAdapterBinary {
+                        command: program,
+                        arguments: args,
+                        envs: HashMap::default(),
+                        cwd: None,
+                        connection,
+                        request_args: binary.request_args,
+                    })
                 })
             }
             DapStoreMode::Collab => {

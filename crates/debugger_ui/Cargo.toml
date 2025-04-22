@@ -20,6 +20,9 @@ test-support = [
     "project/test-support",
     "util/test-support",
     "workspace/test-support",
+    "env_logger",
+    "unindent",
+    "debugger_tools"
 ]
 
 [dependencies]
@@ -54,6 +57,9 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
+env_logger = { workspace = true, optional = true }
+debugger_tools = { workspace = true, optional = true }
+unindent = { workspace = true, optional = true }
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }

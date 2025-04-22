@@ -48,7 +48,7 @@ pub async fn init_test_workspace(
     let debugger_panel = workspace_handle
         .update(cx, |_, window, cx| {
             cx.spawn_in(window, async move |this, cx| {
-                DebugPanel::load(this, cx.clone()).await
+                DebugPanel::load(this, cx).await
             })
         })
         .unwrap()

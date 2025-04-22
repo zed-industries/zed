@@ -2,11 +2,13 @@ use crate::tests::TestServer;
 use call::ActiveCall;
 use collections::{HashMap, HashSet};
 
+use debugger_ui::debugger_panel::DebugPanel;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     AppContext as _, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal as _,
+    VisualContext,
 };
 use http_client::BlockedHttpClient;
 use language::{
@@ -578,15 +580,94 @@ async fn test_ssh_collaboration_formatting_with_prettier(
 }
 
 #[gpui::test]
-async fn test_remote_server_debugger(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let fs = FakeFs::new(server_cx.executor());
-    fs.insert_tree(
-        path!("/code"),
-        json!({
-            "lib.rs": "fn one() -> usize { 1 }"
-        }),
-    )
-    .await;
+async fn test_remote_server_debugger(cx_a: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    cx_a.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+        command_palette_hooks::init(cx);
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+    });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "lib.rs": "fn one() -> usize { 1 }"
+            }),
+        )
+        .await;
 
-    let (project, headless_project) = init_test(&fs, cx, server_cx).await;
+    // User A connects to the remote project via SSH.
+    server_cx.update(HeadlessProject::init);
+    let remote_http_client = Arc::new(BlockedHttpClient);
+    let node = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    let _headless_project = server_cx.new(|cx| {
+        client::init_settings(cx);
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: remote_http_client,
+                node_runtime: node,
+                languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+            },
+            cx,
+        )
+    });
+
+    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let mut server = TestServer::start(server_cx.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    cx_a.update(|cx| {
+        debugger_ui::init(cx);
+        command_palette_hooks::init(cx);
+    });
+    let (project_a, _) = client_a
+        .build_ssh_project(path!("/code"), client_ssh, cx_a)
+        .await;
+
+    let (workspace, cx_a) = client_a.build_workspace(&project_a, cx_a);
+
+    let debugger_panel = workspace
+        .update_in(cx_a, |_workspace, window, cx| {
+            cx.spawn_in(window, DebugPanel::load)
+        })
+        .await
+        .unwrap();
+
+    workspace.update_in(cx_a, |workspace, window, cx| {
+        workspace.add_panel(debugger_panel, window, cx);
+    });
+
+    cx_a.run_until_parked();
+    let debug_panel = workspace
+        .update(cx_a, |workspace, cx| workspace.panel::<DebugPanel>(cx))
+        .unwrap();
+
+    let workspace_window = cx_a
+        .window_handle()
+        .downcast::<workspace::Workspace>()
+        .unwrap();
+
+    let session = debugger_ui::tests::start_debug_session(&workspace_window, cx_a, |_| {}).unwrap();
+    cx_a.run_until_parked();
+    debug_panel.update(cx_a, |debug_panel, cx| {
+        assert_eq!(
+            debug_panel.active_session().unwrap().read(cx).session(cx),
+            session
+        )
+    });
+    session
+        .update(cx_a, |session, cx| {
+            assert_eq!(session.binary().command, "ssh");
+            session.shutdown(cx)
+        })
+        .await;
 }

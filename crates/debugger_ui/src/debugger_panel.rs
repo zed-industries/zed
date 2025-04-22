@@ -220,7 +220,7 @@ impl DebugPanel {
 
     pub fn load(
         workspace: WeakEntity<Workspace>,
-        cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
             workspace.update_in(cx, |workspace, window, cx| {

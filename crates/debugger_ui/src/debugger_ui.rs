@@ -16,7 +16,7 @@ mod new_session_modal;
 mod persistence;
 pub(crate) mod session;
 
-#[cfg(test)]
+#[cfg(any(feature = "test-support", test))]
 pub mod tests;
 
 actions!(

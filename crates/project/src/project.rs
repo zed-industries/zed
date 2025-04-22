@@ -1066,7 +1066,7 @@ impl Project {
             let dap_store = cx.new(|cx| {
                 DapStore::new_ssh(
                     SSH_PROJECT_ID,
-                    ssh_proto.clone(),
+                    ssh.clone(),
                     breakpoint_store.clone(),
                     worktree_store.clone(),
                     cx,
