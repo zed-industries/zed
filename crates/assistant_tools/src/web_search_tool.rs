@@ -5,7 +5,7 @@ use crate::ui::ToolCallCardHeader;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{Future, FutureExt, TryFutureExt};
-use gpui::{App, AppContext, Context, Entity, IntoElement, Task, Window};
+use gpui::{AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, Window};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -54,6 +54,7 @@ impl Tool for WebSearchTool {
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<WebSearchToolInput>(input) {

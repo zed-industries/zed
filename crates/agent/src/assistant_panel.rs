@@ -356,14 +356,9 @@ impl AssistantPanel {
         &self.thread_store
     }
 
-    fn cancel(
-        &mut self,
-        _: &editor::actions::Cancel,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.thread
-            .update(cx, |thread, cx| thread.cancel_last_completion(cx));
+            .update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
     }
 
     fn new_thread(&mut self, action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {

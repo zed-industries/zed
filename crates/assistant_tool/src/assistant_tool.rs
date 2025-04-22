@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::AnyElement;
+use gpui::AnyWindowHandle;
 use gpui::Context;
 use gpui::IntoElement;
 use gpui::Window;
@@ -163,6 +164,7 @@ pub trait Tool: 'static + Send + Sync {
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult;
 }

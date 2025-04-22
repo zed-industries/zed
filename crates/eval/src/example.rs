@@ -486,7 +486,7 @@ impl Example {
             thread.update(cx, |thread, cx| {
                 let context = vec![];
                 thread.insert_user_message(this.prompt.clone(), context, None, cx);
-                thread.send_to_model(model, cx);
+                thread.send_to_model(model, None, cx);
             })?;
 
             event_handler_task.await?;
