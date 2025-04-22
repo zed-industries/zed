@@ -1,9 +1,9 @@
+mod assertions;
 mod ids;
 mod instance;
 mod thread;
 mod threads;
 mod tool_metrics;
-mod assertions;
 
 use instance::{
     JudgeOutput, REPOS_DIR, RunOutput, ThreadInstance, WORKTREES_DIR, repo_path_for_url, run_git,
@@ -340,18 +340,9 @@ fn main() {
 
                         println!("{}", run_output.tool_metrics);
 
-                        if !run_output.assertions.success.is_empty()
-                            || !run_output.assertions.failure.is_empty()
-                        {
-                            // Print assertions table
+                        if !run_output.assertions.total() > 0 {
                             println!("{}", run_output.assertions);
-
-                            let total_run = run_output.assertions.failure.len()
-                                + run_output.assertions.success.len();
-                            let total = total_run
-                                .max(instance.thread.meta().max_assertions.unwrap_or(0) as usize);
-                            let pct = run_output.assertions.success.len() / total * 100;
-                            assertion_stats.push(pct)
+                            assertion_stats.push(run_output.assertions.success_percentage())
                         }
                     }
                 }

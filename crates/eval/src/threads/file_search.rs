@@ -38,7 +38,7 @@ impl EvalThread for Thread {
         let glob = input.glob;
         cx.assert(
             glob.ends_with(FILENAME),
-            format!("path_search glob ends with {FILENAME:?}"),
+            format!("glob ends with {FILENAME:?}"),
         )?;
 
         let without_filename = glob.replace(FILENAME, "");

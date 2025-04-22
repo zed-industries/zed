@@ -160,12 +160,12 @@ impl ThreadContext {
         match result {
             Ok(value) => {
                 self.assertions.success.push(message.clone());
-                println!("{}✅: {}", self.log_prefix, message);
+                println!("{}✅ {}", self.log_prefix, message);
                 Ok(value)
             }
             Err(err) => {
                 self.assertions.failure.push(message);
-                println!("{}❌: {}", self.log_prefix, err);
+                println!("{}❌ {}", self.log_prefix, err);
                 Err(err)
             }
         }
@@ -262,7 +262,7 @@ impl Response {
                 }
             })
         });
-        cx.assert_some(result, format!("has `{}` tool calls", tool_name))
+        cx.assert_some(result, format!("called `{}`", tool_name))
     }
 }
 

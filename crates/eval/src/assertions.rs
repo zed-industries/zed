@@ -17,17 +17,17 @@ impl Assertions {
         }
     }
 
-    fn total_assertions(&self) -> usize {
+    pub fn total(&self) -> usize {
         self.max
             .unwrap_or(0)
             .max(self.success.len() + self.failure.len())
     }
 
-    fn success_percentage(&self) -> f32 {
-        if self.total_assertions() == 0 {
+    pub fn success_percentage(&self) -> f32 {
+        if self.total() == 0 {
             0.0
         } else {
-            (self.success.len() as f32 / self.total_assertions() as f32) * 100.0
+            (self.success.len() as f32 / self.total() as f32) * 100.0
         }
     }
 }
@@ -38,7 +38,7 @@ const RESULTS_WIDTH: usize = 8;
 impl Display for Assertions {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         // Do nothing if no assertions
-        if self.total_assertions() == 0 {
+        if self.total() == 0 {
             return Ok(());
         }
 
