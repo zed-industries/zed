@@ -73,6 +73,7 @@ mod asset_cache;
 mod assets;
 mod bounds_tree;
 mod color;
+mod debug;
 mod element;
 mod elements;
 mod executor;
