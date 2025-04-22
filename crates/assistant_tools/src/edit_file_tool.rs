@@ -273,7 +273,7 @@ pub struct EditFileToolCard {
     multibuffer: Entity<MultiBuffer>,
     project: Entity<Project>,
     diff_task: Option<Task<Result<()>>>,
-    expanded: bool,
+    preview: bool,
     full_height: bool,
     index: usize,
 }
@@ -320,7 +320,7 @@ impl EditFileToolCard {
             editor,
             multibuffer,
             diff_task: None,
-            expanded: true,
+            preview: true,
             full_height: false,
             index: Self::next_index(),
         }
@@ -418,33 +418,20 @@ impl ToolCard for EditFileToolCard {
             .justify_between()
             .bg(codeblock_header_bg)
             .rounded_t_md()
-            .when(self.expanded, |header| {
+            .when(self.preview, |header| {
                 header
                     .border_b_1()
                     .border_color(cx.theme().colors().border.opacity(0.6))
             })
             .child(path_label_button)
             .child(
-                Disclosure::new(("edit-file-disclosure", self.index), self.expanded)
+                Disclosure::new(("edit-file-disclosure", self.index), self.preview)
                     .opened_icon(IconName::ChevronUp)
                     .closed_icon(IconName::ChevronDown)
                     .on_click(cx.listener(move |this, _event, _window, _cx| {
-                        this.expanded = !this.expanded;
+                        this.preview = !this.preview;
                     })),
             );
-
-        let gradient_overlay = div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .w_full()
-            .h_1_4()
-            .rounded_b_lg()
-            .bg(gpui::linear_gradient(
-                0.,
-                gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
-                gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
-            ));
 
         let editor = self.editor.update(cx, |editor, cx| {
             editor.render(window, cx).into_any_element()
@@ -457,15 +444,42 @@ impl ToolCard for EditFileToolCard {
             .rounded_lg()
             .overflow_hidden()
             .child(codeblock_header)
-            .when(self.expanded, |card| {
+            .when(self.preview, |card| {
                 card.child(
                     div()
                         .relative()
-                        .min_h_64()
+                        .map(|buffer_container| {
+                            if self.full_height {
+                                buffer_container.h_full()
+                            } else {
+                                buffer_container.min_h_64()
+                            }
+                        })
                         .child(editor)
-                        .child(gradient_overlay),
+                        .child(
+                            h_flex()
+                                .id("full_height_button")
+                                .absolute()
+                                .bottom_0()
+                                .h_4()
+                                .w_full()
+                                .justify_center()
+                                .rounded_b_md()
+                                .bg(cx.theme().colors().editor_background.opacity(0.8))
+                                .hover(|style| style.bg(cx.theme().colors().editor_background))
+                                .cursor_pointer()
+                                .child(
+                                    Icon::new(IconName::ChevronDown)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                    this.full_height = !this.full_height;
+                                })),
+                        ),
                 )
             })
+
         // .child(div().pl_2().child(editor))
     }
 }
