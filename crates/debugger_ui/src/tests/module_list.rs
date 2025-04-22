@@ -29,9 +29,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let session = start_debug_session(&workspace, cx, |client| {
-        dbg!("HERE");
         client.on_request::<Initialize, _>(move |_, _| {
-            dbg!("request initialize intercepted");
             Ok(dap::Capabilities {
                 supports_modules_request: Some(true),
                 ..Default::default()

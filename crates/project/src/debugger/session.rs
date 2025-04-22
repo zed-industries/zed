@@ -780,15 +780,12 @@ impl Session {
             this.update(cx, |this, cx| {
                 this.mode = Mode::Running(mode);
                 cx.emit(SessionStateEvent::Running);
-                dbg!("Emitted running event");
             })?;
 
-            dbg!("requesting initialization");
             this.update(cx, |session, cx| session.request_initialize(cx))?
                 .await?;
 
             this.update(cx, |session, cx| {
-                dbg!(session.capabilities());
                 session.initialize_sequence(initialized_rx, dap_store.clone(), cx)
             })?
             .await

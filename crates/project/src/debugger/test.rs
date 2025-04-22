@@ -10,14 +10,11 @@ pub fn intercept_debug_sessions<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     configure: T,
 ) -> Subscription {
     cx.update(|cx| {
-        dbg!("new session");
         let configure = Arc::new(configure);
         cx.observe_new::<Session>(move |_, _, cx| {
             let configure = configure.clone();
             cx.subscribe_self(move |session, event, cx| {
                 let configure = configure.clone();
-                dbg!("new session running");
-                dbg!(&event);
                 if matches!(event, SessionStateEvent::Running) {
                     let client = session.adapter_client().unwrap();
                     register_default_handlers(session, &client, cx);
