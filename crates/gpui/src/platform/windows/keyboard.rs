@@ -52,6 +52,7 @@ impl KeyboardMapper for WindowsKeyboardMapper {
         {
             return Cow::Borrowed(keystroke);
         }
+
         // This handles case 1, case 4 and case 5, where the keystroke outputs a single character
         if let Some(key_char) = keystroke.key_char.as_ref() {
             if key_char.len() == 1 {
@@ -62,58 +63,50 @@ impl KeyboardMapper for WindowsKeyboardMapper {
                 });
             }
         }
+
+        if keystroke.key.len() != 1 {
+            log::error!(
+                "Failed to convert keystroke to vim keystroke: {}",
+                keystroke
+            );
+            return Cow::Borrowed(keystroke);
+        }
+
         // Below handles case 2 and case 3, `ctrl-shit-4` -> `ctrl-$`, `alt-shift-3` -> `alt-#`
         let mut modifiers = keystroke.modifiers;
-        let vkey = {
-            if keystroke.key.len() != 1 {
-                log::error!(
-                    "Failed to convert keystroke to vim keystroke: {}",
-                    keystroke
-                );
-                return Cow::Borrowed(keystroke);
-            }
-            let Some(key) = self
-                .get_vkey_from_char(keystroke.key.as_str(), &mut modifiers)
-                .log_err()
-            else {
-                log::error!(
-                    "Failed to convert keystroke to vim keystroke: {}",
-                    keystroke
-                );
-                return Cow::Borrowed(keystroke);
-            };
-            key
+        let Some(vkey) = self
+            .get_vkey_from_char(keystroke.key.as_str(), &mut modifiers)
+            .log_err()
+        else {
+            log::error!(
+                "Failed to convert keystroke to vim keystroke: {}",
+                keystroke
+            );
+            return Cow::Borrowed(keystroke);
         };
-        let new_key = {
-            let mut state = [0; 256];
-            if modifiers.shift {
-                state[VK_SHIFT.0 as usize] = 0x80;
-                modifiers.shift = false;
+
+        let mut state = [0; 256];
+        if modifiers.shift {
+            state[VK_SHIFT.0 as usize] = 0x80;
+            modifiers.shift = false;
+        }
+
+        let scan_code = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_VSC) };
+        let mut buffer = [0; 4];
+        let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 0) };
+
+        if len > 0 {
+            let candidate = String::from_utf16_lossy(&buffer[..len as usize]);
+            if !candidate.is_empty() && !candidate.chars().next().unwrap().is_control() {
+                return Cow::Owned(Keystroke {
+                    modifiers,
+                    key: candidate,
+                    key_char: keystroke.key_char.clone(),
+                });
             }
-            let scan_code = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_VSC) };
-            let mut buffer = [0; 8];
-            let len =
-                unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 1 << 2) };
-            if len > 0 {
-                let candidate = String::from_utf16_lossy(&buffer[..len as usize]);
-                if candidate.is_empty() {
-                    keystroke.key.clone()
-                } else {
-                    if candidate.chars().next().unwrap().is_control() {
-                        keystroke.key.clone()
-                    } else {
-                        candidate
-                    }
-                }
-            } else {
-                keystroke.key.clone()
-            }
-        };
-        Cow::Owned(Keystroke {
-            modifiers,
-            key: new_key,
-            key_char: keystroke.key_char.clone(),
-        })
+        }
+
+        Cow::Borrowed(keystroke)
     }
 }
 
