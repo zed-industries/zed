@@ -30,30 +30,34 @@ impl PlatformKeyboardLayout for MacKeyboardLayout {
 
 impl MacKeyboardLayout {
     pub(crate) fn new() -> Self {
-        unsafe {
-            let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
-
-            let id: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyInputSourceID as *const c_void,
-            );
-            let id: *const std::os::raw::c_char = msg_send![id, UTF8String];
-            let id = CStr::from_ptr(id).to_str().unwrap().to_string();
-
-            let name: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyLocalizedName as *const c_void,
-            );
+        let (keyboard, id) = get_keyboard_layout_id();
+        let name = unsafe {
+            let name: *mut Object =
+                TISGetInputSourceProperty(keyboard, kTISPropertyLocalizedName as *const c_void);
             let name: *const std::os::raw::c_char = msg_send![name, UTF8String];
-            let name = CStr::from_ptr(name).to_str().unwrap().to_string();
+            CStr::from_ptr(name).to_str().unwrap().to_string()
+        };
 
-            Self { id, name }
-        }
+        Self { id, name }
+    }
+}
+
+fn get_keyboard_layout_id() -> (*mut Object, String) {
+    unsafe {
+        let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
+
+        let id: *mut Object =
+            TISGetInputSourceProperty(current_keyboard, kTISPropertyInputSourceID as *const c_void);
+        let id: *const std::os::raw::c_char = msg_send![id, UTF8String];
+        (
+            current_keyboard,
+            CStr::from_ptr(id).to_str().unwrap().to_string(),
+        )
     }
 }
 
 pub(crate) struct MacKeyboardMapper {
-    mappings: HashMap<String, String>,
+    mappings: Option<HashMap<String, String>>,
 }
 
 impl KeyboardMapper for MacKeyboardMapper {
@@ -67,8 +71,9 @@ impl KeyboardMapper for MacKeyboardMapper {
 }
 
 impl MacKeyboardMapper {
-    pub(crate) fn new(layout_id: &str) -> Self {
-        let mappings: &[(char, char)] = match layout_id {
+    pub(crate) fn new() -> Self {
+        let (_, layout_id) = get_keyboard_layout_id();
+        let mappings: &[(char, char)] = match layout_id.as_str() {
             "com.apple.keylayout.ABC-AZERTY" => &[
                 ('!', '1'),
                 ('"', '%'),
@@ -1454,19 +1459,15 @@ impl MacKeyboardMapper {
             "com.apple.keylayout.USInternational-PC" => &[('^', 'ˆ'), ('~', '˜')],
             "com.apple.keylayout.Welsh" => &[('#', '£')],
 
-            _ => {
-                return Self {
-                    mappings: HashMap::default(),
-                };
-            }
+            _ => return Self { mappings: None },
         };
 
         Self {
-            mappings: HashMap::from_iter(
+            mappings: Some(HashMap::from_iter(
                 mappings
                     .into_iter()
                     .map(|(from, to)| (from.to_string(), to.to_string())),
-            ),
+            )),
         }
     }
 }

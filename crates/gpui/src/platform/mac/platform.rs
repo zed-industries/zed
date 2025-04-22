@@ -1,5 +1,5 @@
 use super::{
-    BoolExt, MacKeyboardLayout,
+    BoolExt, MacKeyboardLayout, MacKeyboardMapper,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
     is_macos_version_at_least, renderer, screen_capture,
@@ -169,6 +169,7 @@ pub(crate) struct MacPlatformState {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
+    keyboard_mapper: MacKeyboardMapper,
 }
 
 impl Default for MacPlatform {
@@ -187,6 +188,8 @@ impl MacPlatform {
         #[cfg(not(feature = "font-kit"))]
         let text_system = Arc::new(crate::NoopTextSystem::new());
 
+        let keyboard_mapper = MacKeyboardMapper::new();
+
         Self(Mutex::new(MacPlatformState {
             headless,
             text_system,
@@ -196,6 +199,7 @@ impl MacPlatform {
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
+            keyboard_mapper,
             reopen: None,
             quit: None,
             menu_command: None,
@@ -1350,6 +1354,8 @@ extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
 extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
+    let keyboard_mapper = MacKeyboardMapper::new();
+    lock.keyboard_mapper = keyboard_mapper;
     if let Some(mut callback) = lock.on_keyboard_layout_change.take() {
         drop(lock);
         callback();
