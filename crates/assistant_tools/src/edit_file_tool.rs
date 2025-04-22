@@ -375,10 +375,12 @@ impl EditFileToolCard {
 impl ToolCard for EditFileToolCard {
     fn render(
         &mut self,
-        _status: &ToolUseStatus,
+        status: &ToolUseStatus,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let failed = matches!(status, ToolUseStatus::Error(_));
+
         let path_label_button = h_flex()
             .id(("code-block-header-label", self.index))
             .w_full()
@@ -421,22 +423,32 @@ impl ToolCard for EditFileToolCard {
             .p_1()
             .gap_1()
             .justify_between()
-            .bg(codeblock_header_bg)
             .rounded_t_md()
-            .when(self.preview, |header| {
+            .when(!failed, |header| header.bg(codeblock_header_bg))
+            .when(!failed && self.preview, |header| {
                 header
                     .border_b_1()
                     .border_color(cx.theme().colors().border.opacity(0.6))
             })
             .child(path_label_button)
-            .child(
-                Disclosure::new(("edit-file-disclosure", self.index), self.preview)
-                    .opened_icon(IconName::ChevronUp)
-                    .closed_icon(IconName::ChevronDown)
-                    .on_click(cx.listener(move |this, _event, _window, _cx| {
-                        this.preview = !this.preview;
-                    })),
-            );
+            .map(|container| {
+                if failed {
+                    container.child(
+                        Icon::new(IconName::Close)
+                            .size(IconSize::Small)
+                            .color(Color::Error),
+                    )
+                } else {
+                    container.child(
+                        Disclosure::new(("edit-file-disclosure", self.index), self.preview)
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown)
+                            .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                this.preview = !this.preview;
+                            })),
+                    )
+                }
+            });
 
         let editor = self.editor.update(cx, |editor, cx| {
             editor.render(window, cx).into_any_element()
@@ -445,11 +457,12 @@ impl ToolCard for EditFileToolCard {
         v_flex()
             .mb_2()
             .border_1()
+            .when(failed, |container| container.border_dashed())
             .border_color(cx.theme().colors().border.opacity(0.6))
             .rounded_lg()
             .overflow_hidden()
             .child(codeblock_header)
-            .when(self.preview, |card| {
+            .when(!failed && self.preview, |card| {
                 card.child(
                     div()
                         .relative()
@@ -484,8 +497,6 @@ impl ToolCard for EditFileToolCard {
                         ),
                 )
             })
-
-        // .child(div().pl_2().child(editor))
     }
 }
 
