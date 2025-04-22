@@ -25,7 +25,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::{TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
+use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
@@ -637,7 +637,7 @@ impl SettingsObserver {
                                             .with_context(|| {
                                                 format!("parsing VSCode debug tasks, file {abs_path:?}")
                                             })?;
-                                    let zed_tasks = TaskTemplates::try_from(vscode_tasks)
+                                    let zed_tasks = DebugTaskFile::try_from(vscode_tasks)
                                         .with_context(|| {
                                             format!(
                                         "converting VSCode debug tasks into Zed ones, file {abs_path:?}"
