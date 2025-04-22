@@ -233,7 +233,6 @@ impl ImageCache for SimpleLruCache {
             .spawn(cx, {
                 async move |cx| {
                     _ = task.await;
-                    dbg!("loaded...");
                     cx.on_next_frame(move |_, cx| {
                         cx.notify(entity);
                     });
