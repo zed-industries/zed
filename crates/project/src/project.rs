@@ -25,7 +25,6 @@ mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git_store::{Repository, RepositoryId};
-use task::DebugTaskDefinition;
 pub mod search_history;
 mod yarn;
 
@@ -39,17 +38,13 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{
-    adapters::{DebugAdapterBinary, TcpArguments},
-    client::DebugAdapterClient,
-};
+use dap::client::DebugAdapterClient;
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
 use debugger::{
     breakpoint_store::BreakpointStore,
     dap_store::{DapStore, DapStoreEvent},
-    session::Session,
 };
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
@@ -97,7 +92,6 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    net::Ipv4Addr,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -107,7 +101,7 @@ use std::{
 };
 
 use task_store::TaskStore;
-use terminals::{SshCommand, Terminals, wrap_for_ssh};
+use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
@@ -1072,8 +1066,9 @@ impl Project {
             let dap_store = cx.new(|cx| {
                 DapStore::new_ssh(
                     SSH_PROJECT_ID,
-                    ssh_proto.clone(),
+                    ssh.clone(),
                     breakpoint_store.clone(),
+                    worktree_store.clone(),
                     cx,
                 )
             });
@@ -1258,6 +1253,7 @@ impl Project {
                 remote_id,
                 client.clone().into(),
                 breakpoint_store.clone(),
+                worktree_store.clone(),
                 cx,
             )
         })?;
@@ -1461,79 +1457,6 @@ impl Project {
                 self.disconnected_from_host_internal(cx);
             }
         }
-    }
-
-    pub fn start_debug_session(
-        &mut self,
-        definition: DebugTaskDefinition,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Session>>> {
-        let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
-        };
-
-        let ssh_client = self.ssh_client().clone();
-
-        let result = cx.spawn(async move |this, cx| {
-            let mut binary = this
-                .update(cx, |this, cx| {
-                    this.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.get_debug_adapter_binary(definition.clone(), cx)
-                    })
-                })?
-                .await?;
-
-            if let Some(ssh_client) = ssh_client {
-                let mut ssh_command = ssh_client.update(cx, |ssh, _| {
-                    anyhow::Ok(SshCommand {
-                        arguments: ssh
-                            .ssh_args()
-                            .ok_or_else(|| anyhow!("SSH arguments not found"))?,
-                    })
-                })??;
-
-                let mut connection = None;
-                if let Some(c) = binary.connection {
-                    let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
-                    let port = dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
-
-                    ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
-                    connection = Some(TcpArguments {
-                        port: c.port,
-                        host: local_bind_addr,
-                        timeout: c.timeout,
-                    })
-                }
-
-                let (program, args) = wrap_for_ssh(
-                    &ssh_command,
-                    Some((&binary.command, &binary.arguments)),
-                    binary.cwd.as_deref(),
-                    binary.envs,
-                    None,
-                );
-
-                binary = DebugAdapterBinary {
-                    command: program,
-                    arguments: args,
-                    envs: HashMap::default(),
-                    cwd: None,
-                    connection,
-                    request_args: binary.request_args,
-                }
-            };
-
-            let ret = this
-                .update(cx, |project, cx| {
-                    project.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.new_session(binary, definition, worktree.downgrade(), None, cx)
-                    })
-                })?
-                .1
-                .await;
-            ret
-        });
-        result
     }
 
     #[cfg(any(test, feature = "test-support"))]
