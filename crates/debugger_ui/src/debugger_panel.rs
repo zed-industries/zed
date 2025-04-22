@@ -413,7 +413,6 @@ impl DebugPanel {
         let definition = parent_session.read(cx).definition().clone();
         let mut binary = parent_session.read(cx).binary().clone();
         binary.request_args = request.clone();
-        dbg!(&request, &binary);
 
         cx.spawn_in(window, async move |this, cx| {
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {

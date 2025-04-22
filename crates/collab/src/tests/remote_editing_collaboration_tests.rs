@@ -576,3 +576,17 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         "Prettier formatting was not applied to client buffer after host's request"
     );
 }
+
+#[gpui::test]
+async fn test_remote_server_debugger(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "lib.rs": "fn one() -> usize { 1 }"
+        }),
+    )
+    .await;
+
+    let (project, headless_project) = init_test(&fs, cx, server_cx).await;
+}

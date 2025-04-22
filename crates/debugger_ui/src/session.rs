@@ -88,6 +88,12 @@ impl DebugSession {
         }
     }
 
+    pub fn session(&self, cx: &App) -> Entity<Session> {
+        match &self.mode {
+            DebugSessionState::Running(entity) => entity.read(cx).session().clone(),
+        }
+    }
+
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
         match &self.mode {
             DebugSessionState::Running(state) => state.update(cx, |state, cx| state.shutdown(cx)),

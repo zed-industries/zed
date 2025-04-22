@@ -413,6 +413,86 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     shutdown_session.await.unwrap();
 }
 
+#[gpui::test]
+async fn test_handle_start_debugging_request(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        "/project",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    let fake_config = json!({"one": "two"});
+    let launched_with = Arc::new(parking_lot::Mutex::new(None));
+
+    let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
+        let launched_with = launched_with.clone();
+        move |client| {
+            let launched_with = launched_with.clone();
+            client.on_request::<dap::requests::Launch, _>(move |_, args| {
+                launched_with.lock().replace(args.raw);
+                Ok(())
+            });
+            client.on_request::<dap::requests::Attach, _>(move |_, _| {
+                assert!(false, "should not get attach request");
+                Ok(())
+            });
+        }
+    });
+
+    client
+        .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
+            request: StartDebuggingRequestArgumentsRequest::Launch,
+            configuration: fake_config.clone(),
+        })
+        .await;
+
+    cx.run_until_parked();
+
+    workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let active_session = debug_panel
+                .read(cx)
+                .active_session()
+                .unwrap()
+                .read(cx)
+                .session(cx);
+            let parent_session = active_session.read(cx).parent_session().unwrap();
+
+            assert_eq!(
+                active_session.read(cx).definition(),
+                parent_session.read(cx).definition()
+            );
+        })
+        .unwrap();
+
+    assert_eq!(&fake_config, launched_with.lock().as_ref().unwrap());
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+}
+
 // // covers that we always send a response back, if something when wrong,
 // // while spawning the terminal
 #[gpui::test]
