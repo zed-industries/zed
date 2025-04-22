@@ -124,6 +124,7 @@ impl ThreadContext {
         )
     }
 
+    #[allow(dead_code)]
     pub fn assert_eq<T: PartialEq + Debug>(
         &mut self,
         left: T,
@@ -215,8 +216,8 @@ impl ThreadContext {
             let mut messages = Vec::new();
             for message in thread.messages().skip(message_count_before) {
                 messages.push(Message {
-                    role: message.role,
-                    text: message.to_string(),
+                    _role: message.role,
+                    _text: message.to_string(),
                     tool_use: thread
                         .tool_uses_for_message(message.id, cx)
                         .into_iter()
@@ -268,16 +269,12 @@ impl Response {
         });
         cx.assert_some(result, format!("Has `{}` tool calls", tool_name))
     }
-
-    fn extend(&mut self, other: Response) {
-        self.messages.extend(other.messages);
-    }
 }
 
 #[derive(Debug)]
 pub struct Message {
-    role: Role,
-    text: String,
+    _role: Role,
+    _text: String,
     tool_use: Vec<ToolUse>,
 }
 

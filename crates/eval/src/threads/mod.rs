@@ -88,17 +88,6 @@ pub struct ExampleBase {
     pub allow_preexisting_diagnostics: bool,
 }
 
-impl ExampleBase {
-    pub fn repo_name(&self) -> String {
-        self.url
-            .split('/')
-            .next_back()
-            .unwrap_or(&"")
-            .trim_end_matches(".git")
-            .into()
-    }
-}
-
 #[async_trait(?Send)]
 impl EvalThread for ExampleThread {
     fn meta(&self) -> EvalThreadMetadata {
