@@ -3179,7 +3179,7 @@ impl BufferSnapshot {
             let mut range = None;
             loop {
                 let child_range = cursor.node().byte_range();
-                if !child_range.to_inclusive().contains(&offset) {
+                if !child_range.contains(&offset) {
                     break;
                 }
 
