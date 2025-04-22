@@ -2506,15 +2506,17 @@ async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
             .collect::<Vec<_>>();
         ranges.sort_by_key(|range| range.start);
         log::info!("Setting ranges: {:?}", row_ranges(&ranges));
-        multibuffer.update(cx, |multibuffer, cx| {
+        let (created, _) = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
                 PathKey::for_buffer(&buf, cx),
                 buf.clone(),
                 ranges.clone(),
                 2,
                 cx,
-            );
+            )
         });
+
+        assert_eq!(created.len(), ranges.len());
 
         let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         let mut last_end = None;
