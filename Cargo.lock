@@ -14228,6 +14228,7 @@ dependencies = [
  "gpui",
  "hex",
  "parking_lot",
+ "pretty_assertions",
  "proto",
  "schemars",
  "serde",
