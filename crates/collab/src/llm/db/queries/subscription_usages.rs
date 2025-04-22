@@ -77,7 +77,7 @@ impl LlmDatabase {
                 model_requests: ActiveValue::set(model_requests),
                 edit_predictions: ActiveValue::set(edit_predictions),
             })
-            .exec_with_returning(&*tx)
+            .exec_with_returning(tx)
             .await?,
         )
     }
@@ -111,7 +111,7 @@ impl LlmDatabase {
             .filter(subscription_usage::Column::UserId.eq(user_id))
             .filter(subscription_usage::Column::PeriodStartAt.eq(period_start_at))
             .filter(subscription_usage::Column::PeriodEndAt.eq(period_end_at))
-            .one(&*tx)
+            .one(tx)
             .await?)
     }
 
