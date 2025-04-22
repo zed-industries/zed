@@ -3,6 +3,7 @@ mod instance;
 mod thread;
 mod threads;
 mod tool_metrics;
+mod assertions;
 
 use instance::{
     JudgeOutput, REPOS_DIR, RunOutput, ThreadInstance, WORKTREES_DIR, repo_path_for_url, run_git,
@@ -342,41 +343,8 @@ fn main() {
                         if !run_output.assertions.success.is_empty()
                             || !run_output.assertions.failure.is_empty()
                         {
-                            println!("");
-                            println!("┌────────────────────────────────────────────┬───────────┐");
-                            println!("│ Assertion                                  │ Result    │");
-                            println!("├────────────────────────────────────────────┼───────────┤");
-
-                            // Print successful assertions
-                            for assertion in &run_output.assertions.success {
-                                println!(
-                                    "│ {:<42} │ {}  │",
-                                    truncate_assertion(assertion),
-                                    "\x1b[32m✔︎ Passed\x1b[0m"
-                                );
-                            }
-
-                            // Print failed assertions
-                            for assertion in &run_output.assertions.failure {
-                                println!(
-                                    "│ {:<42} │ {}  │",
-                                    truncate_assertion(assertion),
-                                    "\x1b[31m✗ Failed\x1b[0m"
-                                );
-                            }
-
-                            println!("└────────────────────────────────────────────┴───────────┘");
-
-                            println!(
-                                "\n{} assertion{} failed, {} passed",
-                                run_output.assertions.failure.len(),
-                                if run_output.assertions.failure.len() == 1 {
-                                    ""
-                                } else {
-                                    "s"
-                                },
-                                run_output.assertions.success.len(),
-                            );
+                            // Print assertions table
+                            println!("{}", run_output.assertions);
 
                             let total_run = run_output.assertions.failure.len()
                                 + run_output.assertions.success.len();
@@ -587,15 +555,6 @@ pub fn find_model(
 
 pub async fn get_current_commit_id(repo_path: &Path) -> Option<String> {
     (run_git(repo_path, &["rev-parse", "HEAD"]).await).ok()
-}
-
-fn truncate_assertion(assertion: &str) -> String {
-    const MAX_WIDTH: usize = 42;
-    if assertion.len() <= MAX_WIDTH {
-        assertion.to_string()
-    } else {
-        format!("{}...", &assertion[..MAX_WIDTH - 3])
-    }
 }
 
 pub fn get_current_commit_id_sync(repo_path: &Path) -> String {

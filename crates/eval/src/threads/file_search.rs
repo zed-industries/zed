@@ -3,7 +3,7 @@ use assistant_tools::PathSearchToolInput;
 use async_trait::async_trait;
 use regex::Regex;
 
-use crate::thread::{EvalThread, EvalThreadMetadata, LanguageServer, ThreadContext};
+use crate::thread::{EvalThread, EvalThreadMetadata, ThreadContext};
 
 pub struct Thread;
 
@@ -14,10 +14,7 @@ impl EvalThread for Thread {
             name: "file_search".to_string(),
             url: "https://github.com/zed-industries/zed.git".to_string(),
             revision: "03ecb88fe30794873f191ddb728f597935b3101c".to_string(),
-            language_server: Some(LanguageServer {
-                file_extension: "rs".to_string(),
-                allow_preexisting_diagnostics: false,
-            }),
+            language_server: None,
             max_assertions: Some(4),
         }
     }
@@ -41,7 +38,7 @@ impl EvalThread for Thread {
         let glob = input.glob;
         cx.assert(
             glob.ends_with(FILENAME),
-            "path_search glob ends with {FILENAME:?}",
+            format!("path_search glob ends with {FILENAME:?}"),
         )?;
 
         let without_filename = glob.replace(FILENAME, "");

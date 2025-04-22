@@ -28,7 +28,8 @@ use util::ResultExt as _;
 use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
-use crate::thread::{Assertions, EvalThread, FailedAssertion, ThreadContext};
+use crate::assertions::Assertions;
+use crate::thread::{EvalThread, FailedAssertion, ThreadContext};
 use crate::{AgentAppState, ToolMetrics};
 
 pub const REPOS_DIR: &str = "./crates/eval/repos";

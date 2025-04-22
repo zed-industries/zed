@@ -4,13 +4,13 @@ use std::{
     sync::Arc,
 };
 
+use crate::assertions::Assertions;
 use agent::ThreadEvent;
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use futures::{StreamExt, channel::mpsc};
 use gpui::{AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
-use serde::{Deserialize, Serialize};
 
 #[async_trait(?Send)]
 pub trait EvalThread {
@@ -30,7 +30,7 @@ pub struct EvalThreadMetadata {
     pub url: String,
     pub revision: String,
     pub language_server: Option<LanguageServer>,
-    pub max_assertions: Option<u32>,
+    pub max_assertions: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,11 +83,13 @@ impl ThreadContext {
         model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
+        let assertions = Assertions::new(meta.max_assertions);
+
         Self {
             meta,
             log_prefix,
             agent_thread,
-            assertions: Assertions::default(),
+            assertions,
             model,
             app,
         }
@@ -145,8 +147,7 @@ impl ThreadContext {
 
     fn assertion_result<T>(&mut self, result: Result<T>, message: String) -> Result<T> {
         if let Some(max) = self.meta.max_assertions {
-            let run =
-                self.assertions.failure.len() as u32 + self.assertions.success.len() as u32 + 1;
+            let run = self.assertions.failure.len() + self.assertions.success.len();
 
             if run > max {
                 return Err(anyhow!(
@@ -239,12 +240,6 @@ impl ThreadContext {
     pub fn report(self) -> Assertions {
         self.assertions
     }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct Assertions {
-    pub success: Vec<String>,
-    pub failure: Vec<String>,
 }
 
 #[derive(Debug)]
