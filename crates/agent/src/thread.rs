@@ -780,9 +780,9 @@ impl Thread {
                                 cx,
                             );
                         }
-                        AssistantContext::Excerpt(excerpt_context) => {
+                        AssistantContext::Selection(selection_context) => {
                             log.buffer_added_as_context(
-                                excerpt_context.context_buffer.buffer.clone(),
+                                selection_context.context_buffer.buffer.clone(),
                                 cx,
                             );
                         }

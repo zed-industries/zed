@@ -343,8 +343,8 @@ impl AddedContext {
                 render_preview: None,
             },
 
-            AssistantContext::Selection(excerpt_context) => {
-                let full_path = excerpt_context.context_buffer.full_path(cx);
+            AssistantContext::Selection(selection_context) => {
+                let full_path = selection_context.context_buffer.full_path(cx);
                 let mut full_path_string = full_path.to_string_lossy().into_owned();
                 let mut name = full_path
                     .file_name()
@@ -353,8 +353,8 @@ impl AddedContext {
 
                 let line_range_text = format!(
                     " ({}-{})",
-                    excerpt_context.line_range.start.row + 1,
-                    excerpt_context.line_range.end.row + 1
+                    selection_context.line_range.start.row + 1,
+                    selection_context.line_range.end.row + 1
                 );
 
                 full_path_string.push_str(&line_range_text);
@@ -366,14 +366,25 @@ impl AddedContext {
                     .map(|n| n.to_string_lossy().into_owned().into());
 
                 AddedContext {
-                    id: excerpt_context.id,
+                    id: selection_context.id,
                     kind: ContextKind::Selection,
                     name: name.into(),
                     parent,
-                    tooltip: Some(full_path_string.into()),
+                    tooltip: None,
                     icon_path: FileIcons::get_icon(&full_path, cx),
                     status: ContextStatus::Ready,
-                    render_preview: None,
+                    render_preview: Some(Rc::new({
+                        let content = selection_context.context_buffer.text.clone();
+                        move |_, cx| {
+                            div()
+                                .id("context-pill-selection-preview")
+                                .overflow_scroll()
+                                .max_w_128()
+                                .max_h_96()
+                                .child(Label::new(content.clone()).buffer_font(cx))
+                                .into_any_element()
+                        }
+                    })),
                 }
             }
 
