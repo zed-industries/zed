@@ -209,7 +209,6 @@ impl ImageCache for SimpleLruCache {
             self.usages.remove(current_ix);
             self.usages.insert(0, hash);
 
-            dbg!("cache hit for {}", resource);
             return item.get();
         }
 
