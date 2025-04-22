@@ -3,6 +3,7 @@ mod ids;
 mod tool_metrics;
 
 pub(crate) use example::*;
+use parking_lot::Mutex;
 pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
@@ -11,7 +12,7 @@ use clap::Parser;
 use client::{Client, ProxySettings, UserStore};
 use collections::HashSet;
 use extension::ExtensionHostProxy;
-use futures::{StreamExt, future};
+use futures::future;
 use gpui::http_client::{Uri, read_proxy_from_env};
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
 use gpui_tokio::Tokio;
@@ -24,6 +25,7 @@ use prompt_store::PromptBuilder;
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
+use std::collections::VecDeque;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -40,13 +42,9 @@ struct Args {
     model: String,
     #[arg(long, value_delimiter = ',', default_value = "rs,ts")]
     languages: Vec<String>,
-    /// How many times to run each example. Note that this is currently not very efficient as N
-    /// worktrees will be created for the examples.
+    /// How many times to run each example.
     #[arg(long, default_value = "1")]
     repetitions: u32,
-    /// How many times to run the judge on each example run.
-    #[arg(long, default_value = "3")]
-    judge_repetitions: u32,
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "10")]
     concurrency: usize,
@@ -184,20 +182,11 @@ fn main() {
                     continue;
                 }
 
-                // TODO: This creates a worktree per repetition. Ideally these examples should
-                // either be run sequentially on the same worktree, or reuse worktrees when there
-                // are more examples to run than the concurrency limit.
-                for repetition_number in 0..args.repetitions {
-                    let mut example = example.clone();
-                    example.set_repetition_number(repetition_number);
-
-                    let name_len = example.name.len();
-                    if name_len > max_name_width {
-                        max_name_width = example.name.len();
-                    }
-
-                    examples.push(example);
+                let name_len = example.name.len();
+                if name_len > max_name_width {
+                    max_name_width = example.name.len();
                 }
+                examples.push(example);
             }
 
             println!("Skipped examples: {}\n", skipped.join(", "));
@@ -263,49 +252,53 @@ fn main() {
             future::join_all(clone_tasks).await;
 
             for example in examples.iter_mut() {
-                example.setup().await?;
+                example.fetch().await?;
             }
 
-            let judge_repetitions = args.judge_repetitions;
-            let concurrency = args.concurrency;
+            let examples = Arc::new(Mutex::new(VecDeque::from(examples)));
+            let results = Arc::new(Mutex::new(Vec::new()));
 
-            let tasks = examples.iter().map(|example| {
+            future::join_all((0..args.concurrency).map(|_| {
+                let repetitions = args.repetitions;
                 let app_state = app_state.clone();
                 let model = model.clone();
-                let example = example.clone();
                 let zed_commit_sha = zed_commit_sha.clone();
                 let zed_branch_name = zed_branch_name.clone();
                 let run_id = run_id.clone();
+                let examples = examples.clone();
+                let results = results.clone();
                 cx.spawn(async move |cx| {
-                    let result = async {
-                        let run_output = cx
-                            .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
-                            .await?;
-                        let judge_tasks = (0..judge_repetitions).map(|round| {
-                            run_judge_repetition(
-                                example.clone(),
-                                model.clone(),
-                                &zed_commit_sha,
-                                &zed_branch_name,
-                                &run_id,
-                                &run_output,
-                                round,
-                                enable_telemetry,
-                                cx,
-                            )
-                        });
-                        let judge_outputs = future::join_all(judge_tasks).await;
-                        anyhow::Ok((run_output, judge_outputs))
+                    loop {
+                        let Some(mut example) = examples.lock().pop_front() else {
+                            break;
+                        };
+                        for round in 0..repetitions {
+                            let result = async {
+                                example.setup().await?;
+                                let run_output = cx
+                                    .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
+                                    .await?;
+                                let judge_output = run_judge_repetition(
+                                    example.clone(),
+                                    model.clone(),
+                                    &zed_commit_sha,
+                                    &zed_branch_name,
+                                    &run_id,
+                                    &run_output,
+                                    round,
+                                    enable_telemetry,
+                                    cx,
+                                )
+                                .await;
+                                anyhow::Ok((run_output, judge_output))
+                            }
+                            .await;
+                            results.lock().push((example.clone(), result));
+                        }
                     }
-                    .await;
-                    (example, result)
                 })
-            });
-
-            let results = futures::stream::iter(tasks)
-                .buffer_unordered(concurrency)
-                .collect::<Vec<_>>()
-                .await;
+            }))
+            .await;
 
             println!("\n\n");
             print_header("EVAL RESULTS");
@@ -314,7 +307,7 @@ fn main() {
             let mut thread_scores = Vec::new();
             let mut error_count = 0;
 
-            for (example, result) in results {
+            for (example, result) in results.lock().iter() {
                 print_header(&example.name);
 
                 match result {
@@ -322,38 +315,23 @@ fn main() {
                         println!("💥 {}{:?}", example.log_prefix, err);
                         error_count += 1;
                     }
-                    Ok((run_output, judge_results)) => {
+                    Ok((run_output, judge_result)) => {
                         cumulative_tool_metrics.merge(&run_output.tool_metrics);
 
                         println!("┌───────┬──────┬────────┐");
-                        println!("│ Judge │ Diff │ Thread │");
+                        println!("│ Round │ Diff │ Thread │");
                         println!("├───────┼──────┼────────┤");
 
-                        for (i, judge_result) in judge_results.iter().enumerate() {
-                            match judge_result {
-                                Ok(judge_output) => {
-                                    let diff_score = judge_output.diff.score;
-                                    diff_scores.push(diff_score);
-
-                                    let thread_display = if let Some(thread) = &judge_output.thread
-                                    {
-                                        let thread_score = thread.score;
-                                        thread_scores.push(thread_score);
-                                        format!("{}", thread_score)
-                                    } else {
-                                        "N/A".to_string()
-                                    };
-
-                                    println!(
-                                        "|{:^7}│{:^6}│{:^8}│",
-                                        i + 1,
-                                        diff_score,
-                                        thread_display
-                                    );
-                                }
-                                Err(err) => {
-                                    println!("|{:^7}│{:^6}│{:^8}│{:?}", i + 1, "N/A", "N/A", err);
-                                }
+                        match judge_result {
+                            Ok(judge_output) => {
+                                let diff_score = judge_output.diff.score();
+                                let thread_score = judge_output.thread.score();
+                                diff_scores.push(diff_score);
+                                thread_scores.push(thread_score);
+                                println!("|{:^7}│{:^6}│{:^8}│", 1, diff_score, thread_score);
+                            }
+                            Err(err) => {
+                                println!("|{:^7}│{:^6}│{:^8}│{:?}", 1, "N/A", "N/A", err);
                             }
                         }
 
@@ -380,24 +358,16 @@ fn main() {
                 println!("\n{error_count} examples failed to run!");
             }
 
-            if diff_score_count > 0 {
-                println!("\nAverage code diff score: {average_diff_score}");
-            }
+            println!("\nAverage code diff score: {average_diff_score}");
 
             let thread_score_count = thread_scores.len();
+            let average_thread_score = thread_scores
+                .into_iter()
+                .map(|score| score as f32)
+                .sum::<f32>()
+                / (thread_score_count as f32);
 
-            // We might have gotten no thread scores if we weren't asked to judge the thread.
-            if thread_score_count > 0 {
-                let average_thread_score = thread_scores
-                    .into_iter()
-                    .map(|score| score as f32)
-                    .sum::<f32>()
-                    / (thread_score_count as f32);
-
-                if diff_score_count > 0 {
-                    println!("\nAverage thread score: {average_thread_score}");
-                }
-            }
+            println!("\nAverage thread score: {average_thread_score}");
 
             print_header("CUMULATIVE TOOL METRICS");
             println!("{}", cumulative_tool_metrics);
@@ -593,13 +563,13 @@ async fn run_judge_repetition(
     let judge_output = example.judge(model.clone(), &run_output, round, cx).await;
 
     let diff_evaluation;
-    let thread_diff_evaluation;
+    let thread_evaluation;
     if let Ok(output) = judge_output.as_ref() {
         diff_evaluation = Some(output.diff.clone());
-        thread_diff_evaluation = output.thread.clone();
+        thread_evaluation = Some(output.thread.clone());
     } else {
         diff_evaluation = None;
-        thread_diff_evaluation = None;
+        thread_evaluation = None;
     }
 
     if enable_telemetry {
@@ -611,7 +581,7 @@ async fn run_judge_repetition(
             example_name = example.name.clone(),
             round = round,
             diff_evaluation = diff_evaluation,
-            thread_evaluation = thread_diff_evaluation,
+            thread_evaluation = thread_evaluation,
             tool_metrics = run_output.tool_metrics,
             response_count = run_output.response_count,
             token_usage = run_output.token_usage,

@@ -68,7 +68,7 @@ pub struct Example {
     /// Content of `diff_criteria.md`
     pub diff_criteria: String,
     /// Content of `thread_criteria.md`, if that file exists (it's optional)
-    pub thread_criteria: Option<String>,
+    pub thread_criteria: String,
     /// Path to the directory containing the requests and responses for the agentic loop
     pub run_directory_path: PathBuf,
     /// Prefix used for logging that identifies this example
@@ -92,11 +92,6 @@ pub struct RunOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeDiffInput {
     pub repository_diff: String,
-    pub ran_diagnostics_check: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostics_before: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostics_after: Option<String>,
     pub criteria: String,
 }
 
@@ -109,12 +104,13 @@ pub struct JudgeThreadInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeResponse {
     pub analysis: String,
-    pub score: u32,
+    pub passing_criteria: u32,
+    pub total_criteria: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeOutput {
-    pub thread: Option<JudgeResponse>,
+    pub thread: JudgeResponse,
     pub diff: JudgeResponse,
 }
 
@@ -131,12 +127,6 @@ impl Example {
         let prompt_path = dir_path.join("prompt.md");
         let diff_criteria_path = dir_path.join("diff_criteria.md");
         let thread_criteria_path = dir_path.join("thread_criteria.md");
-        let thread_criteria = if thread_criteria_path.exists() {
-            Some(fs::read_to_string(thread_criteria_path.clone())?)
-        } else {
-            None
-        };
-
         let base: ExampleBase = toml::from_str(&fs::read_to_string(&base_path)?)?;
 
         let repo_path = repo_path_for_url(repos_dir, &base.url);
@@ -151,19 +141,13 @@ impl Example {
             name: name.clone(),
             base,
             prompt: fs::read_to_string(prompt_path.clone())?,
-            thread_criteria,
+            thread_criteria: fs::read_to_string(thread_criteria_path.clone())?,
             diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
             run_directory_path: run_dir.to_path_buf(),
             worktree_path,
             repo_path,
             log_prefix: name,
         })
-    }
-
-    pub fn set_repetition_number(&mut self, repetition_number: u32) {
-        if repetition_number > 0 {
-            self.name = format!("{}-{}", self.name, repetition_number);
-        }
     }
 
     pub fn example_output_directory(&self) -> PathBuf {
@@ -184,7 +168,7 @@ impl Example {
     }
 
     /// Set up the example by checking out the specified Git revision
-    pub async fn setup(&mut self) -> Result<()> {
+    pub async fn fetch(&mut self) -> Result<()> {
         let revision_exists = run_git(
             &self.repo_path,
             &["rev-parse", &format!("{}^{{commit}}", self.base.revision)],
@@ -203,7 +187,11 @@ impl Example {
             )
             .await?;
         }
+        Ok(())
+    }
 
+    /// Set up the example by checking out the specified Git revision
+    pub async fn setup(&mut self) -> Result<()> {
         if self.worktree_path.is_dir() {
             println!("{}Resetting existing worktree", self.log_prefix);
 
@@ -549,9 +537,6 @@ impl Example {
             judge_diff_prompt_name,
             &JudgeDiffInput {
                 repository_diff: run_output.repository_diff.clone(),
-                ran_diagnostics_check: run_output.ran_diagnostics_check,
-                diagnostics_before: run_output.diagnostics_before.clone(),
-                diagnostics_after: run_output.diagnostics_after.clone(),
                 criteria: self.diff_criteria.clone(),
             },
         )?;
@@ -574,7 +559,7 @@ impl Example {
 
         println!(
             "{}Judge #{judge_number} - Diff score: {}",
-            self.log_prefix, diff_output.score
+            self.log_prefix, diff_output.passing_criteria
         );
 
         Ok((diff_response, diff_output))
@@ -586,48 +571,43 @@ impl Example {
         run_output: &RunOutput,
         judge_number: u32,
         cx: &AsyncApp,
-    ) -> Result<(String, Option<JudgeResponse>)> {
-        if let Some(criteria) = self.thread_criteria.clone() {
-            let judge_thread_prompt = include_str!("judge_thread_prompt.hbs");
-            let judge_thread_prompt_name = "judge_thread_prompt";
-            let mut hbs = Handlebars::new();
-            hbs.register_template_string(judge_thread_prompt_name, judge_thread_prompt)?;
+    ) -> Result<(String, JudgeResponse)> {
+        let judge_thread_prompt = include_str!("judge_thread_prompt.hbs");
+        let judge_thread_prompt_name = "judge_thread_prompt";
+        let mut hbs = Handlebars::new();
+        hbs.register_template_string(judge_thread_prompt_name, judge_thread_prompt)?;
 
-            let request_markdown = RequestMarkdown::new(&run_output.last_request);
-            let thread_prompt = hbs.render(
-                judge_thread_prompt_name,
-                &JudgeThreadInput {
-                    messages: request_markdown.messages,
-                    criteria,
-                },
-            )?;
+        let request_markdown = RequestMarkdown::new(&run_output.last_request);
+        let thread_prompt = hbs.render(
+            judge_thread_prompt_name,
+            &JudgeThreadInput {
+                messages: request_markdown.messages,
+                criteria: self.thread_criteria.clone(),
+            },
+        )?;
 
-            let request = LanguageModelRequest {
-                thread_id: None,
-                prompt_id: None,
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: vec![MessageContent::Text(thread_prompt)],
-                    cache: false,
-                }],
-                temperature: None,
-                tools: Vec::new(),
-                stop: Vec::new(),
-            };
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text(thread_prompt)],
+                cache: false,
+            }],
+            temperature: None,
+            tools: Vec::new(),
+            stop: Vec::new(),
+        };
 
-            let thread_response = send_language_model_request(model, request, cx).await?;
-            let thread_output = JudgeResponse::parse(&thread_response)?;
+        let thread_response = send_language_model_request(model, request, cx).await?;
+        let thread_output = JudgeResponse::parse(&thread_response)?;
 
-            println!(
-                "{}Judge #{judge_number} - Thread score: {}",
-                self.log_prefix, thread_output.score
-            );
+        println!(
+            "{}Judge #{judge_number} - Thread score: {}",
+            self.log_prefix, thread_output.passing_criteria
+        );
 
-            Ok((thread_response, Some(thread_output)))
-        } else {
-            let msg = "There were no criteria specified for this thread, so this example was not judged on its thread.".to_string();
-            Ok((msg, None))
-        }
+        Ok((thread_response, thread_output))
     }
 
     pub async fn judge(
@@ -805,11 +785,21 @@ async fn query_lsp_diagnostics(
 impl JudgeResponse {
     fn parse(response: &str) -> Result<Self> {
         let analysis = get_tag("analysis", response)?.to_string();
-        let score = get_tag("score", response)?
+        let passing_criteria = get_tag("passing_criteria", response)?
             .parse()
             .context("error parsing score")?;
+        let total_criteria = get_tag("total_criteria", response)?
+            .parse()
+            .context("error parsing score")?;
+        Ok(Self {
+            analysis,
+            total_criteria,
+            passing_criteria,
+        })
+    }
 
-        Ok(Self { analysis, score })
+    pub fn score(&self) -> u32 {
+        (100.0 * self.passing_criteria as f32 / self.total_criteria as f32).round() as u32
     }
 }
 
@@ -1042,7 +1032,6 @@ fn response_events_to_markdown(
 #[cfg(test)]
 mod test {
     use super::*;
-    use handlebars::Handlebars;
 
     #[test]
     fn test_parse_judge_output() {
@@ -1057,7 +1046,7 @@ mod test {
             output.analysis,
             "The model did a good job but there were still compilations errors."
         );
-        assert_eq!(output.score, 3);
+        assert_eq!(output.passing_criteria, 3);
 
         let response = r#"
             Text around ignored
@@ -1074,156 +1063,6 @@ mod test {
 
         let output = JudgeResponse::parse(&response).unwrap();
         assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
-        assert_eq!(output.score, 1);
-    }
-
-    #[test]
-    fn test_judge_prompt_with_diagnostics() {
-        // Case 1: Both diagnostics before and after are present
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: true,
-            diagnostics_before: Some("Error at line 10: variable not found".to_string()),
-            diagnostics_after: Some("Error at line 15: missing semicolon".to_string()),
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates().render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        let expected_diagnostics_section = r#"
-            Take into account the diagnostics before and after applying the change:
-
-            <diagnostics_before>
-            Error at line 10: variable not found
-            </diagnostics_before>
-
-            <diagnostics_after>
-            Error at line 15: missing semicolon
-            </diagnostics_after>
-            "#
-        .unindent();
-
-        assert!(rendered.contains(&expected_diagnostics_section));
-    }
-
-    #[test]
-    fn test_judge_prompt_with_empty_diagnostics() {
-        // Case 2: Diagnostics check run but no diagnostics found
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: true,
-            diagnostics_before: None,
-            diagnostics_after: None,
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates().render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        let expected_diagnostics_section = r#"
-            Take into account the diagnostics before and after applying the change:
-
-            <diagnostics_before>
-            No diagnostics before applying the edits.
-            </diagnostics_before>
-
-            <diagnostics_after>
-            No diagnostics after applying the edits.
-            </diagnostics_after>
-            "#
-        .unindent();
-
-        assert!(rendered.contains(&expected_diagnostics_section));
-    }
-
-    #[test]
-    fn test_judge_prompt_with_mixed_diagnostics() {
-        let templates = templates();
-
-        // Case 3: Before diagnostics present, after diagnostics absent
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: true,
-            diagnostics_before: Some("Error at line 10: variable not found".to_string()),
-            diagnostics_after: None,
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        let expected_diagnostics_section = r#"
-            Take into account the diagnostics before and after applying the change:
-
-            <diagnostics_before>
-            Error at line 10: variable not found
-            </diagnostics_before>
-
-            <diagnostics_after>
-            No diagnostics after applying the edits.
-            </diagnostics_after>
-            "#
-        .unindent();
-
-        assert!(rendered.contains(&expected_diagnostics_section));
-
-        // Case 4: Before diagnostics absent, after diagnostics present
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: true,
-            diagnostics_before: None,
-            diagnostics_after: Some("Error at line 15: missing semicolon".to_string()),
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        let expected_diagnostics_section = r#"
-            Take into account the diagnostics before and after applying the change:
-
-            <diagnostics_before>
-            No diagnostics before applying the edits.
-            </diagnostics_before>
-
-            <diagnostics_after>
-            Error at line 15: missing semicolon
-            </diagnostics_after>
-            "#
-        .unindent();
-
-        assert!(rendered.contains(&expected_diagnostics_section));
-    }
-
-    #[test]
-    fn test_judge_prompt_without_diagnostics() {
-        let templates = templates();
-
-        // Case 5: No diagnostics check run
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: false,
-            diagnostics_before: None,
-            diagnostics_after: None,
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        // Check for the message when no diagnostics were performed
-        let diagnostics_message = "No diagnostic checks were performed.";
-
-        assert!(rendered.contains(diagnostics_message));
-        assert!(!rendered.contains("<diagnostics_before>"));
-        assert!(!rendered.contains("<diagnostics_after>"));
-    }
-
-    const JUDGE_PROMPT_NAME: &str = "judge_prompt";
-
-    fn templates() -> Handlebars<'static> {
-        let mut judge_prompt = include_str!("judge_diff_prompt.hbs").to_string();
-        language::LineEnding::normalize(&mut judge_prompt);
-        let mut handlebars = Handlebars::new();
-        handlebars
-            .register_template_string(JUDGE_PROMPT_NAME, judge_prompt)
-            .unwrap();
-        handlebars
+        assert_eq!(output.passing_criteria, 1);
     }
 }
