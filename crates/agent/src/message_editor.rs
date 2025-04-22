@@ -298,7 +298,7 @@ impl MessageEditor {
                         .filter(|ctx| {
                             matches!(
                                 ctx,
-                                AssistantContext::Excerpt(_) | AssistantContext::Image(_)
+                                AssistantContext::Selection(_) | AssistantContext::Image(_)
                             )
                         })
                         .map(|ctx| ctx.id())
