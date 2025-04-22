@@ -4,9 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{App, Entity, SharedString};
+use futures::{FutureExt, future::Shared};
+use gpui::{App, Entity, SharedString, Task};
 use language::Buffer;
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelImage, LanguageModelRequestMessage};
 use project::{ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::Point;
@@ -32,10 +33,11 @@ pub enum ContextKind {
     File,
     Directory,
     Symbol,
-    Excerpt,
+    Selection,
     FetchedUrl,
     Thread,
     Rules,
+    Image,
 }
 
 impl ContextKind {
@@ -44,10 +46,11 @@ impl ContextKind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
-            ContextKind::Excerpt => IconName::Code,
+            ContextKind::Selection => IconName::Context,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
             ContextKind::Rules => RULES_ICON,
+            ContextKind::Image => IconName::Image,
         }
     }
 }
@@ -59,8 +62,9 @@ pub enum AssistantContext {
     Symbol(SymbolContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
-    Excerpt(ExcerptContext),
+    Selection(SelectionContext),
     Rules(RulesContext),
+    Image(ImageContext),
 }
 
 impl AssistantContext {
@@ -71,8 +75,9 @@ impl AssistantContext {
             Self::Symbol(symbol) => symbol.id,
             Self::FetchedUrl(url) => url.id,
             Self::Thread(thread) => thread.id,
-            Self::Excerpt(excerpt) => excerpt.id,
+            Self::Selection(selection) => selection.id,
             Self::Rules(rules) => rules.id,
+            Self::Image(image) => image.id,
         }
     }
 }
@@ -140,6 +145,31 @@ impl ThreadContext {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ImageContext {
+    pub id: ContextId,
+    pub original_image: Arc<gpui::Image>,
+    pub image_task: Shared<Task<Option<LanguageModelImage>>>,
+}
+
+impl ImageContext {
+    pub fn image(&self) -> Option<LanguageModelImage> {
+        self.image_task.clone().now_or_never().flatten()
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.image_task.clone().now_or_never().is_none()
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.image_task
+            .clone()
+            .now_or_never()
+            .map(|result| result.is_none())
+            .unwrap_or(false)
+    }
+}
+
 #[derive(Clone)]
 pub struct ContextBuffer {
     pub id: BufferId,
@@ -190,7 +220,7 @@ pub struct ContextSymbolId {
 }
 
 #[derive(Debug, Clone)]
-pub struct ExcerptContext {
+pub struct SelectionContext {
     pub id: ContextId,
     pub range: Range<Anchor>,
     pub line_range: Range<Point>,
@@ -213,7 +243,7 @@ pub fn format_context_as_string<'a>(
     let mut file_context = Vec::new();
     let mut directory_context = Vec::new();
     let mut symbol_context = Vec::new();
-    let mut excerpt_context = Vec::new();
+    let mut selection_context = Vec::new();
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
     let mut rules_context = Vec::new();
@@ -223,17 +253,18 @@ pub fn format_context_as_string<'a>(
             AssistantContext::File(context) => file_context.push(context),
             AssistantContext::Directory(context) => directory_context.push(context),
             AssistantContext::Symbol(context) => symbol_context.push(context),
-            AssistantContext::Excerpt(context) => excerpt_context.push(context),
+            AssistantContext::Selection(context) => selection_context.push(context),
             AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context),
             AssistantContext::Rules(context) => rules_context.push(context),
+            AssistantContext::Image(_) => {}
         }
     }
 
     if file_context.is_empty()
         && directory_context.is_empty()
         && symbol_context.is_empty()
-        && excerpt_context.is_empty()
+        && selection_context.is_empty()
         && fetch_context.is_empty()
         && thread_context.is_empty()
         && rules_context.is_empty()
@@ -272,13 +303,13 @@ pub fn format_context_as_string<'a>(
         result.push_str("</symbols>\n");
     }
 
-    if !excerpt_context.is_empty() {
-        result.push_str("<excerpts>\n");
-        for context in excerpt_context {
+    if !selection_context.is_empty() {
+        result.push_str("<selections>\n");
+        for context in selection_context {
             result.push_str(&context.context_buffer.text);
             result.push('\n');
         }
-        result.push_str("</excerpts>\n");
+        result.push_str("</selections>\n");
     }
 
     if !fetch_context.is_empty() {

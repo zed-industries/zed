@@ -1,2 +1,2 @@
-1. The changes must replace the previous output returned by `FindReplaceFileTool` with the new `ToolResult` struct. The struct should contain an `output` field that is the same as the string we were returning before, and a new `card` field that contains a view for the card
-2. The card should be a view that displays a diff. Each line in the diff should be colored according to whether it was added, removed or unchanged.
+- The changes must replace the previous output returned by `FindReplaceFileTool` with the new `ToolResult` struct. The struct should contain an `output` field that is the same as the task we were returning before, and a new `card` field that contains a view for the card.
+- The card should be a view that displays a diff. Each line in the diff should be colored according to whether it was added, removed or unchanged.

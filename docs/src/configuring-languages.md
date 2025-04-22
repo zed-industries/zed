@@ -143,7 +143,7 @@ Many language servers accept custom configuration options. You can set these in 
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
-        "checkOnSave": {
+        "check": {
           "command": "clippy"
         }
       }
