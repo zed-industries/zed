@@ -1,9 +1,9 @@
 use agent::ThreadStore;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
 use futures::channel::mpsc;
-use futures::{FutureExt as _, StreamExt as _};
+use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
@@ -29,8 +29,8 @@ use util::ResultExt as _;
 use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
-use crate::assertions::Assertions;
-use crate::thread::{EvalThread, FailedAssertion, ThreadContext};
+use crate::assertions::{Assertion, AssertionResult, AssertionsReport};
+use crate::thread::{EvalThread, FailedAssertion, JudgeAssertion, ThreadContext};
 use crate::{AgentAppState, ToolMetrics};
 
 pub const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
@@ -61,32 +61,25 @@ pub struct RunOutput {
     pub token_usage: TokenUsage,
     pub tool_metrics: ToolMetrics,
     pub last_request: LanguageModelRequest,
-    pub assertions: Assertions,
+    pub assertions: AssertionsReport,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeDiffInput {
     pub repository_diff: String,
-    pub criteria: String,
+    pub assertion: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeThreadInput {
     pub messages: String,
-    pub criteria: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JudgeResponse {
-    pub analysis: String,
-    pub passing_criteria: u32,
-    pub total_criteria: u32,
+    pub assertion: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeOutput {
-    pub thread: Option<JudgeResponse>,
-    pub diff: Option<JudgeResponse>,
+    pub thread: AssertionsReport,
+    pub diff: AssertionsReport,
 }
 
 impl ThreadInstance {
@@ -442,19 +435,17 @@ impl ThreadInstance {
         model: Arc<dyn LanguageModel>,
         run_output: &RunOutput,
         cx: &AsyncApp,
-    ) -> Result<JudgeOutput> {
+    ) -> JudgeOutput {
         let mut output_file =
             File::create(self.run_directory.join("judge.md")).expect("failed to create judge.md");
 
-        println!("{}Running judge", self.log_prefix);
-
-        let diff_task = self.judge_diff(model.clone(), &run_output, 1, cx);
-        let thread_task = self.judge_thread(model.clone(), &run_output, 1, cx);
+        let diff_task = self.judge_diff(model.clone(), &run_output, cx);
+        let thread_task = self.judge_thread(model.clone(), &run_output, cx);
 
         let (diff_result, thread_result) = futures::join!(diff_task, thread_task);
 
-        let (diff_response, diff_output) = diff_result?;
-        let (thread_response, thread_output) = thread_result?;
+        let (diff_response, diff_output) = diff_result;
+        let (thread_response, thread_output) = thread_result;
 
         writeln!(
             &mut output_file,
@@ -462,113 +453,165 @@ impl ThreadInstance {
         )
         .log_err();
 
-        Ok(JudgeOutput {
+        JudgeOutput {
             thread: thread_output,
             diff: diff_output,
-        })
+        }
     }
 
     async fn judge_diff(
         &self,
         model: Arc<dyn LanguageModel>,
         run_output: &RunOutput,
-        judge_number: u32,
         cx: &AsyncApp,
-    ) -> Result<(String, Option<JudgeResponse>)> {
-        let diff_criteria = self.thread.diff_criteria();
-        if diff_criteria.is_empty() {
-            let msg = "No diff criteria specified.".to_string();
-            return Ok((msg, None));
+    ) -> (String, AssertionsReport) {
+        let diff_assertions = self.thread.diff_assertions();
+
+        if diff_assertions.is_empty() {
+            return (
+                "No diff assertions".to_string(),
+                AssertionsReport::default(),
+            );
         }
+
+        println!("{}Running diff judge", self.log_prefix);
 
         let judge_diff_prompt = include_str!("judge_diff_prompt.hbs");
         let judge_diff_prompt_name = "judge_diff_prompt";
         let mut hbs = Handlebars::new();
-        hbs.register_template_string(judge_diff_prompt_name, judge_diff_prompt)?;
+        hbs.register_template_string(judge_diff_prompt_name, judge_diff_prompt)
+            .unwrap();
 
-        let diff_prompt = hbs.render(
-            judge_diff_prompt_name,
-            &JudgeDiffInput {
-                repository_diff: run_output.repository_diff.clone(),
-                criteria: diff_criteria,
-            },
-        )?;
-
-        let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text(diff_prompt)],
-                cache: false,
-            }],
-            temperature: None,
-            tools: Vec::new(),
-            stop: Vec::new(),
+        let to_prompt = |assertion: String| {
+            hbs.render(
+                judge_diff_prompt_name,
+                &JudgeDiffInput {
+                    repository_diff: run_output.repository_diff.clone(),
+                    assertion,
+                },
+            )
+            .unwrap()
         };
 
-        let diff_response = send_language_model_request(model, request, cx).await?;
-        let diff_output = JudgeResponse::parse(&diff_response)?;
+        let (responses, report) = self
+            .judge_assertions(model, diff_assertions, to_prompt, cx)
+            .await;
 
         println!(
-            "{}Judge #{judge_number} - Diff score: {}",
+            "{}Judge - Diff score: {}%",
             self.log_prefix,
-            diff_output.score()
+            report.passed_percentage()
         );
 
-        Ok((diff_response, Some(diff_output)))
+        (responses, report)
     }
 
     async fn judge_thread(
         &self,
         model: Arc<dyn LanguageModel>,
         run_output: &RunOutput,
-        judge_number: u32,
         cx: &AsyncApp,
-    ) -> Result<(String, Option<JudgeResponse>)> {
-        let thread_criteria = self.thread.thread_criteria();
-        if thread_criteria.is_empty() {
-            let msg = "There were no criteria specified for this thread, so this example was not judged on its thread.".to_string();
-            return Ok((msg, None));
+    ) -> (String, AssertionsReport) {
+        let thread_assertions = self.thread.thread_assertions();
+
+        if thread_assertions.is_empty() {
+            return (
+                "No diff assertions".to_string(),
+                AssertionsReport::default(),
+            );
         }
 
         let judge_thread_prompt = include_str!("judge_thread_prompt.hbs");
-        let judge_thread_prompt_name = "judge_thread_prompt";
+        let judge_diff_prompt_name = "judge_thread_prompt";
         let mut hbs = Handlebars::new();
-        hbs.register_template_string(judge_thread_prompt_name, judge_thread_prompt)?;
+        hbs.register_template_string(judge_diff_prompt_name, judge_thread_prompt)
+            .unwrap();
 
         let request_markdown = RequestMarkdown::new(&run_output.last_request);
-        let thread_prompt = hbs.render(
-            judge_thread_prompt_name,
-            &JudgeThreadInput {
-                messages: request_markdown.messages,
-                criteria: thread_criteria,
-            },
-        )?;
-
-        let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text(thread_prompt)],
-                cache: false,
-            }],
-            temperature: None,
-            tools: Vec::new(),
-            stop: Vec::new(),
+        let to_prompt = |assertion: String| {
+            hbs.render(
+                judge_diff_prompt_name,
+                &JudgeThreadInput {
+                    messages: request_markdown.messages.clone(),
+                    assertion,
+                },
+            )
+            .unwrap()
         };
 
-        let thread_response = send_language_model_request(model, request, cx).await?;
-        let thread_output = JudgeResponse::parse(&thread_response)?;
+        let (responses, report) = self
+            .judge_assertions(model, thread_assertions, to_prompt, cx)
+            .await;
 
         println!(
-            "{}Judge #{judge_number} - Thread score: {}",
+            "{}Judge - Thread score: {}%",
             self.log_prefix,
-            thread_output.score()
+            report.passed_percentage()
         );
 
-        Ok((thread_response, Some(thread_output)))
+        (responses, report)
+    }
+
+    async fn judge_assertions(
+        &self,
+        model: Arc<dyn LanguageModel>,
+        assertions: Vec<JudgeAssertion>,
+        to_prompt: impl Fn(String) -> String,
+        cx: &AsyncApp,
+    ) -> (String, AssertionsReport) {
+        let assertions = assertions.into_iter().map(|assertion| {
+            let request = LanguageModelRequest {
+                thread_id: None,
+                prompt_id: None,
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text(to_prompt(assertion.description))],
+                    cache: false,
+                }],
+                temperature: None,
+                tools: Vec::new(),
+                stop: Vec::new(),
+            };
+
+            let model = model.clone();
+            let log_prefix = self.log_prefix.clone();
+            async move {
+                let response = send_language_model_request(model, request, cx).await;
+
+                let (response, result) = match response {
+                    Ok(response) => (
+                        response.clone(),
+                        parse_assertion_result(&response).map_err(|err| err.to_string()),
+                    ),
+                    Err(err) => (err.to_string(), Err(err.to_string())),
+                };
+
+                if result.is_ok() {
+                    println!("{}✅ {}", log_prefix, assertion.id);
+                } else {
+                    println!("{}❌ {}", log_prefix, assertion.id);
+                }
+
+                (
+                    response,
+                    Assertion {
+                        id: assertion.id,
+                        result,
+                    },
+                )
+            }
+        });
+
+        let mut responses = String::new();
+        let mut report = AssertionsReport::default();
+
+        for (response, assertion) in future::join_all(assertions).await {
+            writeln!(&mut responses, "# {}", assertion.id).unwrap();
+            writeln!(&mut responses, "{}\n\n", response).unwrap();
+            report.assertions.push(assertion);
+        }
+
+        (responses, report)
     }
 }
 
@@ -703,25 +746,17 @@ pub async fn query_lsp_diagnostics(
     anyhow::Ok(Some(output))
 }
 
-impl JudgeResponse {
-    fn parse(response: &str) -> Result<Self> {
-        let analysis = get_tag("analysis", response)?.to_string();
-        let passing_criteria = get_tag("passing_criteria", response)?
-            .parse()
-            .context("error parsing score")?;
-        let total_criteria = get_tag("total_criteria", response)?
-            .parse()
-            .context("error parsing score")?;
-        Ok(Self {
-            analysis,
-            total_criteria,
-            passing_criteria,
-        })
-    }
-
-    pub fn score(&self) -> u32 {
-        (100.0 * self.passing_criteria as f32 / self.total_criteria as f32).round() as u32
-    }
+fn parse_assertion_result(response: &str) -> Result<AssertionResult> {
+    let analysis = get_tag("analysis", response)?.to_string();
+    let passed = match get_tag("passed", response)?.to_lowercase().as_str() {
+        "true" => true,
+        "false" => false,
+        value @ _ => bail!("invalid judge `passed` tag: {value}"),
+    };
+    Ok(AssertionResult {
+        analysis: Some(analysis),
+        passed,
+    })
 }
 
 fn get_tag(name: &'static str, response: &str) -> Result<String> {
@@ -954,18 +989,16 @@ mod test {
     fn test_parse_judge_output() {
         let response = r#"
             <analysis>The model did a good job but there were still compilations errors.</analysis>
-            <passing_criteria>3</passing_criteria>
-            <total_criteria>5</total_criteria>
+            <passed>true</passed>
         "#
         .unindent();
 
-        let output = JudgeResponse::parse(&response).unwrap();
+        let output = parse_assertion_result(&response).unwrap();
         assert_eq!(
             output.analysis,
-            "The model did a good job but there were still compilations errors."
+            Some("The model did a good job but there were still compilations errors.".into())
         );
-        assert_eq!(output.passing_criteria, 3);
-        assert_eq!(output.total_criteria, 5);
+        assert_eq!(output.passed, true);
 
         let response = r#"
             Text around ignored
@@ -976,15 +1009,15 @@ mod test {
                 - Error 2
             </analysis>
 
-            <passing_criteria>1</passing_criteria>
-
-            <total_criteria>3</total_criteria>
+            <passed>false</passeda>
         "#
         .unindent();
 
-        let output = JudgeResponse::parse(&response).unwrap();
-        assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
-        assert_eq!(output.passing_criteria, 1);
-        assert_eq!(output.total_criteria, 3);
+        let output = parse_assertion_result(&response).unwrap();
+        assert_eq!(
+            output.analysis,
+            Some("Failed to compile:\n- Error 1\n- Error 2".into())
+        );
+        assert_eq!(output.passed, false);
     }
 }

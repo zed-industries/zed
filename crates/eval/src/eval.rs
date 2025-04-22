@@ -5,12 +5,13 @@ mod thread;
 mod threads;
 mod tool_metrics;
 
+use assertions::display_error_row;
 use instance::{JudgeOutput, RunOutput, ThreadInstance, run_git};
 use parking_lot::Mutex;
 pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
-use anyhow::{Result, anyhow};
+use anyhow::anyhow;
 use clap::Parser;
 use client::{Client, ProxySettings, UserStore};
 use collections::{HashMap, HashSet};
@@ -30,7 +31,6 @@ use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
 use std::collections::VecDeque;
 use std::env;
-use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::ResultExt as _;
@@ -186,7 +186,9 @@ fn main() {
                 }
             }
 
-            println!("Skipped threads: {}\n", skipped.join(", "));
+            if !skipped.is_empty() {
+                println!("Skipped threads: {}", skipped.join(", "));
+            }
 
             if included.is_empty() {
                 eprintln!("Filter matched no examples");
@@ -307,7 +309,7 @@ fn main() {
 
             let mut diff_scores = Vec::new();
             let mut thread_scores = Vec::new();
-            let mut assertion_stats = Vec::new();
+            let mut programmatic_scores = Vec::new();
             let mut error_count = 0;
 
             for (example_name, results) in results_by_example_name.lock().iter_mut() {
@@ -316,84 +318,54 @@ fn main() {
                 results.sort_unstable_by_key(|(example, _)| example.repetition);
                 let mut example_cumulative_tool_metrics = ToolMetrics::default();
 
-                let mut judge_table_rows = String::new();
-                let mut assertions_table_rows = String::new();
+                let mut table_rows = String::new();
 
-                for (example, result) in results {
-                    let relative_run_dir_path =
-                        example.run_directory.strip_prefix(&root_dir).unwrap();
-
+                for (example, result) in results.iter() {
                     match result {
                         Err(err) => {
-                            writeln!(
-                                &mut judge_table_rows,
-                                "|{:^7}│{:^6}│{:^8}│ {:?}{}",
+                            display_error_row(
+                                &mut table_rows,
                                 example.repetition,
-                                "N/A",
-                                "N/A",
-                                err,
-                                relative_run_dir_path.display()
+                                err.to_string(),
                             )?;
                             error_count += 1;
                         }
-                        Ok((run_output, judge_result)) => {
+                        Ok((run_output, judge_output)) => {
                             cumulative_tool_metrics.merge(&run_output.tool_metrics);
                             example_cumulative_tool_metrics.merge(&run_output.tool_metrics);
 
                             if !run_output.assertions.total_count() > 0 {
-                                for assertion in &run_output.assertions.success {
+                                for assertion in &run_output.assertions.assertions {
                                     assertions::display_table_row(
-                                        &mut assertions_table_rows,
+                                        &mut table_rows,
                                         example.repetition,
                                         assertion,
-                                        true,
                                     )?;
                                 }
 
-                                for assertion in &run_output.assertions.failure {
-                                    assertions::display_table_row(
-                                        &mut assertions_table_rows,
-                                        example.repetition,
-                                        assertion,
-                                        false,
-                                    )?;
-                                }
-
-                                assertion_stats.push(run_output.assertions.success_percentage())
+                                programmatic_scores.push(run_output.assertions.passed_percentage())
                             }
 
-                            match judge_result {
-                                Ok(judge_output) => {
-                                    if let Some(diff) = &judge_output.diff {
-                                        diff_scores.push(diff.score());
-                                    }
-                                    if let Some(thread) = &judge_output.thread {
-                                        thread_scores.push(thread.score());
-                                    }
-                                    writeln!(
-                                        &mut judge_table_rows,
-                                        "|{:^7}│{:^6}│{:^8}│ {}",
+                            if !judge_output.diff.is_empty() {
+                                diff_scores.push(judge_output.diff.passed_percentage());
+
+                                for assertion in &judge_output.diff.assertions {
+                                    assertions::display_table_row(
+                                        &mut table_rows,
                                         example.repetition,
-                                        judge_output.diff.as_ref().map_or(
-                                            "N/A".to_string(),
-                                            |diff| format!("{}%", diff.score())
-                                        ),
-                                        judge_output.thread.as_ref().map_or(
-                                            "N/A".to_string(),
-                                            |thread| format!("{}%", thread.score())
-                                        ),
-                                        relative_run_dir_path.display()
+                                        assertion,
                                     )?;
                                 }
-                                Err(err) => {
-                                    writeln!(
-                                        &mut judge_table_rows,
-                                        "|{:^7}│{:^6}│{:^8}│{:?}│ {}",
+                            }
+
+                            if !judge_output.thread.is_empty() {
+                                thread_scores.push(judge_output.thread.passed_percentage());
+
+                                for assertion in &judge_output.thread.assertions {
+                                    assertions::display_table_row(
+                                        &mut table_rows,
                                         example.repetition,
-                                        "N/A",
-                                        "N/A",
-                                        err,
-                                        relative_run_dir_path.display()
+                                        assertion,
                                     )?;
                                 }
                             }
@@ -401,65 +373,91 @@ fn main() {
                     }
                 }
 
-                if !judge_table_rows.is_empty() {
-                    println!("┌───────┬──────┬────────┐");
-                    println!("│ Round │ Diff │ Thread │");
-                    println!("├───────┼──────┼────────┤");
-                    print!("{}", judge_table_rows);
-                    println!("└───────┴──────┴────────┘");
-                }
-
-                if !judge_table_rows.is_empty() || !assertions_table_rows.is_empty() {
-                    println!("\n");
-                }
-
-                if !assertions_table_rows.is_empty() {
+                if !table_rows.is_empty() {
                     assertions::print_table_header();
-                    print!("{}", assertions_table_rows);
+                    print!("{}", table_rows);
+
+                    assertions::print_table_divider();
+
+                    for (example, result) in results.iter() {
+                        if let Ok((run_output, judge_output)) = result {
+                            assertions::print_table_round_summary(
+                                &example.repetition.to_string(),
+                                [
+                                    &run_output.assertions,
+                                    &judge_output.diff,
+                                    &judge_output.thread,
+                                ]
+                                .into_iter(),
+                            )
+                        }
+                    }
+
+                    assertions::print_table_divider();
+
+                    assertions::print_table_round_summary(
+                        "avg",
+                        results.iter().flat_map(|(_, result)| {
+                            result.iter().flat_map(|(run_output, judge_output)| {
+                                [
+                                    &run_output.assertions,
+                                    &judge_output.diff,
+                                    &judge_output.thread,
+                                ]
+                                .into_iter()
+                            })
+                        }),
+                    );
+
                     assertions::print_table_footer();
                 }
+
+                if !example_cumulative_tool_metrics.is_empty() {
+                    println!("{}", &example_cumulative_tool_metrics);
+                }
             }
 
-            print_h2("AGGREGATE");
+            if results_by_example_name.lock().len() > 1 {
+                print_h1("AGGREGATE");
 
-            if error_count > 0 {
-                println!("\n{error_count} examples failed to run!");
+                if error_count > 0 {
+                    println!("\n{error_count} examples failed to run!");
+                }
+
+                let programmatic_score_count = programmatic_scores.len();
+                if programmatic_score_count > 0 {
+                    let average_programmatic_score = programmatic_scores
+                        .into_iter()
+                        .map(|pct| pct as f32)
+                        .sum::<f32>()
+                        / (programmatic_score_count as f32);
+                    println!("Average programmatic score: {average_programmatic_score}%");
+                }
+
+                let diff_score_count = diff_scores.len();
+                if diff_score_count > 0 {
+                    let average_diff_score = diff_scores
+                        .into_iter()
+                        .map(|score| score as f32)
+                        .sum::<f32>()
+                        / (diff_score_count as f32);
+                    println!("Average diff score: {average_diff_score}%");
+                }
+
+                let thread_score_count = thread_scores.len();
+
+                if thread_score_count > 0 {
+                    let average_thread_score =
+                        thread_scores.into_iter().sum::<f32>() / (thread_score_count as f32);
+
+                    println!("Average thread score: {average_thread_score}%");
+                }
+
+                println!("");
+
+                print_h2("CUMULATIVE TOOL METRICS");
+                println!("{}", cumulative_tool_metrics);
             }
-
-            let assertion_stats_count = assertion_stats.len();
-            if assertion_stats_count > 0 {
-                let avg_assertion_success_pct = assertion_stats
-                    .into_iter()
-                    .map(|pct| pct as f32)
-                    .sum::<f32>()
-                    / (assertion_stats_count as f32);
-                println!("\nAverage assertion success: {avg_assertion_success_pct}%");
-            }
-
-            let diff_score_count = diff_scores.len();
-            if diff_score_count > 0 {
-                let average_diff_score = diff_scores
-                    .into_iter()
-                    .map(|score| score as f32)
-                    .sum::<f32>()
-                    / (diff_score_count as f32);
-                println!("\nAverage code diff score: {average_diff_score}");
-            }
-
-            let thread_score_count = thread_scores.len();
-
-            if thread_score_count > 0 {
-                let average_thread_score = thread_scores
-                    .into_iter()
-                    .map(|score| score as f32)
-                    .sum::<f32>()
-                    / (thread_score_count as f32);
-
-                println!("\nAverage thread score: {average_thread_score}");
-            }
-
-            print_h1("CUMULATIVE TOOL METRICS");
-            println!("{}", cumulative_tool_metrics);
 
             app_state.client.telemetry().flush_events().await;
 
@@ -633,18 +631,8 @@ async fn judge_example(
     run_output: &RunOutput,
     enable_telemetry: bool,
     cx: &AsyncApp,
-) -> Result<JudgeOutput> {
+) -> JudgeOutput {
     let judge_output = example.judge(model.clone(), &run_output, cx).await;
-
-    let diff_evaluation;
-    let thread_evaluation;
-    if let Ok(output) = judge_output.as_ref() {
-        diff_evaluation = Some(output.diff.clone());
-        thread_evaluation = Some(output.thread.clone());
-    } else {
-        diff_evaluation = None;
-        thread_evaluation = None;
-    }
 
     if enable_telemetry {
         telemetry::event!(
@@ -654,8 +642,8 @@ async fn judge_example(
             run_id = run_id,
             example_name = example.name.clone(),
             example_repetition = example.repetition,
-            diff_evaluation = diff_evaluation,
-            thread_evaluation = thread_evaluation,
+            diff_evaluation = judge_output.diff.clone(),
+            thread_evaluation = judge_output.thread.clone(),
             tool_metrics = run_output.tool_metrics,
             response_count = run_output.response_count,
             token_usage = run_output.token_usage,

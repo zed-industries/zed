@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::fs;
 use std::{
     path::{Path, PathBuf},
@@ -8,7 +9,7 @@ use std::{
 };
 use util::serde::default_true;
 
-use crate::thread::{EvalThread, EvalThreadMetadata, ThreadContext};
+use crate::thread::{EvalThread, EvalThreadMetadata, JudgeAssertion, ThreadContext};
 
 mod file_search;
 
@@ -25,24 +26,14 @@ pub fn all() -> Vec<Rc<dyn EvalThread>> {
 struct ExampleThread {
     metadata: EvalThreadMetadata,
     prompt: String,
-    diff_criteria: String,
-    thread_criteria: String,
+    diff_assertions: Vec<JudgeAssertion>,
+    thread_assertions: Vec<JudgeAssertion>,
 }
 
 impl ExampleThread {
-    pub fn load(dir_path: &Path) -> Result<Self> {
-        let name = Self::name_from_path(dir_path);
-        let base_path = dir_path.join("base.toml");
-        let prompt_path = dir_path.join("prompt.md");
-        let diff_criteria_path = dir_path.join("diff_criteria.md");
-        let thread_criteria_path = dir_path.join("thread_criteria.md");
-        let thread_criteria = if thread_criteria_path.exists() {
-            Some(fs::read_to_string(thread_criteria_path.clone())?)
-        } else {
-            None
-        };
-
-        let base: ExampleBase = toml::from_str(&fs::read_to_string(&base_path)?)?;
+    pub fn load(example_path: &Path) -> Result<Self> {
+        let name = Self::name_from_path(example_path);
+        let base: ExampleToml = toml::from_str(&fs::read_to_string(&example_path)?)?;
 
         let language_server = if base.require_lsp {
             Some(crate::thread::LanguageServer {
@@ -65,19 +56,27 @@ impl ExampleThread {
 
         Ok(ExampleThread {
             metadata,
-            prompt: fs::read_to_string(prompt_path.clone())?,
-            thread_criteria: thread_criteria.unwrap_or("".to_string()),
-            diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
+            prompt: base.prompt,
+            thread_assertions: base
+                .thread_assertions
+                .into_iter()
+                .map(|(id, description)| JudgeAssertion { id, description })
+                .collect(),
+            diff_assertions: base
+                .diff_assertions
+                .into_iter()
+                .map(|(id, description)| JudgeAssertion { id, description })
+                .collect(),
         })
     }
 
     pub fn name_from_path(path: &Path) -> String {
-        path.file_name().unwrap().to_string_lossy().to_string()
+        path.file_stem().unwrap().to_string_lossy().to_string()
     }
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct ExampleBase {
+pub struct ExampleToml {
     pub url: String,
     pub revision: String,
     pub language_extension: Option<String>,
@@ -86,6 +85,11 @@ pub struct ExampleBase {
     pub require_lsp: bool,
     #[serde(default)]
     pub allow_preexisting_diagnostics: bool,
+    pub prompt: String,
+    #[serde(default)]
+    pub diff_assertions: BTreeMap<String, String>,
+    #[serde(default)]
+    pub thread_assertions: BTreeMap<String, String>,
 }
 
 #[async_trait(?Send)]
@@ -100,12 +104,12 @@ impl EvalThread for ExampleThread {
         Ok(())
     }
 
-    fn diff_criteria(&self) -> String {
-        self.diff_criteria.clone()
+    fn diff_assertions(&self) -> Vec<JudgeAssertion> {
+        self.diff_assertions.clone()
     }
 
-    fn thread_criteria(&self) -> String {
-        self.thread_criteria.clone()
+    fn thread_assertions(&self) -> Vec<JudgeAssertion> {
+        self.thread_assertions.clone()
     }
 }
 
@@ -118,7 +122,7 @@ fn list_all_examples() -> Result<Vec<PathBuf>> {
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        if path.extension() == Some("toml".as_ref()) {
             result_paths.push(path);
         }
     }

@@ -5,7 +5,10 @@ use std::{
     time::Duration,
 };
 
-use crate::{ToolMetrics, assertions::Assertions};
+use crate::{
+    ToolMetrics,
+    assertions::{Assertion, AssertionResult, AssertionsReport},
+};
 use agent::ThreadEvent;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -19,12 +22,18 @@ pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 pub trait EvalThread {
     fn meta(&self) -> EvalThreadMetadata;
     async fn conversation(&self, cx: &mut ThreadContext) -> Result<()>;
-    fn diff_criteria(&self) -> String {
-        "".to_string()
+    fn diff_assertions(&self) -> Vec<JudgeAssertion> {
+        Vec::new()
     }
-    fn thread_criteria(&self) -> String {
-        "".to_string()
+    fn thread_assertions(&self) -> Vec<JudgeAssertion> {
+        Vec::new()
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct JudgeAssertion {
+    pub id: String,
+    pub description: String,
 }
 
 #[derive(Clone, Debug)]
@@ -75,7 +84,7 @@ pub struct ThreadContext {
     agent_thread: Entity<agent::Thread>,
     app: AsyncApp,
     model: Arc<dyn LanguageModel>,
-    pub assertions: Assertions,
+    pub assertions: AssertionsReport,
     pub tool_metrics: Arc<Mutex<ToolMetrics>>,
 }
 
@@ -87,7 +96,7 @@ impl ThreadContext {
         model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
-        let assertions = Assertions::new(meta.max_assertions);
+        let assertions = AssertionsReport::new(meta.max_assertions);
 
         Self {
             meta,
@@ -152,9 +161,7 @@ impl ThreadContext {
 
     fn log_assertion<T>(&mut self, result: Result<T>, message: String) -> Result<T> {
         if let Some(max) = self.meta.max_assertions {
-            let run = self.assertions.failure.len() + self.assertions.success.len();
-
-            if run > max {
+            if self.assertions.run_count() > max {
                 return Err(anyhow!(
                     "More assertions were run than the stated max_assertions of {}",
                     max
@@ -162,18 +169,21 @@ impl ThreadContext {
             }
         }
 
-        match result {
-            Ok(value) => {
-                self.assertions.success.push(message.clone());
-                println!("{}✅ {}", self.log_prefix, message);
-                Ok(value)
-            }
-            Err(err) => {
-                self.assertions.failure.push(message);
-                println!("{}❌ {}", self.log_prefix, err);
-                Err(err)
-            }
+        self.assertions.assertions.push(Assertion {
+            id: message.clone(),
+            result: Ok(AssertionResult {
+                analysis: None,
+                passed: result.is_ok(),
+            }),
+        });
+
+        if result.is_ok() {
+            println!("{}✅ {}", self.log_prefix, message);
+        } else {
+            println!("{}❌ {}", self.log_prefix, message);
         }
+
+        result
     }
 
     pub async fn run_to_end(&mut self) -> Result<Response> {
