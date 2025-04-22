@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
-use editor::{CompletionProvider, Editor, ExcerptId};
+use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
@@ -254,7 +254,7 @@ impl ContextPickerCompletionProvider {
                     ContextPickerAction::AddSelections => {
                         let selections = selection_ranges(workspace, cx);
 
-                        let mut selection_infos = selections
+                        let selection_infos = selections
                             .iter()
                             .map(|(buffer, range)| {
                                 let full_path = buffer
@@ -278,50 +278,64 @@ impl ContextPickerCompletionProvider {
                             })
                             .collect::<Vec<_>>();
 
-                        let (crease_text, new_text) = if selection_infos.len() == 1 {
-                            let (file_name, link, line_range) = selection_infos.remove(0);
-                            let crease_text = format!(
-                                "{} ({}-{})",
-                                file_name,
-                                line_range.start.row + 1,
-                                line_range.end.row + 1
-                            );
-                            (crease_text, link)
-                        } else {
-                            let line_count = selection_infos
-                                .iter()
-                                .map(|(_, _, range)| range.end.row - range.start.row + 1)
-                                .sum::<u32>();
+                        let new_text = selection_infos.iter().map(|(_, link, _)| link).join(" ");
 
-                            let crease_text =
-                                format!("{} Selections ({} Lines)", selections.len(), line_count);
-                            let combined_link =
-                                selection_infos.iter().map(|(_, link, _)| link).join(" ");
+                        let callback = Arc::new({
+                            let context_store = context_store.clone();
+                            let selections = selections.clone();
+                            let selection_infos = selection_infos.clone();
+                            move |_, _: &mut Window, cx: &mut App| {
+                                context_store.update(cx, |context_store, cx| {
+                                    for (buffer, range) in &selections {
+                                        context_store
+                                            .add_excerpt(buffer.clone(), range.clone(), cx)
+                                            .detach_and_log_err(cx)
+                                    }
+                                });
 
-                            (crease_text, combined_link)
-                        };
+                                let editor = editor.clone();
+                                let selection_infos = selection_infos.clone();
+                                cx.defer(move |cx| {
+                                    let mut current_offset = 0;
+                                    for (file_name, link, line_range) in selection_infos.iter() {
+                                        let snapshot =
+                                            editor.read(cx).buffer().read(cx).snapshot(cx);
+                                        let Some(start) = snapshot
+                                            .anchor_in_excerpt(excerpt_id, source_range.start)
+                                        else {
+                                            return;
+                                        };
 
-                        let callback = confirm_completion_callback(
-                            IconName::Context.path().into(),
-                            crease_text.into(),
-                            excerpt_id,
-                            source_range.start,
-                            new_text.len(),
-                            editor.clone(),
-                            {
-                                let context_store = context_store.clone();
-                                let selections = selections.clone();
-                                move |cx| {
-                                    context_store.update(cx, |context_store, cx| {
-                                        for (buffer, range) in &selections {
-                                            context_store
-                                                .add_excerpt(buffer.clone(), range.clone(), cx)
-                                                .detach_and_log_err(cx)
-                                        }
-                                    });
-                                }
-                            },
-                        );
+                                        let offset = start.to_offset(&snapshot) + current_offset;
+                                        let text_len = link.len();
+
+                                        let range = snapshot.anchor_after(offset)
+                                            ..snapshot.anchor_after(offset + text_len);
+
+                                        let crease = super::crease_for_mention(
+                                            format!(
+                                                "{} ({}-{})",
+                                                file_name, line_range.start.row, line_range.end.row
+                                            )
+                                            .into(),
+                                            IconName::Context.path().into(),
+                                            range,
+                                            editor.downgrade(),
+                                        );
+
+                                        editor.update(cx, |editor, cx| {
+                                            editor.display_map.update(cx, |display_map, cx| {
+                                                display_map.fold(vec![crease], cx);
+                                            });
+                                        });
+
+                                        current_offset += text_len + 1;
+                                    }
+                                });
+
+                                false
+                            }
+                        });
 
                         (new_text, callback)
                     }

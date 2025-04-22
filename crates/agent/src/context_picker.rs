@@ -650,30 +650,40 @@ pub(crate) fn insert_fold_for_mention(
         let start = start.bias_right(&snapshot);
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
-        let placeholder = FoldPlaceholder {
-            render: render_fold_icon_button(
-                crease_icon_path,
-                crease_label,
-                editor_entity.downgrade(),
-            ),
-            merge_adjacent: false,
-            ..Default::default()
-        };
-
-        let render_trailer =
-            move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
-
-        let crease = Crease::inline(
+        let crease = crease_for_mention(
+            crease_label,
+            crease_icon_path,
             start..end,
-            placeholder.clone(),
-            fold_toggle("mention"),
-            render_trailer,
+            editor_entity.downgrade(),
         );
 
         editor.display_map.update(cx, |display_map, cx| {
             display_map.fold(vec![crease], cx);
         });
     });
+}
+
+pub fn crease_for_mention(
+    label: SharedString,
+    icon_path: SharedString,
+    range: Range<Anchor>,
+    editor_entity: WeakEntity<Editor>,
+) -> Crease<Anchor> {
+    let placeholder = FoldPlaceholder {
+        render: render_fold_icon_button(icon_path, label, editor_entity),
+        merge_adjacent: false,
+        ..Default::default()
+    };
+
+    let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
+
+    let crease = Crease::inline(
+        range,
+        placeholder.clone(),
+        fold_toggle("mention"),
+        render_trailer,
+    );
+    crease
 }
 
 fn render_fold_icon_button(
