@@ -88,8 +88,8 @@ impl Settings for GitPanelSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
-        vscode.bool_setting("git.enabled", &mut old.button);
-        vscode.string_setting("git.defaultBranchName", &mut old.fallback_branch_name);
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.bool_setting("git.enabled", &mut current.button);
+        vscode.string_setting("git.defaultBranchName", &mut current.fallback_branch_name);
     }
 }

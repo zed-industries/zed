@@ -278,7 +278,7 @@ impl Settings for WorkspaceSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
         if vscode
             .read_bool("accessibility.dimUnfocused.enabled")
             .unwrap_or_default()
@@ -287,10 +287,10 @@ impl Settings for WorkspaceSettings {
                 .read_value("accessibility.dimUnfocused.opacity")
                 .and_then(|v| v.as_f64())
             {
-                if let Some(settings) = old.active_pane_modifiers.as_mut() {
+                if let Some(settings) = current.active_pane_modifiers.as_mut() {
                     settings.inactive_opacity = Some(opacity as f32)
                 } else {
-                    old.active_pane_modifiers = Some(ActivePanelModifiers {
+                    current.active_pane_modifiers = Some(ActivePanelModifiers {
                         inactive_opacity: Some(opacity as f32),
                         ..Default::default()
                     })
@@ -300,7 +300,7 @@ impl Settings for WorkspaceSettings {
 
         vscode.enum_setting(
             "window.confirmBeforeClose",
-            &mut old.confirm_quit,
+            &mut current.confirm_quit,
             |s| match s {
                 "always" | "keyboardOnly" => Some(true),
                 "never" => Some(false),
@@ -310,11 +310,11 @@ impl Settings for WorkspaceSettings {
 
         vscode.bool_setting(
             "workbench.editor.restoreViewState",
-            &mut old.restore_on_file_reopen,
+            &mut current.restore_on_file_reopen,
         );
 
         if let Some(b) = vscode.read_bool("window.closeWhenEmpty") {
-            old.when_closing_with_no_tabs = Some(if b {
+            current.when_closing_with_no_tabs = Some(if b {
                 CloseWindowWhenNoItems::CloseWindow
             } else {
                 CloseWindowWhenNoItems::KeepWindowOpen
@@ -322,10 +322,10 @@ impl Settings for WorkspaceSettings {
         }
 
         if let Some(b) = vscode.read_bool("files.simpleDialog.enable") {
-            old.use_system_path_prompts = Some(!b);
+            current.use_system_path_prompts = Some(!b);
         }
 
-        vscode.enum_setting("files.autoSave", &mut old.autosave, |s| match s {
+        vscode.enum_setting("files.autoSave", &mut current.autosave, |s| match s {
             "off" => Some(AutosaveSetting::Off),
             "afterDelay" => Some(AutosaveSetting::AfterDelay {
                 milliseconds: vscode
@@ -350,7 +350,7 @@ impl Settings for WorkspaceSettings {
                 .read_bool("workbench.editor.limit.enabled")
                 .unwrap_or_default()
             {
-                old.max_tabs = Some(n)
+                current.max_tabs = Some(n)
             }
         }
 
@@ -371,14 +371,14 @@ impl Settings for TabBarSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
-        vscode.enum_setting("workbench.editor.showTabs", &mut old.show, |s| match s {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.enum_setting("workbench.editor.showTabs", &mut current.show, |s| match s {
             "multiple" => Some(true),
             "single" | "none" => Some(false),
             _ => None,
         });
         if Some("hidden") == vscode.read_string("workbench.editor.editorActionsLocation") {
-            old.show_tab_bar_buttons = Some(false)
+            current.show_tab_bar_buttons = Some(false)
         }
     }
 }

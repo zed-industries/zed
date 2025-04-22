@@ -30,7 +30,7 @@ impl Settings for FileFinderSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {}
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]

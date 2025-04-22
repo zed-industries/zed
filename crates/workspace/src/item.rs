@@ -142,9 +142,9 @@ impl Settings for ItemSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
         if let Some(b) = vscode.read_bool("workbench.editor.tabActionCloseVisibility") {
-            old.show_close_button = Some(if b {
+            current.show_close_button = Some(if b {
                 ShowCloseButton::Always
             } else {
                 ShowCloseButton::Hidden
@@ -152,7 +152,7 @@ impl Settings for ItemSettings {
         }
         vscode.enum_setting(
             "workbench.editor.tabActionLocation",
-            &mut old.close_position,
+            &mut current.close_position,
             |s| match s {
                 "right" => Some(ClosePosition::Right),
                 "left" => Some(ClosePosition::Left),
@@ -160,15 +160,15 @@ impl Settings for ItemSettings {
             },
         );
         if let Some(b) = vscode.read_bool("workbench.editor.focusRecentEditorAfterClose") {
-            old.activate_on_close = Some(if b {
+            current.activate_on_close = Some(if b {
                 ActivateOnClose::History
             } else {
                 ActivateOnClose::LeftNeighbour
             })
         }
 
-        vscode.bool_setting("workbench.editor.showIcons", &mut old.file_icons);
-        vscode.bool_setting("git.decorations.enabled", &mut old.git_status);
+        vscode.bool_setting("workbench.editor.showIcons", &mut current.file_icons);
+        vscode.bool_setting("git.decorations.enabled", &mut current.git_status);
     }
 }
 
@@ -181,15 +181,15 @@ impl Settings for PreviewTabsSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
-        vscode.bool_setting("workbench.editor.enablePreview", &mut old.enabled);
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.bool_setting("workbench.editor.enablePreview", &mut current.enabled);
         vscode.bool_setting(
             "workbench.editor.enablePreviewFromCodeNavigation",
-            &mut old.enable_preview_from_code_navigation,
+            &mut current.enable_preview_from_code_navigation,
         );
         vscode.bool_setting(
             "workbench.editor.enablePreviewFromQuickOpen",
-            &mut old.enable_preview_from_file_finder,
+            &mut current.enable_preview_from_file_finder,
         );
     }
 }

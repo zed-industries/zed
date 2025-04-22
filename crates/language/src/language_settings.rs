@@ -1371,8 +1371,8 @@ impl settings::Settings for AllLanguageSettings {
         root_schema
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
-        let d = &mut old.defaults;
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        let d = &mut current.defaults;
         if let Some(size) = vscode
             .read_value("editor.tabSize")
             .and_then(|v| v.as_u64())
@@ -1482,7 +1482,7 @@ impl settings::Settings for AllLanguageSettings {
             }
         }
         // TODO: do we want to merge imported globs per filetype? for now we'll just replace
-        old.file_types.extend(associations);
+        current.file_types.extend(associations);
     }
 }
 

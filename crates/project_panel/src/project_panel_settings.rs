@@ -159,23 +159,23 @@ impl Settings for ProjectPanelSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
-        vscode.bool_setting("explorer.excludeGitIgnore", &mut old.hide_gitignore);
-        vscode.bool_setting("explorer.autoReveal", &mut old.auto_reveal_entries);
-        vscode.bool_setting("explorer.compactFolders", &mut old.auto_fold_dirs);
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.bool_setting("explorer.excludeGitIgnore", &mut current.hide_gitignore);
+        vscode.bool_setting("explorer.autoReveal", &mut current.auto_reveal_entries);
+        vscode.bool_setting("explorer.compactFolders", &mut current.auto_fold_dirs);
 
         if Some(false) == vscode.read_bool("git.decorations.enabled") {
-            old.git_status = Some(false);
+            current.git_status = Some(false);
         }
         if Some(false) == vscode.read_bool("problems.decorations.enabled") {
-            old.show_diagnostics = Some(ShowDiagnostics::Off);
+            current.show_diagnostics = Some(ShowDiagnostics::Off);
         }
         if let (Some(false), Some(false)) = (
             vscode.read_bool("explorer.decorations.badges"),
             vscode.read_bool("explorer.decorations.colors"),
         ) {
-            old.git_status = Some(false);
-            old.show_diagnostics = Some(ShowDiagnostics::Off);
+            current.git_status = Some(false);
+            current.show_diagnostics = Some(ShowDiagnostics::Off);
         }
     }
 }

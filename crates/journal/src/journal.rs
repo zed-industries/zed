@@ -54,7 +54,7 @@ impl settings::Settings for JournalSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {}
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 pub fn init(_: Arc<AppState>, cx: &mut App) {

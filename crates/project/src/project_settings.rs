@@ -331,19 +331,19 @@ impl Settings for ProjectSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
         // this just sets the binary name instead of a full path so it relies on path lookup
         // resolving to the one you want
-        vscode.enum_setting("npm.packageManager", &mut old.node.npm_path, |s| match s {
+        vscode.enum_setting("npm.packageManager", &mut current.node.npm_path, |s| match s {
             v @ ("npm" | "yarn" | "bun" | "pnpm") => Some(v.to_owned()),
             _ => None,
         });
 
         if let Some(b) = vscode.read_bool("git.blame.editorDecoration.enabled") {
-            if let Some(blame) = old.git.inline_blame.as_mut() {
+            if let Some(blame) = current.git.inline_blame.as_mut() {
                 blame.enabled = b
             } else {
-                old.git.inline_blame = Some(InlineBlameSettings {
+                current.git.inline_blame = Some(InlineBlameSettings {
                     enabled: b,
                     ..Default::default()
                 })

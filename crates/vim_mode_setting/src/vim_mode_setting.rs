@@ -34,7 +34,7 @@ impl Settings for VimModeSetting {
         ))
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _old: &mut Self::FileContent) {
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
         // TODO: could possibly check if any of the `vim.<foo>` keys are set?
     }
 }

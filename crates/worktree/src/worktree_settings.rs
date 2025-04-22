@@ -97,16 +97,16 @@ impl Settings for WorktreeSettings {
         })
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, old: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
         if let Some(inclusions) = vscode
             .read_value("files.watcherInclude")
             .and_then(|v| v.as_array())
             .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
         {
-            if let Some(old) = old.file_scan_inclusions.as_mut() {
+            if let Some(old) = current.file_scan_inclusions.as_mut() {
                 old.extend(inclusions)
             } else {
-                old.file_scan_inclusions = Some(inclusions)
+                current.file_scan_inclusions = Some(inclusions)
             }
         }
         if let Some(exclusions) = vscode
@@ -114,10 +114,10 @@ impl Settings for WorktreeSettings {
             .and_then(|v| v.as_array())
             .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
         {
-            if let Some(old) = old.file_scan_exclusions.as_mut() {
+            if let Some(old) = current.file_scan_exclusions.as_mut() {
                 old.extend(exclusions)
             } else {
-                old.file_scan_exclusions = Some(exclusions)
+                current.file_scan_exclusions = Some(exclusions)
             }
         }
     }
