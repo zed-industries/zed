@@ -657,7 +657,9 @@ impl CompletionsMenu {
         )
     }
 
-    fn sort_matches(matches: &mut Vec<SortableMatch<'_>>, query: Option<&str>) {
+    pub fn sort_matches(matches: &mut Vec<SortableMatch<'_>>, query: Option<&str>) {
+        dbg!(&matches);
+
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
@@ -810,11 +812,11 @@ impl CompletionsMenu {
 }
 
 #[derive(Debug)]
-struct SortableMatch<'a> {
-    string_match: StringMatch,
-    is_snippet: bool,
-    sort_text: Option<&'a str>,
-    sort_key: (usize, &'a str),
+pub struct SortableMatch<'a> {
+    pub string_match: StringMatch,
+    pub is_snippet: bool,
+    pub sort_text: Option<&'a str>,
+    pub sort_key: (usize, &'a str),
 }
 
 #[derive(Clone)]
