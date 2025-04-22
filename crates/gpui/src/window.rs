@@ -1,5 +1,5 @@
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
+    Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
@@ -617,6 +617,7 @@ pub struct Window {
     pub(crate) element_opacity: Option<f32>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     pub(crate) next_hitbox_id: HitboxId,
@@ -933,6 +934,7 @@ impl Window {
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
+            image_cache_stack: Vec::new(),
         })
     }
 
@@ -2854,6 +2856,17 @@ impl Window {
         self.rendered_entity_stack.push(id);
         let result = f(self);
         self.rendered_entity_stack.pop();
+        result
+    }
+
+    /// Executes the provided function with the specified image cache.
+    pub(crate) fn with_image_cache<F, R>(&mut self, image_cache: AnyImageCache, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.image_cache_stack.push(image_cache);
+        let result = f(self);
+        self.image_cache_stack.pop();
         result
     }
 

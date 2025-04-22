@@ -35,7 +35,7 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
     LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
     WindowInvalidator, current_platform, hash, init_app_menus,
@@ -1615,6 +1615,22 @@ impl App {
     /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
     pub fn can_select_mixed_files_and_dirs(&self) -> bool {
         self.platform.can_select_mixed_files_and_dirs()
+    }
+
+    /// Removes an image from the sprite atlas on all windows.
+    ///
+    /// If the current window is being updated, it will be removed from `App.windows``, you can use `current_window` to specify the current window.
+    /// This is a no-op if the image is not in the sprite atlas.
+    pub fn drop_image(&mut self, image: Arc<RenderImage>, current_window: Option<&mut Window>) {
+        // remove the texture from all other windows
+        for window in self.windows.values_mut().flatten() {
+            _ = window.drop_image(image.clone());
+        }
+
+        // remove the texture from the current window
+        if let Some(window) = current_window {
+            _ = window.drop_image(image);
+        }
     }
 }
 
