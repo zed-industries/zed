@@ -136,6 +136,11 @@ fn main() {
 
             for thread in all_threads {
                 let meta = thread.meta();
+                if !args.filter.iter().any(|sub| meta.name.contains(sub)) {
+                    skipped.push(meta.name);
+                    continue;
+                }
+
                 if meta.language_server.map_or(false, |language| {
                     !languages.contains(&language.file_extension)
                 }) {
@@ -251,7 +256,6 @@ fn main() {
                         anyhow::Ok((run_output, judge_outputs))
                     }
                     .await;
-                    dbg!(&result);
                     (thread, result)
                 })
             });

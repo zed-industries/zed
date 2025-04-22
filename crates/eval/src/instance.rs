@@ -304,100 +304,86 @@ impl ThreadInstance {
 
             let tool_metrics = Arc::new(Mutex::new(ToolMetrics::default()));
 
-            let (thread_event_tx, mut thread_event_rx) = mpsc::unbounded();
-
-            let subscription = cx.subscribe(&thread, move |_thread, event: &ThreadEvent, _cx| {
-                thread_event_tx.unbounded_send(event.clone()).log_err();
-            });
-
-            let event_handler_task = cx.spawn({
+            let subscription = cx.subscribe(&thread, {
                 let log_prefix = this.log_prefix.clone();
                 let tool_metrics = tool_metrics.clone();
-                let thread = thread.downgrade();
-                async move |cx| {
-                    loop {
-                        let event = select_biased! {
-                            event = thread_event_rx.next() => event,
-                            _ = cx.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
-                                return Err(anyhow!("Agentic loop stalled - waited {:?} without any events", THREAD_EVENT_TIMEOUT));
-                            }
-                        };
-                        let Some(event) = event else {
-                            return Err(anyhow!("ThreadEvent channel ended early"));
-                        };
+                let thread = thread.clone();
 
-                        match event {
-                            ThreadEvent::Stopped(reason) => match reason {
-                                Ok(StopReason::EndTurn) => {
-                                    return Ok(());
-                                }
-                                Ok(StopReason::MaxTokens) => {
-                                    return Err(anyhow!("Exceeded maximum tokens"));
-                                }
-                                Ok(StopReason::ToolUse) => {
-                                    if std::env::var("ZED_EVAL_DEBUG").is_ok() {
-                                        println!("{}StopReason: Tool use", log_prefix);
-                                    }
-                                }
-                                Err(error) => {
-                                    return Err(anyhow!(error.clone()));
-                                }
-                            },
-                            ThreadEvent::ShowError(thread_error) => {
-                                break Err(anyhow!(thread_error.clone()));
+                move |_thread, event: &ThreadEvent, cx| {
+                match event {
+                    ThreadEvent::Stopped(reason) => match reason {
+                        Ok(StopReason::EndTurn) => {
+                            if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                                println!("{}StopReason: End turn", log_prefix);
                             }
-                            ThreadEvent::StreamedAssistantText(_, _)| ThreadEvent::StreamedAssistantThinking(_, _) | ThreadEvent::UsePendingTools { .. } => {
+                        }
+                        Ok(StopReason::ToolUse) => {
+                            if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                                println!("{}StopReason: Tool use", log_prefix);
                             }
-                            ThreadEvent::ToolFinished {
-                                tool_use_id,
-                                pending_tool_use,
-                                ..
-                            } => {
-                                thread.update(cx, |thread, _cx| {
-                                    if let Some(tool_use) = pending_tool_use {
-                                        let mut tool_metrics = tool_metrics.lock().unwrap();
-                                        if let Some(tool_result) = thread.tool_result(&tool_use_id) {
-                                            let message = if tool_result.is_error {
-                                                format!("TOOL FAILED: {}", tool_use.name)
-                                            } else {
-                                                format!("TOOL FINISHED: {}", tool_use.name)
-                                            };
-                                            println!("{log_prefix}{message}");
-                                            tool_metrics.insert(tool_result.tool_name.clone(), !tool_result.is_error);
-                                        } else {
-                                            let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
-                                            println!("{log_prefix}{message}");
-                                            tool_metrics.insert(tool_use.name.clone(), true);
-                                        }
-                                    }
-                                })?;
+                        }
+                        Ok(StopReason::MaxTokens) | Err(_) => {
+                            if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                                println!("{}Event: {:#?}", log_prefix, event);
                             }
-                            ThreadEvent::ToolConfirmationNeeded => {
-                                panic!("{}Bug: Tool confirmation should not be required in eval", log_prefix);
-                            },
-                            ThreadEvent::StreamedCompletion |
-                            ThreadEvent::MessageAdded(_) |
-                            ThreadEvent::MessageEdited(_) |
-                            ThreadEvent::MessageDeleted(_) |
-                            ThreadEvent::SummaryChanged |
-                            ThreadEvent::SummaryGenerated |
-                            ThreadEvent::CheckpointChanged |
-                            ThreadEvent::UsageUpdated(_) => {
-                                if std::env::var("ZED_EVAL_DEBUG").is_ok() {
-                                    println!("{}Event: {:#?}", log_prefix, event);
+                        }
+                    },
+                    ThreadEvent::StreamedAssistantText(_, _)| ThreadEvent::StreamedAssistantThinking(_, _) | ThreadEvent::UsePendingTools { .. } => {
+                    }
+                    ThreadEvent::ToolFinished {
+                        tool_use_id,
+                        pending_tool_use,
+                        ..
+                    } => {
+                        thread.update(cx, |thread, _cx| {
+                            if let Some(tool_use) = pending_tool_use {
+                                let mut tool_metrics = tool_metrics.lock().unwrap();
+                                if let Some(tool_result) = thread.tool_result(&tool_use_id) {
+                                    let message = if tool_result.is_error {
+                                        format!("TOOL FAILED: {}", tool_use.name)
+                                    } else {
+                                        format!("TOOL FINISHED: {}", tool_use.name)
+                                    };
+                                    println!("{log_prefix}{message}");
+                                    tool_metrics.insert(tool_result.tool_name.clone(), !tool_result.is_error);
+                                } else {
+                                    let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
+                                    println!("{log_prefix}{message}");
+                                    tool_metrics.insert(tool_use.name.clone(), true);
                                 }
                             }
+                        });
+                    }
+                    ThreadEvent::ToolConfirmationNeeded => {
+                        panic!("{}Bug: Tool confirmation should not be required in eval", log_prefix);
+                    },
+                    ThreadEvent::StreamedCompletion |
+                    ThreadEvent::MessageAdded(_) |
+                    ThreadEvent::MessageEdited(_) |
+                    ThreadEvent::MessageDeleted(_) |
+                    ThreadEvent::SummaryChanged |
+                    ThreadEvent::SummaryGenerated |
+                    ThreadEvent::CheckpointChanged |
+                    ThreadEvent::UsageUpdated(_) |
+                    ThreadEvent::ShowError(_) => {
+                        if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                            println!("{}Event: {:#?}", log_prefix, event);
                         }
                     }
                 }
-            });
+            }});
 
             let mut thread_cx = ThreadContext::new(meta.clone(), thread.clone(), model.clone(), cx.clone());
-            let result = this.thread.conversation(&mut thread_cx).await;
-            // todo!
-            dbg!(thread_cx.report());
 
-            event_handler_task.await?;
+            select_biased! {
+                result = this.thread.conversation(&mut thread_cx).fuse() => {
+                    result?;
+                    dbg!(thread_cx.report());
+                },
+                _ = cx.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
+                    return Err(anyhow!("Agentic loop stalled - waited {:?} without any events", THREAD_EVENT_TIMEOUT));
+                }
+            };
 
             println!("{}Stopped", this.log_prefix);
 

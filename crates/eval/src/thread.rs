@@ -1,7 +1,7 @@
 use std::{error::Error, fmt, sync::Arc};
 
 use agent::ThreadEvent;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use futures::{StreamExt, channel::mpsc};
 use gpui::{AppContext, AsyncApp, Entity};
@@ -132,13 +132,32 @@ impl ThreadContext {
     }
 
     pub async fn run_to_end(&mut self) -> Result<Response> {
+        self.run_turns(u32::MAX).await
+    }
+
+    pub async fn run_turn(&mut self) -> Result<Response> {
+        self.run_turns(1).await
+    }
+
+    pub async fn run_turns(&mut self, iterations: u32) -> Result<Response> {
         let (mut tx, mut rx) = mpsc::channel(1);
 
         let _subscription = self.app.subscribe(
             &self.agent_thread,
-            move |_thread, event: &ThreadEvent, _cx| match event {
+            move |thread, event: &ThreadEvent, cx| match event {
                 ThreadEvent::Stopped(Ok(StopReason::EndTurn)) => {
-                    tx.try_send(()).ok();
+                    tx.try_send(Ok(())).ok();
+                }
+                ThreadEvent::Stopped(Ok(StopReason::ToolUse)) => {
+                    if thread.read(cx).remaining_turns() == 0 {
+                        tx.try_send(Ok(())).ok();
+                    }
+                }
+                ThreadEvent::Stopped(Ok(StopReason::MaxTokens)) => {
+                    tx.try_send(Err(anyhow!("Exceeded maximum tokens"))).ok();
+                }
+                ThreadEvent::ShowError(thread_error) => {
+                    tx.try_send(Err(anyhow!(thread_error.clone()))).ok();
                 }
                 _ => {}
             },
@@ -147,11 +166,12 @@ impl ThreadContext {
         let model = self.model.clone();
 
         let message_count_before = self.app.update_entity(&self.agent_thread, |thread, cx| {
+            thread.set_remaining_turns(iterations);
             thread.send_to_model(model, cx);
             thread.messages().len()
         })?;
 
-        rx.next().await;
+        rx.next().await.context("Failed to read from channel")??;
 
         let messages = self.app.read_entity(&self.agent_thread, |thread, cx| {
             let mut messages = Vec::new();
@@ -173,20 +193,6 @@ impl ThreadContext {
         })?;
 
         let response = Response::new(messages);
-
-        Ok(response)
-    }
-
-    async fn run_turn(&self, response: &mut Response) -> Result<Response> {
-        todo!()
-    }
-
-    pub async fn run_turns(&self, iterations: usize) -> Result<Response> {
-        let mut response = Response::new(vec![]);
-
-        for _ in 0..iterations {
-            self.run_turn(&mut response).await?;
-        }
 
         Ok(response)
     }

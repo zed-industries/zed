@@ -317,6 +317,7 @@ pub struct Thread {
     request_callback: Option<
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
     >,
+    remaining_turns: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -370,6 +371,7 @@ impl Thread {
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
             request_callback: None,
+            remaining_turns: u32::MAX,
         }
     }
 
@@ -443,6 +445,7 @@ impl Thread {
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
             request_callback: None,
+            remaining_turns: u32::MAX,
         }
     }
 
@@ -942,7 +945,21 @@ impl Thread {
         })
     }
 
+    pub fn remaining_turns(&self) -> u32 {
+        self.remaining_turns
+    }
+
+    pub fn set_remaining_turns(&mut self, remaining_turns: u32) {
+        self.remaining_turns = remaining_turns;
+    }
+
     pub fn send_to_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+        if self.remaining_turns == 0 {
+            return;
+        }
+
+        self.remaining_turns -= 1;
+
         let mut request = self.to_completion_request(cx);
         if model.supports_tools() {
             request.tools = {
