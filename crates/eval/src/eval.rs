@@ -4,6 +4,7 @@ mod tool_metrics;
 
 pub(crate) use example::*;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
@@ -16,11 +17,13 @@ use futures::future;
 use gpui::http_client::{Uri, read_proxy_from_env};
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
 use gpui_tokio::Tokio;
-use language::LanguageRegistry;
-use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry};
+use language::{Diagnostic, LanguageRegistry};
+use language_model::{
+    ConfiguredModel, LanguageModel, LanguageModelRegistry, LanguageModelRequest, TokenUsage,
+};
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
-use project::Project;
 use project::project_settings::ProjectSettings;
+use project::{DiagnosticSummary, Project};
 use prompt_store::PromptBuilder;
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
@@ -271,25 +274,7 @@ fn main() {
                         let Some(mut example) = examples.lock().pop_front() else {
                             break;
                         };
-                        let result = async {
-                            example.setup().await?;
-                            let run_output = cx
-                                .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
-                                .await?;
-                            let judge_output = judge_example(
-                                example.clone(),
-                                model.clone(),
-                                &zed_commit_sha,
-                                &zed_branch_name,
-                                &run_id,
-                                &run_output,
-                                enable_telemetry,
-                                cx,
-                            )
-                            .await;
-                            anyhow::Ok((run_output, judge_output))
-                        }
-                        .await;
+                        let result = example.evaluate();
                         results
                             .lock()
                             .entry(example.name.clone())
@@ -414,19 +399,21 @@ fn list_all_examples(examples_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(result_paths)
 }
 
-/// Subset of `workspace::AppState` needed by `HeadlessAssistant`, with additional fields.
-pub struct AgentAppState {
+/// GPUI application state for the eval binary
+pub struct EvalAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub node_runtime: NodeRuntime,
-
-    // Additional fields not present in `workspace::AppState`.
+    pub commit_sha: String,
+    pub branch_name: String,
+    pub run_id: String,
+    pub enable_telemetry: bool,
     pub prompt_builder: Arc<PromptBuilder>,
 }
 
-pub fn init(cx: &mut App) -> Arc<AgentAppState> {
+pub fn init(cx: &mut App) -> Arc<EvalAppState> {
     release_channel::init(SemanticVersion::default(), cx);
     gpui_tokio::init(cx);
 
@@ -521,7 +508,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     })
     .unwrap();
 
-    Arc::new(AgentAppState {
+    Arc::new(EvalAppState {
         languages,
         client,
         user_store,
@@ -569,54 +556,68 @@ pub fn git_branch_for_path(repo_path: &Path) -> String {
     }
 }
 
-async fn judge_example(
-    example: Example,
-    model: Arc<dyn LanguageModel>,
-    zed_commit_sha: &str,
-    zed_branch_name: &str,
-    run_id: &str,
-    run_output: &RunOutput,
-    enable_telemetry: bool,
-    cx: &AsyncApp,
-) -> Result<JudgeOutput> {
-    let judge_output = example.judge(model.clone(), &run_output, cx).await;
-
-    let diff_evaluation;
-    let thread_evaluation;
-    if let Ok(output) = judge_output.as_ref() {
-        diff_evaluation = Some(output.diff.clone());
-        thread_evaluation = Some(output.thread.clone());
-    } else {
-        diff_evaluation = None;
-        thread_evaluation = None;
-    }
-
-    if enable_telemetry {
-        telemetry::event!(
-            "Agent Example Evaluated",
-            zed_commit_sha = zed_commit_sha,
-            zed_branch_name = zed_branch_name,
-            run_id = run_id,
-            example_name = example.name.clone(),
-            example_repetition = example.repetition,
-            diff_evaluation = diff_evaluation,
-            thread_evaluation = thread_evaluation,
-            tool_metrics = run_output.tool_metrics,
-            response_count = run_output.response_count,
-            token_usage = run_output.token_usage,
-            model = model.telemetry_id(),
-            model_provider = model.provider_id().to_string(),
-            repository_url = example.base.url.clone(),
-            repository_revision = example.base.revision.clone(),
-            diagnostic_summary_before = run_output.diagnostic_summary_before,
-            diagnostic_summary_after = run_output.diagnostic_summary_after,
-            diagnostics_before = run_output.diagnostics_before,
-            diagnostics_after = run_output.diagnostics_after,
-        );
-    }
-
-    judge_output
+#[derive(Debug, Default, Serialize, Clone)]
+pub struct Sample {
+    pub repository_diff: String,
+    pub ran_diagnostics_check: bool,
+    pub diagnostic_summary_before: DiagnosticSummary,
+    pub diagnostic_summary_after: DiagnosticSummary,
+    pub diagnostics_before: Option<String>,
+    pub diagnostics_after: Option<String>,
+    pub response_count: usize,
+    pub token_usage: TokenUsage,
+    pub tool_metrics: ToolMetrics,
+    pub last_request: LanguageModelRequest,
+    pub error: Option<SamplingError>,
 }
+
+#[derive(Debug, Serialize, Clone)]
+struct SamplingError {
+    message: String,
+    full_stack: String,
+}
+
+#[derive(Clone, Serialize)]
+struct Evaluation {
+    metadata: EvaluationMetadata,
+    sample: Sample,
+    diff_evaluation: DiffEvaluation,
+    thread_evaluation: ThreadEvaluation,
+    error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct EvaluationMetadata {
+    zed_commit_sha: String,
+    zed_branch_name: String,
+    run_id: String,
+    example_name: String,
+    example_repetition: usize,
+    model: String,
+    model_provider: String,
+    repository_url: String,
+    repository_revision: String,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct DiffEvaluation {
+    assertions: Vec<EvaluatedAssertion>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct ThreadEvaluation {
+    assertions: Vec<EvaluatedAssertion>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct EvaluatedAssertion {
+    assertion: Assertion,
+    passed: bool,
+    analysis: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct Assertion(String);
 
 fn print_header(header: &str) {
     println!("\n========================================");
