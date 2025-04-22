@@ -405,8 +405,10 @@ impl MessageEditor {
         });
     }
 
-    fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.edits_expanded = true;
         AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+        cx.notify();
     }
 
     fn handle_file_click(
