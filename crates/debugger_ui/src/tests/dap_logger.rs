@@ -1,14 +1,10 @@
 use crate::tests::{init_test, init_test_workspace, start_debug_session};
-use dap::{
-    requests::{StackTrace, Threads},
-    transport::LogKind,
-};
+use dap::requests::{StackTrace, Threads};
 use debugger_tools::LogStore;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::Project;
 use serde_json::json;
-use std::sync::{Arc, Mutex};
-use std::{cell::OnceCell, collections::VecDeque};
+use std::{cell::OnceCell, sync::Arc};
 
 #[gpui::test]
 async fn test_dap_logger_captures_all_session_rpc_messages(
@@ -39,19 +35,41 @@ async fn test_dap_logger_captures_all_session_rpc_messages(
     )
     .await;
 
-    // Set up the project and workspace
+    assert!(
+        log_store.read_with(cx, |log_store, _| log_store
+            .contained_session_ids()
+            .is_empty()),
+        "log_store shouldn't contain any session IDs before any sessions were created"
+    );
+
     let project = Project::test(fs, ["/project".as_ref()], cx).await;
 
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    // Create a logger extractor to capture RPC logs after the test
-    let rpc_logs = Arc::new(Mutex::new(VecDeque::new()));
-    let rpc_logs_capture = rpc_logs.clone();
-
     // Start a debug session
     let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let session_id = session.read_with(cx, |session, _| session.session_id());
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    assert_eq!(
+        log_store.read_with(cx, |log_store, _| log_store.contained_session_ids().len()),
+        1,
+    );
+
+    assert!(
+        log_store.read_with(cx, |log_store, _| log_store
+            .contained_session_ids()
+            .contains(&session_id)),
+        "log_store should contain the session IDs of the started session"
+    );
+
+    assert!(
+        !log_store.read_with(cx, |log_store, _| log_store
+            .rpc_messages_for_session_id(session_id)
+            .is_empty()),
+        "We should have the initialization sequence in the log store"
+    );
 
     // Set up basic responses for common requests
     client.on_request::<Threads, _>(move |_, _| {
@@ -88,18 +106,6 @@ async fn test_dap_logger_captures_all_session_rpc_messages(
 
     cx.run_until_parked();
 
-    // Create a custom log extractor to capture RPC logs directly from the client
-    // We need to do this because we don't have direct access to the LogStore
-    client.add_log_handler(
-        move |_, message| {
-            rpc_logs_capture
-                .lock()
-                .unwrap()
-                .push_back(message.to_string());
-        },
-        LogKind::Rpc,
-    );
-
     // Shutdown the debug session
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
@@ -109,64 +115,4 @@ async fn test_dap_logger_captures_all_session_rpc_messages(
 
     shutdown_session.await.unwrap();
     cx.run_until_parked();
-
-    // Access logs for verification
-    let logs = rpc_logs.lock().unwrap();
-
-    // Make sure we have some RPC logs
-    assert!(!logs.is_empty(), "Should have captured RPC logs");
-
-    // Print the log count for diagnostic purposes
-    println!("Captured {} RPC logs", logs.len());
-
-    // Check for specific messages that should be present
-    // We expect at least:
-    // 1. An initialize request at the beginning
-    let has_initialize = logs.iter().any(|log| log.contains("initialize"));
-
-    // 2. A disconnect request at the end
-    let has_disconnect = logs.iter().any(|log| log.contains("disconnect"));
-
-    // 3. Configuration done in the middle
-    let has_configuration_done = logs.iter().any(|log| log.contains("configurationDone"));
-
-    // 4. Threads request
-    let has_threads = logs.iter().any(|log| log.contains("threads"));
-
-    // Verify the critical messages were captured
-    assert!(has_initialize, "Should have captured initialize message");
-    assert!(has_disconnect, "Should have captured disconnect message");
-    assert!(
-        has_configuration_done,
-        "Should have captured configurationDone message"
-    );
-    assert!(has_threads, "Should have captured threads request");
-
-    // Check the sequence of messages to ensure proper session flow
-    // First convert to a vector for easier indexing
-    let logs_vec: Vec<_> = logs.iter().collect();
-
-    // Find indexes of key messages
-    let initialize_index = logs_vec.iter().position(|log| log.contains("initialize"));
-    let config_done_index = logs_vec
-        .iter()
-        .position(|log| log.contains("configurationDone"));
-    let threads_index = logs_vec.iter().position(|log| log.contains("threads"));
-    let disconnect_index = logs_vec.iter().position(|log| log.contains("disconnect"));
-
-    // The initialize request should come before configurationDone
-    if let (Some(init_idx), Some(config_idx)) = (initialize_index, config_done_index) {
-        assert!(
-            init_idx < config_idx,
-            "Initialize should occur before configurationDone"
-        );
-    }
-
-    // The disconnect should come after threads requests
-    if let (Some(threads_idx), Some(disconnect_idx)) = (threads_index, disconnect_index) {
-        assert!(
-            threads_idx < disconnect_idx,
-            "Threads request should occur before disconnect"
-        );
-    }
 }
