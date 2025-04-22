@@ -426,30 +426,25 @@ fn main() {
 
                 let programmatic_score_count = programmatic_scores.len();
                 if programmatic_score_count > 0 {
-                    let average_programmatic_score = programmatic_scores
-                        .into_iter()
-                        .map(|pct| pct as f32)
-                        .sum::<f32>()
-                        / (programmatic_score_count as f32);
+                    let average_programmatic_score = (programmatic_scores.into_iter().sum::<f32>()
+                        / (programmatic_score_count as f32))
+                        .floor();
                     println!("Average programmatic score: {average_programmatic_score}%");
                 }
 
                 let diff_score_count = diff_scores.len();
                 if diff_score_count > 0 {
-                    let average_diff_score = diff_scores
-                        .into_iter()
-                        .map(|score| score as f32)
-                        .sum::<f32>()
-                        / (diff_score_count as f32);
+                    let average_diff_score =
+                        (diff_scores.into_iter().sum::<f32>() / (diff_score_count as f32)).floor();
                     println!("Average diff score: {average_diff_score}%");
                 }
 
                 let thread_score_count = thread_scores.len();
 
                 if thread_score_count > 0 {
-                    let average_thread_score =
-                        thread_scores.into_iter().sum::<f32>() / (thread_score_count as f32);
-
+                    let average_thread_score = (thread_scores.into_iter().sum::<f32>()
+                        / (thread_score_count as f32))
+                        .floor();
                     println!("Average thread score: {average_thread_score}%");
                 }
 

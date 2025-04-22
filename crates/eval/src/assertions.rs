@@ -122,7 +122,7 @@ pub fn print_table_round_summary<'a>(
         "│ {:^ROUND_WIDTH$} │ {:<ASSERTIONS_WIDTH$} │ {:>RESULTS_WIDTH$} │",
         round,
         "total",
-        format!("{}%", passed as f32 / total as f32 * 100.0)
+        format!("{}%", (passed as f32 / total as f32 * 100.0).floor())
     )
 }
 
