@@ -3,6 +3,7 @@ use agent::{ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
+use collections::IndexSet;
 use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
@@ -471,8 +472,9 @@ impl Example {
             });
 
             thread.update(cx, |thread, cx| {
-                let context = vec![];
-                thread.insert_user_message(this.prompt.clone(), context, None, cx);
+                let context = IndexSet::default();
+                let context_text = "".to_string();
+                thread.insert_user_message(this.prompt.clone(), context, context_text, None, cx);
                 thread.send_to_model(model, cx);
             })?;
 

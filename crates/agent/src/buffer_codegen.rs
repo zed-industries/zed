@@ -1,4 +1,4 @@
-use crate::context::attach_context_to_message;
+// use crate::context::attach_context_to_message;
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::CodegenStatus;
 use anyhow::Result;
@@ -414,13 +414,14 @@ impl CodegenAlternative {
             cache: false,
         };
 
-        if let Some(context_store) = &self.context_store {
-            attach_context_to_message(
-                &mut request_message,
-                context_store.read(cx).context().iter(),
-                cx,
-            );
-        }
+        // todo!
+        // if let Some(context_store) = &self.context_store {
+        //     attach_context_to_message(
+        //         &mut request_message,
+        //         context_store.read(cx).context().iter(),
+        //         cx,
+        //     );
+        // }
 
         request_message.content.push(prompt.into());
 

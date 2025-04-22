@@ -1,32 +1,20 @@
-use std::{
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{ops::Range, path::Path};
 
-use gpui::{App, Entity, SharedString};
+use anyhow::Context as _;
+use futures::future;
+use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use language::Buffer;
 use language_model::LanguageModelRequestMessage;
-use project::{ProjectEntryId, ProjectPath, Worktree};
+use project::ProjectEntryId;
 use prompt_store::UserPromptId;
-use rope::Point;
-use serde::{Deserialize, Serialize};
-use text::{Anchor, BufferId};
-use ui::IconName;
-use util::post_inc;
+use rope::{Point, Rope};
+use text::Anchor;
+use ui::{ElementId, IconName};
+use util::ResultExt as _;
 
 use crate::thread::Thread;
 
 pub const RULES_ICON: IconName = IconName::Context;
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct ContextId(pub(crate) usize);
-
-impl ContextId {
-    pub fn post_inc(&mut self) -> Self {
-        Self(post_inc(&mut self.0))
-    }
-}
 
 pub enum ContextKind {
     File,
@@ -52,45 +40,62 @@ impl ContextKind {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Handle for context that can be added to the message thread. This type has the following properties:
+///
+/// * Cheap to clone.
+///
+/// * `Eq + Hash` for detecting when context has already been added.
+///
+/// * Use IDs that are stable enough for tracking renames and identifying when context has already
+/// been added to the thread. For example, `ProjectEntryId` is used instead of `ProjectPath` for
+/// `DirectoryContext` so that it follows renames.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum AssistantContext {
     File(FileContext),
+    /*
     Directory(DirectoryContext),
     Symbol(SymbolContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
     Excerpt(ExcerptContext),
     Rules(RulesContext),
+    */
 }
 
 impl AssistantContext {
-    pub fn id(&self) -> ContextId {
+    pub fn element_id(&self, name: &'static str) -> ElementId {
         match self {
-            Self::File(file) => file.id,
-            Self::Directory(directory) => directory.id,
-            Self::Symbol(symbol) => symbol.id,
-            Self::FetchedUrl(url) => url.id,
-            Self::Thread(thread) => thread.id,
-            Self::Excerpt(excerpt) => excerpt.id,
-            Self::Rules(rules) => rules.id,
+            Self::File(context) => ElementId::NamedInteger(
+                name.into(),
+                context.buffer.entity_id().as_u64().try_into().unwrap(),
+            ),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+/// todo! document decisions
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct FileContext {
-    pub id: ContextId,
-    pub context_buffer: ContextBuffer,
+    pub buffer: Entity<Buffer>,
 }
 
+impl FileContext {
+    fn loader(self, cx: &App) -> Option<impl FnOnce() -> String + Send + 'static> {
+        let buffer_ref = self.buffer.read(cx);
+        let Some(file) = buffer_ref.file() else {
+            log::error!("file context missing path");
+            return None;
+        };
+        let full_path = file.full_path(cx);
+        let content = buffer_ref.as_rope().clone();
+        Some(move || to_fenced_codeblock(&full_path, content, None))
+    }
+}
+
+/*
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
-    pub id: ContextId,
-    pub worktree: Entity<Worktree>,
-    pub entry_id: ProjectEntryId,
-    pub last_path: Arc<Path>,
-    /// Buffers of the files within the directory.
-    pub context_buffers: Vec<ContextBuffer>,
+    entry_id: ProjectEntryId,
 }
 
 impl DirectoryContext {
@@ -98,37 +103,32 @@ impl DirectoryContext {
         self.worktree.read(cx).entry_for_id(self.entry_id)
     }
 
-    pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        let worktree = self.worktree.read(cx);
-        worktree
-            .entry_for_id(self.entry_id)
-            .map(|entry| ProjectPath {
-                worktree_id: worktree.id(),
-                path: entry.path.clone(),
-            })
+    fn loader(&self, cx: &App) -> Option<impl FnOnce() -> String> {
+        todo!()
     }
+
 }
 
 #[derive(Debug, Clone)]
 pub struct SymbolContext {
-    pub id: ContextId,
-    pub context_symbol: ContextSymbol,
+    pub name: SharedString,
+    pub excerpt: ExcerptContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExcerptContext {
+    pub buffer: Entity<Buffer>,
+    pub range: Range<Anchor>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FetchedUrlContext {
-    pub id: ContextId,
     pub url: SharedString,
-    pub text: SharedString,
 }
 
 #[derive(Debug, Clone)]
 pub struct ThreadContext {
-    pub id: ContextId,
-    // TODO: Entity<Thread> holds onto the thread even if the thread is deleted. Should probably be
-    // a WeakEntity and handle removal from the UI when it has dropped.
-    pub thread: Entity<Thread>,
-    pub text: SharedString,
+    pub thread_id: ThreadId,
 }
 
 impl ThreadContext {
@@ -140,183 +140,9 @@ impl ThreadContext {
     }
 }
 
-#[derive(Clone)]
-pub struct ContextBuffer {
-    pub id: BufferId,
-    // TODO: Entity<Buffer> holds onto the buffer even if the buffer is deleted. Should probably be
-    // a WeakEntity and handle removal from the UI when it has dropped.
-    pub buffer: Entity<Buffer>,
-    pub last_full_path: Arc<Path>,
-    pub version: clock::Global,
-    pub text: SharedString,
-}
-
-impl ContextBuffer {
-    pub fn full_path(&self, cx: &App) -> PathBuf {
-        let file = self.buffer.read(cx).file();
-        // Note that in practice file can't be `None` because it is present when this is created and
-        // there's no way for buffers to go from having a file to not.
-        file.map_or(self.last_full_path.to_path_buf(), |file| file.full_path(cx))
-    }
-}
-
-impl std::fmt::Debug for ContextBuffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ContextBuffer")
-            .field("id", &self.id)
-            .field("buffer", &self.buffer)
-            .field("version", &self.version)
-            .field("text", &self.text)
-            .finish()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ContextSymbol {
-    pub id: ContextSymbolId,
-    pub buffer: Entity<Buffer>,
-    pub buffer_version: clock::Global,
-    /// The range that the symbol encloses, e.g. for function symbol, this will
-    /// include not only the signature, but also the body
-    pub enclosing_range: Range<Anchor>,
-    pub text: SharedString,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ContextSymbolId {
-    pub path: ProjectPath,
-    pub name: SharedString,
-    pub range: Range<Anchor>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExcerptContext {
-    pub id: ContextId,
-    pub range: Range<Anchor>,
-    pub line_range: Range<Point>,
-    pub context_buffer: ContextBuffer,
-}
-
 #[derive(Debug, Clone)]
 pub struct RulesContext {
-    pub id: ContextId,
     pub prompt_id: UserPromptId,
-    pub title: SharedString,
-    pub text: SharedString,
-}
-
-/// Formats a collection of contexts into a string representation
-pub fn format_context_as_string<'a>(
-    contexts: impl Iterator<Item = &'a AssistantContext>,
-    cx: &App,
-) -> Option<String> {
-    let mut file_context = Vec::new();
-    let mut directory_context = Vec::new();
-    let mut symbol_context = Vec::new();
-    let mut excerpt_context = Vec::new();
-    let mut fetch_context = Vec::new();
-    let mut thread_context = Vec::new();
-    let mut rules_context = Vec::new();
-
-    for context in contexts {
-        match context {
-            AssistantContext::File(context) => file_context.push(context),
-            AssistantContext::Directory(context) => directory_context.push(context),
-            AssistantContext::Symbol(context) => symbol_context.push(context),
-            AssistantContext::Excerpt(context) => excerpt_context.push(context),
-            AssistantContext::FetchedUrl(context) => fetch_context.push(context),
-            AssistantContext::Thread(context) => thread_context.push(context),
-            AssistantContext::Rules(context) => rules_context.push(context),
-        }
-    }
-
-    if file_context.is_empty()
-        && directory_context.is_empty()
-        && symbol_context.is_empty()
-        && excerpt_context.is_empty()
-        && fetch_context.is_empty()
-        && thread_context.is_empty()
-        && rules_context.is_empty()
-    {
-        return None;
-    }
-
-    let mut result = String::new();
-    result.push_str("\n<context>\n\
-        The following items were attached by the user. You don't need to use other tools to read them.\n\n");
-
-    if !file_context.is_empty() {
-        result.push_str("<files>\n");
-        for context in file_context {
-            result.push_str(&context.context_buffer.text);
-        }
-        result.push_str("</files>\n");
-    }
-
-    if !directory_context.is_empty() {
-        result.push_str("<directories>\n");
-        for context in directory_context {
-            for context_buffer in &context.context_buffers {
-                result.push_str(&context_buffer.text);
-            }
-        }
-        result.push_str("</directories>\n");
-    }
-
-    if !symbol_context.is_empty() {
-        result.push_str("<symbols>\n");
-        for context in symbol_context {
-            result.push_str(&context.context_symbol.text);
-            result.push('\n');
-        }
-        result.push_str("</symbols>\n");
-    }
-
-    if !excerpt_context.is_empty() {
-        result.push_str("<excerpts>\n");
-        for context in excerpt_context {
-            result.push_str(&context.context_buffer.text);
-            result.push('\n');
-        }
-        result.push_str("</excerpts>\n");
-    }
-
-    if !fetch_context.is_empty() {
-        result.push_str("<fetched_urls>\n");
-        for context in &fetch_context {
-            result.push_str(&context.url);
-            result.push('\n');
-            result.push_str(&context.text);
-            result.push('\n');
-        }
-        result.push_str("</fetched_urls>\n");
-    }
-
-    if !thread_context.is_empty() {
-        result.push_str("<conversation_threads>\n");
-        for context in &thread_context {
-            result.push_str(&context.summary(cx));
-            result.push('\n');
-            result.push_str(&context.text);
-            result.push('\n');
-        }
-        result.push_str("</conversation_threads>\n");
-    }
-
-    if !rules_context.is_empty() {
-        result.push_str(
-            "<user_rules>\n\
-            The user has specified the following rules that should be applied:\n\n",
-        );
-        for context in &rules_context {
-            result.push_str(&context.text);
-            result.push('\n');
-        }
-        result.push_str("</user_rules>\n");
-    }
-
-    result.push_str("</context>\n");
-    Some(result)
 }
 
 pub fn attach_context_to_message<'a>(
@@ -324,7 +150,187 @@ pub fn attach_context_to_message<'a>(
     contexts: impl Iterator<Item = &'a AssistantContext>,
     cx: &App,
 ) {
-    if let Some(context_string) = format_context_as_string(contexts, cx) {
+    if let Some(context_string) = load_context_string(contexts, cx) {
         message.content.push(context_string.into());
     }
+}
+*/
+
+/// Loads and formats a collection of contexts.
+pub fn load_context_text<'a>(
+    contexts: impl Iterator<Item = &'a AssistantContext>,
+    cx: &App,
+) -> Task<String> {
+    let mut file_context = Vec::new();
+    /*
+    let mut directory_context = Vec::new();
+    let mut symbol_context = Vec::new();
+    let mut excerpt_context = Vec::new();
+    let mut fetch_context = Vec::new();
+    let mut thread_context = Vec::new();
+    let mut rules_context = Vec::new();
+    */
+
+    let contexts = contexts.cloned().collect::<Vec<_>>();
+
+    for context in contexts {
+        match context {
+            AssistantContext::File(context) => file_context.extend(context.loader(cx)),
+            /*
+            AssistantContext::Directory(context) => directory_context.push(context.loader(cx)),
+            AssistantContext::Symbol(context) => symbol_context.push(context.loader(cx)),
+            AssistantContext::Excerpt(context) => excerpt_context.push(context.loader(cx)),
+            AssistantContext::FetchedUrl(context) => fetch_context.push(context.loader(cx)),
+            AssistantContext::Thread(context) => thread_context.push(context.loader(cx)),
+            AssistantContext::Rules(context) => rules_context.push(context.loader(cx)),
+            */
+        }
+    }
+
+    if file_context.is_empty()
+    /*
+    && directory_context.is_empty()
+    && symbol_context.is_empty()
+    && excerpt_context.is_empty()
+    && fetch_context.is_empty()
+    && thread_context.is_empty()
+    && rules_context.is_empty()
+    */
+    {
+        return Task::ready("".to_string());
+    }
+
+    cx.background_spawn(async move {
+        let mut result = String::new();
+        result.push_str("\n<context>\n\
+            The following items were attached by the user. You don't need to use other tools to read them.\n\n");
+
+        if !file_context.is_empty() {
+            result.push_str("<files>\n");
+            for loader in file_context {
+                result.push_str(&loader());
+            }
+            result.push_str("</files>\n");
+        }
+
+        /*
+        if !directory_context.is_empty() {
+            result.push_str("<directories>\n");
+            for context in directory_context {
+                for context_buffer in &context.context_buffers {
+                    result.push_str(&context_buffer.text);
+                }
+            }
+            result.push_str("</directories>\n");
+        }
+
+        if !symbol_context.is_empty() {
+            result.push_str("<symbols>\n");
+            for context in symbol_context {
+                result.push_str(&context.context_symbol.text);
+                result.push('\n');
+            }
+            result.push_str("</symbols>\n");
+        }
+
+        if !excerpt_context.is_empty() {
+            result.push_str("<excerpts>\n");
+            for context in excerpt_context {
+                result.push_str(&context.context_buffer.text);
+                result.push('\n');
+            }
+            result.push_str("</excerpts>\n");
+        }
+
+        if !fetch_context.is_empty() {
+            result.push_str("<fetched_urls>\n");
+            for context in &fetch_context {
+                result.push_str(&context.url);
+                result.push('\n');
+                result.push_str(&context.text);
+                result.push('\n');
+            }
+            result.push_str("</fetched_urls>\n");
+        }
+
+        if !thread_context.is_empty() {
+            result.push_str("<conversation_threads>\n");
+            for context in &thread_context {
+                result.push_str(&context.summary(cx));
+                result.push('\n');
+                result.push_str(&context.text);
+                result.push('\n');
+            }
+            result.push_str("</conversation_threads>\n");
+        }
+
+        if !rules_context.is_empty() {
+            result.push_str(
+                "<user_rules>\n\
+                The user has specified the following rules that should be applied:\n\n",
+            );
+            for context in &rules_context {
+                result.push_str(&context.text);
+                result.push('\n');
+            }
+            result.push_str("</user_rules>\n");
+        }
+        */
+
+        result.push_str("</context>\n");
+        result
+    })
+}
+
+fn to_fenced_codeblock(path: &Path, content: Rope, line_range: Option<Range<Point>>) -> String {
+    let line_range_text = line_range.map(|range| {
+        if range.start.row == range.end.row {
+            format!(":{}", range.start.row + 1)
+        } else {
+            format!(":{}-{}", range.start.row + 1, range.end.row + 1)
+        }
+    });
+
+    let path_extension = path.extension().and_then(|ext| ext.to_str());
+    let path_string = path.to_string_lossy();
+    let capacity = 3
+        + path_extension.map_or(0, |extension| extension.len() + 1)
+        + path_string.len()
+        + line_range_text.as_ref().map_or(0, |text| text.len())
+        + 1
+        + content.len()
+        + 5;
+    let mut buffer = String::with_capacity(capacity);
+
+    buffer.push_str("```");
+
+    if let Some(extension) = path_extension {
+        buffer.push_str(extension);
+        buffer.push(' ');
+    }
+    buffer.push_str(&path_string);
+
+    if let Some(line_range_text) = line_range_text {
+        buffer.push_str(&line_range_text);
+    }
+
+    buffer.push('\n');
+    for chunk in content.chunks() {
+        buffer.push_str(&chunk);
+    }
+
+    if !buffer.ends_with('\n') {
+        buffer.push('\n');
+    }
+
+    buffer.push_str("```\n");
+
+    debug_assert!(
+        buffer.len() == capacity - 1 || buffer.len() == capacity,
+        "to_fenced_codeblock calculated capacity of {}, but length was {}",
+        capacity,
+        buffer.len(),
+    );
+
+    buffer
 }

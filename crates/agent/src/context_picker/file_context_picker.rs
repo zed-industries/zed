@@ -14,7 +14,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context_picker::ContextPicker;
-use crate::context_store::{ContextStore, FileInclusion};
+use crate::context_store::ContextStore;
 
 pub struct FileContextPicker {
     picker: Entity<Picker<FileContextPickerDelegate>>,
@@ -133,11 +133,13 @@ impl PickerDelegate for FileContextPickerDelegate {
         let Some(task) = self
             .context_store
             .update(cx, |context_store, cx| {
+                /* todo!
                 if is_directory {
                     context_store.add_directory(project_path, true, cx)
                 } else {
-                    context_store.add_file_from_path(project_path, true, cx)
-                }
+                */
+                context_store.add_file_from_path(project_path, true, cx)
+                // }
             })
             .ok()
         else {
@@ -319,6 +321,7 @@ pub fn render_file_context_entry(
 ) -> Stateful<Div> {
     let (file_name, directory) = extract_file_name_and_directory(&path, path_prefix);
 
+    /* todo!
     let added = context_store.upgrade().and_then(|context_store| {
         let project_path = ProjectPath {
             worktree_id,
@@ -332,6 +335,7 @@ pub fn render_file_context_entry(
                 .will_include_file_path(&project_path, cx)
         }
     });
+    */
 
     let file_icon = if is_directory {
         FileIcons::get_folder_icon(false, cx)
@@ -356,8 +360,25 @@ pub fn render_file_context_entry(
                         .color(Color::Muted)
                 })),
         )
-        .when_some(added, |el, added| match added {
-            FileInclusion::Direct(_) => el.child(
+    /* todo!
+    .when_some(added, |el, added| match added {
+        FileInclusion::Direct(_) => el.child(
+            h_flex()
+                .w_full()
+                .justify_end()
+                .gap_0p5()
+                .child(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Success),
+                )
+                .child(Label::new("Added").size(LabelSize::Small)),
+        ),
+        FileInclusion::InDirectory(directory_project_path) => {
+            // TODO: Consider using worktree full_path to include worktree name.
+            let directory_path = directory_project_path.path.to_string_lossy().into_owned();
+
+            el.child(
                 h_flex()
                     .w_full()
                     .justify_end()
@@ -367,25 +388,10 @@ pub fn render_file_context_entry(
                             .size(IconSize::Small)
                             .color(Color::Success),
                     )
-                    .child(Label::new("Added").size(LabelSize::Small)),
-            ),
-            FileInclusion::InDirectory(directory_project_path) => {
-                // TODO: Consider using worktree full_path to include worktree name.
-                let directory_path = directory_project_path.path.to_string_lossy().into_owned();
-
-                el.child(
-                    h_flex()
-                        .w_full()
-                        .justify_end()
-                        .gap_0p5()
-                        .child(
-                            Icon::new(IconName::Check)
-                                .size(IconSize::Small)
-                                .color(Color::Success),
-                        )
-                        .child(Label::new("Included").size(LabelSize::Small)),
-                )
-                .tooltip(Tooltip::text(format!("in {directory_path}")))
-            }
-        })
+                    .child(Label::new("Included").size(LabelSize::Small)),
+            )
+            .tooltip(Tooltip::text(format!("in {directory_path}")))
+        }
+    })
+    */
 }

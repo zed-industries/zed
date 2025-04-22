@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
@@ -5,7 +6,7 @@ use gpui::ClickEvent;
 use gpui::{Animation, AnimationExt as _, pulsating_between};
 use ui::{IconButtonShape, Tooltip, prelude::*};
 
-use crate::context::{AssistantContext, ContextId, ContextKind};
+use crate::context::{AssistantContext, ContextKind};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -70,9 +71,7 @@ impl ContextPill {
 
     pub fn id(&self) -> ElementId {
         match self {
-            Self::Added { context, .. } => {
-                ElementId::NamedInteger("context-pill".into(), context.id.0)
-            }
+            Self::Added { context, .. } => context.context.element_id("context-pill"),
             Self::Suggested { .. } => "suggested-context-pill".into(),
         }
     }
@@ -156,7 +155,7 @@ impl RenderOnce for ContextPill {
                 )
                 .when_some(on_remove.as_ref(), |element, on_remove| {
                     element.child(
-                        IconButton::new(("remove", context.id.0), IconName::Close)
+                        IconButton::new(context.context.element_id("remove"), IconName::Close)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
                             .tooltip(Tooltip::text("Remove Context"))
@@ -228,7 +227,7 @@ impl RenderOnce for ContextPill {
 }
 
 pub struct AddedContext {
-    pub id: ContextId,
+    pub context: AssistantContext,
     pub kind: ContextKind,
     pub name: SharedString,
     pub parent: Option<SharedString>,
@@ -238,10 +237,10 @@ pub struct AddedContext {
 }
 
 impl AddedContext {
-    pub fn new(context: &AssistantContext, cx: &App) -> AddedContext {
+    pub fn new(context: AssistantContext, cx: &App) -> Option<AddedContext> {
         match context {
-            AssistantContext::File(file_context) => {
-                let full_path = file_context.context_buffer.full_path(cx);
+            AssistantContext::File(ref file_context) => {
+                let full_path = file_context.buffer.read(cx).file()?.full_path(cx);
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path
@@ -252,122 +251,122 @@ impl AddedContext {
                     .parent()
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().into_owned().into());
-                AddedContext {
-                    id: file_context.id,
+                Some(AddedContext {
+                    context: context.clone(),
                     kind: ContextKind::File,
                     name,
                     parent,
                     tooltip: Some(full_path_string),
                     icon_path: FileIcons::get_icon(&full_path, cx),
                     summarizing: false,
-                }
-            }
+                })
+            } /*
+              AssistantContext::Directory(directory_context) => {
+                  let worktree = directory_context.worktree.read(cx);
+                  // If the directory no longer exists, use its last known path.
+                  let full_path = worktree
+                      .entry_for_id(directory_context.entry_id)
+                      .map_or_else(
+                          || directory_context.last_path.clone(),
+                          |entry| worktree.full_path(&entry.path).into(),
+                      );
+                  let full_path_string: SharedString =
+                      full_path.to_string_lossy().into_owned().into();
+                  let name = full_path
+                      .file_name()
+                      .map(|n| n.to_string_lossy().into_owned().into())
+                      .unwrap_or_else(|| full_path_string.clone());
+                  let parent = full_path
+                      .parent()
+                      .and_then(|p| p.file_name())
+                      .map(|n| n.to_string_lossy().into_owned().into());
+                  AddedContext {
+                      id: directory_context.id,
+                      kind: ContextKind::Directory,
+                      name,
+                      parent,
+                      tooltip: Some(full_path_string),
+                      icon_path: None,
+                      summarizing: false,
+                  }
+              }
 
-            AssistantContext::Directory(directory_context) => {
-                let worktree = directory_context.worktree.read(cx);
-                // If the directory no longer exists, use its last known path.
-                let full_path = worktree
-                    .entry_for_id(directory_context.entry_id)
-                    .map_or_else(
-                        || directory_context.last_path.clone(),
-                        |entry| worktree.full_path(&entry.path).into(),
-                    );
-                let full_path_string: SharedString =
-                    full_path.to_string_lossy().into_owned().into();
-                let name = full_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned().into())
-                    .unwrap_or_else(|| full_path_string.clone());
-                let parent = full_path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned().into());
-                AddedContext {
-                    id: directory_context.id,
-                    kind: ContextKind::Directory,
-                    name,
-                    parent,
-                    tooltip: Some(full_path_string),
-                    icon_path: None,
-                    summarizing: false,
-                }
-            }
+              AssistantContext::Symbol(symbol_context) => AddedContext {
+                  id: symbol_context.id,
+                  kind: ContextKind::Symbol,
+                  name: symbol_context.context_symbol.id.name.clone(),
+                  parent: None,
+                  tooltip: None,
+                  icon_path: None,
+                  summarizing: false,
+              },
 
-            AssistantContext::Symbol(symbol_context) => AddedContext {
-                id: symbol_context.id,
-                kind: ContextKind::Symbol,
-                name: symbol_context.context_symbol.id.name.clone(),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                summarizing: false,
-            },
+              AssistantContext::Excerpt(excerpt_context) => {
+                  let full_path = excerpt_context.context_buffer.full_path(cx);
+                  let mut full_path_string = full_path.to_string_lossy().into_owned();
+                  let mut name = full_path
+                      .file_name()
+                      .map(|n| n.to_string_lossy().into_owned())
+                      .unwrap_or_else(|| full_path_string.clone());
 
-            AssistantContext::Excerpt(excerpt_context) => {
-                let full_path = excerpt_context.context_buffer.full_path(cx);
-                let mut full_path_string = full_path.to_string_lossy().into_owned();
-                let mut name = full_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| full_path_string.clone());
+                  let line_range_text = format!(
+                      " ({}-{})",
+                      excerpt_context.line_range.start.row + 1,
+                      excerpt_context.line_range.end.row + 1
+                  );
 
-                let line_range_text = format!(
-                    " ({}-{})",
-                    excerpt_context.line_range.start.row + 1,
-                    excerpt_context.line_range.end.row + 1
-                );
+                  full_path_string.push_str(&line_range_text);
+                  name.push_str(&line_range_text);
 
-                full_path_string.push_str(&line_range_text);
-                name.push_str(&line_range_text);
+                  let parent = full_path
+                      .parent()
+                      .and_then(|p| p.file_name())
+                      .map(|n| n.to_string_lossy().into_owned().into());
 
-                let parent = full_path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned().into());
+                  AddedContext {
+                      id: excerpt_context.id,
+                      kind: ContextKind::File, // Use File icon for excerpts
+                      name: name.into(),
+                      parent,
+                      tooltip: Some(full_path_string.into()),
+                      icon_path: FileIcons::get_icon(&full_path, cx),
+                      summarizing: false,
+                  }
+              }
 
-                AddedContext {
-                    id: excerpt_context.id,
-                    kind: ContextKind::File, // Use File icon for excerpts
-                    name: name.into(),
-                    parent,
-                    tooltip: Some(full_path_string.into()),
-                    icon_path: FileIcons::get_icon(&full_path, cx),
-                    summarizing: false,
-                }
-            }
+              AssistantContext::FetchedUrl(fetched_url_context) => AddedContext {
+                  id: fetched_url_context.id,
+                  kind: ContextKind::FetchedUrl,
+                  name: fetched_url_context.url.clone(),
+                  parent: None,
+                  tooltip: None,
+                  icon_path: None,
+                  summarizing: false,
+              },
 
-            AssistantContext::FetchedUrl(fetched_url_context) => AddedContext {
-                id: fetched_url_context.id,
-                kind: ContextKind::FetchedUrl,
-                name: fetched_url_context.url.clone(),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                summarizing: false,
-            },
+              AssistantContext::Thread(thread_context) => AddedContext {
+                  id: thread_context.id,
+                  kind: ContextKind::Thread,
+                  name: thread_context.summary(cx),
+                  parent: None,
+                  tooltip: None,
+                  icon_path: None,
+                  summarizing: thread_context
+                      .thread
+                      .read(cx)
+                      .is_generating_detailed_summary(),
+              },
 
-            AssistantContext::Thread(thread_context) => AddedContext {
-                id: thread_context.id,
-                kind: ContextKind::Thread,
-                name: thread_context.summary(cx),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                summarizing: thread_context
-                    .thread
-                    .read(cx)
-                    .is_generating_detailed_summary(),
-            },
-
-            AssistantContext::Rules(user_rules_context) => AddedContext {
-                id: user_rules_context.id,
-                kind: ContextKind::Rules,
-                name: user_rules_context.title.clone(),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                summarizing: false,
-            },
+              AssistantContext::Rules(user_rules_context) => AddedContext {
+                  id: user_rules_context.id,
+                  kind: ContextKind::Rules,
+                  name: user_rules_context.title.clone(),
+                  parent: None,
+                  tooltip: None,
+                  icon_path: None,
+                  summarizing: false,
+              },
+              */
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::context::{AssistantContext, ContextId, RULES_ICON, format_context_as_string};
+use crate::context::{AssistantContext, RULES_ICON};
 use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
@@ -1204,6 +1204,7 @@ impl ActiveThread {
     }
 
     fn update_editing_message_token_count(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        /* todo!
         let Some((message_id, state)) = self.editing_message.as_mut() else {
             return;
         };
@@ -1269,6 +1270,7 @@ impl ActiveThread {
                 cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
             })
         }));
+        */
     }
 
     fn cancel_editing_message(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -1662,77 +1664,77 @@ impl ActiveThread {
         let message_is_empty = message.should_display_content();
         let has_content = !message_is_empty || !context.is_empty();
 
-        let message_content =
-            has_content.then(|| {
-                v_flex()
-                    .gap_1p5()
-                    .when(!message_is_empty, |parent| {
-                        parent.child(
-                            if let Some(edit_message_editor) = edit_message_editor.clone() {
-                                let settings = ThemeSettings::get_global(cx);
-                                let font_size = TextSize::Small.rems(cx);
-                                let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
+        let message_content = has_content.then(|| {
+            v_flex()
+                .gap_1p5()
+                .when(!message_is_empty, |parent| {
+                    parent.child(
+                        if let Some(edit_message_editor) = edit_message_editor.clone() {
+                            let settings = ThemeSettings::get_global(cx);
+                            let font_size = TextSize::Small.rems(cx);
+                            let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
 
-                                let text_style = TextStyle {
-                                    color: cx.theme().colors().text,
-                                    font_family: settings.buffer_font.family.clone(),
-                                    font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                                    font_features: settings.buffer_font.features.clone(),
-                                    font_size: font_size.into(),
-                                    line_height: line_height.into(),
-                                    ..Default::default()
-                                };
+                            let text_style = TextStyle {
+                                color: cx.theme().colors().text,
+                                font_family: settings.buffer_font.family.clone(),
+                                font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                                font_features: settings.buffer_font.features.clone(),
+                                font_size: font_size.into(),
+                                line_height: line_height.into(),
+                                ..Default::default()
+                            };
 
-                                div()
-                                    .key_context("EditMessageEditor")
-                                    .on_action(cx.listener(Self::cancel_editing_message))
-                                    .on_action(cx.listener(Self::confirm_editing_message))
-                                    .min_h_6()
-                                    .pt_1()
-                                    .child(EditorElement::new(
-                                        &edit_message_editor,
-                                        EditorStyle {
-                                            background: colors.editor_background,
-                                            local_player: cx.theme().players().local(),
-                                            text: text_style,
-                                            syntax: cx.theme().syntax().clone(),
-                                            ..Default::default()
-                                        },
-                                    ))
-                                    .into_any()
-                            } else {
-                                div()
-                                    .min_h_6()
-                                    .text_ui(cx)
-                                    .child(self.render_message_content(
-                                        message_id,
-                                        rendered_message,
-                                        has_tool_uses,
-                                        workspace.clone(),
-                                        window,
-                                        cx,
-                                    ))
-                                    .into_any()
-                            },
-                        )
-                    })
-                    .when(!context.is_empty(), |parent| {
-                        parent.child(h_flex().flex_wrap().gap_1().children(
-                            context.into_iter().map(|context| {
-                                let context_id = context.id();
+                            div()
+                                .key_context("EditMessageEditor")
+                                .on_action(cx.listener(Self::cancel_editing_message))
+                                .on_action(cx.listener(Self::confirm_editing_message))
+                                .min_h_6()
+                                .pt_1()
+                                .child(EditorElement::new(
+                                    &edit_message_editor,
+                                    EditorStyle {
+                                        background: colors.editor_background,
+                                        local_player: cx.theme().players().local(),
+                                        text: text_style,
+                                        syntax: cx.theme().syntax().clone(),
+                                        ..Default::default()
+                                    },
+                                ))
+                                .into_any()
+                        } else {
+                            div()
+                                .min_h_6()
+                                .text_ui(cx)
+                                .child(self.render_message_content(
+                                    message_id,
+                                    rendered_message,
+                                    has_tool_uses,
+                                    workspace.clone(),
+                                    window,
+                                    cx,
+                                ))
+                                .into_any()
+                        },
+                    )
+                })
+                .when(!context.is_empty(), |parent| {
+                    parent.child(h_flex().flex_wrap().gap_1().children(
+                        context.into_iter().flat_map(|context| {
+                            Some(
                                 ContextPill::added(
-                                    AddedContext::new(context, cx),
+                                    AddedContext::new(context.clone(), cx)?,
                                     false,
                                     false,
                                     None,
                                 )
                                 .on_click(Rc::new(cx.listener({
+                                    let context = context.clone();
                                     let workspace = workspace.clone();
                                     let context_store = context_store.clone();
                                     move |_, _, window, cx| {
                                         if let Some(workspace) = workspace.upgrade() {
                                             open_context(
-                                                context_id,
+                                                &context,
                                                 context_store.clone(),
                                                 workspace,
                                                 window,
@@ -1741,11 +1743,12 @@ impl ActiveThread {
                                             cx.notify();
                                         }
                                     }
-                                })))
-                            }),
-                        ))
-                    })
-            });
+                                }))),
+                            )
+                        }),
+                    ))
+                })
+        });
 
         let styled_message = match message.role {
             Role::User => v_flex()
@@ -3260,89 +3263,85 @@ impl Render for ActiveThread {
 }
 
 pub(crate) fn open_context(
-    id: ContextId,
+    context: &AssistantContext,
     context_store: Entity<ContextStore>,
     workspace: Entity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let Some(context) = context_store.read(cx).context_for_id(id) else {
-        return;
-    };
-
     match context {
         AssistantContext::File(file_context) => {
-            if let Some(project_path) = file_context.context_buffer.buffer.read(cx).project_path(cx)
-            {
+            if let Some(project_path) = file_context.buffer.read(cx).project_path(cx) {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .open_path(project_path, None, true, window, cx)
                         .detach_and_log_err(cx);
                 });
             }
-        }
-        AssistantContext::Directory(directory_context) => {
-            let entry_id = directory_context.entry_id;
-            workspace.update(cx, |workspace, cx| {
-                workspace.project().update(cx, |_project, cx| {
-                    cx.emit(project::Event::RevealInProjectPanel(entry_id));
-                })
-            })
-        }
-        AssistantContext::Symbol(symbol_context) => {
-            if let Some(project_path) = symbol_context
-                .context_symbol
-                .buffer
-                .read(cx)
-                .project_path(cx)
-            {
-                let snapshot = symbol_context.context_symbol.buffer.read(cx).snapshot();
-                let target_position = symbol_context
-                    .context_symbol
-                    .id
-                    .range
-                    .start
-                    .to_point(&snapshot);
+        } /*
+          AssistantContext::Directory(directory_context) => {
+              let entry_id = directory_context.entry_id;
+              workspace.update(cx, |workspace, cx| {
+                  workspace.project().update(cx, |_project, cx| {
+                      cx.emit(project::Event::RevealInProjectPanel(entry_id));
+                  })
+              })
+          }
+          AssistantContext::Symbol(symbol_context) => {
+              if let Some(project_path) = symbol_context
+                  .context_symbol
+                  .buffer
+                  .read(cx)
+                  .project_path(cx)
+              {
+                  let snapshot = symbol_context.context_symbol.buffer.read(cx).snapshot();
+                  let target_position = symbol_context
+                      .context_symbol
+                      .id
+                      .range
+                      .start
+                      .to_point(&snapshot);
 
-                open_editor_at_position(project_path, target_position, &workspace, window, cx)
-                    .detach();
-            }
-        }
-        AssistantContext::Excerpt(excerpt_context) => {
-            if let Some(project_path) = excerpt_context
-                .context_buffer
-                .buffer
-                .read(cx)
-                .project_path(cx)
-            {
-                let snapshot = excerpt_context.context_buffer.buffer.read(cx).snapshot();
-                let target_position = excerpt_context.range.start.to_point(&snapshot);
+                  open_editor_at_position(project_path, target_position, &workspace, window, cx)
+                      .detach();
+              }
+          }
+          AssistantContext::Excerpt(excerpt_context) => {
+              if let Some(project_path) = excerpt_context
+                  .context_buffer
+                  .buffer
+                  .read(cx)
+                  .project_path(cx)
+              {
+                  let snapshot = excerpt_context.context_buffer.buffer.read(cx).snapshot();
+                  let target_position = excerpt_context.range.start.to_point(&snapshot);
 
-                open_editor_at_position(project_path, target_position, &workspace, window, cx)
-                    .detach();
-            }
-        }
-        AssistantContext::FetchedUrl(fetched_url_context) => {
-            cx.open_url(&fetched_url_context.url);
-        }
-        AssistantContext::Thread(thread_context) => {
-            let thread_id = thread_context.thread.read(cx).id().clone();
-            workspace.update(cx, |workspace, cx| {
-                if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                    panel.update(cx, |panel, cx| {
-                        panel
-                            .open_thread(&thread_id, window, cx)
-                            .detach_and_log_err(cx)
-                    });
-                }
-            })
-        }
-        AssistantContext::Rules(rules_context) => window.dispatch_action(
-            Box::new(OpenPromptLibrary {
-                prompt_to_select: Some(rules_context.prompt_id.0),
-            }),
-            cx,
-        ),
+                  open_editor_at_position(project_path, target_position, &workspace, window, cx)
+                      .detach();
+              }
+          }
+          AssistantContext::FetchedUrl(fetched_url_context) => {
+              cx.open_url(&fetched_url_context.url);
+          }
+          AssistantContext::Thread(thread_context) => {
+              let thread_id = thread_context.thread.read(cx).id().clone();
+              workspace.update(cx, |workspace, cx| {
+                  if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                      panel.update(cx, |panel, cx| {
+                          panel
+                              .open_thread(&thread_id, window, cx)
+                              .detach_and_log_err(cx)
+                      });
+                  }
+              })
+          }
+          AssistantContext::Rules(rules_context) => window.dispatch_action(
+              Box::new(OpenPromptLibrary {
+                  prompt_to_select: Some(rules_context.prompt_id.0),
+              }),
+              cx,
+          ),
+          */
     }
 }
 

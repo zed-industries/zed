@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet, IndexSet};
 use futures::future::join_all;
 use futures::{self, Future, FutureExt, future};
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
@@ -15,27 +15,15 @@ use text::{Anchor, BufferId, OffsetRangeExt};
 use util::ResultExt as _;
 
 use crate::ThreadStore;
-use crate::context::{
-    AssistantContext, ContextBuffer, ContextId, ContextSymbol, ContextSymbolId, DirectoryContext,
-    ExcerptContext, FetchedUrlContext, FileContext, RulesContext, SymbolContext, ThreadContext,
-};
+use crate::context::{AssistantContext, FileContext};
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
 
 pub struct ContextStore {
     project: WeakEntity<Project>,
-    context: Vec<AssistantContext>,
     thread_store: Option<WeakEntity<ThreadStore>>,
-    next_context_id: ContextId,
-    files: BTreeMap<BufferId, ContextId>,
-    directories: HashMap<ProjectPath, ContextId>,
-    symbols: HashMap<ContextSymbolId, ContextId>,
-    symbol_buffers: HashMap<ContextSymbolId, Entity<Buffer>>,
-    symbols_by_path: HashMap<ProjectPath, Vec<ContextSymbolId>>,
-    threads: HashMap<ThreadId, ContextId>,
     thread_summary_tasks: Vec<Task<()>>,
-    fetched_urls: HashMap<String, ContextId>,
-    user_rules: HashMap<UserPromptId, ContextId>,
+    context: IndexSet<AssistantContext>,
 }
 
 impl ContextStore {
@@ -46,35 +34,17 @@ impl ContextStore {
         Self {
             project,
             thread_store,
-            context: Vec::new(),
-            next_context_id: ContextId(0),
-            files: BTreeMap::default(),
-            directories: HashMap::default(),
-            symbols: HashMap::default(),
-            symbol_buffers: HashMap::default(),
-            symbols_by_path: HashMap::default(),
-            threads: HashMap::default(),
             thread_summary_tasks: Vec::new(),
-            fetched_urls: HashMap::default(),
-            user_rules: HashMap::default(),
+            context: IndexSet::default(),
         }
     }
 
-    pub fn context(&self) -> &Vec<AssistantContext> {
+    pub fn context(&self) -> &IndexSet<AssistantContext> {
         &self.context
-    }
-
-    pub fn context_for_id(&self, id: ContextId) -> Option<&AssistantContext> {
-        self.context().iter().find(|context| context.id() == id)
     }
 
     pub fn clear(&mut self) {
         self.context.clear();
-        self.files.clear();
-        self.directories.clear();
-        self.threads.clear();
-        self.fetched_urls.clear();
-        self.user_rules.clear();
     }
 
     pub fn add_file_from_path(
@@ -95,6 +65,7 @@ impl ContextStore {
             let buffer = open_buffer_task.await?;
             let buffer_id = this.update(cx, |_, cx| buffer.read(cx).remote_id())?;
 
+            /* todo!
             let already_included = this.update(cx, |this, cx| {
                 match this.will_include_buffer(buffer_id, &project_path) {
                     Some(FileInclusion::Direct(context_id)) => {
@@ -111,43 +82,26 @@ impl ContextStore {
             if already_included {
                 return anyhow::Ok(());
             }
-
-            let context_buffer = this
-                .update(cx, |_, cx| load_context_buffer(buffer, cx))??
-                .await;
+            */
 
             this.update(cx, |this, cx| {
-                this.insert_file(context_buffer, cx);
+                this.add_file_from_buffer(buffer, cx);
             })?;
 
             anyhow::Ok(())
         })
     }
 
-    pub fn add_file_from_buffer(
-        &mut self,
-        buffer: Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        cx.spawn(async move |this, cx| {
-            let context_buffer = this
-                .update(cx, |_, cx| load_context_buffer(buffer, cx))??
-                .await;
-
-            this.update(cx, |this, cx| this.insert_file(context_buffer, cx))?;
-
-            anyhow::Ok(())
-        })
+    pub fn add_file_from_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let inserted = self
+            .context
+            .insert(AssistantContext::File(FileContext { buffer }));
+        if inserted {
+            cx.notify();
+        }
     }
 
-    fn insert_file(&mut self, context_buffer: ContextBuffer, cx: &mut Context<Self>) {
-        let id = self.next_context_id.post_inc();
-        self.files.insert(context_buffer.id, id);
-        self.context
-            .push(AssistantContext::File(FileContext { id, context_buffer }));
-        cx.notify();
-    }
-
+    /*
     pub fn add_directory(
         &mut self,
         project_path: ProjectPath,
@@ -485,12 +439,13 @@ impl ContextStore {
         }));
         cx.notify();
     }
+    */
 
     pub fn accept_suggested_context(
         &mut self,
         suggested: &SuggestedContext,
         cx: &mut Context<ContextStore>,
-    ) -> Task<Result<()>> {
+    ) {
         match suggested {
             SuggestedContext::File {
                 buffer,
@@ -498,58 +453,24 @@ impl ContextStore {
                 name: _,
             } => {
                 if let Some(buffer) = buffer.upgrade() {
-                    return self.add_file_from_buffer(buffer, cx);
+                    self.add_file_from_buffer(buffer, cx);
                 };
-            }
-            SuggestedContext::Thread { thread, name: _ } => {
-                if let Some(thread) = thread.upgrade() {
-                    self.insert_thread(thread, cx);
-                };
-            }
+            } /*
+              SuggestedContext::Thread { thread, name: _ } => {
+                  if let Some(thread) = thread.upgrade() {
+                      self.insert_thread(thread, cx);
+                  };
+              }
+              */
         }
-        Task::ready(Ok(()))
     }
 
-    pub fn remove_context(&mut self, id: ContextId, cx: &mut Context<Self>) {
-        let Some(ix) = self.context.iter().position(|context| context.id() == id) else {
-            return;
-        };
-
-        match self.context.remove(ix) {
-            AssistantContext::File(_) => {
-                self.files.retain(|_, context_id| *context_id != id);
-            }
-            AssistantContext::Directory(_) => {
-                self.directories.retain(|_, context_id| *context_id != id);
-            }
-            AssistantContext::Symbol(symbol) => {
-                if let Some(symbols_in_path) =
-                    self.symbols_by_path.get_mut(&symbol.context_symbol.id.path)
-                {
-                    symbols_in_path.retain(|s| {
-                        self.symbols
-                            .get(s)
-                            .map_or(false, |context_id| *context_id != id)
-                    });
-                }
-                self.symbol_buffers.remove(&symbol.context_symbol.id);
-                self.symbols.retain(|_, context_id| *context_id != id);
-            }
-            AssistantContext::Excerpt(_) => {}
-            AssistantContext::FetchedUrl(_) => {
-                self.fetched_urls.retain(|_, context_id| *context_id != id);
-            }
-            AssistantContext::Thread(_) => {
-                self.threads.retain(|_, context_id| *context_id != id);
-            }
-            AssistantContext::Rules(RulesContext { prompt_id, .. }) => {
-                self.user_rules.remove(&prompt_id);
-            }
-        }
-
+    pub fn remove_context(&mut self, context: &AssistantContext, cx: &mut Context<Self>) {
+        self.context.swap_remove(context);
         cx.notify();
     }
 
+    /*
     /// Returns whether the buffer is already included directly in the context, or if it will be
     /// included in the context via a directory. Directory inclusion is based on paths rather than
     /// buffer IDs as the directory will be re-scanned.
@@ -681,8 +602,10 @@ impl ContextStore {
     pub fn thread_ids(&self) -> HashSet<ThreadId> {
         self.threads.keys().cloned().collect()
     }
+    */
 }
 
+/*
 pub enum FileInclusion {
     Direct(ContextId),
     InDirectory(ProjectPath),
@@ -738,87 +661,6 @@ fn load_context_buffer_range(
     Ok((line_range, task))
 }
 
-fn load_context_buffer(buffer: Entity<Buffer>, cx: &App) -> Result<Task<ContextBuffer>> {
-    let buffer_ref = buffer.read(cx);
-    let id = buffer_ref.remote_id();
-
-    let file = buffer_ref.file().context("context buffer missing path")?;
-    let full_path = file.full_path(cx);
-
-    // Important to collect version at the same time as content so that staleness logic is correct.
-    let version = buffer_ref.version();
-    let content = buffer_ref.as_rope().clone();
-
-    // Build the text on a background thread.
-    Ok(cx.background_spawn(async move {
-        let text = to_fenced_codeblock(&full_path, content, None);
-        ContextBuffer {
-            id,
-            buffer,
-            last_full_path: full_path.into(),
-            version,
-            text,
-        }
-    }))
-}
-
-fn to_fenced_codeblock(
-    path: &Path,
-    content: Rope,
-    line_range: Option<Range<Point>>,
-) -> SharedString {
-    let line_range_text = line_range.map(|range| {
-        if range.start.row == range.end.row {
-            format!(":{}", range.start.row + 1)
-        } else {
-            format!(":{}-{}", range.start.row + 1, range.end.row + 1)
-        }
-    });
-
-    let path_extension = path.extension().and_then(|ext| ext.to_str());
-    let path_string = path.to_string_lossy();
-    let capacity = 3
-        + path_extension.map_or(0, |extension| extension.len() + 1)
-        + path_string.len()
-        + line_range_text.as_ref().map_or(0, |text| text.len())
-        + 1
-        + content.len()
-        + 5;
-    let mut buffer = String::with_capacity(capacity);
-
-    buffer.push_str("```");
-
-    if let Some(extension) = path_extension {
-        buffer.push_str(extension);
-        buffer.push(' ');
-    }
-    buffer.push_str(&path_string);
-
-    if let Some(line_range_text) = line_range_text {
-        buffer.push_str(&line_range_text);
-    }
-
-    buffer.push('\n');
-    for chunk in content.chunks() {
-        buffer.push_str(&chunk);
-    }
-
-    if !buffer.ends_with('\n') {
-        buffer.push('\n');
-    }
-
-    buffer.push_str("```\n");
-
-    debug_assert!(
-        buffer.len() == capacity - 1 || buffer.len() == capacity,
-        "to_fenced_codeblock calculated capacity of {}, but length was {}",
-        capacity,
-        buffer.len(),
-    );
-
-    buffer.into()
-}
-
 fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
     let mut files = Vec::new();
 
@@ -832,267 +674,4 @@ fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
 
     files
 }
-
-pub fn refresh_context_text(
-    context_store: Entity<ContextStore>,
-    context: &AssistantContext,
-    cx: &App,
-) -> Option<Task<()>> {
-    match context {
-        AssistantContext::File(file_context) => refresh_file_text(context_store, file_context, cx),
-        AssistantContext::Directory(directory_context) => {
-            refresh_directory_text(context_store, directory_context, cx)
-        }
-        AssistantContext::Symbol(symbol_context) => {
-            refresh_symbol_text(context_store, symbol_context, cx)
-        }
-        AssistantContext::Excerpt(excerpt_context) => {
-            refresh_excerpt_text(context_store, excerpt_context, cx)
-        }
-        AssistantContext::Thread(thread_context) => {
-            Some(refresh_thread_text(context_store, thread_context, cx))
-        }
-        // Intentionally omit refreshing fetched URLs as it doesn't seem all that useful,
-        // and doing the caching properly could be tricky (unless it's already handled by
-        // the HttpClient?).
-        AssistantContext::FetchedUrl(_) => None,
-        AssistantContext::Rules(user_rules_context) => {
-            Some(refresh_user_rules(context_store, user_rules_context, cx))
-        }
-    }
-}
-
-fn refresh_file_text(
-    context_store: Entity<ContextStore>,
-    file_context: &FileContext,
-    cx: &App,
-) -> Option<Task<()>> {
-    let id = file_context.id;
-    let task = refresh_context_buffer(&file_context.context_buffer, cx);
-    if let Some(task) = task {
-        Some(cx.spawn(async move |cx| {
-            let context_buffer = task.await;
-            context_store
-                .update(cx, |context_store, _| {
-                    let new_file_context = FileContext { id, context_buffer };
-                    context_store.replace_context(AssistantContext::File(new_file_context));
-                })
-                .ok();
-        }))
-    } else {
-        None
-    }
-}
-
-fn refresh_directory_text(
-    context_store: Entity<ContextStore>,
-    directory_context: &DirectoryContext,
-    cx: &App,
-) -> Option<Task<()>> {
-    let directory_path = directory_context.project_path(cx)?;
-    let mut stale = directory_path.path != directory_context.last_path;
-
-    let futures = directory_context
-        .context_buffers
-        .iter()
-        .map(|context_buffer| {
-            if let Some(refresh_task) = refresh_context_buffer(context_buffer, cx) {
-                stale = true;
-                future::Either::Left(refresh_task)
-            } else {
-                future::Either::Right(future::ready((*context_buffer).clone()))
-            }
-        })
-        .collect::<Vec<_>>();
-
-    if !stale {
-        return None;
-    }
-
-    let context_buffers = future::join_all(futures);
-
-    let id = directory_context.id;
-    let worktree = directory_context.worktree.clone();
-    let entry_id = directory_context.entry_id;
-    let last_path = directory_path.path;
-    Some(cx.spawn(async move |cx| {
-        let context_buffers = context_buffers.await;
-        context_store
-            .update(cx, |context_store, _| {
-                let new_directory_context = DirectoryContext {
-                    id,
-                    worktree,
-                    entry_id,
-                    last_path,
-                    context_buffers,
-                };
-                context_store.replace_context(AssistantContext::Directory(new_directory_context));
-            })
-            .ok();
-    }))
-}
-
-fn refresh_symbol_text(
-    context_store: Entity<ContextStore>,
-    symbol_context: &SymbolContext,
-    cx: &App,
-) -> Option<Task<()>> {
-    let id = symbol_context.id;
-    let task = refresh_context_symbol(&symbol_context.context_symbol, cx);
-    if let Some(task) = task {
-        Some(cx.spawn(async move |cx| {
-            let context_symbol = task.await;
-            context_store
-                .update(cx, |context_store, _| {
-                    let new_symbol_context = SymbolContext { id, context_symbol };
-                    context_store.replace_context(AssistantContext::Symbol(new_symbol_context));
-                })
-                .ok();
-        }))
-    } else {
-        None
-    }
-}
-
-fn refresh_excerpt_text(
-    context_store: Entity<ContextStore>,
-    excerpt_context: &ExcerptContext,
-    cx: &App,
-) -> Option<Task<()>> {
-    let id = excerpt_context.id;
-    let range = excerpt_context.range.clone();
-    let task = refresh_context_excerpt(&excerpt_context.context_buffer, range.clone(), cx);
-    if let Some(task) = task {
-        Some(cx.spawn(async move |cx| {
-            let (line_range, context_buffer) = task.await;
-            context_store
-                .update(cx, |context_store, _| {
-                    let new_excerpt_context = ExcerptContext {
-                        id,
-                        range,
-                        line_range,
-                        context_buffer,
-                    };
-                    context_store.replace_context(AssistantContext::Excerpt(new_excerpt_context));
-                })
-                .ok();
-        }))
-    } else {
-        None
-    }
-}
-
-fn refresh_thread_text(
-    context_store: Entity<ContextStore>,
-    thread_context: &ThreadContext,
-    cx: &App,
-) -> Task<()> {
-    let id = thread_context.id;
-    let thread = thread_context.thread.clone();
-    cx.spawn(async move |cx| {
-        context_store
-            .update(cx, |context_store, cx| {
-                let text = thread.read(cx).latest_detailed_summary_or_text();
-                context_store.replace_context(AssistantContext::Thread(ThreadContext {
-                    id,
-                    thread,
-                    text,
-                }));
-            })
-            .ok();
-    })
-}
-
-fn refresh_user_rules(
-    context_store: Entity<ContextStore>,
-    user_rules_context: &RulesContext,
-    cx: &App,
-) -> Task<()> {
-    let id = user_rules_context.id;
-    let prompt_id = user_rules_context.prompt_id;
-    let Some(thread_store) = context_store.read(cx).thread_store.as_ref() else {
-        return Task::ready(());
-    };
-    let Ok(load_task) = thread_store.read_with(cx, |thread_store, cx| {
-        thread_store.load_rules(prompt_id, cx)
-    }) else {
-        return Task::ready(());
-    };
-    cx.spawn(async move |cx| {
-        if let Ok((metadata, text)) = load_task.await {
-            if let Some(title) = metadata.title.clone() {
-                context_store
-                    .update(cx, |context_store, _cx| {
-                        context_store.replace_context(AssistantContext::Rules(RulesContext {
-                            id,
-                            prompt_id,
-                            title,
-                            text: text.into(),
-                        }));
-                    })
-                    .ok();
-                return;
-            }
-        }
-        context_store
-            .update(cx, |context_store, cx| {
-                context_store.remove_context(id, cx);
-            })
-            .ok();
-    })
-}
-
-fn refresh_context_buffer(context_buffer: &ContextBuffer, cx: &App) -> Option<Task<ContextBuffer>> {
-    let buffer = context_buffer.buffer.read(cx);
-    let file = buffer.file()?;
-    if buffer.version.changed_since(&context_buffer.version)
-        || file.full_path(cx).as_path() != context_buffer.last_full_path.as_ref()
-    {
-        load_context_buffer(context_buffer.buffer.clone(), cx).log_err()
-    } else {
-        None
-    }
-}
-
-fn refresh_context_excerpt(
-    context_buffer: &ContextBuffer,
-    range: Range<Anchor>,
-    cx: &App,
-) -> Option<impl Future<Output = (Range<Point>, ContextBuffer)> + use<>> {
-    let buffer = context_buffer.buffer.read(cx);
-    let file = buffer.file()?;
-    if buffer.version.changed_since(&context_buffer.version)
-        || file.full_path(cx).as_path() != context_buffer.last_full_path.as_ref()
-    {
-        let (line_range, context_buffer_task) =
-            load_context_buffer_range(context_buffer.buffer.clone(), range, cx).log_err()?;
-        Some(context_buffer_task.map(move |context_buffer| (line_range, context_buffer)))
-    } else {
-        None
-    }
-}
-
-fn refresh_context_symbol(
-    context_symbol: &ContextSymbol,
-    cx: &App,
-) -> Option<impl Future<Output = ContextSymbol> + use<>> {
-    let buffer = context_symbol.buffer.read(cx);
-    let project_path = buffer.project_path(cx)?;
-    // TODO: Should refresh text when path has changed.
-    if buffer.version.changed_since(&context_symbol.buffer_version) {
-        let (_line_range, context_buffer_task) = load_context_buffer_range(
-            context_symbol.buffer.clone(),
-            context_symbol.enclosing_range.clone(),
-            cx,
-        )
-        .log_err()?;
-        let name = context_symbol.id.name.clone();
-        let range = context_symbol.id.range.clone();
-        let enclosing_range = context_symbol.enclosing_range.clone();
-        Some(context_buffer_task.map(move |context_buffer| {
-            make_context_symbol(context_buffer, project_path, name, range, enclosing_range)
-        }))
-    } else {
-        None
-    }
-}
+*/

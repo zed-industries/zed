@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::{AssistantContext, format_context_as_string};
+use crate::context::{AssistantContext, load_context_text};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -32,7 +32,7 @@ use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
-use crate::context_store::{ContextStore, refresh_context_text};
+use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{Thread, TokenUsageRatio};
@@ -270,44 +270,33 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
-        // Only need to refresh context that's added to the message.
-        let new_context = self
-            .thread
+        let mut new_context = self.context_store.read(cx).context().clone();
+        self.thread
             .read(cx)
-            .filter_new_context(self.context_store.read(cx).context().iter())
-            .collect::<Vec<_>>();
-        let refresh_task = future::join_all(
-            new_context
-                .iter()
-                .flat_map(|context| refresh_context_text(self.context_store.clone(), context, cx))
-                .collect::<Vec<_>>(),
-        );
-        let new_context_ids = new_context
-            .into_iter()
-            .map(|context| context.id())
-            .collect::<Vec<_>>();
+            .remove_already_added_context(&mut new_context);
+        let context_text_task = load_context_text(new_context.iter(), cx);
 
         let thread = self.thread.clone();
-        let context_store = self.context_store.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_this, cx| {
             let checkpoint = checkpoint.await.ok();
-            refresh_task.await;
+            let context_text = context_text_task.await;
 
             thread
                 .update(cx, |thread, cx| {
-                    let context_store_ref = context_store.read(cx);
-                    let new_context = new_context_ids
-                        .into_iter()
-                        .flat_map(|id| context_store_ref.context_for_id(id))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    thread.insert_user_message(user_message, new_context, checkpoint, cx);
+                    thread.insert_user_message(
+                        user_message,
+                        new_context,
+                        context_text,
+                        checkpoint,
+                        cx,
+                    );
                 })
                 .log_err();
 
+            /* todo!
             context_store
                 .update(cx, |context_store, cx| {
                     let excerpt_ids = context_store
@@ -341,6 +330,7 @@ impl MessageEditor {
                 })
                 .log_err();
             }
+            */
 
             // Send to model after summaries are done
             thread
@@ -996,6 +986,7 @@ impl MessageEditor {
     }
 
     fn message_or_context_changed(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        /* todo!
         cx.emit(MessageEditorEvent::Changed);
         self.update_token_count_task.take();
 
@@ -1054,6 +1045,7 @@ impl MessageEditor {
                 this.update_token_count_task.take();
             })
         }));
+        */
     }
 }
 

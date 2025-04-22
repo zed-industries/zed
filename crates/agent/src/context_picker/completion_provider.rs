@@ -22,26 +22,26 @@ use workspace::Workspace;
 
 use crate::context::RULES_ICON;
 use crate::context_picker::file_context_picker::search_files;
-use crate::context_picker::symbol_context_picker::search_symbols;
+// use crate::context_picker::symbol_context_picker::search_symbols;
 use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 
-use super::fetch_context_picker::fetch_url_content;
+// use super::fetch_context_picker::fetch_url_content;
 use super::file_context_picker::FileMatch;
-use super::rules_context_picker::{RulesContextEntry, search_rules};
-use super::symbol_context_picker::SymbolMatch;
-use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
+// use super::rules_context_picker::{RulesContextEntry, search_rules};
+// use super::symbol_context_picker::SymbolMatch;
+// use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
     ContextPickerMode, MentionLink, RecentEntry, recent_context_picker_entries,
     supported_context_picker_modes,
 };
 
 pub(crate) enum Match {
-    Symbol(SymbolMatch),
+    // Symbol(SymbolMatch),
     File(FileMatch),
-    Thread(ThreadMatch),
-    Fetch(SharedString),
-    Rules(RulesContextEntry),
+    // Thread(ThreadMatch),
+    // Fetch(SharedString),
+    // Rules(RulesContextEntry),
     Mode(ModeMatch),
 }
 
@@ -55,10 +55,10 @@ impl Match {
         match self {
             Match::File(file) => file.mat.score,
             Match::Mode(mode) => mode.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
-            Match::Thread(_) => 1.,
-            Match::Symbol(_) => 1.,
-            Match::Fetch(_) => 1.,
-            Match::Rules(_) => 1.,
+            // Match::Thread(_) => 1.,
+            // Match::Symbol(_) => 1.,
+            // Match::Fetch(_) => 1.,
+            // Match::Rules(_) => 1.,
         }
     }
 }
@@ -84,54 +84,54 @@ fn search(
                     .collect()
             })
         }
-        Some(ContextPickerMode::Symbol) => {
-            let search_symbols_task =
-                search_symbols(query.clone(), cancellation_flag.clone(), &workspace, cx);
-            cx.background_spawn(async move {
-                search_symbols_task
-                    .await
-                    .into_iter()
-                    .map(Match::Symbol)
-                    .collect()
-            })
-        }
-        Some(ContextPickerMode::Thread) => {
-            if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
-                let search_threads_task =
-                    search_threads(query.clone(), cancellation_flag.clone(), thread_store, cx);
-                cx.background_spawn(async move {
-                    search_threads_task
-                        .await
-                        .into_iter()
-                        .map(Match::Thread)
-                        .collect()
-                })
-            } else {
-                Task::ready(Vec::new())
-            }
-        }
-        Some(ContextPickerMode::Fetch) => {
-            if !query.is_empty() {
-                Task::ready(vec![Match::Fetch(query.into())])
-            } else {
-                Task::ready(Vec::new())
-            }
-        }
-        Some(ContextPickerMode::Rules) => {
-            if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
-                let search_rules_task =
-                    search_rules(query.clone(), cancellation_flag.clone(), thread_store, cx);
-                cx.background_spawn(async move {
-                    search_rules_task
-                        .await
-                        .into_iter()
-                        .map(Match::Rules)
-                        .collect::<Vec<_>>()
-                })
-            } else {
-                Task::ready(Vec::new())
-            }
-        }
+        // Some(ContextPickerMode::Symbol) => {
+        //     let search_symbols_task =
+        //         search_symbols(query.clone(), cancellation_flag.clone(), &workspace, cx);
+        //     cx.background_spawn(async move {
+        //         search_symbols_task
+        //             .await
+        //             .into_iter()
+        //             .map(Match::Symbol)
+        //             .collect()
+        //     })
+        // }
+        // Some(ContextPickerMode::Thread) => {
+        //     if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
+        //         let search_threads_task =
+        //             search_threads(query.clone(), cancellation_flag.clone(), thread_store, cx);
+        //         cx.background_spawn(async move {
+        //             search_threads_task
+        //                 .await
+        //                 .into_iter()
+        //                 .map(Match::Thread)
+        //                 .collect()
+        //         })
+        //     } else {
+        //         Task::ready(Vec::new())
+        //     }
+        // }
+        // Some(ContextPickerMode::Fetch) => {
+        //     if !query.is_empty() {
+        //         Task::ready(vec![Match::Fetch(query.into())])
+        //     } else {
+        //         Task::ready(Vec::new())
+        //     }
+        // }
+        // Some(ContextPickerMode::Rules) => {
+        //     if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
+        //         let search_rules_task =
+        //             search_rules(query.clone(), cancellation_flag.clone(), thread_store, cx);
+        //         cx.background_spawn(async move {
+        //             search_rules_task
+        //                 .await
+        //                 .into_iter()
+        //                 .map(Match::Rules)
+        //                 .collect::<Vec<_>>()
+        //         })
+        //     } else {
+        //         Task::ready(Vec::new())
+        //     }
+        // }
         None => {
             if query.is_empty() {
                 let mut matches = recent_entries
@@ -152,12 +152,12 @@ fn search(
                             },
                             is_recent: true,
                         }),
-                        super::RecentEntry::Thread(thread_context_entry) => {
-                            Match::Thread(ThreadMatch {
-                                thread: thread_context_entry,
-                                is_recent: true,
-                            })
-                        }
+                        // super::RecentEntry::Thread(thread_context_entry) => {
+                        //     Match::Thread(ThreadMatch {
+                        //         thread: thread_context_entry,
+                        //         is_recent: true,
+                        //     })
+                        // }
                     })
                     .collect::<Vec<_>>();
 
@@ -256,6 +256,7 @@ impl ContextPickerCompletionProvider {
         }
     }
 
+    /*
     fn completion_for_thread(
         thread_entry: ThreadContextEntry,
         excerpt_id: ExcerptId,
@@ -411,6 +412,7 @@ impl ContextPickerCompletionProvider {
             )),
         }
     }
+    */
 
     fn completion_for_path(
         project_path: ProjectPath,
@@ -467,11 +469,13 @@ impl ContextPickerCompletionProvider {
                 editor,
                 move |cx| {
                     context_store.update(cx, |context_store, cx| {
-                        let task = if is_directory {
-                            context_store.add_directory(project_path.clone(), false, cx)
-                        } else {
-                            context_store.add_file_from_path(project_path.clone(), false, cx)
-                        };
+                        // todo!
+                        // let task = if is_directory {
+                        //     context_store.add_directory(project_path.clone(), false, cx)
+                        // } else {
+                        let task =
+                            context_store.add_file_from_path(project_path.clone(), false, cx);
+                        // };
                         task.detach_and_log_err(cx);
                     })
                 },
@@ -479,6 +483,7 @@ impl ContextPickerCompletionProvider {
         }
     }
 
+    /*
     fn completion_for_symbol(
         symbol: Symbol,
         excerpt_id: ExcerptId,
@@ -544,6 +549,7 @@ impl ContextPickerCompletionProvider {
             )),
         })
     }
+    */
 }
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
@@ -644,51 +650,52 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 cx,
                             ))
                         }
-                        Match::Symbol(SymbolMatch { symbol, .. }) => Self::completion_for_symbol(
-                            symbol,
-                            excerpt_id,
-                            source_range.clone(),
-                            editor.clone(),
-                            context_store.clone(),
-                            workspace.clone(),
-                            cx,
-                        ),
-                        Match::Thread(ThreadMatch {
-                            thread, is_recent, ..
-                        }) => {
-                            let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
-                            Some(Self::completion_for_thread(
-                                thread,
-                                excerpt_id,
-                                source_range.clone(),
-                                is_recent,
-                                editor.clone(),
-                                context_store.clone(),
-                                thread_store,
-                            ))
-                        }
-                        Match::Rules(user_rules) => {
-                            let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
-                            Some(Self::completion_for_rules(
-                                user_rules,
-                                excerpt_id,
-                                source_range.clone(),
-                                editor.clone(),
-                                context_store.clone(),
-                                thread_store,
-                            ))
-                        }
-                        Match::Fetch(url) => Some(Self::completion_for_fetch(
-                            source_range.clone(),
-                            url,
-                            excerpt_id,
-                            editor.clone(),
-                            context_store.clone(),
-                            http_client.clone(),
-                        )),
                         Match::Mode(ModeMatch { mode, .. }) => {
                             Some(Self::completion_for_mode(source_range.clone(), mode))
-                        }
+                        } /*
+                          Match::Symbol(SymbolMatch { symbol, .. }) => Self::completion_for_symbol(
+                              symbol,
+                              excerpt_id,
+                              source_range.clone(),
+                              editor.clone(),
+                              context_store.clone(),
+                              workspace.clone(),
+                              cx,
+                          ),
+                          Match::Thread(ThreadMatch {
+                              thread, is_recent, ..
+                          }) => {
+                              let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
+                              Some(Self::completion_for_thread(
+                                  thread,
+                                  excerpt_id,
+                                  source_range.clone(),
+                                  is_recent,
+                                  editor.clone(),
+                                  context_store.clone(),
+                                  thread_store,
+                              ))
+                          }
+                          Match::Rules(user_rules) => {
+                              let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
+                              Some(Self::completion_for_rules(
+                                  user_rules,
+                                  excerpt_id,
+                                  source_range.clone(),
+                                  editor.clone(),
+                                  context_store.clone(),
+                                  thread_store,
+                              ))
+                          }
+                          Match::Fetch(url) => Some(Self::completion_for_fetch(
+                              source_range.clone(),
+                              url,
+                              excerpt_id,
+                              editor.clone(),
+                              context_store.clone(),
+                              http_client.clone(),
+                          )),
+                          */
                     })
                     .collect()
             })?))

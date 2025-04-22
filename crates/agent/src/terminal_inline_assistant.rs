@@ -1,4 +1,3 @@
-use crate::context::attach_context_to_message;
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
@@ -252,11 +251,13 @@ impl TerminalInlineAssistant {
             cache: false,
         };
 
+        /* todo!
         attach_context_to_message(
             &mut request_message,
             assist.context_store.read(cx).context().iter(),
             cx,
         );
+        */
 
         request_message.content.push(prompt.into());
 

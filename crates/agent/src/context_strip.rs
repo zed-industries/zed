@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::rc::Rc;
 
-use collections::HashSet;
+use collections::{HashSet, IndexSet};
 use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
@@ -14,7 +14,7 @@ use project::ProjectItem;
 use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::{Workspace, notifications::NotifyResultExt};
 
-use crate::context::{ContextId, ContextKind};
+use crate::context::{AssistantContext, ContextKind};
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
@@ -82,7 +82,7 @@ impl ContextStrip {
     fn suggested_context(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
         match self.suggest_context_kind {
             SuggestContextKind::File => self.suggested_file(cx),
-            SuggestContextKind::Thread => self.suggested_thread(cx),
+            // SuggestContextKind::Thread => self.suggested_thread(cx),
         }
     }
 
@@ -96,6 +96,7 @@ impl ContextStrip {
 
         let project_path = active_buffer.project_path(cx)?;
 
+        /* todo!
         if self
             .context_store
             .read(cx)
@@ -104,6 +105,7 @@ impl ContextStrip {
         {
             return None;
         }
+        */
 
         let file_name = active_buffer.file()?.file_name(cx);
 
@@ -116,6 +118,7 @@ impl ContextStrip {
         })
     }
 
+    /*
     fn suggested_thread(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
         if !self.context_picker.read(cx).allow_threads() {
             return None;
@@ -145,6 +148,7 @@ impl ContextStrip {
             thread: weak_active_thread,
         })
     }
+    */
 
     fn handle_context_picker_event(
         &mut self,
@@ -272,12 +276,18 @@ impl ContextStrip {
         best.map(|(index, _, _)| index)
     }
 
-    fn open_context(&mut self, id: ContextId, window: &mut Window, cx: &mut App) {
+    fn open_context(&mut self, context: &AssistantContext, window: &mut Window, cx: &mut App) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 
-        crate::active_thread::open_context(id, self.context_store.clone(), workspace, window, cx);
+        crate::active_thread::open_context(
+            context,
+            self.context_store.clone(),
+            workspace,
+            window,
+            cx,
+        );
     }
 
     fn remove_focused_context(
@@ -290,8 +300,8 @@ impl ContextStrip {
             let mut is_empty = false;
 
             self.context_store.update(cx, |this, cx| {
-                if let Some(item) = this.context().get(index) {
-                    this.remove_context(item.id(), cx);
+                if let Some(item) = this.context().get_index(index) {
+                    this.remove_context(&item.clone(), cx);
                 }
 
                 is_empty = this.context().is_empty();
@@ -306,7 +316,7 @@ impl ContextStrip {
         }
     }
 
-    fn is_suggested_focused<T>(&self, context: &Vec<T>) -> bool {
+    fn is_suggested_focused<T>(&self, context: &IndexSet<T>) -> bool {
         // We only suggest one item after the actual context
         self.focused_index == Some(context.len())
     }
@@ -332,23 +342,10 @@ impl ContextStrip {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let task = self.context_store.update(cx, |context_store, cx| {
+        // todo! conditional notify
+        self.context_store.update(cx, |context_store, cx| {
             context_store.accept_suggested_context(&suggested, cx)
         });
-
-        cx.spawn_in(window, async move |this, cx| {
-            match task.await.notify_async_err(cx) {
-                None => {}
-                Some(()) => {
-                    if let Some(this) = this.upgrade() {
-                        this.update(cx, |_, cx| cx.notify())?;
-                    }
-                }
-            }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-
         cx.notify();
     }
 }
@@ -370,7 +367,7 @@ impl Render for ContextStrip {
 
         let added_contexts = context
             .iter()
-            .map(|c| AddedContext::new(c, cx))
+            .flat_map(|c| AddedContext::new(c.clone(), cx))
             .collect::<Vec<_>>();
         let dupe_names = added_contexts
             .iter()
@@ -466,16 +463,17 @@ impl Render for ContextStrip {
                     .enumerate()
                     .map(|(i, added_context)| {
                         let name = added_context.name.clone();
-                        let id = added_context.id;
+                        let context = added_context.context.clone();
                         ContextPill::added(
                             added_context,
                             dupe_names.contains(&name),
                             self.focused_index == Some(i),
                             Some({
+                                let context = context.clone();
                                 let context_store = self.context_store.clone();
                                 Rc::new(cx.listener(move |_this, _event, _window, cx| {
                                     context_store.update(cx, |this, cx| {
-                                        this.remove_context(id, cx);
+                                        this.remove_context(&context, cx);
                                     });
                                     cx.notify();
                                 }))
@@ -484,7 +482,7 @@ impl Render for ContextStrip {
                         .on_click({
                             Rc::new(cx.listener(move |this, event: &ClickEvent, window, cx| {
                                 if event.down.click_count > 1 {
-                                    this.open_context(id, window, cx);
+                                    this.open_context(&context, window, cx);
                                 } else {
                                     this.focused_index = Some(i);
                                 }
@@ -548,7 +546,7 @@ impl EventEmitter<ContextStripEvent> for ContextStrip {}
 
 pub enum SuggestContextKind {
     File,
-    Thread,
+    // Thread,
 }
 
 #[derive(Clone)]
@@ -558,31 +556,31 @@ pub enum SuggestedContext {
         icon_path: Option<SharedString>,
         buffer: WeakEntity<Buffer>,
     },
-    Thread {
-        name: SharedString,
-        thread: WeakEntity<Thread>,
-    },
+    // Thread {
+    //     name: SharedString,
+    //     thread: WeakEntity<Thread>,
+    // },
 }
 
 impl SuggestedContext {
     pub fn name(&self) -> &SharedString {
         match self {
             Self::File { name, .. } => name,
-            Self::Thread { name, .. } => name,
+            // Self::Thread { name, .. } => name,
         }
     }
 
     pub fn icon_path(&self) -> Option<SharedString> {
         match self {
             Self::File { icon_path, .. } => icon_path.clone(),
-            Self::Thread { .. } => None,
+            // Self::Thread { .. } => None,
         }
     }
 
     pub fn kind(&self) -> ContextKind {
         match self {
             Self::File { .. } => ContextKind::File,
-            Self::Thread { .. } => ContextKind::Thread,
+            // Self::Thread { .. } => ContextKind::Thread,
         }
     }
 }
