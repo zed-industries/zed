@@ -270,6 +270,7 @@ fn main() {
 
             let mut diff_scores = Vec::new();
             let mut thread_scores = Vec::new();
+            let mut assertion_stats = Vec::new();
             let mut error_count = 0;
 
             for (instance, result) in results {
@@ -365,14 +366,37 @@ fn main() {
                             }
 
                             println!("└────────────────────────────────────────────┴───────────┘");
+
+                            println!(
+                                "\n{} assertion{} failed, {} passed",
+                                run_output.assertions.failure.len(),
+                                if run_output.assertions.failure.len() == 1 {
+                                    ""
+                                } else {
+                                    "s"
+                                },
+                                run_output.assertions.success.len(),
+                            );
+
+                            let total = run_output.assertions.failure.len()
+                                + run_output.assertions.success.len();
+                            let pct = run_output.assertions.success.len() / total * 100;
+                            assertion_stats.push(pct)
                         }
                     }
                 }
-                println!(
-                    "{}    > {}",
-                    " ".repeat(max_name_width),
-                    instance.run_directory.display()
-                );
+                println!("\n> {}", instance.run_directory.display());
+            }
+
+            let assertion_stats_count = assertion_stats.len();
+            let avg_assertion_success_pct = assertion_stats
+                .into_iter()
+                .map(|pct| pct as f32)
+                .sum::<f32>()
+                / (assertion_stats_count as f32);
+
+            if assertion_stats_count > 0 {
+                println!("\nAverage assertion success: {avg_assertion_success_pct}%");
             }
 
             let diff_score_count = diff_scores.len();
