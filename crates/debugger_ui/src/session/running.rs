@@ -1020,7 +1020,7 @@ impl RunningState {
                 window,
                 cx,
             );
-            this.activate_item(1, false, false, window, cx);
+            this.activate_item(0, false, false, window, cx);
         });
 
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
