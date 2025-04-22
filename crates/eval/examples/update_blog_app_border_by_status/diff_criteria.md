@@ -1,0 +1,5 @@
+- The changes enhance the blog post UI by adding client-side read status tracking through localStorage.
+- Visual modifications include a blue border for unread posts and gray border for read posts, with opacity reduction for read states.
+- A toggle button with dynamic text ("Mark as Read"/"Mark as Unread") is added using CSS classes that change background colors between blue and gray.
+- The UI implementation introduces two core functions - saveReadStatus() and getReadStatus() - that interface with localStorage using JSON serialization, storing post IDs as keys in a JSON object.
+- Event listeners are attached to buttons through querySelectorAll(), using closest() to traverse the hierarchy and dataset.postId for post identification, while toggling CSS classes and updating button text through classList.toggle() and textContent.
