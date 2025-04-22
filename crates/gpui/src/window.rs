@@ -1467,6 +1467,20 @@ impl Window {
         self.rem_size = rem_size.into();
     }
 
+    /// Acquire a globally unique identifier for the given ElementId.
+    /// Only valid for the duration of the provided closure.
+    pub fn with_global_id<R>(
+        &mut self,
+        element_id: ElementId,
+        f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
+    ) -> R {
+        self.element_id_stack.push(element_id);
+        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let result = f(&global_id, self);
+        self.element_id_stack.pop();
+        result
+    }
+
     /// Executes the provided function with the specified rem size.
     ///
     /// This method must only be called as part of element drawing.
