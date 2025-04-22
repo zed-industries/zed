@@ -127,19 +127,19 @@ impl RenderOnce for ContextPill {
                 let status_is_error = matches!(context.status, ContextStatus::Error { .. });
 
                 base_pill
-                    .bg(if status_is_error {
-                        cx.theme().status().error_background
-                    } else {
-                        color.element_background
-                    })
-                    .border_color(if status_is_error {
-                        cx.theme().status().error_border
-                    } else if *focused {
-                        color.border_focused
-                    } else {
-                        color.border.opacity(0.5)
-                    })
                     .pr(if on_remove.is_some() { px(2.) } else { px(4.) })
+                    .map(|pill| {
+                        if status_is_error {
+                            pill.bg(cx.theme().status().error_background)
+                                .border_color(cx.theme().status().error_border)
+                        } else if *focused {
+                            pill.bg(color.element_background)
+                                .border_color(color.border_focused)
+                        } else {
+                            pill.bg(color.element_background)
+                                .border_color(color.border.opacity(0.5))
+                        }
+                    })
                     .child(
                         h_flex()
                             .id("context-data")
@@ -222,15 +222,15 @@ impl RenderOnce for ContextPill {
                 .cursor_pointer()
                 .pr_1()
                 .border_dashed()
-                .border_color(if *focused {
-                    color.border_focused
-                } else {
-                    color.border
+                .map(|pill| {
+                    if *focused {
+                        pill.border_color(color.border_focused)
+                            .bg(color.element_background.opacity(0.5))
+                    } else {
+                        pill.border_color(color.border)
+                    }
                 })
                 .hover(|style| style.bg(color.element_hover.opacity(0.5)))
-                .when(*focused, |this| {
-                    this.bg(color.element_background.opacity(0.5))
-                })
                 .child(
                     div().max_w_64().child(
                         Label::new(name.clone())
