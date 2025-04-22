@@ -1,7 +1,11 @@
-use std::{ops::Range, path::Path, sync::Arc};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use gpui::{App, Entity, SharedString};
-use language::{Buffer, File};
+use language::Buffer;
 use language_model::LanguageModelRequestMessage;
 use project::{ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
@@ -142,9 +146,18 @@ pub struct ContextBuffer {
     // TODO: Entity<Buffer> holds onto the buffer even if the buffer is deleted. Should probably be
     // a WeakEntity and handle removal from the UI when it has dropped.
     pub buffer: Entity<Buffer>,
-    pub file: Arc<dyn File>,
+    pub last_full_path: Arc<Path>,
     pub version: clock::Global,
     pub text: SharedString,
+}
+
+impl ContextBuffer {
+    pub fn full_path(&self, cx: &App) -> PathBuf {
+        let file = self.buffer.read(cx).file();
+        // Note that in practice file can't be `None` because it is present when this is created and
+        // there's no way for buffers to go from having a file to not.
+        file.map_or(self.last_full_path.to_path_buf(), |file| file.full_path(cx))
+    }
 }
 
 impl std::fmt::Debug for ContextBuffer {
