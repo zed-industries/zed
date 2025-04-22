@@ -1687,7 +1687,7 @@ impl MultiBuffer {
             if let Some(last_range) = merged_ranges.last_mut() {
                 debug_assert!(last_range.context.start <= range.context.start);
                 if last_range.context.end >= range.context.start {
-                    last_range.context.end = range.context.end;
+                    last_range.context.end = range.context.end.max(last_range.context.end);
                     *counts.last_mut().unwrap() += 1;
                     continue;
                 }
@@ -1773,7 +1773,9 @@ impl MultiBuffer {
                     added_a_new_excerpt = true;
                     let next = new_iter.next().unwrap();
                     if let Some((_, last)) = to_insert.last_mut() {
-                        if last.context.start <= next.context.end {
+                        if next.context.start <= last.context.end
+                            && last.context.start <= next.context.end
+                        {
                             last.context.end = next.context.end.max(last.context.end);
                             continue;
                         }
@@ -1816,7 +1818,21 @@ impl MultiBuffer {
                 }
                 to_remove.push(existing_id);
                 continue;
-            } else if existing_start > new.context.end {
+            }
+
+            if let Some((_, last)) = to_insert.last_mut() {
+                if last.context.end >= new.context.start.min(existing_start)
+                    && last.context.start <= new.context.end.max(existing_end)
+                {
+                    let existing_id = existing_iter.next().unwrap();
+                    let new = new_iter.next().unwrap();
+                    last.context.end = new.context.end.max(last.context.end).max(existing_end);
+                    to_remove.push(existing_id);
+                    continue;
+                }
+            }
+
+            if existing_start > new.context.end {
                 to_insert.push((next_excerpt_id(), new_iter.next().unwrap()));
                 continue;
             }
