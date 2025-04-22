@@ -135,7 +135,7 @@ impl Render for AgentNotification {
                             .child(
                                 h_flex()
                                     .relative()
-                                    .gap_1()
+                                    .gap_2()
                                     .text_size(px(12.))
                                     .text_color(cx.theme().colors().text_muted)
                                     .truncate()
@@ -144,7 +144,7 @@ impl Render for AgentNotification {
                                         |description, project_name| {
                                             description.child(
                                                 h_flex()
-                                                    .gap_1()
+                                                    .gap_2()
                                                     .child(
                                                         Icon::new(IconName::Folder)
                                                             .size(IconSize::XSmall)
