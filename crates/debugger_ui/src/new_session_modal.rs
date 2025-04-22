@@ -284,8 +284,6 @@ impl NewSessionModal {
                             .task_inventory()
                             .iter()
                             .flat_map(|task_inventory| task_inventory.read(cx).list_debug_tasks())
-                            .cloned()
-                            .filter_map(|task| task.try_into().ok())
                             .collect()
                     })
                     .ok()

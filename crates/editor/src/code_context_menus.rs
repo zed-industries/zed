@@ -787,13 +787,7 @@ impl CodeActionContents {
         actions: Option<Rc<[AvailableCodeAction]>>,
         cx: &App,
     ) -> Self {
-        if !cx.has_flag::<Debugger>() {
-            if let Some(tasks) = &mut tasks {
-                tasks
-                    .templates
-                    .retain(|(_, task)| !matches!(task.task_type(), task::TaskType::Debug(_)));
-            }
-        }
+        if !cx.has_flag::<Debugger>() {}
 
         Self {
             tasks: tasks.map(Rc::new),

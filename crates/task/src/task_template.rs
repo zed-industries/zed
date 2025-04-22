@@ -59,9 +59,6 @@ pub struct TaskTemplate {
     /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
     #[serde(default)]
     pub hide: HideStrategy,
-    /// If this task should start a debugger or not
-    #[serde(default, skip)]
-    pub task_type: TaskType,
     /// Represents the tags which this template attaches to.
     /// Adding this removes this task from other UI and gives you ability to run it by tag.
     #[serde(default, deserialize_with = "non_empty_string_vec")]
@@ -174,9 +171,7 @@ impl TaskTemplate {
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
     pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
-        if self.label.trim().is_empty()
-            || (self.command.trim().is_empty() && matches!(self.task_type, TaskType::Script))
-        {
+        if self.label.trim().is_empty() || self.command.trim().is_empty() {
             return None;
         }
 

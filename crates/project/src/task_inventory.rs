@@ -17,7 +17,8 @@ use language::{
     language_settings::language_settings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
-use settings::{InvalidSettingsError, TaskKind, parse_json_with_comments};
+use paths::task_file_name;
+use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
     DebugTaskTemplate, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
     TaskVariables, VariableName,
@@ -38,7 +39,7 @@ pub struct Inventory {
 #[derive(Debug, Default)]
 struct ParsedTemplates {
     global: HashMap<PathBuf, Vec<TaskTemplate>>,
-    worktree: HashMap<WorktreeId, HashMap<(Arc<Path>, TaskKind), Vec<TaskTemplate>>>,
+    worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<TaskTemplate>>>,
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
@@ -134,20 +135,11 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
-    pub fn list_debug_tasks(&self) -> Vec<&TaskTemplate> {
+    pub fn list_debug_tasks(&self) -> Vec<DebugTaskTemplate> {
         self.templates_from_settings
             .worktree
             .values()
-            .flat_map(|tasks| {
-                tasks.iter().filter_map(|(kind, tasks)| {
-                    if matches!(kind.1, TaskKind::Debug) {
-                        Some(tasks)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .flatten()
+            .flat_map(|_| std::iter::empty())
             .collect()
     }
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -365,10 +357,7 @@ impl Inventory {
                 templates.into_iter().map(|template| {
                     (
                         TaskSourceKind::AbsPath {
-                            id_base: match template.task_type {
-                                task::TaskType::Script => Cow::Borrowed("global tasks.json"),
-                                task::TaskType::Debug(_) => Cow::Borrowed("global debug.json"),
-                            },
+                            id_base: Cow::Borrowed("global tasks.json"),
                             abs_path: file_path.clone(),
                         },
                         template.clone(),
@@ -390,7 +379,7 @@ impl Inventory {
                 .flat_map(|(directory, templates)| {
                     templates.iter().map(move |template| (directory, template))
                 })
-                .map(move |((directory, _task_kind), template)| {
+                .map(move |(directory, template)| {
                     (
                         TaskSourceKind::Worktree {
                             id: worktree,
@@ -413,7 +402,6 @@ impl Inventory {
         &mut self,
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
-        task_kind: TaskKind,
     ) -> Result<(), InvalidSettingsError> {
         let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
             raw_tasks_json.unwrap_or("[]"),
@@ -424,21 +412,16 @@ impl Inventory {
                     path: match location {
                         TaskSettingsLocation::Global(path) => path.to_owned(),
                         TaskSettingsLocation::Worktree(settings_location) => {
-                            task_kind.config_in_dir(settings_location.path)
+                            settings_location.path.join(task_file_name())
                         }
                     },
                     message: format!("Failed to parse tasks file content as a JSON array: {e}"),
                 });
             }
         };
-        let new_templates = raw_tasks
-            .into_iter()
-            .filter_map(|raw_template| match &task_kind {
-                TaskKind::Script => serde_json::from_value::<TaskTemplate>(raw_template).log_err(),
-                TaskKind::Debug => serde_json::from_value::<DebugTaskTemplate>(raw_template)
-                    .log_err()
-                    .map(|content| content.to_zed_format()),
-            });
+        let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
+            serde_json::from_value::<TaskTemplate>(raw_template).log_err()
+        });
 
         let parsed_templates = &mut self.templates_from_settings;
         match location {
@@ -454,14 +437,14 @@ impl Inventory {
                     if let Some(worktree_tasks) =
                         parsed_templates.worktree.get_mut(&location.worktree_id)
                     {
-                        worktree_tasks.remove(&(Arc::from(location.path), task_kind));
+                        worktree_tasks.remove(location.path);
                     }
                 } else {
                     parsed_templates
                         .worktree
                         .entry(location.worktree_id)
                         .or_default()
-                        .insert((Arc::from(location.path), task_kind), new_templates);
+                        .insert(Arc::from(location.path), new_templates);
                 }
             }
         }

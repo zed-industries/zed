@@ -87,36 +87,36 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
-impl TryFrom<TaskTemplate> for DebugTaskTemplate {
-    type Error = ();
+// impl TryFrom<TaskTemplate> for DebugTaskTemplate {
+//     type Error = ();
 
-    fn try_from(value: TaskTemplate) -> Result<Self, Self::Error> {
-        let TaskType::Debug(debug_args) = value.task_type else {
-            return Err(());
-        };
+//     fn try_from(value: TaskTemplate) -> Result<Self, Self::Error> {
+//         let TaskType::Debug(debug_args) = value.task_type else {
+//             return Err(());
+//         };
 
-        let request = match debug_args.request {
-            crate::DebugArgsRequest::Launch => DebugRequest::Launch(LaunchRequest {
-                program: value.command,
-                cwd: value.cwd.map(PathBuf::from),
-                args: value.args,
-            }),
-            crate::DebugArgsRequest::Attach(attach_config) => DebugRequest::Attach(attach_config),
-        };
+//         let request = match debug_args.request {
+//             crate::DebugArgsRequest::Launch => DebugRequest::Launch(LaunchRequest {
+//                 program: value.command,
+//                 cwd: value.cwd.map(PathBuf::from),
+//                 args: value.args,
+//             }),
+//             crate::DebugArgsRequest::Attach(attach_config) => DebugRequest::Attach(attach_config),
+//         };
 
-        Ok(DebugTaskTemplate {
-            locator: debug_args.locator,
-            definition: DebugTaskDefinition {
-                adapter: debug_args.adapter,
-                request,
-                label: value.label,
-                initialize_args: debug_args.initialize_args,
-                tcp_connection: debug_args.tcp_connection,
-                stop_on_entry: debug_args.stop_on_entry,
-            },
-        })
-    }
-}
+//         Ok(DebugTaskTemplate {
+//             locator: debug_args.locator,
+//             definition: DebugTaskDefinition {
+//                 adapter: debug_args.adapter,
+//                 request,
+//                 label: value.label,
+//                 initialize_args: debug_args.initialize_args,
+//                 tcp_connection: debug_args.tcp_connection,
+//                 stop_on_entry: debug_args.stop_on_entry,
+//             },
+//         })
+//     }
+// }
 
 impl DebugTaskTemplate {
     /// Translate from debug definition to a task template
@@ -136,14 +136,14 @@ impl DebugTaskTemplate {
             ),
         };
 
-        let task_type = TaskType::Debug(DebugArgs {
-            adapter: self.definition.adapter,
-            request,
-            initialize_args: self.definition.initialize_args,
-            locator: self.locator,
-            tcp_connection: self.definition.tcp_connection,
-            stop_on_entry: self.definition.stop_on_entry,
-        });
+        // let task_type = TaskType::Debug(DebugArgs {
+        //     adapter: self.definition.adapter,
+        //     request,
+        //     initialize_args: self.definition.initialize_args,
+        //     locator: self.locator,
+        //     tcp_connection: self.definition.tcp_connection,
+        //     stop_on_entry: self.definition.stop_on_entry,
+        // });
 
         let label = self.definition.label.clone();
 
@@ -151,7 +151,6 @@ impl DebugTaskTemplate {
             label,
             command,
             args: vec![],
-            task_type,
             cwd,
             ..Default::default()
         }

@@ -212,14 +212,8 @@ impl FromStr for Editorconfig {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LocalSettingsKind {
     Settings,
-    Tasks(TaskKind),
+    Tasks,
     Editorconfig,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum TaskKind {
-    Debug,
-    Script,
 }
 
 impl Global for SettingsStore {}
@@ -251,16 +245,6 @@ trait AnySettingValue: 'static + Send + Sync {
 }
 
 struct DeserializedSetting(Box<dyn Any>);
-
-impl TaskKind {
-    /// Returns a file path of a task configuration file of this kind within the given directory.
-    pub fn config_in_dir(&self, dir: &Path) -> PathBuf {
-        dir.join(match self {
-            Self::Debug => debug_task_file_name(),
-            Self::Script => task_file_name(),
-        })
-    }
-}
 
 impl SettingsStore {
     pub fn new(cx: &App) -> Self {
@@ -622,10 +606,10 @@ impl SettingsStore {
                 .map(|content| content.trim())
                 .filter(|content| !content.is_empty()),
         ) {
-            (LocalSettingsKind::Tasks(task_kind), _) => {
+            (LocalSettingsKind::Tasks, _) => {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
-                    path: task_kind.config_in_dir(&directory_path),
+                    path: directory_path.join(task_file_name()),
                 });
             }
             (LocalSettingsKind::Settings, None) => {

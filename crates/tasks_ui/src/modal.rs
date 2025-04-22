@@ -359,43 +359,17 @@ impl PickerDelegate for TasksModalDelegate {
             }
         }
 
-        match task.task_type() {
-            TaskType::Debug(_) => {
-                let Some(config) = task.resolved_debug_adapter_config() else {
-                    return;
-                };
-                let config = config.definition;
-
-                match &config.request {
-                    DebugRequest::Attach(attach_config) if attach_config.process_id.is_none() => {
-                        cx.emit(ShowAttachModal {
-                            debug_config: config.clone(),
-                        });
-                        return;
-                    }
-                    _ => {
-                        self.workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.schedule_debug_task(task, window, cx);
-                            })
-                            .ok();
-                    }
-                }
-            }
-            TaskType::Script => {
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.schedule_resolved_task(
-                            task_source_kind,
-                            task,
-                            omit_history_entry,
-                            window,
-                            cx,
-                        );
-                    })
-                    .ok();
-            }
-        };
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.schedule_resolved_task(
+                    task_source_kind,
+                    task,
+                    omit_history_entry,
+                    window,
+                    cx,
+                );
+            })
+            .ok();
 
         cx.emit(DismissEvent);
     }
@@ -576,20 +550,13 @@ impl PickerDelegate for TasksModalDelegate {
         }
         self.workspace
             .update(cx, |workspace, cx| {
-                match task.task_type() {
-                    TaskType::Script => workspace.schedule_resolved_task(
-                        task_source_kind,
-                        task,
-                        omit_history_entry,
-                        window,
-                        cx,
-                    ),
-                    // todo(debugger): Should create a schedule_resolved_debug_task function
-                    // This would allow users to access to debug history and other issues
-                    TaskType::Debug(_) => {
-                        workspace.schedule_debug_task(task, window, cx);
-                    }
-                };
+                workspace.schedule_resolved_task(
+                    task_source_kind,
+                    task,
+                    omit_history_entry,
+                    window,
+                    cx,
+                )
             })
             .ok();
         cx.emit(DismissEvent);
@@ -716,10 +683,7 @@ fn string_match_candidates<'a>(
     candidates
         .into_iter()
         .enumerate()
-        .filter(|(_, (_, candidate))| match candidate.task_type() {
-            TaskType::Script => task_modal_type == TaskModal::ScriptModal,
-            TaskType::Debug(_) => task_modal_type == TaskModal::DebugModal,
-        })
+        .filter(|(_, (_, _))| task_modal_type == TaskModal::ScriptModal)
         .map(|(index, (_, candidate))| StringMatchCandidate::new(index, candidate.display_label()))
         .collect()
 }
