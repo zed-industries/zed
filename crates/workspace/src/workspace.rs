@@ -788,6 +788,7 @@ pub enum Event {
         language: &'static str,
     },
     ZoomChanged,
+    ModalOpened,
 }
 
 #[derive(Debug)]
@@ -1059,6 +1060,13 @@ impl Workspace {
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
         let modal_layer = cx.new(|_| ModalLayer::new());
         let toast_layer = cx.new(|_| ToastLayer::new());
+        cx.subscribe(
+            &modal_layer,
+            |_, _, _: &modal_layer::ModalOpenedEvent, cx| {
+                cx.emit(Event::ModalOpened);
+            },
+        )
+        .detach();
 
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
@@ -5444,7 +5452,7 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
-        context.set("keyboard_layout", cx.keyboard_layout().clone());
+        context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();

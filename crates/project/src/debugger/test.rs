@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 use dap::{DebugRequest, client::DebugAdapterClient};
-use gpui::{App, AppContext, Entity, Subscription};
+use gpui::{App, AppContext, Entity, Subscription, Task};
 use task::DebugTaskDefinition;
 
 use super::session::{Session, SessionStateEvent};
@@ -37,6 +37,41 @@ pub fn intercept_debug_sessions<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
             .detach();
         })
     })
+}
+
+pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
+    project: &Entity<Project>,
+    cx: &mut gpui::TestAppContext,
+    config: DebugTaskDefinition,
+    configure: T,
+) -> Task<Result<Entity<Session>>> {
+    let subscription = intercept_debug_sessions(cx, configure);
+    let task = project.update(cx, |project, cx| project.start_debug_session(config, cx));
+    cx.spawn(async move |_| {
+        let result = task.await;
+        drop(subscription);
+        result
+    })
+}
+
+pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
+    project: &Entity<Project>,
+    cx: &mut gpui::TestAppContext,
+    configure: T,
+) -> Task<Result<Entity<Session>>> {
+    start_debug_session_with(
+        project,
+        cx,
+        DebugTaskDefinition {
+            adapter: "fake-adapter".to_string(),
+            request: DebugRequest::Launch(Default::default()),
+            label: "test".to_string(),
+            initialize_args: None,
+            tcp_connection: None,
+            stop_on_entry: None,
+        },
+        configure,
+    )
 }
 
 fn register_default_handlers(session: &Session, client: &Arc<DebugAdapterClient>, cx: &mut App) {

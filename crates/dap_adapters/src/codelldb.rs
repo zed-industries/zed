@@ -143,9 +143,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             cwd: None,
             arguments: vec![
                 "--settings".into(),
-                json!({"sourceLanguages": ["cpp", "rust"]})
-                    .to_string()
-                    .into(),
+                json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
             ],
             request_args: self.request_args(config),
             envs: HashMap::default(),

@@ -1547,6 +1547,18 @@ impl Terminal {
         }
     }
 
+    pub fn select_word_at_event_position(&mut self, e: &MouseDownEvent) {
+        let position = e.position - self.last_content.terminal_bounds.bounds.origin;
+        let (point, side) = grid_point_and_side(
+            position,
+            self.last_content.terminal_bounds,
+            self.last_content.display_offset,
+        );
+        let selection = Selection::new(SelectionType::Semantic, point, side);
+        self.events
+            .push_back(InternalEvent::SetSelection(Some((selection, point))));
+    }
+
     pub fn mouse_drag(
         &mut self,
         e: &MouseMoveEvent,
@@ -1859,10 +1871,10 @@ impl Terminal {
     }
 
     fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<Terminal>) {
-        let e: Option<ExitStatus> = error_code.map(|e| {
+        let e: Option<ExitStatus> = error_code.map(|code| {
             #[cfg(unix)]
             {
-                return std::os::unix::process::ExitStatusExt::from_raw(e);
+                return std::os::unix::process::ExitStatusExt::from_raw(code);
             }
             #[cfg(windows)]
             {

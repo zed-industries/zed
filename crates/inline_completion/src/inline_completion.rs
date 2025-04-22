@@ -1,7 +1,14 @@
+use std::ops::Range;
+use std::str::FromStr as _;
+
+use anyhow::{Result, anyhow};
+use gpui::http_client::http::{HeaderMap, HeaderValue};
 use gpui::{App, Context, Entity, SharedString};
 use language::Buffer;
 use project::Project;
-use std::ops::Range;
+use zed_llm_client::{
+    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
+};
 
 // TODO: Find a better home for `Direction`.
 //
@@ -52,6 +59,32 @@ impl DataCollectionState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct EditPredictionUsage {
+    pub limit: UsageLimit,
+    pub amount: i32,
+}
+
+impl EditPredictionUsage {
+    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        let limit = headers
+            .get(EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME)
+            .ok_or_else(|| {
+                anyhow!("missing {EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME:?} header")
+            })?;
+        let limit = UsageLimit::from_str(limit.to_str()?)?;
+
+        let amount = headers
+            .get(EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME)
+            .ok_or_else(|| {
+                anyhow!("missing {EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME:?} header")
+            })?;
+        let amount = amount.to_str()?.parse::<i32>()?;
+
+        Ok(Self { limit, amount })
+    }
+}
+
 pub trait EditPredictionProvider: 'static + Sized {
     fn name() -> &'static str;
     fn display_name() -> &'static str;
@@ -62,6 +95,11 @@ pub trait EditPredictionProvider: 'static + Sized {
     fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
         DataCollectionState::Unsupported
     }
+
+    fn usage(&self, _cx: &App) -> Option<EditPredictionUsage> {
+        None
+    }
+
     fn toggle_data_collection(&mut self, _cx: &mut App) {}
     fn is_enabled(
         &self,
@@ -110,6 +148,7 @@ pub trait InlineCompletionProviderHandle {
     fn show_completions_in_menu(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
+    fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
     fn toggle_data_collection(&self, cx: &mut App);
     fn needs_terms_acceptance(&self, cx: &App) -> bool;
     fn is_refreshing(&self, cx: &App) -> bool;
@@ -160,6 +199,10 @@ where
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
         self.read(cx).data_collection_state(cx)
+    }
+
+    fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
+        self.read(cx).usage(cx)
     }
 
     fn toggle_data_collection(&self, cx: &mut App) {

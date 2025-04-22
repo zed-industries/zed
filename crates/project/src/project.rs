@@ -39,7 +39,10 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::client::DebugAdapterClient;
+use dap::{
+    adapters::{DebugAdapterBinary, TcpArguments},
+    client::DebugAdapterClient,
+};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -94,6 +97,7 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
+    net::Ipv4Addr,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -103,7 +107,7 @@ use std::{
 };
 
 use task_store::TaskStore;
-use terminals::Terminals;
+use terminals::{SshCommand, Terminals, wrap_for_ssh};
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
@@ -1063,13 +1067,12 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone().into()));
+                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone()));
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_ssh(
                     SSH_PROJECT_ID,
-                    ssh.clone(),
-                    worktree_store.clone(),
+                    ssh_proto.clone(),
                     breakpoint_store.clone(),
                     cx,
                 )
@@ -1254,7 +1257,6 @@ impl Project {
             DapStore::new_collab(
                 remote_id,
                 client.clone().into(),
-                worktree_store.clone(),
                 breakpoint_store.clone(),
                 cx,
             )
@@ -3607,7 +3609,7 @@ impl Project {
             .filter(|buffer| {
                 let b = buffer.read(cx);
                 if let Some(file) = b.file() {
-                    if !search_query.file_matches(file.path()) {
+                    if !search_query.match_path(file.path()) {
                         return false;
                     }
                     if let Some(entry) = b

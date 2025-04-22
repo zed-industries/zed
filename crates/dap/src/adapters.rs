@@ -101,9 +101,9 @@ impl TcpArguments {
 
     pub fn to_proto(&self) -> proto::TcpHost {
         TcpArgumentsTemplate {
-            host: Some(self.host.clone()),
-            port: Some(self.port.clone()),
-            timeout: self.timeout.clone(),
+            host: Some(self.host),
+            port: Some(self.port),
+            timeout: self.timeout,
         }
         .to_proto()
     }
@@ -136,7 +136,7 @@ impl DebugAdapterBinary {
             envs: binary.envs.into_iter().collect(),
             connection: binary
                 .connection
-                .map(|c| TcpArguments::from_proto(c))
+                .map(TcpArguments::from_proto)
                 .transpose()?,
             request_args: StartDebuggingRequestArguments {
                 configuration: serde_json::from_str(&binary.configuration)?,

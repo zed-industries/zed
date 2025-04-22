@@ -160,12 +160,9 @@ impl DebugTaskTemplate {
 
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
-///
 pub struct DebugTaskTemplate {
-    ///
     pub locator: Option<String>,
     #[serde(flatten)]
-    ///
     pub definition: DebugTaskDefinition,
 }
 
@@ -228,7 +225,6 @@ impl DebugTaskDefinition {
         }
     }
 
-    ///
     pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
         let request = proto
             .request
@@ -238,7 +234,7 @@ impl DebugTaskDefinition {
             initialize_args: proto.initialize_args.map(|v| v.into()),
             tcp_connection: proto
                 .tcp_connection
-                .map(|t| TcpArgumentsTemplate::from_proto(t))
+                .map(TcpArgumentsTemplate::from_proto)
                 .transpose()?,
             stop_on_entry: proto.stop_on_entry,
             adapter: proto.adapter.clone(),

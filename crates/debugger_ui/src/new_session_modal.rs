@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::{Result, anyhow};
 use dap::{DapRegistry, DebugRequest};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
@@ -112,7 +113,50 @@ impl NewSessionModal {
             panel.past_debug_definition = Some(config.clone());
             panel.start_session(config, window, cx)
         });
-        cx.emit(DismissEvent);
+
+        let task_contexts = workspace
+            .update(cx, |workspace, cx| {
+                tasks_ui::task_contexts(workspace, window, cx)
+            })
+            .ok();
+
+        cx.spawn(async move |this, cx| {
+            let task_context = if let Some(task) = task_contexts {
+                task.await
+                    .active_worktree_context
+                    .map_or(task::TaskContext::default(), |context| context.1)
+            } else {
+                task::TaskContext::default()
+            };
+            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
+
+            let task = project.update(cx, |this, cx| {
+                let template = DebugTaskTemplate {
+                    locator: None,
+                    definition: config.clone(),
+                };
+                if let Some(debug_config) = template
+                    .to_zed_format()
+                    .resolve_task("debug_task", &task_context)
+                    .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
+                {
+                    this.start_debug_session(debug_config.definition, cx)
+                } else {
+                    this.start_debug_session(config, cx)
+                }
+            })?;
+            let spawn_result = task.await;
+            if spawn_result.is_ok() {
+                this.update(cx, |_, cx| {
+                    cx.emit(DismissEvent);
+                })
+                .ok();
+            }
+            spawn_result?;
+            anyhow::Result::<_, anyhow::Error>::Ok(())
+        })
+        .detach_and_log_err(cx);
+        Ok(())
     }
 
     fn update_attach_picker(
