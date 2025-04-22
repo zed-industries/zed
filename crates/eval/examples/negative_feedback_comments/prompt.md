@@ -1,0 +1,1 @@
+Add support for optional user comments when the thumbs down is given on a thread. Comments should be submitted along with the reaction and logged if provided. Make sure the UI highlights the ui icon when the user clicks it.

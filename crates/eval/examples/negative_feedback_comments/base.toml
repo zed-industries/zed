@@ -1,0 +1,4 @@
+# Pull Request: https://github.com/zed-industries/zed/pull/27934
+url = "https://github.com/zed-industries/zed.git"
+revision = "889bc13b7dd61c67d894cee8a6cdd87f56c6c45b"
+language_extension = "rs"
