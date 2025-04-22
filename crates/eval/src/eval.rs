@@ -38,8 +38,8 @@ struct Args {
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
-    #[arg(long, value_delimiter = ',')]
-    languages: Option<Vec<String>>,
+    #[arg(long, value_delimiter = ',', default_value = "rs,ts")]
+    languages: Vec<String>,
     /// How many times to run each example. Note that this is currently not very efficient as N
     /// worktrees will be created for the examples.
     #[arg(long, default_value = "1")]
@@ -85,7 +85,6 @@ fn main() {
     let zed_branch_name = git_branch_for_path(root_dir);
     let args = Args::parse();
     let all_available_examples = list_all_examples(&examples_dir).unwrap();
-    let languages = args.languages.unwrap_or_else(|| vec!["rs".to_string()]);
 
     let example_paths = all_available_examples
         .iter()
@@ -179,7 +178,7 @@ fn main() {
                     .base
                     .language_extension
                     .as_ref()
-                    .map_or(false, |lang| languages.contains(lang))
+                    .map_or(false, |lang| args.languages.contains(lang))
                 {
                     skipped.push(example.name);
                     continue;
