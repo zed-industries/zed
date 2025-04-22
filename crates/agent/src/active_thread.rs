@@ -1701,7 +1701,6 @@ impl ActiveThread {
                             } else {
                                 div()
                                     .min_h_6()
-                                    .text_ui(cx)
                                     .child(self.render_message_content(
                                         message_id,
                                         rendered_message,
@@ -1765,7 +1764,7 @@ impl ActiveThread {
                         .border_1()
                         .border_color(colors.border)
                         .shadow_md()
-                        .child(div().p_2().children(message_content))
+                        .child(div().py_2().px_2p5().children(message_content))
                         .child(
                             h_flex()
                                 .p_1()
@@ -2091,6 +2090,7 @@ impl ActiveThread {
         v_flex()
             .text_ui(cx)
             .gap_2()
+            .when(is_user_message, |this| this.text_xs())
             .children(
                 rendered_message.segments.iter().enumerate().map(
                     |(index, segment)| match segment {
@@ -2113,23 +2113,15 @@ impl ActiveThread {
                                 markdown.clone(),
                                 if is_user_message {
                                     let mut style = default_markdown_style(window, cx);
-                                    let theme_settings = ThemeSettings::get_global(cx);
-                                    let buffer_font_size = TextSize::Small.rems(cx);
                                     let mut text_style = window.text_style();
+                                    let theme_settings = ThemeSettings::get_global(cx);
+
+                                    let buffer_font = theme_settings.buffer_font.family.clone();
+                                    let buffer_font_size = TextSize::Small.rems(cx);
 
                                     text_style.refine(&TextStyleRefinement {
-                                        font_family: Some(
-                                            theme_settings.buffer_font.family.clone(),
-                                        ),
-                                        font_fallbacks: theme_settings
-                                            .buffer_font
-                                            .fallbacks
-                                            .clone(),
-                                        font_features: Some(
-                                            theme_settings.buffer_font.features.clone(),
-                                        ),
+                                        font_family: Some(buffer_font),
                                         font_size: Some(buffer_font_size.into()),
-                                        color: Some(cx.theme().colors().text),
                                         ..Default::default()
                                     });
 
