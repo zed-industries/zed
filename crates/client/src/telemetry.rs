@@ -425,7 +425,7 @@ impl Telemetry {
         // RUST_LOG=telemetry=trace to debug telemetry events
         log::trace!(target: "telemetry", "{:?}", event);
 
-        if !dbg!(state.settings.metrics) {
+        if !state.settings.metrics {
             return;
         }
 
@@ -458,8 +458,7 @@ impl Telemetry {
             event,
         });
 
-        if dbg!(state.installation_id.is_some()) && state.events_queue.len() >= state.max_queue_size
-        {
+        if state.installation_id.is_some() && state.events_queue.len() >= state.max_queue_size {
             drop(state);
             self.flush_events().detach();
         }
@@ -505,8 +504,6 @@ impl Telemetry {
     }
 
     pub fn flush_events(self: &Arc<Self>) -> Task<()> {
-        dbg!("flush_events");
-
         let mut state = self.state.lock();
         state.first_event_date_time = None;
         let mut events = mem::take(&mut state.events_queue);
@@ -548,8 +545,6 @@ impl Telemetry {
                         events,
                     }
                 };
-
-                dbg!(&request_body);
 
                 let request = this.build_request(json_bytes, request_body)?;
                 let response = this.http_client.send(request).await?;
