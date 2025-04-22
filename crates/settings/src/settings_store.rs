@@ -71,7 +71,7 @@ pub trait Settings: 'static + Send + Sync {
 
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
     /// equivalent settings from a vscode config to our config
-    fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent);
+    fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent);
 
     #[track_caller]
     fn register(cx: &mut App)
@@ -1984,7 +1984,7 @@ mod tests {
             sources.json_merge()
         }
 
-        fn import_from_vscode(_vscode: &VsCodeSettings, _old: &mut Self::FileContent) {}
+        fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut Self::FileContent) {}
     }
 
     #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -2010,12 +2010,12 @@ mod tests {
             sources.json_merge()
         }
 
-        fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent) {
+        fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
             let first_value = vscode.read_string("key_1_first");
             let second_value = vscode.read_string("key_1_second");
 
             if let Some((first, second)) = first_value.zip(second_value) {
-                old.key1 = Some(format!("{} {}", first, second));
+                current.key1 = Some(format!("{} {}", first, second));
             }
         }
     }
@@ -2048,8 +2048,8 @@ mod tests {
             sources.json_merge()
         }
 
-        fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent) {
-            vscode.enum_setting("time_format", &mut old.hour_format, |s| match s {
+        fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
+            vscode.enum_setting("time_format", &mut current.hour_format, |s| match s {
                 "12" => Some(HourFormat::Hour12),
                 "24" => Some(HourFormat::Hour24),
                 _ => None,
@@ -2078,8 +2078,8 @@ mod tests {
             sources.json_merge()
         }
 
-        fn import_from_vscode(vscode: &VsCodeSettings, old: &mut Self::FileContent) {
-            old.languages.extend(
+        fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
+            current.languages.extend(
                 vscode
                     .read_value("vscode_languages")
                     .and_then(|value| value.as_array())
