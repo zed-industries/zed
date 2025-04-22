@@ -9,14 +9,14 @@ pub struct Thread;
 impl EvalThread for Thread {
     fn meta(&self) -> EvalThreadMetadata {
         EvalThreadMetadata {
-            name: "test path_search",
-            url: "https://github.com/zed-industries/zed.git",
-            revision: "03ecb88fe30794873f191ddb728f597935b3101c",
+            name: "test path_search".to_string(),
+            url: "https://github.com/zed-industries/zed.git".to_string(),
+            revision: "03ecb88fe30794873f191ddb728f597935b3101c".to_string(),
             language_server: Some(LanguageServer {
-                file_extension: "rs",
+                file_extension: "rs".to_string(),
                 allow_preexisting_diagnostics: false,
             }),
-            max_assertions: 4,
+            max_assertions: Some(4),
         }
     }
 

@@ -5,8 +5,7 @@ mod threads;
 mod tool_metrics;
 
 use instance::{
-    EXAMPLES_DIR, JudgeOutput, REPOS_DIR, RunOutput, ThreadInstance, WORKTREES_DIR,
-    repo_path_for_url, run_git,
+    JudgeOutput, REPOS_DIR, RunOutput, ThreadInstance, WORKTREES_DIR, repo_path_for_url, run_git,
 };
 pub(crate) use tool_metrics::*;
 
@@ -138,7 +137,7 @@ fn main() {
             for thread in all_threads {
                 let meta = thread.meta();
                 if meta.language_server.map_or(false, |language| {
-                    !languages.contains(language.file_extension)
+                    !languages.contains(&language.file_extension)
                 }) {
                     skipped.push(meta.name);
                     continue;
@@ -181,7 +180,7 @@ fn main() {
                 );
 
                 let repo_url = thread_instance.repo_url();
-                if repo_urls.insert(repo_url) {
+                if repo_urls.insert(repo_url.clone()) {
                     let repo_path = repo_path_for_url(&repo_url);
 
                     if !repo_path.join(".git").is_dir() {
@@ -370,20 +369,6 @@ fn main() {
         })
         .detach_and_log_err(cx);
     });
-}
-
-fn list_all_examples() -> Result<Vec<PathBuf>> {
-    let path = std::fs::canonicalize(EXAMPLES_DIR).unwrap();
-    let entries = std::fs::read_dir(path).unwrap();
-    let mut result_paths = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            result_paths.push(path);
-        }
-    }
-    Ok(result_paths)
 }
 
 /// Subset of `workspace::AppState` needed by `HeadlessAssistant`, with additional fields.

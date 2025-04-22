@@ -31,7 +31,6 @@ use util::markdown::MarkdownString;
 use crate::thread::{EvalThread, ThreadContext};
 use crate::{AgentAppState, ToolMetrics};
 
-pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
 pub const REPOS_DIR: &str = "./crates/eval/repos";
 pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
 
@@ -79,13 +78,13 @@ pub struct JudgeDiffInput {
     pub diagnostics_before: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostics_after: Option<String>,
-    pub criteria: &'static str,
+    pub criteria: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct JudgeThreadInput {
     pub messages: String,
-    pub criteria: &'static str,
+    pub criteria: String,
 }
 
 impl ThreadInstance {
@@ -106,11 +105,11 @@ impl ThreadInstance {
         }
     }
 
-    pub fn repo_url(&self) -> &'static str {
+    pub fn repo_url(&self) -> String {
         self.thread.meta().url
     }
 
-    pub fn revision(&self) -> &'static str {
+    pub fn revision(&self) -> String {
         self.thread.meta().revision
     }
 
@@ -125,7 +124,7 @@ impl ThreadInstance {
 
     pub async fn setup(&mut self) -> Result<()> {
         let meta = self.thread.meta();
-        let repo_path = repo_path_for_url(meta.url);
+        let repo_path = repo_path_for_url(&meta.url);
 
         let revision_exists = run_git(
             &repo_path,
@@ -138,7 +137,7 @@ impl ThreadInstance {
             println!("{}Fetching revision {}", self.log_prefix, &meta.revision);
             run_git(
                 &repo_path,
-                &["fetch", "--depth", "1", "origin", meta.revision],
+                &["fetch", "--depth", "1", "origin", &meta.revision],
             )
             .await?;
         }
@@ -152,7 +151,7 @@ impl ThreadInstance {
             // it will also remove build artifacts, and so prevent incremental reuse there.
             run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
             run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&worktree_path, &["checkout", meta.revision]).await?;
+            run_git(&worktree_path, &["checkout", &meta.revision]).await?;
         } else {
             println!("{}Creating worktree", self.log_prefix);
 
@@ -165,7 +164,7 @@ impl ThreadInstance {
                     "add",
                     "-f",
                     &worktree_path_string,
-                    meta.revision,
+                    &meta.revision,
                 ],
             )
             .await?;
@@ -233,7 +232,7 @@ impl ThreadInstance {
                         .files(false, 0)
                         .find_map(|e| {
                             if e.path.clone().extension().and_then(|ext| ext.to_str())
-                                == Some(language_server.file_extension)
+                                == Some(&language_server.file_extension)
                             {
                                 Some(ProjectPath {
                                     worktree_id: worktree.id(),
@@ -1019,7 +1018,7 @@ mod test {
             ran_diagnostics_check: true,
             diagnostics_before: Some("Error at line 10: variable not found".to_string()),
             diagnostics_after: Some("Error at line 15: missing semicolon".to_string()),
-            criteria: "Fix all bugs",
+            criteria: "Fix all bugs".to_string(),
         };
 
         let rendered = templates().render(JUDGE_PROMPT_NAME, &input).unwrap();
@@ -1048,7 +1047,7 @@ mod test {
             ran_diagnostics_check: true,
             diagnostics_before: None,
             diagnostics_after: None,
-            criteria: "Fix all bugs",
+            criteria: "Fix all bugs".to_string(),
         };
 
         let rendered = templates().render(JUDGE_PROMPT_NAME, &input).unwrap();
@@ -1079,7 +1078,7 @@ mod test {
             ran_diagnostics_check: true,
             diagnostics_before: Some("Error at line 10: variable not found".to_string()),
             diagnostics_after: None,
-            criteria: "Fix all bugs",
+            criteria: "Fix all bugs".to_string(),
         };
 
         let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
@@ -1105,7 +1104,7 @@ mod test {
             ran_diagnostics_check: true,
             diagnostics_before: None,
             diagnostics_after: Some("Error at line 15: missing semicolon".to_string()),
-            criteria: "Fix all bugs",
+            criteria: "Fix all bugs".to_string(),
         };
 
         let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
@@ -1136,7 +1135,7 @@ mod test {
             ran_diagnostics_check: false,
             diagnostics_before: None,
             diagnostics_after: None,
-            criteria: "Fix all bugs",
+            criteria: "Fix all bugs".to_string(),
         };
 
         let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();

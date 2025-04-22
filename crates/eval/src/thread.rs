@@ -11,26 +11,26 @@ use language_model::{LanguageModel, Role, StopReason};
 pub trait EvalThread {
     fn meta(&self) -> EvalThreadMetadata;
     async fn conversation(&self, cx: &mut ThreadContext) -> Result<()>;
-    fn diff_criteria(&self) -> &'static str {
-        ""
+    fn diff_criteria(&self) -> String {
+        "".to_string()
     }
-    fn thread_criteria(&self) -> &'static str {
-        ""
+    fn thread_criteria(&self) -> String {
+        "".to_string()
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct EvalThreadMetadata {
-    pub name: &'static str,
-    pub url: &'static str,
-    pub revision: &'static str,
+    pub name: String,
+    pub url: String,
+    pub revision: String,
     pub language_server: Option<LanguageServer>,
-    pub max_assertions: u32,
+    pub max_assertions: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
 pub struct LanguageServer {
-    pub file_extension: &'static str,
+    pub file_extension: String,
     pub allow_preexisting_diagnostics: bool,
 }
 
@@ -113,12 +113,13 @@ impl ThreadContext {
     fn assertion_result<T>(&mut self, result: Result<T>) -> Result<T> {
         self.assertions_run += 1;
 
-        let max = self.meta.max_assertions;
-        if self.assertions_run > max {
-            return Err(anyhow!(
-                "More assertions were run than the stated max_assertions of {}",
-                max
-            ));
+        if let Some(max) = self.meta.max_assertions {
+            if self.assertions_run > max {
+                return Err(anyhow!(
+                    "More assertions were run than the stated max_assertions of {}",
+                    max
+                ));
+            }
         }
 
         match result {
