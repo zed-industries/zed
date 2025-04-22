@@ -421,8 +421,8 @@ impl ContextStore {
 
     pub fn add_excerpt(
         &mut self,
-        range: Range<Anchor>,
         buffer: Entity<Buffer>,
+        range: Range<Anchor>,
         cx: &mut Context<ContextStore>,
     ) -> Task<Result<()>> {
         cx.spawn(async move |this, cx| {

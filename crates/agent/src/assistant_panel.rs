@@ -1946,7 +1946,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
                                 .collect::<Vec<_>>();
 
                             for (buffer, range) in selection_ranges {
-                                store.add_excerpt(range, buffer, cx).detach_and_log_err(cx);
+                                store.add_excerpt(buffer, range, cx).detach_and_log_err(cx);
                             }
                         })
                     })

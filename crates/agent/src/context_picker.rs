@@ -36,12 +36,65 @@ use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextPickerEntry {
+    Mode(ContextPickerMode),
+    Action(ContextPickerAction),
+}
+
+impl ContextPickerEntry {
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Self::Mode(mode) => mode.keyword(),
+            Self::Action(action) => action.keyword(),
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Mode(mode) => mode.label(),
+            Self::Action(action) => action.label(),
+        }
+    }
+
+    pub fn icon(&self) -> IconName {
+        match self {
+            Self::Mode(mode) => mode.icon(),
+            Self::Action(action) => action.icon(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPickerMode {
     File,
     Symbol,
     Fetch,
     Thread,
-    Selection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextPickerAction {
+    AddSelections,
+}
+
+impl ContextPickerAction {
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Self::AddSelections => "selection",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::AddSelections => "Selection",
+        }
+    }
+
+    pub fn icon(&self) -> IconName {
+        match self {
+            Self::AddSelections => IconName::Context,
+        }
+    }
 }
 
 impl TryFrom<&str> for ContextPickerMode {
@@ -51,7 +104,6 @@ impl TryFrom<&str> for ContextPickerMode {
         match value {
             "file" => Ok(Self::File),
             "symbol" => Ok(Self::Symbol),
-            "selection" => Ok(Self::Selection),
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
             _ => Err(format!("Invalid context picker mode: {}", value)),
@@ -60,11 +112,10 @@ impl TryFrom<&str> for ContextPickerMode {
 }
 
 impl ContextPickerMode {
-    pub fn mention_prefix(&self) -> &'static str {
+    pub fn keyword(&self) -> &'static str {
         match self {
             Self::File => "file",
             Self::Symbol => "symbol",
-            Self::Selection => "selection",
             Self::Fetch => "fetch",
             Self::Thread => "thread",
         }
@@ -74,7 +125,6 @@ impl ContextPickerMode {
         match self {
             Self::File => "Files & Directories",
             Self::Symbol => "Symbols",
-            Self::Selection => "Selection",
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
         }
@@ -84,7 +134,6 @@ impl ContextPickerMode {
         match self {
             Self::File => IconName::File,
             Self::Symbol => IconName::Code,
-            Self::Selection => IconName::Context,
             Self::Fetch => IconName::Globe,
             Self::Thread => IconName::MessageBubbles,
         }
@@ -161,10 +210,12 @@ impl ContextPicker {
                 .enumerate()
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
-            let modes = self
+            let entries = self
                 .workspace
                 .upgrade()
-                .map(|workspace| available_context_picker_modes(&self.thread_store, &workspace, cx))
+                .map(|workspace| {
+                    available_context_picker_entries(&self.thread_store, &workspace, cx)
+                })
                 .unwrap_or_default();
 
             menu.when(has_recent, |menu| {
@@ -181,15 +232,15 @@ impl ContextPicker {
             })
             .extend(recent_entries)
             .when(has_recent, |menu| menu.separator())
-            .extend(modes.into_iter().map(|mode| {
+            .extend(entries.into_iter().map(|entry| {
                 let context_picker = context_picker.clone();
 
-                ContextMenuEntry::new(mode.label())
-                    .icon(mode.icon())
+                ContextMenuEntry::new(entry.label())
+                    .icon(entry.icon())
                     .icon_size(IconSize::XSmall)
                     .icon_color(Color::Muted)
                     .handler(move |window, cx| {
-                        context_picker.update(cx, |this, cx| this.select_mode(mode, window, cx))
+                        context_picker.update(cx, |this, cx| this.select_entry(entry, window, cx))
                     })
             }))
             .keep_open_on_confirm()
@@ -208,70 +259,74 @@ impl ContextPicker {
         self.thread_store.is_some()
     }
 
-    fn select_mode(
+    fn select_entry(
         &mut self,
-        mode: ContextPickerMode,
+        entry: ContextPickerEntry,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let context_picker = cx.entity().downgrade();
 
-        match mode {
-            ContextPickerMode::File => {
-                self.mode = ContextPickerState::File(cx.new(|cx| {
-                    FileContextPicker::new(
-                        context_picker.clone(),
-                        self.workspace.clone(),
-                        self.context_store.clone(),
-                        window,
-                        cx,
-                    )
-                }));
-            }
-            ContextPickerMode::Symbol => {
-                self.mode = ContextPickerState::Symbol(cx.new(|cx| {
-                    SymbolContextPicker::new(
-                        context_picker.clone(),
-                        self.workspace.clone(),
-                        self.context_store.clone(),
-                        window,
-                        cx,
-                    )
-                }));
-            }
-            ContextPickerMode::Selection => {
-                if let Some((context_store, workspace)) =
-                    self.context_store.upgrade().zip(self.workspace.upgrade())
-                {
-                    add_selections_as_context(&context_store, &workspace, cx);
-                }
-
-                cx.emit(DismissEvent);
-            }
-            ContextPickerMode::Fetch => {
-                self.mode = ContextPickerState::Fetch(cx.new(|cx| {
-                    FetchContextPicker::new(
-                        context_picker.clone(),
-                        self.workspace.clone(),
-                        self.context_store.clone(),
-                        window,
-                        cx,
-                    )
-                }));
-            }
-            ContextPickerMode::Thread => {
-                if let Some(thread_store) = self.thread_store.as_ref() {
-                    self.mode = ContextPickerState::Thread(cx.new(|cx| {
-                        ThreadContextPicker::new(
-                            thread_store.clone(),
+        match entry {
+            ContextPickerEntry::Mode(mode) => match mode {
+                ContextPickerMode::File => {
+                    self.mode = ContextPickerState::File(cx.new(|cx| {
+                        FileContextPicker::new(
                             context_picker.clone(),
+                            self.workspace.clone(),
                             self.context_store.clone(),
                             window,
                             cx,
                         )
                     }));
                 }
-            }
+                ContextPickerMode::Symbol => {
+                    self.mode = ContextPickerState::Symbol(cx.new(|cx| {
+                        SymbolContextPicker::new(
+                            context_picker.clone(),
+                            self.workspace.clone(),
+                            self.context_store.clone(),
+                            window,
+                            cx,
+                        )
+                    }));
+                }
+                ContextPickerMode::Fetch => {
+                    self.mode = ContextPickerState::Fetch(cx.new(|cx| {
+                        FetchContextPicker::new(
+                            context_picker.clone(),
+                            self.workspace.clone(),
+                            self.context_store.clone(),
+                            window,
+                            cx,
+                        )
+                    }));
+                }
+                ContextPickerMode::Thread => {
+                    if let Some(thread_store) = self.thread_store.as_ref() {
+                        self.mode = ContextPickerState::Thread(cx.new(|cx| {
+                            ThreadContextPicker::new(
+                                thread_store.clone(),
+                                context_picker.clone(),
+                                self.context_store.clone(),
+                                window,
+                                cx,
+                            )
+                        }));
+                    }
+                }
+            },
+            ContextPickerEntry::Action(action) => match action {
+                ContextPickerAction::AddSelections => {
+                    if let Some((context_store, workspace)) =
+                        self.context_store.upgrade().zip(self.workspace.upgrade())
+                    {
+                        add_selections_as_context(&context_store, &workspace, cx);
+                    }
+
+                    cx.emit(DismissEvent);
+                }
+            },
         }
 
         cx.notify();
@@ -440,12 +495,15 @@ enum RecentEntry {
     Thread(ThreadContextEntry),
 }
 
-fn available_context_picker_modes(
+fn available_context_picker_entries(
     thread_store: &Option<WeakEntity<ThreadStore>>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
-) -> Vec<ContextPickerMode> {
-    let mut modes = vec![ContextPickerMode::File, ContextPickerMode::Symbol];
+) -> Vec<ContextPickerEntry> {
+    let mut entries = vec![
+        ContextPickerEntry::Mode(ContextPickerMode::File),
+        ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+    ];
 
     let has_selection = workspace
         .read(cx)
@@ -455,16 +513,18 @@ fn available_context_picker_modes(
             editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
         });
     if has_selection {
-        modes.push(ContextPickerMode::Selection);
+        entries.push(ContextPickerEntry::Action(
+            ContextPickerAction::AddSelections,
+        ));
     }
 
     if thread_store.is_some() {
-        modes.push(ContextPickerMode::Thread);
+        entries.push(ContextPickerEntry::Mode(ContextPickerMode::Thread));
     }
 
-    modes.push(ContextPickerMode::Fetch);
+    entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
 
-    modes
+    entries
 }
 
 fn recent_context_picker_entries(
@@ -532,7 +592,7 @@ fn add_selections_as_context(
     context_store.update(cx, |context_store, cx| {
         for (buffer, range) in selection_ranges {
             context_store
-                .add_excerpt(range, buffer, cx)
+                .add_excerpt(buffer, range, cx)
                 .detach_and_log_err(cx);
         }
     })
@@ -722,6 +782,7 @@ impl MentionLink {
         url.starts_with(Self::FILE)
             || url.starts_with(Self::SYMBOL)
             || url.starts_with(Self::FETCH)
+            || url.starts_with(Self::EXCERPT)
             || url.starts_with(Self::THREAD)
     }
 
@@ -739,19 +800,21 @@ impl MentionLink {
         )
     }
 
-    pub fn for_fetch(url: &str) -> String {
-        format!("[@{}]({}:{})", url, Self::FETCH, url)
-    }
-
     pub fn for_excerpt(file_name: &str, full_path: &str, line_range: Range<usize>) -> String {
         format!(
-            "[@{}]({}:{}:{}-{})",
+            "[@{} ({}-{})]({}:{}:{}-{})",
             file_name,
-            Self::FILE,
+            line_range.start,
+            line_range.end,
+            Self::EXCERPT,
             full_path,
             line_range.start,
             line_range.end
         )
+    }
+
+    pub fn for_fetch(url: &str) -> String {
+        format!("[@{}]({}:{})", url, Self::FETCH, url)
     }
 
     pub fn for_thread(thread: &ThreadContextEntry) -> String {
