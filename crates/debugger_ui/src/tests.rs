@@ -11,12 +11,19 @@ use workspace::Workspace;
 
 use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
+#[cfg(test)]
 mod attach_modal;
+#[cfg(test)]
 mod console;
+#[cfg(test)]
 mod dap_logger;
+#[cfg(test)]
 mod debugger_panel;
+#[cfg(test)]
 mod module_list;
+#[cfg(test)]
 mod stack_frame_list;
+#[cfg(test)]
 mod variable_list;
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {

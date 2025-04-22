@@ -4,14 +4,14 @@ use debugger_tools::LogStore;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::Project;
 use serde_json::json;
-use std::{cell::OnceCell, sync::Arc};
+use std::cell::OnceCell;
 
 #[gpui::test]
 async fn test_dap_logger_captures_all_session_rpc_messages(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
-    let log_store_cell = Arc::new(OnceCell::new());
+    let log_store_cell = std::rc::Rc::new(OnceCell::new());
 
     cx.update(|cx| {
         let log_store_cell = log_store_cell.clone();
