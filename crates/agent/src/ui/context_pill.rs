@@ -3,7 +3,7 @@ use std::{rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
 use futures::FutureExt;
-use gpui::{Animation, AnimationExt as _, AnyView, Image, MouseButton, pulsating_between};
+use gpui::{Animation, AnimationExt as _, Image, MouseButton, pulsating_between};
 use gpui::{ClickEvent, Task};
 use language_model::LanguageModelImage;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
@@ -168,11 +168,16 @@ impl RenderOnce for ContextPill {
                             .map(|element| match &context.status {
                                 ContextStatus::Ready => element
                                     .when_some(
-                                        context.show_preview.as_ref(),
-                                        |element, show_preview| {
+                                        context.render_preview.as_ref(),
+                                        |element, render_preview| {
                                             element.hoverable_tooltip({
-                                                let show_preview = show_preview.clone();
-                                                move |window, cx| show_preview(window, cx)
+                                                let render_preview = render_preview.clone();
+                                                move |_, cx| {
+                                                    cx.new(|_| ContextPillPreview {
+                                                        render_preview: render_preview.clone(),
+                                                    })
+                                                    .into()
+                                                }
                                             })
                                         },
                                     )
@@ -266,7 +271,7 @@ pub struct AddedContext {
     pub tooltip: Option<SharedString>,
     pub icon_path: Option<SharedString>,
     pub status: ContextStatus,
-    pub show_preview: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    pub render_preview: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>>,
 }
 
 impl AddedContext {
@@ -292,7 +297,7 @@ impl AddedContext {
                     tooltip: Some(full_path_string),
                     icon_path: FileIcons::get_icon(&full_path, cx),
                     status: ContextStatus::Ready,
-                    show_preview: None,
+                    render_preview: None,
                 }
             }
 
@@ -323,7 +328,7 @@ impl AddedContext {
                     tooltip: Some(full_path_string),
                     icon_path: None,
                     status: ContextStatus::Ready,
-                    show_preview: None,
+                    render_preview: None,
                 }
             }
 
@@ -335,7 +340,7 @@ impl AddedContext {
                 tooltip: None,
                 icon_path: None,
                 status: ContextStatus::Ready,
-                show_preview: None,
+                render_preview: None,
             },
 
             AssistantContext::Excerpt(excerpt_context) => {
@@ -368,7 +373,7 @@ impl AddedContext {
                     tooltip: Some(full_path_string.into()),
                     icon_path: FileIcons::get_icon(&full_path, cx),
                     status: ContextStatus::Ready,
-                    show_preview: None,
+                    render_preview: None,
                 }
             }
 
@@ -380,7 +385,7 @@ impl AddedContext {
                 tooltip: None,
                 icon_path: None,
                 status: ContextStatus::Ready,
-                show_preview: None,
+                render_preview: None,
             },
 
             AssistantContext::Thread(thread_context) => AddedContext {
@@ -401,7 +406,7 @@ impl AddedContext {
                 } else {
                     ContextStatus::Ready
                 },
-                show_preview: None,
+                render_preview: None,
             },
 
             AssistantContext::Rules(user_rules_context) => AddedContext {
@@ -412,7 +417,7 @@ impl AddedContext {
                 tooltip: None,
                 icon_path: None,
                 status: ContextStatus::Ready,
-                show_preview: None,
+                render_preview: None,
             },
 
             AssistantContext::Image(image_context) => AddedContext {
@@ -433,13 +438,13 @@ impl AddedContext {
                 } else {
                     ContextStatus::Ready
                 },
-                show_preview: Some(Rc::new({
+                render_preview: Some(Rc::new({
                     let image = image_context.original_image.clone();
-                    move |_, cx| {
-                        cx.new(|_| ImagePreview {
-                            image: image.clone(),
-                        })
-                        .into()
+                    move |_, _| {
+                        gpui::img(image.clone())
+                            .max_w_96()
+                            .max_h_96()
+                            .into_any_element()
                     }
                 })),
             },
@@ -447,17 +452,17 @@ impl AddedContext {
     }
 }
 
-struct ImagePreview {
-    image: Arc<Image>,
+struct ContextPillPreview {
+    render_preview: Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
 }
 
-impl Render for ImagePreview {
+impl Render for ContextPillPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, move |this, _, _| {
+        tooltip_container(window, cx, move |this, window, cx| {
             this.occlude()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(gpui::img(self.image.clone()).max_w_96().max_h_96())
+                .child((self.render_preview)(window, cx))
         })
     }
 }
