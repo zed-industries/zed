@@ -287,7 +287,7 @@ async fn create_billing_subscription(
         }
     }
 
-    let customer_id = if let Some(existing_customer) = existing_billing_customer {
+    let customer_id = if let Some(existing_customer) = &existing_billing_customer {
         CustomerId::from_str(&existing_customer.stripe_customer_id)
             .context("failed to parse customer ID")?
     } else {
@@ -320,6 +320,15 @@ async fn create_billing_subscription(
                 .await?
         }
         Some(ProductCode::ZedProTrial) => {
+            if let Some(existing_billing_customer) = &existing_billing_customer {
+                if existing_billing_customer.trial_started_at.is_some() {
+                    return Err(Error::http(
+                        StatusCode::FORBIDDEN,
+                        "user already used free trial".into(),
+                    ));
+                }
+            }
+
             stripe_billing
                 .checkout_with_zed_pro_trial(
                     app.config.zed_pro_price_id()?,
@@ -816,6 +825,24 @@ async fn handle_customer_subscription_event(
         find_or_create_billing_customer(app, stripe_client, subscription.customer)
             .await?
             .ok_or_else(|| anyhow!("billing customer not found"))?;
+
+    if let Some(SubscriptionKind::ZedProTrial) = subscription_kind {
+        if subscription.status == SubscriptionStatus::Trialing {
+            let current_period_start =
+                DateTime::from_timestamp(subscription.current_period_start, 0)
+                    .ok_or_else(|| anyhow!("No trial subscription period start"))?;
+
+            app.db
+                .update_billing_customer(
+                    billing_customer.id,
+                    &UpdateBillingCustomerParams {
+                        trial_started_at: ActiveValue::set(Some(current_period_start.naive_utc())),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+        }
+    }
 
     let was_canceled_due_to_payment_failure = subscription.status == SubscriptionStatus::Canceled
         && subscription
