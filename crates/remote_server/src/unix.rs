@@ -428,7 +428,7 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::Application::headless().run(move |cx| {
         settings::init(cx);
-        let app_version = AppVersion::init(env!("ZED_PKG_VERSION"));
+        let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
 
