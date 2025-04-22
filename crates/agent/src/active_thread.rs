@@ -3323,6 +3323,7 @@ pub(crate) fn open_context(
             }),
             cx,
         ),
+        AssistantContext::Image(_) => {}
     }
 }
 
