@@ -585,8 +585,9 @@ impl Example {
         let diff_output = JudgeResponse::parse(&diff_response)?;
 
         println!(
-            "{}Judge - Diff score: {}",
-            self.log_prefix, diff_output.passing_criteria
+            "{}Judge - Diff score: {}%",
+            self.log_prefix,
+            diff_output.score()
         );
 
         Ok((diff_response, diff_output))

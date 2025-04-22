@@ -338,15 +338,13 @@ fn main() {
 
                             match judge_result {
                                 Ok(judge_output) => {
-                                    let diff_score = judge_output.diff.score();
-                                    let thread_score = judge_output.thread.score();
-                                    diff_scores.push(diff_score);
-                                    thread_scores.push(thread_score);
+                                    diff_scores.push(judge_output.diff.score());
+                                    thread_scores.push(judge_output.thread.score());
                                     println!(
                                         "|{:^7}│{:^6}│{:^8}│ {}",
                                         example.repetition,
-                                        diff_score,
-                                        thread_score,
+                                        format!("{}%", judge_output.diff.score()),
+                                        format!("{}%", judge_output.thread.score()),
                                         relative_run_dir_path.display()
                                     );
                                 }

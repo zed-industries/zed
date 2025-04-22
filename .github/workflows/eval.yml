@@ -66,7 +66,7 @@ jobs:
         run: cargo build --package=eval
 
       - name: Run eval
-        run: cargo run --package=eval -- --repetitions=3
+        run: cargo run --package=eval -- --repetitions=3 --concurrency=1
 
       # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
       # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
