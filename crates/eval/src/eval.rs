@@ -57,6 +57,9 @@ fn main() {
 
     let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
     let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
+
+    dbg!(&system_id, &installation_id);
+
     let session_id = uuid::Uuid::new_v4().to_string();
     let run_timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
     let run_id = match env::var("GITHUB_RUN_ID") {
