@@ -725,6 +725,13 @@ impl Session {
         })
     }
 
+    pub fn worktree(&self) -> Option<Entity<Worktree>> {
+        match &self.mode {
+            Mode::Building => None,
+            Mode::Running(local_mode) => local_mode.worktree.upgrade(),
+        }
+    }
+
     pub fn boot(
         &mut self,
         binary: DebugAdapterBinary,

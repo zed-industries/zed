@@ -1068,6 +1068,7 @@ impl Project {
                     SSH_PROJECT_ID,
                     ssh_proto.clone(),
                     breakpoint_store.clone(),
+                    worktree_store.clone(),
                     cx,
                 )
             });
@@ -1252,6 +1253,7 @@ impl Project {
                 remote_id,
                 client.clone().into(),
                 breakpoint_store.clone(),
+                worktree_store.clone(),
                 cx,
             )
         })?;

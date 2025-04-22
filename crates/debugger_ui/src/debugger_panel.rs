@@ -6,6 +6,7 @@ use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
+use dap::StartDebuggingRequestArguments;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
@@ -17,7 +18,7 @@ use gpui::{
     actions, anchored, deferred,
 };
 
-use project::debugger::session::SessionStateEvent;
+use project::debugger::session::{Session, SessionStateEvent};
 use project::{
     Project,
     debugger::{
@@ -63,7 +64,7 @@ pub struct DebugPanel {
     active_session: Option<Entity<DebugSession>>,
     /// This represents the last debug definition that was created in the new session modal
     pub(crate) past_debug_definition: Option<DebugTaskDefinition>,
-    project: WeakEntity<Project>,
+    project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
@@ -127,7 +128,7 @@ impl DebugPanel {
                 _subscriptions,
                 past_debug_definition: None,
                 focus_handle: cx.focus_handle(),
-                project: project.downgrade(),
+                project,
                 workspace: workspace.weak_handle(),
                 context_menu: None,
             };
@@ -264,11 +265,7 @@ impl DebugPanel {
                 tasks_ui::task_contexts(workspace, window, cx)
             })
             .ok();
-        let Some(project) = self.project.upgrade() else {
-            return;
-        };
-        let dap_store = project.read(cx).dap_store().clone();
-        let adapter_name = definition.adapter.clone();
+        let dap_store = self.project.read(cx).dap_store().clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let task_context = if let Some(task) = task_contexts {
@@ -279,92 +276,181 @@ impl DebugPanel {
                 task::TaskContext::default()
             };
 
-            let session = dap_store.update(cx, |dap_store, cx| {
+            let (session, task) = dap_store.update(cx, |dap_store, cx| {
                 let template = DebugTaskTemplate {
                     locator: None,
                     definition: definition.clone(),
                 };
-                if let Some(debug_config) = template
+                let session = if let Some(debug_config) = template
                     .to_zed_format()
                     .resolve_task("debug_task", &task_context)
                     .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
                 {
-                    dap_store.start_session(debug_config.definition, None, cx)
+                    dap_store.new_session(debug_config.definition, None, cx)
                 } else {
-                    dap_store.start_session(definition.clone(), None, cx)
-                }
-            })??;
+                    dap_store.new_session(definition.clone(), None, cx)
+                };
 
-            this.update_in(cx, |_, window, cx| {
-                let definition = definition.clone();
-                cx.subscribe_in(
-                    &session,
-                    window,
-                    move |_, session, event: &SessionStateEvent, window, cx| match event {
-                        SessionStateEvent::Restart => {
-                            let mut curr_session = session.clone();
-                            while let Some(parent_session) = curr_session
-                                .read_with(cx, |session, _| session.parent_session().cloned())
-                            {
-                                curr_session = parent_session;
-                            }
-
-                            let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
-
-                            let definition = definition.clone();
-                            cx.spawn_in(window, async move |this, cx| {
-                                task.await;
-
-                                this.update_in(cx, |this, window, cx| {
-                                    this.start_session(definition, window, cx)
-                                })
-                            })
-                            .detach_and_log_err(cx);
-                        }
-                        _ => {}
-                    },
-                )
-                .detach();
-            })
-            .ok();
-
-            let serialized_layout = persistence::get_serialized_pane_layout(adapter_name).await;
-
-            let workspace = this.update_in(cx, |this, window, cx| {
-                this.sessions.retain(|session| {
-                    session
-                        .read(cx)
-                        .mode()
-                        .as_running()
-                        .map_or(false, |running_state| {
-                            !running_state.read(cx).session().read(cx).is_terminated()
-                        })
-                });
-
-                let session_item = DebugSession::running(
-                    project,
-                    this.workspace.clone(),
-                    session,
-                    cx.weak_entity(),
-                    serialized_layout,
-                    window,
-                    cx,
-                );
-
-                if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
-                    // We might want to make this an event subscription and only notify when a new thread is selected
-                    // This is used to filter the command menu correctly
-                    cx.observe(&running, |_, _, cx| cx.notify()).detach();
-                }
-
-                this.sessions.push(session_item.clone());
-                this.activate_session(session_item, window, cx);
-                this.workspace.clone()
+                (session.clone(), dap_store.boot_session(session, cx))
             })?;
 
-            workspace.update_in(cx, |workspace, window, cx| {
-                workspace.focus_panel::<Self>(window, cx)
-            })
+            match task.await {
+                Err(e) => {
+                    this.update(cx, |this, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_error(&e, cx);
+                            })
+                            .ok();
+                    })
+                    .ok();
+
+                    session
+                        .update(cx, |session, cx| session.shutdown(cx))?
+                        .await;
+                }
+                Ok(_) => Self::register_session(this, session, cx).await?,
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    async fn register_session(
+        this: WeakEntity<Self>,
+        session: Entity<Session>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        let adapter_name = session.update(cx, |session, _| session.adapter_name())?;
+        this.update_in(cx, |_, window, cx| {
+            cx.subscribe_in(
+                &session,
+                window,
+                move |_, session, event: &SessionStateEvent, window, cx| match event {
+                    SessionStateEvent::Restart => {
+                        let mut curr_session = session.clone();
+                        while let Some(parent_session) = curr_session
+                            .read_with(cx, |session, _| session.parent_session().cloned())
+                        {
+                            curr_session = parent_session;
+                        }
+
+                        let definition = curr_session.update(cx, |session, _| session.definition());
+                        let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
+
+                        let definition = definition.clone();
+                        cx.spawn_in(window, async move |this, cx| {
+                            task.await;
+
+                            this.update_in(cx, |this, window, cx| {
+                                this.start_session(definition, window, cx)
+                            })
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+        })
+        .ok();
+
+        let serialized_layout = persistence::get_serialized_pane_layout(adapter_name).await;
+
+        let workspace = this.update_in(cx, |this, window, cx| {
+            this.sessions.retain(|session| {
+                session
+                    .read(cx)
+                    .mode()
+                    .as_running()
+                    .map_or(false, |running_state| {
+                        !running_state.read(cx).session().read(cx).is_terminated()
+                    })
+            });
+
+            let session_item = DebugSession::running(
+                this.project.clone(),
+                this.workspace.clone(),
+                session,
+                cx.weak_entity(),
+                serialized_layout,
+                window,
+                cx,
+            );
+
+            if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
+                // We might want to make this an event subscription and only notify when a new thread is selected
+                // This is used to filter the command menu correctly
+                cx.observe(&running, |_, _, cx| cx.notify()).detach();
+            }
+
+            this.sessions.push(session_item.clone());
+            this.activate_session(session_item, window, cx);
+            this.workspace.clone()
+        })?;
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.focus_panel::<Self>(window, cx);
+        })?;
+        Ok(())
+    }
+
+    pub fn start_child_session(
+        &mut self,
+        request: &StartDebuggingRequestArguments,
+        parent_session: Entity<Session>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(worktree) = parent_session.read(cx).worktree() else {
+            log::error!("Attempted to start a child session from non local debug session");
+            return;
+        };
+
+        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let breakpoint_store = self.project.read(cx).breakpoint_store();
+        let definition = parent_session.read(cx).definition().clone();
+        let mut binary = parent_session.read(cx).binary().clone();
+        binary.request_args = request.clone();
+        dbg!(&request, &binary);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
+                let session =
+                    dap_store.new_session(definition.clone(), Some(parent_session.clone()), cx);
+
+                let task = session.update(cx, |session, cx| {
+                    session.boot(
+                        binary,
+                        worktree,
+                        breakpoint_store,
+                        dap_store_handle.downgrade(),
+                        cx,
+                    )
+                });
+                (session, task)
+            })?;
+
+            match task.await {
+                Err(e) => {
+                    this.update(cx, |this, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_error(&e, cx);
+                            })
+                            .ok();
+                    })
+                    .ok();
+
+                    session
+                        .update(cx, |session, cx| session.shutdown(cx))?
+                        .await;
+                }
+                Ok(_) => Self::register_session(this, session, cx).await?,
+            }
+
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -401,6 +487,12 @@ impl DebugPanel {
                     cx,
                 )
                 .detach_and_log_err(cx);
+            }
+            dap_store::DapStoreEvent::SpawnChildSession {
+                request,
+                parent_session,
+            } => {
+                self.start_child_session(request, parent_session.clone(), window, cx);
             }
             _ => {}
         }
@@ -496,8 +588,6 @@ impl DebugPanel {
                 let session = this.dap_store().read(cx).session_by_id(session_id);
                 session.map(|session| !session.read(cx).is_terminated())
             })
-            .ok()
-            .flatten()
             .unwrap_or_default();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -921,7 +1011,6 @@ impl DebugPanel {
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
 impl EventEmitter<DebugPanelEvent> for DebugPanel {}
-impl EventEmitter<project::Event> for DebugPanel {}
 
 impl Focusable for DebugPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
