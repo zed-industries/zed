@@ -38,7 +38,7 @@ use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse, SharedProjectContext,
 };
-use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState, USING_TOOL_MARKER};
+use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -167,12 +167,9 @@ pub enum MessageSegment {
 
 impl MessageSegment {
     pub fn should_display(&self) -> bool {
-        // We add USING_TOOL_MARKER when making a request that includes tool uses
-        // without non-whitespace text around them, and this can cause the model
-        // to mimic the pattern, so we consider those segments not displayable.
         match self {
-            Self::Text(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
-            Self::Thinking { text, .. } => text.is_empty() || text.trim() == USING_TOOL_MARKER,
+            Self::Text(text) => text.is_empty(),
+            Self::Thinking { text, .. } => text.is_empty(),
             Self::RedactedThinking(_) => false,
         }
     }
