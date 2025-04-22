@@ -311,24 +311,6 @@ impl DapStore {
         }
     }
 
-    // pub fn add_remote_client(&mut self, definition: DebugTaskDefinition, cx: &mut Context<Self>) {
-    //     if let DapStoreMode::Ssh(remote) = &self.mode {
-    //         self.sessions.insert(
-    //             session_id,
-    //             cx.new(|_| {
-    //                 debugger::session::Session::remote(
-    //                     session_id,
-    //                     remote.upstream_client.clone(),
-    //                     remote.upstream_project_id,
-    //                     ignore.unwrap_or(false),
-    //                 )
-    //             }),
-    //         );
-    //     } else {
-    //         debug_assert!(false);
-    //     }
-    // }
-
     pub fn start_session(
         &mut self,
         template: DebugTaskDefinition,
@@ -362,7 +344,6 @@ impl DapStore {
         );
 
         self.sessions.insert(session_id, session.clone());
-        cx.emit(DapStoreEvent::DebugClientStarted(session_id));
         cx.notify();
 
         cx.subscribe(&session, {
@@ -397,7 +378,9 @@ impl DapStore {
                     })
                     .detach_and_log_err(cx);
                 }
-                _ => {}
+                SessionStateEvent::Running => {
+                    cx.emit(DapStoreEvent::DebugClientStarted(session_id));
+                }
             }
         })
         .detach();
