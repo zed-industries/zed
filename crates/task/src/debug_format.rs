@@ -119,29 +119,17 @@ impl From<AttachRequest> for DebugRequest {
 //     }
 // }
 
-/// Defines how to find a debug target
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum DebugeeDefinition {
-    /// Find a debugee by running a locator with a given name
-    Locator(SharedString),
-    /// Use a given task template as a debugee
-    Launch(TaskTemplate),
-    /// Attach to a running process with a given PID
-    Attach(Option<u32>),
-}
-
 /// This struct represent a user created debug task
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugScenario {
-    pub adapter: String,
+    pub adapter: SharedString,
     /// Name of the debug task
-    pub label: String,
+    pub label: SharedString,
     /// A task to run prior to spawning the debugee
     pub build: Option<TaskTemplate>,
     #[serde(flatten)]
-    pub debugee: DebugeeDefinition,
+    pub request: Option<DebugRequest>,
     /// Additional initialization arguments to be sent on DAP initialization
     #[serde(default)]
     pub initialize_args: Option<serde_json::Value>,
@@ -159,7 +147,7 @@ pub struct DebugScenario {
 
 impl DebugScenario {
     pub fn cwd(&self) -> Option<&Path> {
-        if let DebugeeDefinition::Launch(config) = &self.debugee {
+        if let Some(DebugRequest::Launch(config)) = &self.request {
             config.cwd.as_ref().map(Path::new)
         } else {
             None

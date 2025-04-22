@@ -371,7 +371,7 @@ impl LocalMode {
         })
     }
 
-    pub fn label(&self) -> String {
+    pub fn label(&self) -> SharedString {
         self.definition.label.clone()
     }
 

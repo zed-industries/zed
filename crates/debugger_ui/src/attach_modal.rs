@@ -4,6 +4,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
 use picker::{Picker, PickerDelegate};
+use task::DebugScenario;
 
 use std::sync::Arc;
 use sysinfo::System;
@@ -24,14 +25,14 @@ pub(crate) struct AttachModalDelegate {
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
     project: Entity<project::Project>,
-    pub(crate) scenario: DebugTaskDefinition,
+    pub(crate) scenario: DebugScenario,
     candidates: Arc<[Candidate]>,
 }
 
 impl AttachModalDelegate {
     fn new(
         project: Entity<project::Project>,
-        scenario: DebugTaskDefinition,
+        scenario: DebugScenario,
         candidates: Arc<[Candidate]>,
     ) -> Self {
         Self {
@@ -53,7 +54,7 @@ pub struct AttachModal {
 impl AttachModal {
     pub fn new(
         project: Entity<project::Project>,
-        scenario: DebugTaskDefinition,
+        scenario: DebugScenario,
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -81,7 +82,7 @@ impl AttachModal {
 
     pub(super) fn with_processes(
         project: Entity<project::Project>,
-        scenario: DebugTaskDefinition,
+        scenario: DebugScenario,
         processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,
@@ -217,11 +218,15 @@ impl PickerDelegate for AttachModalDelegate {
         };
 
         match &mut self.scenario.request {
-            DebugRequest::Attach(config) => {
+            Some(DebugRequest::Attach(config)) => {
                 config.process_id = Some(candidate.pid);
             }
-            DebugRequest::Launch(_) => {
+            Some(DebugRequest::Launch(_)) => {
                 debug_panic!("Debugger attach modal used on launch debug config");
+                return;
+            }
+            _ => {
+                debug_panic!("Debugger attach modal used without a request");
                 return;
             }
         }

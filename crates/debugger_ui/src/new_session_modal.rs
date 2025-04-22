@@ -13,7 +13,7 @@ use gpui::{
 };
 use project::Project;
 use settings::Settings;
-use task::{DebugScenario, DebugeeDefinition, LaunchRequest, TaskTemplate};
+use task::{DebugScenario, LaunchRequest, TaskTemplate};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -37,7 +37,7 @@ pub(super) struct NewSessionModal {
     last_selected_profile_name: Option<SharedString>,
 }
 
-fn suggested_label(request: &DebugRequest, debugger: &str) -> String {
+fn suggested_label(request: &DebugRequest, debugger: &str) -> SharedString {
     match request {
         DebugRequest::Launch(config) => {
             let last_path_component = Path::new(&config.program)
@@ -45,12 +45,13 @@ fn suggested_label(request: &DebugRequest, debugger: &str) -> String {
                 .map(|name| name.to_string_lossy())
                 .unwrap_or_else(|| Cow::Borrowed(&config.program));
 
-            format!("{} ({debugger})", last_path_component)
+            format!("{} ({debugger})", last_path_component).into()
         }
         DebugRequest::Attach(config) => format!(
             "pid: {} ({debugger})",
             config.process_id.unwrap_or(u32::MAX)
-        ),
+        )
+        .into(),
     }
 }
 
@@ -88,31 +89,13 @@ impl NewSessionModal {
         }
     }
 
-    fn debug_config(&self, cx: &App) -> Option<DebugScenario> {
+    fn debug_config(&self, cx: &App) -> Option<DebugTaskDefinition> {
         let request = self.mode.debug_task(cx);
         let label = suggested_label(&request, self.debugger.as_deref()?);
-        let debugee = match request {
-            DebugRequest::Launch(launch_request) => {
-                let template = TaskTemplate {
-                    label: label.clone(),
-                    command: launch_request.program,
-                    args: launch_request.args,
-                    cwd: launch_request
-                        .cwd
-                        .map(|path| path.to_string_lossy().into_owned()),
-                    ..Default::default()
-                };
-                DebugeeDefinition::Launch(template)
-            }
-            DebugRequest::Attach(attach_request) => {
-                DebugeeDefinition::Attach(attach_request.process_id)
-            }
-        };
-        Some(DebugScenario {
+        Some(DebugTaskDefinition {
             adapter: self.debugger.clone()?.into(),
-            build: None,
             label,
-            debugee,
+            request,
             initialize_args: self.initialize_args.clone(),
             tcp_connection: None,
             stop_on_entry: match self.stop_on_entry {
@@ -148,21 +131,8 @@ impl NewSessionModal {
             };
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
 
-            let task = project.update(cx, |this, cx| {
-                let template = DebugTaskDefinition {
-                    locator: None,
-                    definition: config.clone(),
-                };
-                if let Some(debug_config) = template
-                    .to_zed_format()
-                    .resolve_task("debug_task", &task_context)
-                    .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
-                {
-                    this.start_debug_session(debug_config.definition, cx)
-                } else {
-                    this.start_debug_session(config, cx)
-                }
-            })?;
+            let task =
+                project.update(cx, |this, cx| this.start_debug_session(config.clone(), cx))?;
             let spawn_result = task.await;
             if spawn_result.is_ok() {
                 this.update(cx, |_, cx| {
@@ -260,15 +230,15 @@ impl NewSessionModal {
                             this.last_selected_profile_name = Some(SharedString::from(&task.label));
                             this.debugger = Some(task.adapter.clone().into());
                             this.initialize_args = task.initialize_args.clone();
-                            match &task.debugee {
-                                DebugeeDefinition::Launch(launch_config) => {
+                            match &task.request {
+                                Some(DebugRequest::Launch(launch_config)) => {
                                     this.mode = NewSessionMode::launch(
                                         Some(launch_config.clone()),
                                         window,
                                         cx,
                                     );
                                 }
-                                DebugeeDefinition::Attach(_) => {
+                                Some(DebugRequest::Attach(_)) => {
                                     let Ok(project) = this
                                         .workspace
                                         .read_with(cx, |this, _| this.project().clone())
@@ -380,16 +350,19 @@ impl AttachMode {
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Entity<Self> {
-        let debug_definition = DebugTaskDefinition {
-            label: "Attach New Session Setup".into(),
-            request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
-            tcp_connection: None,
+        let scenario = DebugScenario {
             adapter: debugger.clone().unwrap_or_default().into(),
+            label: "Attach New Session Setup".into(),
+            build: None,
+            request: Some(dap::DebugRequest::Attach(task::AttachRequest {
+                process_id: None,
+            })),
             initialize_args: None,
+            tcp_connection: None,
             stop_on_entry: Some(false),
         };
         let attach_picker = cx.new(|cx| {
-            let modal = AttachModal::new(project, debug_definition.clone(), false, window, cx);
+            let modal = AttachModal::new(project, scenario.clone(), false, window, cx);
             window.focus(&modal.focus_handle(cx));
 
             modal

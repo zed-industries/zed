@@ -118,12 +118,12 @@ impl TcpArguments {
 
 /// Represents a debuggable binary/process.
 ///
-/// We start off with a [DebugTaskDefinition], a user-facing type that can define how a debug target is built; once
+/// We start off with a [DebugScenario], a user-facing type that can define how a debug target is built; once
 /// an optional build step is completed, we turn it's result into a DebugScenario by running a locator (or using a user-provided task).
 /// Finally, a [DebugScenario] has to be turned into a concrete debugger invokation.
 #[derive(Clone, Debug)]
 pub struct DebugTaskDefinition {
-    pub label: String,
+    pub label: SharedString,
     pub adapter: SharedString,
     pub request: DebugRequest,
     /// Additional initialization arguments to be sent on DAP initialization
@@ -160,7 +160,7 @@ impl DebugTaskDefinition {
         };
         Ok(Self {
             adapter: payload.adapter.into(),
-            label: payload.label,
+            label: payload.label.into(),
             request,
             initialize_args: payload
                 .configuration
@@ -191,22 +191,9 @@ impl TryFrom<DebugScenario> for DebugTaskDefinition {
     type Error = anyhow::Error;
 
     fn try_from(value: DebugScenario) -> std::result::Result<Self, Self::Error> {
-        let request = match value.debugee {
-            task::DebugeeDefinition::Locator(_) => {
-                return Err(anyhow!(
-                    "DebugScenario cannot be created from unresolved locator"
-                ));
-            }
-            task::DebugeeDefinition::Launch(task_template) => {
-                DebugRequest::Launch(task::LaunchRequest {
-                    program: task_template.command,
-                    cwd: task_template.cwd.map(PathBuf::from),
-                    args: task_template.args,
-                })
-            }
-            task::DebugeeDefinition::Attach(process_id) => {
-                DebugRequest::Attach(task::AttachRequest { process_id })
-            }
+        let Some(request) = value.request else {
+            todo!();
+            return Err(anyhow!("DebugScenario cannot be created without target"));
         };
         Ok(Self {
             request,
@@ -218,6 +205,7 @@ impl TryFrom<DebugScenario> for DebugTaskDefinition {
         })
     }
 }
+
 #[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
     pub command: String,
