@@ -12,7 +12,7 @@ use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role, StopReason, TokenUsage,
 };
-use project::{Project, ProjectPath};
+use project::{DiagnosticSummary, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -81,10 +81,12 @@ pub struct Example {
     worktrees_dir: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct RunOutput {
     pub repository_diff: String,
     pub ran_diagnostics_check: bool,
+    pub diagnostic_summary_before: DiagnosticSummary,
+    pub diagnostic_summary_after: DiagnosticSummary,
     pub diagnostics_before: Option<String>,
     pub diagnostics_after: Option<String>,
     pub response_count: usize,
@@ -321,6 +323,9 @@ impl Example {
                 None
             };
 
+            let diagnostic_summary_before = project.read_with(cx, |project, cx| {
+                project.diagnostic_summary(false, cx)
+            })?;
             let diagnostics_before = query_lsp_diagnostics(project.clone(), cx).await?;
             if diagnostics_before.is_some() && !this.base.allow_preexisting_diagnostics {
                 return Err(anyhow!("Example has pre-existing diagnostics. If you want to run this example regardless, set `allow_preexisting_diagnostics` to `true` in `base.toml`"));
@@ -497,6 +502,9 @@ impl Example {
             std::fs::write(last_diff_file_path, &repository_diff)?;
 
             println!("{}Getting diagnostics", this.log_prefix);
+            let diagnostic_summary_after = project.read_with(cx, |project, cx| {
+                project.diagnostic_summary(false, cx)
+            })?;
             let diagnostics_after = cx
                 .update(move |cx| {
                     cx.spawn(async move |cx| query_lsp_diagnostics(project, cx).await)
@@ -528,6 +536,8 @@ impl Example {
                 RunOutput {
                     repository_diff,
                     ran_diagnostics_check: this.base.require_lsp,
+                    diagnostic_summary_before,
+                    diagnostic_summary_after,
                     diagnostics_before,
                     diagnostics_after,
                     response_count,

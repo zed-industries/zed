@@ -610,6 +610,8 @@ async fn judge_example(
             model_provider = model.provider_id().to_string(),
             repository_url = example.base.url.clone(),
             repository_revision = example.base.revision.clone(),
+            diagnostic_summary_before = run_output.diagnostic_summary_before,
+            diagnostic_summary_after = run_output.diagnostic_summary_after,
             diagnostics_before = run_output.diagnostics_before,
             diagnostics_after = run_output.diagnostics_after,
         );
