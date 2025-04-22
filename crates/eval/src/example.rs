@@ -1063,7 +1063,8 @@ mod test {
     fn test_parse_judge_output() {
         let response = r#"
             <analysis>The model did a good job but there were still compilations errors.</analysis>
-            <score>3</score>
+            <passing_criteria>3</passing_criteria>
+            <total_criteria>5</total_criteria>
         "#
         .unindent();
 
@@ -1073,6 +1074,7 @@ mod test {
             "The model did a good job but there were still compilations errors."
         );
         assert_eq!(output.passing_criteria, 3);
+        assert_eq!(output.total_criteria, 5);
 
         let response = r#"
             Text around ignored
@@ -1083,12 +1085,15 @@ mod test {
                 - Error 2
             </analysis>
 
-            <score>1</score>
+            <passing_criteria>1</passing_criteria>
+
+            <total_criteria>3</total_criteria>
         "#
         .unindent();
 
         let output = JudgeResponse::parse(&response).unwrap();
         assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
         assert_eq!(output.passing_criteria, 1);
+        assert_eq!(output.total_criteria, 3);
     }
 }
