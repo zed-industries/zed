@@ -3,19 +3,13 @@ use super::{
     locators::DapLocator,
     session::{self, Session, SessionStateEvent},
 };
-use crate::{
-    ProjectEnvironment,
-    project_settings::ProjectSettings,
-    terminals::{SshCommand, wrap_for_ssh},
-    worktree_store::WorktreeStore,
-};
+use crate::{ProjectEnvironment, project_settings::ProjectSettings, worktree_store::WorktreeStore};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
-    Source, StartDebuggingRequestArguments,
+    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, EvaluateArguments,
+    EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments, Source,
     adapters::{DapStatus, DebugAdapterBinary, DebugAdapterName},
     client::SessionId,
     messages::Message,
@@ -26,15 +20,12 @@ use futures::{
     channel::mpsc,
     future::{Shared, join_all},
 };
-use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
-};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
-use remote::SshRemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -46,7 +37,6 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
-    net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::Arc,
 };

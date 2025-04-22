@@ -1339,7 +1339,7 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = start_debug_session(&workspace, cx, |client| {
+    start_debug_session(&workspace, cx, |client| {
         client.on_request::<dap::requests::Initialize, _>(|_, _| {
             Err(ErrorResponse {
                 error: Some(Message {
@@ -1353,7 +1353,8 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
                 }),
             })
         });
-    });
+    })
+    .ok();
 
     cx.run_until_parked();
 

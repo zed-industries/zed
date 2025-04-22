@@ -9,7 +9,7 @@ use dap::{
 };
 use editor::{Editor, ToPoint as _};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
-use project::{FakeFs, Project, debugger};
+use project::{FakeFs, Project};
 use serde_json::json;
 use std::sync::Arc;
 use unindent::Unindent as _;

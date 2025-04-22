@@ -15,7 +15,7 @@ use dap::{
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::{SelectFirst, SelectNext, SelectPrevious};
-use project::{FakeFs, Project, debugger};
+use project::{FakeFs, Project};
 use serde_json::json;
 use unindent::Unindent as _;
 use util::path;

@@ -25,7 +25,6 @@ mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git_store::{Repository, RepositoryId};
-use task::DebugTaskDefinition;
 pub mod search_history;
 mod yarn;
 
@@ -39,17 +38,13 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{
-    adapters::{DebugAdapterBinary, TcpArguments},
-    client::DebugAdapterClient,
-};
+use dap::client::DebugAdapterClient;
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
 use debugger::{
     breakpoint_store::BreakpointStore,
     dap_store::{DapStore, DapStoreEvent},
-    session::Session,
 };
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
@@ -97,7 +92,6 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    net::Ipv4Addr,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -107,7 +101,7 @@ use std::{
 };
 
 use task_store::TaskStore;
-use terminals::{SshCommand, Terminals, wrap_for_ssh};
+use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{

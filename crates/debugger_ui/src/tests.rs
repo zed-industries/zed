@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use dap::{DebugRequest, client::DebugAdapterClient};
-use gpui::{Entity, Flatten, TestAppContext, WindowHandle};
+use gpui::{Entity, TestAppContext, WindowHandle};
 use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
 use task::DebugTaskDefinition;
@@ -95,7 +95,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     configure: T,
 ) -> Result<Entity<Session>> {
     let _subscription = project::debugger::test::intercept_debug_sessions(cx, configure);
-    let result = workspace.update(cx, |workspace, window, cx| {
+    workspace.update(cx, |workspace, window, cx| {
         workspace.start_debug_session(config, window, cx)
     })?;
     cx.run_until_parked();
@@ -107,7 +107,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
             .map(|running| running.read(cx).session().clone())
             .ok_or_else(|| anyhow!("Failed to get active session"))
     })??;
-    
+
     Ok(session)
 }
 

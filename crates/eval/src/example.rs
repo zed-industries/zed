@@ -3,7 +3,6 @@ use agent::{ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
-use collections::HashMap;
 use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};

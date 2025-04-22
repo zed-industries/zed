@@ -7,10 +7,7 @@ use dap::{
     requests::{Initialize, Modules},
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
-use project::{
-    FakeFs, Project,
-    debugger::{self},
-};
+use project::{FakeFs, Project};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicI32, Ordering},

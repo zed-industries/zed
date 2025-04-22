@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Result, anyhow};
 use dap::{DapRegistry, DebugRequest};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
@@ -108,9 +107,10 @@ impl NewSessionModal {
             return;
         };
         let config = self.debug_config(cx, debugger);
-        let workspace = self.workspace.clone();
+        let debug_panel = self.debug_panel.clone();
 
-        let task_contexts = workspace
+        let task_contexts = self
+            .workspace
             .update(cx, |workspace, cx| {
                 tasks_ui::task_contexts(workspace, window, cx)
             })
@@ -125,7 +125,7 @@ impl NewSessionModal {
                 task::TaskContext::default()
             };
 
-            workspace.update_in(cx, |this, window, cx| {
+            debug_panel.update_in(cx, |debug_panel, window, cx| {
                 let template = DebugTaskTemplate {
                     locator: None,
                     definition: config.clone(),
@@ -135,9 +135,9 @@ impl NewSessionModal {
                     .resolve_task("debug_task", &task_context)
                     .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
                 {
-                    this.start_debug_session(debug_config.definition, window, cx)
+                    debug_panel.start_session(debug_config.definition, window, cx)
                 } else {
-                    this.start_debug_session(config, window, cx)
+                    debug_panel.start_session(config, window, cx)
                 }
             })?;
             this.update(cx, |_, cx| {

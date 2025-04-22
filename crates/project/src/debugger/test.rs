@@ -1,9 +1,7 @@
 use std::{path::Path, sync::Arc};
 
-use anyhow::Result;
-use dap::{DebugRequest, client::DebugAdapterClient};
-use gpui::{App, AppContext, Entity, Subscription, Task};
-use task::DebugTaskDefinition;
+use dap::client::DebugAdapterClient;
+use gpui::{App, AppContext, Subscription};
 
 use super::session::{Session, SessionStateEvent};
 
