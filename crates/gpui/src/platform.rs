@@ -1497,6 +1497,15 @@ impl Hash for Image {
 }
 
 impl Image {
+    /// An empty image containing no data
+    pub fn empty() -> Self {
+        Self {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+            id: 0,
+        }
+    }
+
     /// Get this image's ID
     pub fn id(&self) -> u64 {
         self.id

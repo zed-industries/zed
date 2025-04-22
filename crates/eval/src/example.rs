@@ -1,9 +1,8 @@
+use crate::{AgentAppState, ToolMetrics};
 use agent::{ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
-use collections::HashMap;
-use dap::DapRegistry;
 use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
@@ -32,13 +31,9 @@ use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 use util::serde::default_true;
 
-use crate::AgentAppState;
-
-pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
-pub const REPOS_DIR: &str = "./crates/eval/repos";
-pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
-
 const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+
+const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExampleBase {
@@ -78,6 +73,8 @@ pub struct Example {
     pub run_directory_path: PathBuf,
     /// Prefix used for logging that identifies this example
     pub log_prefix: String,
+    pub worktree_path: PathBuf,
+    pub repo_path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -88,7 +85,7 @@ pub struct RunOutput {
     pub diagnostics_after: Option<String>,
     pub response_count: usize,
     pub token_usage: TokenUsage,
-    pub tool_use_counts: HashMap<Arc<str>, u32>,
+    pub tool_metrics: ToolMetrics,
     pub last_request: LanguageModelRequest,
 }
 
@@ -123,7 +120,12 @@ pub struct JudgeOutput {
 
 impl Example {
     /// Load an example from a directory containing base.toml, prompt.md, and criteria.md
-    pub fn load_from_directory(dir_path: &Path, run_dir: &Path) -> Result<Self> {
+    pub fn load_from_directory(
+        dir_path: &Path,
+        run_dir: &Path,
+        worktrees_dir: &Path,
+        repos_dir: &Path,
+    ) -> Result<Self> {
         let name = Self::name_from_path(dir_path);
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
@@ -135,13 +137,25 @@ impl Example {
             None
         };
 
+        let base: ExampleBase = toml::from_str(&fs::read_to_string(&base_path)?)?;
+
+        let repo_path = repo_path_for_url(repos_dir, &base.url);
+
+        let worktree_path = worktrees_dir
+            .canonicalize()
+            .unwrap()
+            .join(&name)
+            .join(&base.repo_name());
+
         Ok(Example {
             name: name.clone(),
-            base: toml::from_str(&fs::read_to_string(&base_path)?)?,
+            base,
             prompt: fs::read_to_string(prompt_path.clone())?,
             thread_criteria,
             diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
             run_directory_path: run_dir.to_path_buf(),
+            worktree_path,
+            repo_path,
             log_prefix: name,
         })
     }
@@ -169,21 +183,10 @@ impl Example {
         path.file_name().unwrap().to_string_lossy().to_string()
     }
 
-    pub fn worktree_path(&self) -> PathBuf {
-        Path::new(WORKTREES_DIR)
-            .canonicalize()
-            .context(format!("No such directory {WORKTREES_DIR}"))
-            .unwrap()
-            .join(&self.name)
-            .join(self.base.repo_name())
-    }
-
     /// Set up the example by checking out the specified Git revision
     pub async fn setup(&mut self) -> Result<()> {
-        let repo_path = repo_path_for_url(&self.base.url);
-
         let revision_exists = run_git(
-            &repo_path,
+            &self.repo_path,
             &["rev-parse", &format!("{}^{{commit}}", self.base.revision)],
         )
         .await
@@ -195,29 +198,27 @@ impl Example {
                 self.log_prefix, &self.base.revision
             );
             run_git(
-                &repo_path,
+                &self.repo_path,
                 &["fetch", "--depth", "1", "origin", &self.base.revision],
             )
             .await?;
         }
 
-        let worktree_path = self.worktree_path();
-
-        if worktree_path.is_dir() {
+        if self.worktree_path.is_dir() {
             println!("{}Resetting existing worktree", self.log_prefix);
 
             // TODO: consider including "-x" to remove ignored files. The downside of this is that
             // it will also remove build artifacts, and so prevent incremental reuse there.
-            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
-            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&worktree_path, &["checkout", &self.base.revision]).await?;
+            run_git(&self.worktree_path, &["clean", "--force", "-d"]).await?;
+            run_git(&self.worktree_path, &["reset", "--hard", "HEAD"]).await?;
+            run_git(&self.worktree_path, &["checkout", &self.base.revision]).await?;
         } else {
             println!("{}Creating worktree", self.log_prefix);
 
-            let worktree_path_string = worktree_path.to_string_lossy().to_string();
+            let worktree_path_string = self.worktree_path.to_string_lossy().to_string();
 
             run_git(
-                &repo_path,
+                &self.repo_path,
                 &[
                     "worktree",
                     "add",
@@ -227,6 +228,10 @@ impl Example {
                 ],
             )
             .await?;
+        }
+
+        if self.base.url == ZED_REPO_URL {
+            std::fs::write(self.worktree_path.join(".rules"), std::fs::read(".rules")?)?;
         }
 
         std::fs::create_dir_all(self.example_output_directory())?;
@@ -245,15 +250,13 @@ impl Example {
             app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
-            Arc::new(DapRegistry::default()),
             app_state.fs.clone(),
             None,
             cx,
         );
 
-        let worktree_path = self.worktree_path();
         let worktree = project.update(cx, |project, cx| {
-            project.create_worktree(&worktree_path, true, cx)
+            project.create_worktree(&self.worktree_path, true, cx)
         });
 
         let tools = cx.new(|_| ToolWorkingSet::default());
@@ -321,6 +324,13 @@ impl Example {
                 return Err(anyhow!("Setup only mode"));
             }
 
+            let example_output_dir = this.example_output_directory();
+            let last_diff_file_path = example_output_dir.join("last.diff");
+
+            // Write an empty "last.diff" so that it can be opened in Zed for convenient view of the
+            // history using undo/redo.
+            std::fs::write(&last_diff_file_path, "")?;
+
             let thread_store = thread_store.await?;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
@@ -328,31 +338,49 @@ impl Example {
 
             thread.update(cx, |thread, _cx| {
                 let mut request_count = 0;
-                let example_dir_path = this.example_output_directory();
-
                 let last_request = Rc::clone(&last_request);
+                let previous_diff = Rc::new(RefCell::new("".to_string()));
+                let example_output_dir = example_output_dir.clone();
+                let last_diff_file_path = last_diff_file_path.clone();
+                let this = this.clone();
                 thread.set_request_callback(move |request, response_events| {
                     *last_request.borrow_mut() = Some(request.clone());
 
                     request_count += 1;
-                    let messages_file_path = example_dir_path.join(format!("{request_count}.messages.md"));
-                    let last_messages_file_path = example_dir_path.join("last.messages.md");
+                    let messages_file_path = example_output_dir.join(format!("{request_count}.messages.md"));
+                    let diff_file_path = example_output_dir.join(format!("{request_count}.diff"));
+                    let last_messages_file_path = example_output_dir.join("last.messages.md");
                     let request_markdown = RequestMarkdown::new(request);
                     let response_events_markdown = response_events_to_markdown(response_events);
 
                     let messages = format!("{}\n\n{}", request_markdown.messages, response_events_markdown);
-                    fs::write(messages_file_path, messages.clone()).expect("failed to write messages file");
-                    fs::write(last_messages_file_path, messages).expect("failed to write last messages file");
+                    fs::write(&messages_file_path, messages.clone()).expect("failed to write messages file");
+                    fs::write(&last_messages_file_path, messages).expect("failed to write last messages file");
+
+                    let diff_result = smol::block_on(this.repository_diff());
+                    match diff_result {
+                        Ok(diff) => {
+                            if diff != previous_diff.borrow().clone() {
+                                fs::write(&diff_file_path, &diff).expect("failed to write diff file");
+                                fs::write(&last_diff_file_path, &diff).expect("failed to write last diff file");
+                                *previous_diff.borrow_mut() = diff;
+                            }
+                        }
+                        Err(err) => {
+                            let error_message = format!("{err:?}");
+                            fs::write(&diff_file_path, &error_message).expect("failed to write diff error to file");
+                            fs::write(&last_diff_file_path, &error_message).expect("failed to write last diff file");
+                        }
+                    }
 
                     if request_count == 1 {
-                        let tools_file_path = example_dir_path.join("tools.md");
+                        let tools_file_path = example_output_dir.join("tools.md");
                         fs::write(tools_file_path, request_markdown.tools).expect("failed to write tools file");
                     }
                 });
             })?;
 
-            let tool_use_counts: Arc<Mutex<HashMap<Arc<str>, u32>>> =
-                Mutex::new(HashMap::default()).into();
+            let tool_metrics = Arc::new(Mutex::new(ToolMetrics::default()));
 
             let (thread_event_tx, mut thread_event_rx) = mpsc::unbounded();
 
@@ -362,7 +390,7 @@ impl Example {
 
             let event_handler_task = cx.spawn({
                 let log_prefix = this.log_prefix.clone();
-                let tool_use_counts = tool_use_counts.clone();
+                let tool_metrics = tool_metrics.clone();
                 let thread = thread.downgrade();
                 async move |cx| {
                     loop {
@@ -405,6 +433,7 @@ impl Example {
                             } => {
                                 thread.update(cx, |thread, _cx| {
                                     if let Some(tool_use) = pending_tool_use {
+                                        let mut tool_metrics = tool_metrics.lock().unwrap();
                                         if let Some(tool_result) = thread.tool_result(&tool_use_id) {
                                             let message = if tool_result.is_error {
                                                 format!("TOOL FAILED: {}", tool_use.name)
@@ -412,13 +441,11 @@ impl Example {
                                                 format!("TOOL FINISHED: {}", tool_use.name)
                                             };
                                             println!("{log_prefix}{message}");
-                                            let mut tool_use_counts = tool_use_counts.lock().unwrap();
-                                            *tool_use_counts
-                                                .entry(tool_result.tool_name.clone())
-                                                .or_insert(0) += 1;
+                                            tool_metrics.insert(tool_result.tool_name.clone(), !tool_result.is_error);
                                         } else {
                                             let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
                                             println!("{log_prefix}{message}");
+                                            tool_metrics.insert(tool_use.name.clone(), true);
                                         }
                                     }
                                 })?;
@@ -426,6 +453,7 @@ impl Example {
                             ThreadEvent::ToolConfirmationNeeded => {
                                 panic!("{}Bug: Tool confirmation should not be required in eval", log_prefix);
                             },
+                            ThreadEvent::StreamedToolUse { .. } |
                             ThreadEvent::StreamedCompletion |
                             ThreadEvent::MessageAdded(_) |
                             ThreadEvent::MessageEdited(_) |
@@ -433,6 +461,7 @@ impl Example {
                             ThreadEvent::SummaryChanged |
                             ThreadEvent::SummaryGenerated |
                             ThreadEvent::CheckpointChanged |
+                            ThreadEvent::ReceivedTextChunk |
                             ThreadEvent::UsageUpdated(_) => {
                                 if std::env::var("ZED_EVAL_DEBUG").is_ok() {
                                     println!("{}Event: {:#?}", log_prefix, event);
@@ -459,11 +488,7 @@ impl Example {
 
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
-
-            let example_output_dir = this.example_output_directory();
-            let repository_diff_path = example_output_dir.join("patch.diff");
-            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
-            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
+            std::fs::write(last_diff_file_path, &repository_diff)?;
 
             println!("{}Getting diagnostics", this.log_prefix);
             let diagnostics_after = cx
@@ -501,7 +526,7 @@ impl Example {
                     diagnostics_after,
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
-                    tool_use_counts: tool_use_counts.lock().unwrap().clone(),
+                    tool_metrics: tool_metrics.lock().unwrap().clone(),
                     last_request,
                 }
             })
@@ -641,9 +666,12 @@ impl Example {
     }
 
     async fn repository_diff(&self) -> Result<String> {
-        let worktree_path = self.worktree_path();
-        run_git(&worktree_path, &["add", "."]).await?;
-        run_git(&worktree_path, &["diff", "--staged"]).await
+        run_git(&self.worktree_path, &["add", "."]).await?;
+        let mut diff_args = vec!["diff", "--staged"];
+        if self.base.url == ZED_REPO_URL {
+            diff_args.push(":(exclude).rules");
+        }
+        run_git(&self.worktree_path, &diff_args).await
     }
 }
 
@@ -804,13 +832,13 @@ fn get_tag(name: &'static str, response: &str) -> Result<String> {
     anyhow::Ok(content)
 }
 
-pub fn repo_path_for_url(repo_url: &str) -> PathBuf {
+pub fn repo_path_for_url(repos_dir: &Path, repo_url: &str) -> PathBuf {
     let repo_name = repo_url
         .trim_start_matches("https://")
         .replace(|c: char| !c.is_alphanumeric(), "-");
-    Path::new(REPOS_DIR)
+    Path::new(repos_dir)
         .canonicalize()
-        .context(format!("No such directory {REPOS_DIR}"))
+        .context(format!("No such directory {}", repos_dir.display()))
         .unwrap()
         .join(repo_name)
 }

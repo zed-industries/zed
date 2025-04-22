@@ -4,8 +4,8 @@ use serde::Deserialize;
 use util::ResultExt as _;
 
 use crate::{
-    AttachConfig, DebugArgs, DebugArgsRequest, EnvVariableReplacer, TCPHost, TaskTemplate,
-    TaskTemplates, TaskType, VariableName,
+    AttachRequest, DebugArgs, DebugArgsRequest, EnvVariableReplacer, TaskTemplate, TaskTemplates,
+    TaskType, TcpArgumentsTemplate, VariableName,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -72,11 +72,11 @@ impl VsCodeDebugTaskDefinition {
             task_type: TaskType::Debug(DebugArgs {
                 request: match self.request {
                     Request::Launch { .. } => DebugArgsRequest::Launch,
-                    Request::Attach => DebugArgsRequest::Attach(AttachConfig { process_id: None }),
+                    Request::Attach => DebugArgsRequest::Attach(AttachRequest { process_id: None }),
                 },
                 adapter: task_type_to_adapter_name(self.r#type),
                 // TODO host?
-                tcp_connection: self.port.map(|port| TCPHost {
+                tcp_connection: self.port.map(|port| TcpArgumentsTemplate {
                     port: Some(port),
                     host: None,
                     timeout: None,
@@ -136,7 +136,9 @@ fn task_type_to_adapter_name(task_type: String) -> String {
 mod tests {
     use collections::HashMap;
 
-    use crate::{DebugArgs, DebugArgsRequest, TCPHost, TaskTemplate, TaskTemplates, TaskType};
+    use crate::{
+        DebugArgs, DebugArgsRequest, TaskTemplate, TaskTemplates, TaskType, TcpArgumentsTemplate,
+    };
 
     use super::VsCodeDebugTaskFile;
 
@@ -177,7 +179,7 @@ mod tests {
                 task_type: TaskType::Debug(DebugArgs {
                     request: DebugArgsRequest::Launch,
                     adapter: "JavaScript".into(),
-                    tcp_connection: Some(TCPHost {
+                    tcp_connection: Some(TcpArgumentsTemplate {
                         port: Some(17),
                         host: None,
                         timeout: None,

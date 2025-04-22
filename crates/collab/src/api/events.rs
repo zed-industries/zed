@@ -516,6 +516,7 @@ pub async fn post_events(
     if let Some(kinesis_client) = app.kinesis_client.clone() {
         if let Some(stream) = app.config.kinesis_stream.clone() {
             let mut request = kinesis_client.put_records().stream_name(stream);
+            let mut has_records = false;
             for row in for_snowflake(
                 request_body.clone(),
                 first_event_at,
@@ -530,9 +531,12 @@ pub async fn post_events(
                             .build()
                             .unwrap(),
                     );
+                    has_records = true;
                 }
             }
-            request.send().await.log_err();
+            if has_records {
+                request.send().await.log_err();
+            }
         }
     };
 
@@ -555,7 +559,7 @@ fn for_snowflake(
     country_code: Option<String>,
     checksum_matched: bool,
 ) -> impl Iterator<Item = SnowflakeRow> {
-    body.events.into_iter().flat_map(move |event| {
+    body.events.into_iter().filter_map(move |event| {
         let timestamp =
             first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
         // We will need to double check, but I believe all of the events that
@@ -744,9 +748,11 @@ fn for_snowflake(
         // NOTE: most amplitude user properties are read out of our event_properties
         // dictionary. See https://app.amplitude.com/data/zed/Zed/sources/detail/production/falcon%3A159998
         // for how that is configured.
-        let user_properties = Some(serde_json::json!({
-            "is_staff": body.is_staff,
-        }));
+        let user_properties = body.is_staff.map(|is_staff| {
+            serde_json::json!({
+                "is_staff": is_staff,
+            })
+        });
 
         Some(SnowflakeRow {
             time: timestamp,

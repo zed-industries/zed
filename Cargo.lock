@@ -4013,6 +4013,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "paths",
+ "proto",
  "schemars",
  "serde",
  "serde_json",
@@ -4897,7 +4898,6 @@ dependencies = [
  "client",
  "collections",
  "context_server",
- "dap",
  "dirs 5.0.1",
  "env_logger 0.11.8",
  "extension",
@@ -4920,6 +4920,7 @@ dependencies = [
  "serde",
  "settings",
  "shellexpand 2.1.2",
+ "smol",
  "telemetry",
  "toml 0.8.20",
  "unindent",
@@ -7713,6 +7714,7 @@ dependencies = [
  "mistral",
  "ollama",
  "open_ai",
+ "partial-json-fixer",
  "project",
  "proto",
  "schemars",
@@ -9829,6 +9831,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "partial-json-fixer"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35ffd90b3f3b6477db7478016b9efb1b7e9d38eafd095f0542fe0ec2ea884a13"
+
+[[package]]
 name = "password-hash"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11743,6 +11751,7 @@ dependencies = [
  "client",
  "clock",
  "dap",
+ "dap_adapters",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -14214,12 +14223,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "dap-types",
  "futures 0.3.31",
  "gpui",
  "hex",
  "parking_lot",
  "pretty_assertions",
+ "proto",
  "schemars",
  "serde",
  "serde_json",

@@ -1,5 +1,4 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
-#![deny(missing_docs)]
 
 mod debug_format;
 mod serde_helpers;
@@ -17,8 +16,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub use debug_format::{
-    AttachConfig, DebugConnectionType, DebugRequestDisposition, DebugRequestType,
-    DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
+    AttachRequest, DebugRequest, DebugTaskDefinition, DebugTaskFile, DebugTaskTemplate,
+    LaunchRequest, TcpArgumentsTemplate,
 };
 pub use task_template::{
     DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,
@@ -106,7 +105,7 @@ impl ResolvedTask {
     }
 
     /// Get the configuration for the debug adapter that should be used for this task.
-    pub fn resolved_debug_adapter_config(&self) -> Option<DebugTaskDefinition> {
+    pub fn resolved_debug_adapter_config(&self) -> Option<DebugTaskTemplate> {
         match self.original_task.task_type.clone() {
             TaskType::Debug(debug_args) if self.resolved.is_some() => {
                 let resolved = self
@@ -129,25 +128,27 @@ impl ResolvedTask {
                     })
                     .collect();
 
-                Some(DebugTaskDefinition {
-                    label: resolved.label.clone(),
-                    adapter: debug_args.adapter.clone(),
-                    request: match debug_args.request {
-                        crate::task_template::DebugArgsRequest::Launch => {
-                            DebugRequestType::Launch(LaunchConfig {
-                                program: resolved.command.clone(),
-                                cwd: resolved.cwd.clone(),
-                                args,
-                            })
-                        }
-                        crate::task_template::DebugArgsRequest::Attach(attach_config) => {
-                            DebugRequestType::Attach(attach_config)
-                        }
-                    },
-                    initialize_args: debug_args.initialize_args,
-                    tcp_connection: debug_args.tcp_connection,
+                Some(DebugTaskTemplate {
                     locator: debug_args.locator.clone(),
-                    stop_on_entry: debug_args.stop_on_entry,
+                    definition: DebugTaskDefinition {
+                        label: resolved.label.clone(),
+                        adapter: debug_args.adapter.clone(),
+                        request: match debug_args.request {
+                            crate::task_template::DebugArgsRequest::Launch => {
+                                DebugRequest::Launch(LaunchRequest {
+                                    program: resolved.command.clone(),
+                                    cwd: resolved.cwd.clone(),
+                                    args,
+                                })
+                            }
+                            crate::task_template::DebugArgsRequest::Attach(attach_config) => {
+                                DebugRequest::Attach(attach_config)
+                            }
+                        },
+                        initialize_args: debug_args.initialize_args,
+                        tcp_connection: debug_args.tcp_connection,
+                        stop_on_entry: debug_args.stop_on_entry,
+                    },
                 })
             }
             _ => None,
@@ -368,6 +369,8 @@ pub struct ShellBuilder {
     args: Vec<String>,
 }
 
+pub static DEFAULT_REMOTE_SHELL: &str = "\"${SHELL:-sh}\"";
+
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
     pub fn new(is_local: bool, shell: &Shell) -> Self {
@@ -376,7 +379,7 @@ impl ShellBuilder {
                 if is_local {
                     (Self::system_shell(), Vec::new())
                 } else {
-                    ("\"${SHELL:-sh}\"".to_string(), Vec::new())
+                    (DEFAULT_REMOTE_SHELL.to_string(), Vec::new())
                 }
             }
             Shell::Program(shell) => (shell.clone(), Vec::new()),

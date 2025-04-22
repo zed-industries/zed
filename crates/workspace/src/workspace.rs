@@ -15,7 +15,6 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-use dap::DapRegistry;
 pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -92,11 +91,12 @@ use std::{
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    process::ExitStatus,
     rc::Rc,
     sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
     time::Duration,
 };
-use task::{DebugTaskDefinition, SpawnInTerminal, TaskId};
+use task::SpawnInTerminal;
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -129,6 +129,15 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
         .as_deref()
         .and_then(parse_pixel_position_env_var)
 });
+
+pub trait TerminalProvider {
+    fn spawn(
+        &self,
+        task: SpawnInTerminal,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<ExitStatus>>;
+}
 
 actions!(
     workspace,
@@ -626,7 +635,6 @@ pub fn register_serializable_item<I: SerializableItem>(cx: &mut App) {
 
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
-    pub debug_adapters: Arc<DapRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
     pub workspace_store: Entity<WorkspaceStore>,
@@ -678,7 +686,6 @@ impl AppState {
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let debug_adapters = Arc::new(DapRegistry::fake());
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
@@ -694,7 +701,6 @@ impl AppState {
             client,
             fs,
             languages,
-            debug_adapters,
             user_store,
             workspace_store,
             node_runtime: NodeRuntime::unavailable(),
@@ -772,15 +778,13 @@ pub enum Event {
     },
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakEntity<Workspace>),
-    SpawnTask {
-        action: Box<SpawnInTerminal>,
-    },
     OpenBundledFile {
         text: Cow<'static, str>,
         title: &'static str,
         language: &'static str,
     },
     ZoomChanged,
+    ModalOpened,
 }
 
 #[derive(Debug)]
@@ -855,11 +859,11 @@ pub struct Workspace {
     bounds_save_task_queued: Option<Task<()>>,
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
+    terminal_provider: Option<Box<dyn TerminalProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
-    debug_task_queue: HashMap<task::TaskId, DebugTaskDefinition>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1051,6 +1055,13 @@ impl Workspace {
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
         let modal_layer = cx.new(|_| ModalLayer::new());
         let toast_layer = cx.new(|_| ToastLayer::new());
+        cx.subscribe(
+            &modal_layer,
+            |_, _, _: &modal_layer::ModalOpenedEvent, cx| {
+                cx.emit(Event::ModalOpened);
+            },
+        )
+        .detach();
 
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
@@ -1174,11 +1185,11 @@ impl Workspace {
             bounds_save_task_queued: None,
             on_prompt_for_new_path: None,
             on_prompt_for_open_path: None,
+            terminal_provider: None,
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
             serialized_ssh_project: None,
-            debug_task_queue: Default::default(),
         }
     }
 
@@ -1199,7 +1210,6 @@ impl Workspace {
             app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
-            app_state.debug_adapters.clone(),
             app_state.fs.clone(),
             env,
             cx,
@@ -1689,6 +1699,10 @@ impl Workspace {
 
     pub fn set_prompt_for_open_path(&mut self, prompt: PromptForOpenPath) {
         self.on_prompt_for_open_path = Some(prompt)
+    }
+
+    pub fn set_terminal_provider(&mut self, provider: impl TerminalProvider + 'static) {
+        self.terminal_provider = Some(Box::new(provider));
     }
 
     pub fn serialized_ssh_project(&self) -> Option<SerializedSshProject> {
@@ -5074,7 +5088,6 @@ impl Workspace {
         window.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
-            debug_adapters: project.read(cx).debug_adapters().clone(),
             workspace_store,
             client,
             user_store,
@@ -5229,16 +5242,6 @@ impl Workspace {
         prev_window
             .update(cx, |_, window, _| window.activate_window())
             .ok();
-    }
-
-    pub fn debug_task_ready(&mut self, task_id: &TaskId, cx: &mut App) {
-        if let Some(debug_config) = self.debug_task_queue.remove(task_id) {
-            self.project.update(cx, |project, cx| {
-                project
-                    .start_debug_session(debug_config, cx)
-                    .detach_and_log_err(cx);
-            })
-        }
     }
 }
 

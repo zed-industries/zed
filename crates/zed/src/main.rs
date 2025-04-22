@@ -10,7 +10,6 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
-use dap::DapRegistry;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
@@ -449,7 +448,6 @@ fn main() {
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
-            debug_adapters: DapRegistry::default().into(),
             client: client.clone(),
             user_store: user_store.clone(),
             fs: fs.clone(),
@@ -461,7 +459,7 @@ fn main() {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
-        dap_adapters::init(app_state.debug_adapters.clone());
+        dap_adapters::init(cx);
         auto_update_ui::init(cx);
         reliability::init(
             client.http_client(),
@@ -606,7 +604,7 @@ fn main() {
             setting = "keymap",
             value = BaseKeymap::get_global(cx).to_string()
         );
-        telemetry.flush_events();
+        telemetry.flush_events().detach();
 
         let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
