@@ -1,0 +1,7 @@
+- The first tool call should be to path search for "Cargo.toml" to identify the Rust project’s root directory and validate its structure, ensuring no assumptions are made about file locations.
+- After confirming the project root, search for and verify paths to critical implementation files: src/main.rs, src/cli.rs, src/storage.rs, and src/task.rs before reading or modifying their contents.
+- When adding dependencies, first read the existing Cargo.toml contents to avoid version conflicts, then incrementally insert clap, serde, chrono, and uuid with explicit version/feature specs.
+- For the task storage system, locate or create tasks.json only after confirming the project’s working directory via path checks, then implement read/write operations with atomic file handling.
+- When designing the CLI, derive command structures in cli.rs (or similar file) after validating the file’s existence and checking for preexisting argument-parsing logic to avoid duplication.
+- Integrate components in main.rs only after confirming module paths (mod cli; mod storage; mod task;) and ensuring no breaking changes to existing entry-point logic.
+- Validate documentation updates by first locating README.md in the project root, then inserting usage examples and installation steps while preserving any prior content.
