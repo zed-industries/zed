@@ -7,12 +7,22 @@ use windows_core::HSTRING;
 
 use crate::{KeyboardMapper, Keystroke, Modifiers, PlatformKeyboardLayout};
 
-pub(crate) struct WindowsKeyboardMapper;
-
 pub(crate) struct KeyboardLayout {
     id: String,
     name: String,
 }
+
+impl PlatformKeyboardLayout for KeyboardLayout {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+pub(crate) struct WindowsKeyboardMapper;
 
 impl KeyboardMapper for WindowsKeyboardMapper {
     fn map_keystroke(&self, keystroke: Keystroke, use_key_equivalents: bool) -> Keystroke {
@@ -385,16 +395,6 @@ pub(crate) fn get_key_from_vkey(vkey: VIRTUAL_KEY) -> Option<(String, bool)> {
     let key = char::from_u32(key_data & 0xFFFF)?;
 
     Some((key.to_ascii_lowercase().to_string(), is_dead_key))
-}
-
-impl PlatformKeyboardLayout for KeyboardLayout {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
 }
 
 impl KeyboardLayout {
