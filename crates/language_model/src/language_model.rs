@@ -187,6 +187,7 @@ pub struct LanguageModelToolUse {
     pub id: LanguageModelToolUseId,
     pub name: Arc<str>,
     pub input: serde_json::Value,
+    pub is_input_complete: bool,
 }
 
 pub struct LanguageModelTextStream {

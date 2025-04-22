@@ -830,5 +830,13 @@
       // and Windows.
       "alt-l": "editor::AcceptEditPrediction"
     }
+  },
+  {
+    // Fixes https://github.com/zed-industries/zed/issues/29095 by ensuring that
+    // the last binding for editor::ToggleComments is not ctrl-c.
+    "context": "hack_to_fix_ctrl-c",
+    "bindings": {
+      "g c": "editor::ToggleComments"
+    }
   }
 ]

@@ -3,7 +3,6 @@ use agent::{ThreadEvent, ThreadStore};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
-use dap::DapRegistry;
 use futures::channel::mpsc;
 use futures::{FutureExt, StreamExt as _, select_biased};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
@@ -37,6 +36,8 @@ pub const REPOS_DIR: &str = "./crates/eval/repos";
 pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
 
 const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+
+const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExampleBase {
@@ -227,6 +228,10 @@ impl Example {
             .await?;
         }
 
+        if self.base.url == ZED_REPO_URL {
+            std::fs::write(worktree_path.join(".rules"), std::fs::read(".rules")?)?;
+        }
+
         std::fs::create_dir_all(self.example_output_directory())?;
 
         Ok(())
@@ -243,7 +248,6 @@ impl Example {
             app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
-            Arc::new(DapRegistry::default()),
             app_state.fs.clone(),
             None,
             cx,
@@ -319,6 +323,13 @@ impl Example {
                 return Err(anyhow!("Setup only mode"));
             }
 
+            let example_output_dir = this.example_output_directory();
+            let last_diff_file_path = example_output_dir.join("last.diff");
+
+            // Write an empty "last.diff" so that it can be opened in Zed for convenient view of the
+            // history using undo/redo.
+            std::fs::write(&last_diff_file_path, "")?;
+
             let thread_store = thread_store.await?;
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
@@ -326,24 +337,43 @@ impl Example {
 
             thread.update(cx, |thread, _cx| {
                 let mut request_count = 0;
-                let example_dir_path = this.example_output_directory();
-
                 let last_request = Rc::clone(&last_request);
+                let previous_diff = Rc::new(RefCell::new("".to_string()));
+                let example_output_dir = example_output_dir.clone();
+                let last_diff_file_path = last_diff_file_path.clone();
+                let this = this.clone();
                 thread.set_request_callback(move |request, response_events| {
                     *last_request.borrow_mut() = Some(request.clone());
 
                     request_count += 1;
-                    let messages_file_path = example_dir_path.join(format!("{request_count}.messages.md"));
-                    let last_messages_file_path = example_dir_path.join("last.messages.md");
+                    let messages_file_path = example_output_dir.join(format!("{request_count}.messages.md"));
+                    let diff_file_path = example_output_dir.join(format!("{request_count}.diff"));
+                    let last_messages_file_path = example_output_dir.join("last.messages.md");
                     let request_markdown = RequestMarkdown::new(request);
                     let response_events_markdown = response_events_to_markdown(response_events);
 
                     let messages = format!("{}\n\n{}", request_markdown.messages, response_events_markdown);
-                    fs::write(messages_file_path, messages.clone()).expect("failed to write messages file");
-                    fs::write(last_messages_file_path, messages).expect("failed to write last messages file");
+                    fs::write(&messages_file_path, messages.clone()).expect("failed to write messages file");
+                    fs::write(&last_messages_file_path, messages).expect("failed to write last messages file");
+
+                    let diff_result = smol::block_on(this.repository_diff());
+                    match diff_result {
+                        Ok(diff) => {
+                            if diff != previous_diff.borrow().clone() {
+                                fs::write(&diff_file_path, &diff).expect("failed to write diff file");
+                                fs::write(&last_diff_file_path, &diff).expect("failed to write last diff file");
+                                *previous_diff.borrow_mut() = diff;
+                            }
+                        }
+                        Err(err) => {
+                            let error_message = format!("{err:?}");
+                            fs::write(&diff_file_path, &error_message).expect("failed to write diff error to file");
+                            fs::write(&last_diff_file_path, &error_message).expect("failed to write last diff file");
+                        }
+                    }
 
                     if request_count == 1 {
-                        let tools_file_path = example_dir_path.join("tools.md");
+                        let tools_file_path = example_output_dir.join("tools.md");
                         fs::write(tools_file_path, request_markdown.tools).expect("failed to write tools file");
                     }
                 });
@@ -422,6 +452,7 @@ impl Example {
                             ThreadEvent::ToolConfirmationNeeded => {
                                 panic!("{}Bug: Tool confirmation should not be required in eval", log_prefix);
                             },
+                            ThreadEvent::StreamedToolUse { .. } |
                             ThreadEvent::StreamedCompletion |
                             ThreadEvent::MessageAdded(_) |
                             ThreadEvent::MessageEdited(_) |
@@ -455,11 +486,7 @@ impl Example {
 
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
-
-            let example_output_dir = this.example_output_directory();
-            let repository_diff_path = example_output_dir.join("patch.diff");
-            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
-            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
+            std::fs::write(last_diff_file_path, &repository_diff)?;
 
             println!("{}Getting diagnostics", this.log_prefix);
             let diagnostics_after = cx
@@ -639,7 +666,11 @@ impl Example {
     async fn repository_diff(&self) -> Result<String> {
         let worktree_path = self.worktree_path();
         run_git(&worktree_path, &["add", "."]).await?;
-        run_git(&worktree_path, &["diff", "--staged"]).await
+        let mut diff_args = vec!["diff", "--staged"];
+        if self.base.url == ZED_REPO_URL {
+            diff_args.push(":(exclude).rules");
+        }
+        run_git(&worktree_path, &diff_args).await
     }
 }
 

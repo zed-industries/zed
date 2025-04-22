@@ -43,28 +43,28 @@ impl log::Log for Zlog {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let scope = match record.module_path_static() {
+        let (crate_name_scope, module_scope) = match record.module_path_static() {
             Some(module_path) => {
-                // TODO: better module name -> scope translation
                 let crate_name = private::extract_crate_name_from_module_path(module_path);
-                private::scope_new(&[crate_name])
+                let crate_name_scope = private::scope_new(&[crate_name]);
+                let module_scope = private::scope_new(&[module_path]);
+                (crate_name_scope, module_scope)
             }
             // TODO: when do we hit this
-            None => private::scope_new(&["*unknown*"]),
+            None => (private::scope_new(&[]), private::scope_new(&["*unknown*"])),
         };
         let level = record.metadata().level();
-        if !filter::is_scope_enabled(&scope, level) {
+        if !filter::is_scope_enabled(&crate_name_scope, record.module_path(), level) {
             return;
         }
         sink::submit(sink::Record {
-            scope,
+            scope: module_scope,
             level,
             message: record.args(),
         });
     }
 
     fn flush(&self) {
-        // todo: necessary?
         sink::flush();
     }
 }
@@ -74,7 +74,7 @@ macro_rules! log {
     ($logger:expr, $level:expr, $($arg:tt)+) => {
         let level = $level;
         let logger = $logger;
-        let enabled = $crate::filter::is_scope_enabled(&logger.scope, level);
+        let enabled = $crate::filter::is_scope_enabled(&logger.scope, Some(module_path!()), level);
         if enabled {
             $crate::sink::submit($crate::sink::Record {
                 scope: logger.scope,
@@ -143,7 +143,7 @@ macro_rules! error {
 /// However, this is a feature not a bug, as it allows for a more accurate
 /// understanding of how long the action actually took to complete, including
 /// interruptions, which can help explain why something may have timed out,
-/// why it took longer to complete than it would had the await points resolved
+/// why it took longer to complete than it would have had the await points resolved
 /// immediately, etc.
 #[macro_export]
 macro_rules! time {
@@ -168,15 +168,7 @@ macro_rules! scoped {
         if index >= scope.len() {
             #[cfg(debug_assertions)]
             {
-                panic!("Scope overflow trying to add scope {}", name);
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                $crate::warn!(
-                    parent =>
-                    "Scope overflow trying to add scope {}... ignoring scope",
-                    name
-                );
+                unreachable!("Scope overflow trying to add scope... ignoring scope");
             }
         }
         scope[index] = name;
@@ -208,17 +200,31 @@ macro_rules! crate_name {
 pub mod private {
     use super::*;
 
-    pub fn extract_crate_name_from_module_path(module_path: &'static str) -> &'static str {
-        return module_path
-            .split_once("::")
-            .map(|(crate_name, _)| crate_name)
-            .unwrap_or(module_path);
+    pub const fn extract_crate_name_from_module_path(module_path: &'static str) -> &'static str {
+        let mut i = 0;
+        let mod_path_bytes = module_path.as_bytes();
+        let mut index = mod_path_bytes.len();
+        while i + 1 < mod_path_bytes.len() {
+            if mod_path_bytes[i] == b':' && mod_path_bytes[i + 1] == b':' {
+                index = i;
+                break;
+            }
+            i += 1;
+        }
+        let Some((crate_name, _)) = module_path.split_at_checked(index) else {
+            return module_path;
+        };
+        return crate_name;
     }
 
-    pub fn scope_new(scopes: &[&'static str]) -> Scope {
+    pub const fn scope_new(scopes: &[&'static str]) -> Scope {
         assert!(scopes.len() <= SCOPE_DEPTH_MAX);
         let mut scope = [""; SCOPE_DEPTH_MAX];
-        scope[0..scopes.len()].copy_from_slice(scopes);
+        let mut i = 0;
+        while i < scopes.len() {
+            scope[i] = scopes[i];
+            i += 1;
+        }
         scope
     }
 
@@ -242,6 +248,31 @@ const SCOPE_STRING_SEP_CHAR: char = '.';
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Logger {
     pub scope: Scope,
+}
+
+impl log::Log for Logger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        filter::is_possibly_enabled_level(metadata.level())
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let level = record.metadata().level();
+        if !filter::is_scope_enabled(&self.scope, record.module_path(), level) {
+            return;
+        }
+        sink::submit(sink::Record {
+            scope: self.scope,
+            level,
+            message: record.args(),
+        });
+    }
+
+    fn flush(&self) {
+        sink::flush();
+    }
 }
 
 pub struct Timer {
@@ -269,6 +300,7 @@ impl Timer {
             done: false,
         };
     }
+
     pub fn warn_if_gt(mut self, warn_limit: std::time::Duration) -> Self {
         self.warn_if_longer_than = Some(warn_limit);
         return self;
@@ -313,5 +345,21 @@ mod tests {
     #[test]
     fn test_crate_name() {
         assert_eq!(crate_name!(), "zlog");
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_⚡️_crate::some_module"),
+            "my_speedy_⚡️_crate"
+        );
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_crate_⚡️::some_module"),
+            "my_speedy_crate_⚡️"
+        );
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_crate_:⚡️:some_module"),
+            "my_speedy_crate_:⚡️:some_module"
+        );
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_crate_::⚡️some_module"),
+            "my_speedy_crate_"
+        );
     }
 }

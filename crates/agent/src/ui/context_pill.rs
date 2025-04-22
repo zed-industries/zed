@@ -264,10 +264,14 @@ impl AddedContext {
             }
 
             AssistantContext::Directory(directory_context) => {
-                let full_path = directory_context
-                    .worktree
-                    .read(cx)
-                    .full_path(&directory_context.path);
+                let worktree = directory_context.worktree.read(cx);
+                // If the directory no longer exists, use its last known path.
+                let full_path = worktree
+                    .entry_for_id(directory_context.entry_id)
+                    .map_or_else(
+                        || directory_context.last_path.clone(),
+                        |entry| worktree.full_path(&entry.path).into(),
+                    );
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path
@@ -353,6 +357,16 @@ impl AddedContext {
                     .thread
                     .read(cx)
                     .is_generating_detailed_summary(),
+            },
+
+            AssistantContext::Rules(user_rules_context) => AddedContext {
+                id: user_rules_context.id,
+                kind: ContextKind::Rules,
+                name: user_rules_context.title.clone(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                summarizing: false,
             },
         }
     }

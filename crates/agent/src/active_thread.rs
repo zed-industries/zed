@@ -1,4 +1,4 @@
-use crate::context::{AssistantContext, ContextId, format_context_as_string};
+use crate::context::{AssistantContext, ContextId, RULES_ICON, format_context_as_string};
 use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
@@ -264,14 +264,6 @@ fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         })),
         ..Default::default()
     }
-}
-
-fn render_tool_use_markdown(
-    text: SharedString,
-    language_registry: Arc<LanguageRegistry>,
-    cx: &mut App,
-) -> Entity<Markdown> {
-    cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
 }
 
 fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
@@ -688,6 +680,12 @@ fn open_markdown_link(
             }
         }),
         Some(MentionLink::Fetch(url)) => cx.open_url(&url),
+        Some(MentionLink::Rules(prompt_id)) => window.dispatch_action(
+            Box::new(OpenPromptLibrary {
+                prompt_to_select: Some(prompt_id.0),
+            }),
+            cx,
+        ),
         None => cx.open_url(&text),
     }
 }
@@ -861,21 +859,34 @@ impl ActiveThread {
         tool_output: SharedString,
         cx: &mut Context<Self>,
     ) {
-        let rendered = RenderedToolUse {
-            label: render_tool_use_markdown(tool_label.into(), self.language_registry.clone(), cx),
-            input: render_tool_use_markdown(
-                format!(
-                    "```json\n{}\n```",
-                    serde_json::to_string_pretty(tool_input).unwrap_or_default()
-                )
-                .into(),
-                self.language_registry.clone(),
-                cx,
-            ),
-            output: render_tool_use_markdown(tool_output, self.language_registry.clone(), cx),
-        };
-        self.rendered_tool_uses
-            .insert(tool_use_id.clone(), rendered);
+        let rendered = self
+            .rendered_tool_uses
+            .entry(tool_use_id.clone())
+            .or_insert_with(|| RenderedToolUse {
+                label: cx.new(|cx| {
+                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                }),
+                input: cx.new(|cx| {
+                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                }),
+                output: cx.new(|cx| {
+                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                }),
+            });
+
+        rendered.label.update(cx, |this, cx| {
+            this.replace(tool_label, cx);
+        });
+        rendered.input.update(cx, |this, cx| {
+            let input = format!(
+                "```json\n{}\n```",
+                serde_json::to_string_pretty(tool_input).unwrap_or_default()
+            );
+            this.replace(input, cx);
+        });
+        rendered.output.update(cx, |this, cx| {
+            this.replace(tool_output, cx);
+        });
     }
 
     fn handle_thread_event(
@@ -967,6 +978,19 @@ impl ActiveThread {
                         cx,
                     );
                 }
+            }
+            ThreadEvent::StreamedToolUse {
+                tool_use_id,
+                ui_text,
+                input,
+            } => {
+                self.render_tool_use_markdown(
+                    tool_use_id.clone(),
+                    ui_text.clone(),
+                    input,
+                    "".into(),
+                    cx,
+                );
             }
             ThreadEvent::ToolFinished {
                 pending_tool_use, ..
@@ -2483,13 +2507,15 @@ impl ActiveThread {
         let edit_tools = tool_use.needs_confirmation;
 
         let status_icons = div().child(match &tool_use.status {
-            ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
+            ToolUseStatus::NeedsConfirmation => {
                 let icon = Icon::new(IconName::Warning)
                     .color(Color::Warning)
                     .size(IconSize::Small);
                 icon.into_any_element()
             }
-            ToolUseStatus::Running => {
+            ToolUseStatus::Pending
+            | ToolUseStatus::InputStillStreaming
+            | ToolUseStatus::Running => {
                 let icon = Icon::new(IconName::ArrowCircle)
                     .color(Color::Accent)
                     .size(IconSize::Small);
@@ -2575,7 +2601,7 @@ impl ActiveThread {
                             }),
                         )),
                 ),
-                ToolUseStatus::Running => container.child(
+                ToolUseStatus::InputStillStreaming | ToolUseStatus::Running => container.child(
                     results_content_container().child(
                         h_flex()
                             .gap_1()
@@ -2968,10 +2994,10 @@ impl ActiveThread {
             return div().into_any();
         };
 
-        let default_user_rules_text = if project_context.default_user_rules.is_empty() {
+        let user_rules_text = if project_context.user_rules.is_empty() {
             None
-        } else if project_context.default_user_rules.len() == 1 {
-            let user_rules = &project_context.default_user_rules[0];
+        } else if project_context.user_rules.len() == 1 {
+            let user_rules = &project_context.user_rules[0];
 
             match user_rules.title.as_ref() {
                 Some(title) => Some(format!("Using \"{title}\" user rule")),
@@ -2980,14 +3006,14 @@ impl ActiveThread {
         } else {
             Some(format!(
                 "Using {} user rules",
-                project_context.default_user_rules.len()
+                project_context.user_rules.len()
             ))
         };
 
-        let first_default_user_rules_id = project_context
-            .default_user_rules
+        let first_user_rules_id = project_context
+            .user_rules
             .first()
-            .map(|user_rules| user_rules.uuid);
+            .map(|user_rules| user_rules.uuid.0);
 
         let rules_files = project_context
             .worktrees
@@ -3004,7 +3030,7 @@ impl ActiveThread {
             rules_files => Some(format!("Using {} project rules files", rules_files.len())),
         };
 
-        if default_user_rules_text.is_none() && rules_file_text.is_none() {
+        if user_rules_text.is_none() && rules_file_text.is_none() {
             return div().into_any();
         }
 
@@ -3012,45 +3038,42 @@ impl ActiveThread {
             .pt_2()
             .px_2p5()
             .gap_1()
-            .when_some(
-                default_user_rules_text,
-                |parent, default_user_rules_text| {
-                    parent.child(
-                        h_flex()
-                            .w_full()
-                            .child(
-                                Icon::new(IconName::File)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Disabled),
-                            )
-                            .child(
-                                Label::new(default_user_rules_text)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted)
-                                    .truncate()
-                                    .buffer_font(cx)
-                                    .ml_1p5()
-                                    .mr_0p5(),
-                            )
-                            .child(
-                                IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Ignored)
-                                    // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
-                                    .tooltip(Tooltip::text("View User Rules"))
-                                    .on_click(move |_event, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(OpenPromptLibrary {
-                                                prompt_to_focus: first_default_user_rules_id,
-                                            }),
-                                            cx,
-                                        )
-                                    }),
-                            ),
-                    )
-                },
-            )
+            .when_some(user_rules_text, |parent, user_rules_text| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .child(
+                            Icon::new(RULES_ICON)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                        .child(
+                            Label::new(user_rules_text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .truncate()
+                                .buffer_font(cx)
+                                .ml_1p5()
+                                .mr_0p5(),
+                        )
+                        .child(
+                            IconButton::new("open-prompt-library", IconName::ArrowUpRightAlt)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
+                                .tooltip(Tooltip::text("View User Rules"))
+                                .on_click(move |_event, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(OpenPromptLibrary {
+                                            prompt_to_select: first_user_rules_id,
+                                        }),
+                                        cx,
+                                    )
+                                }),
+                        ),
+                )
+            })
             .when_some(rules_file_text, |parent, rules_file_text| {
                 parent.child(
                     h_flex()
@@ -3270,12 +3293,10 @@ pub(crate) fn open_context(
             }
         }
         AssistantContext::Directory(directory_context) => {
-            let project_path = directory_context.project_path(cx);
+            let entry_id = directory_context.entry_id;
             workspace.update(cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    if let Some(entry) = project.entry_for_path(&project_path, cx) {
-                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
-                    }
+                workspace.project().update(cx, |_project, cx| {
+                    cx.emit(project::Event::RevealInProjectPanel(entry_id));
                 })
             })
         }
@@ -3327,6 +3348,12 @@ pub(crate) fn open_context(
                 }
             })
         }
+        AssistantContext::Rules(rules_context) => window.dispatch_action(
+            Box::new(OpenPromptLibrary {
+                prompt_to_select: Some(rules_context.prompt_id.0),
+            }),
+            cx,
+        ),
     }
 }
 
