@@ -13,6 +13,7 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fs::Fs;
+use futures::future;
 use gpui::{
     Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
     WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
@@ -31,7 +32,7 @@ use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
-use crate::context_store::{ContextStore, refresh_context_store_text};
+use crate::context_store::{ContextStore, refresh_context_text};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{Thread, TokenUsageRatio};
@@ -269,8 +270,22 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
-        let refresh_task =
-            refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
+        // Only need to refresh context that's added to the message.
+        let new_context = self
+            .thread
+            .read(cx)
+            .filter_new_context(self.context_store.read(cx).context().iter())
+            .collect::<Vec<_>>();
+        let refresh_task = future::join_all(
+            new_context
+                .iter()
+                .flat_map(|context| refresh_context_text(self.context_store.clone(), context, cx))
+                .collect::<Vec<_>>(),
+        );
+        let new_context_ids = new_context
+            .into_iter()
+            .map(|context| context.id())
+            .collect::<Vec<_>>();
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
@@ -283,8 +298,13 @@ impl MessageEditor {
 
             thread
                 .update(cx, |thread, cx| {
-                    let context = context_store.read(cx).context().clone();
-                    thread.insert_user_message(user_message, context, checkpoint, cx);
+                    let context_store_ref = context_store.read(cx);
+                    let new_context = new_context_ids
+                        .into_iter()
+                        .flat_map(|id| context_store_ref.context_for_id(id))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    thread.insert_user_message(user_message, new_context, checkpoint, cx);
                 })
                 .log_err();
 

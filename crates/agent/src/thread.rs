@@ -717,28 +717,19 @@ impl Thread {
         &self,
         context: impl Iterator<Item = &'a AssistantContext>,
     ) -> impl Iterator<Item = &'a AssistantContext> {
-        context.filter(|ctx| self.is_context_new(ctx))
-    }
-
-    fn is_context_new(&self, context: &AssistantContext) -> bool {
-        !self.context.contains_key(&context.id())
+        context.filter(|ctx| !self.context.contains_key(&ctx.id()))
     }
 
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
-        context: Vec<AssistantContext>,
+        new_context: Vec<AssistantContext>,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let text = text.into();
 
         let message_id = self.insert_message(Role::User, vec![MessageSegment::Text(text)], cx);
-
-        let new_context: Vec<_> = context
-            .into_iter()
-            .filter(|ctx| self.is_context_new(ctx))
-            .collect();
 
         if !new_context.is_empty() {
             if let Some(context_string) = format_context_as_string(new_context.iter(), cx) {

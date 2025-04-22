@@ -12,7 +12,7 @@ use project::{Project, ProjectEntryId, ProjectItem, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::{Point, Rope};
 use text::{Anchor, BufferId, OffsetRangeExt};
-use util::{ResultExt as _, maybe};
+use util::ResultExt as _;
 
 use crate::ThreadStore;
 use crate::context::{
@@ -833,91 +833,33 @@ fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
     files
 }
 
-pub fn refresh_context_store_text(
+pub fn refresh_context_text(
     context_store: Entity<ContextStore>,
-    changed_buffers: &HashSet<Entity<Buffer>>,
+    context: &AssistantContext,
     cx: &App,
-) -> impl Future<Output = Vec<ContextId>> + use<> {
-    let mut tasks = Vec::new();
-
-    for context in &context_store.read(cx).context {
-        let id = context.id();
-
-        let task = maybe!({
-            match context {
-                AssistantContext::File(file_context) => {
-                    // TODO: Should refresh if the path has changed, as it's in the text.
-                    if changed_buffers.is_empty()
-                        || changed_buffers.contains(&file_context.context_buffer.buffer)
-                    {
-                        let context_store = context_store.clone();
-                        return refresh_file_text(context_store, file_context, cx);
-                    }
-                }
-                AssistantContext::Directory(directory_context) => {
-                    let directory_path = directory_context.project_path(cx)?;
-                    let should_refresh = directory_path.path != directory_context.last_path
-                        || changed_buffers.is_empty()
-                        || changed_buffers.iter().any(|buffer| {
-                            let Some(buffer_path) = buffer.read(cx).project_path(cx) else {
-                                return false;
-                            };
-                            buffer_path.starts_with(&directory_path)
-                        });
-
-                    if should_refresh {
-                        let context_store = context_store.clone();
-                        return refresh_directory_text(
-                            context_store,
-                            directory_context,
-                            directory_path,
-                            cx,
-                        );
-                    }
-                }
-                AssistantContext::Symbol(symbol_context) => {
-                    // TODO: Should refresh if the path has changed, as it's in the text.
-                    if changed_buffers.is_empty()
-                        || changed_buffers.contains(&symbol_context.context_symbol.buffer)
-                    {
-                        let context_store = context_store.clone();
-                        return refresh_symbol_text(context_store, symbol_context, cx);
-                    }
-                }
-                AssistantContext::Excerpt(excerpt_context) => {
-                    // TODO: Should refresh if the path has changed, as it's in the text.
-                    if changed_buffers.is_empty()
-                        || changed_buffers.contains(&excerpt_context.context_buffer.buffer)
-                    {
-                        let context_store = context_store.clone();
-                        return refresh_excerpt_text(context_store, excerpt_context, cx);
-                    }
-                }
-                AssistantContext::Thread(thread_context) => {
-                    if changed_buffers.is_empty() {
-                        let context_store = context_store.clone();
-                        return Some(refresh_thread_text(context_store, thread_context, cx));
-                    }
-                }
-                // Intentionally omit refreshing fetched URLs as it doesn't seem all that useful,
-                // and doing the caching properly could be tricky (unless it's already handled by
-                // the HttpClient?).
-                AssistantContext::FetchedUrl(_) => {}
-                AssistantContext::Rules(user_rules_context) => {
-                    let context_store = context_store.clone();
-                    return Some(refresh_user_rules(context_store, user_rules_context, cx));
-                }
-            }
-
-            None
-        });
-
-        if let Some(task) = task {
-            tasks.push(task.map(move |_| id));
+) -> Option<Task<()>> {
+    match context {
+        AssistantContext::File(file_context) => refresh_file_text(context_store, file_context, cx),
+        AssistantContext::Directory(directory_context) => {
+            refresh_directory_text(context_store, directory_context, cx)
+        }
+        AssistantContext::Symbol(symbol_context) => {
+            refresh_symbol_text(context_store, symbol_context, cx)
+        }
+        AssistantContext::Excerpt(excerpt_context) => {
+            refresh_excerpt_text(context_store, excerpt_context, cx)
+        }
+        AssistantContext::Thread(thread_context) => {
+            Some(refresh_thread_text(context_store, thread_context, cx))
+        }
+        // Intentionally omit refreshing fetched URLs as it doesn't seem all that useful,
+        // and doing the caching properly could be tricky (unless it's already handled by
+        // the HttpClient?).
+        AssistantContext::FetchedUrl(_) => None,
+        AssistantContext::Rules(user_rules_context) => {
+            Some(refresh_user_rules(context_store, user_rules_context, cx))
         }
     }
-
-    future::join_all(tasks)
 }
 
 fn refresh_file_text(
@@ -945,10 +887,11 @@ fn refresh_file_text(
 fn refresh_directory_text(
     context_store: Entity<ContextStore>,
     directory_context: &DirectoryContext,
-    directory_path: ProjectPath,
     cx: &App,
 ) -> Option<Task<()>> {
-    let mut stale = false;
+    let directory_path = directory_context.project_path(cx)?;
+    let mut stale = directory_path.path != directory_context.last_path;
+
     let futures = directory_context
         .context_buffers
         .iter()
@@ -1101,7 +1044,10 @@ fn refresh_user_rules(
 
 fn refresh_context_buffer(context_buffer: &ContextBuffer, cx: &App) -> Option<Task<ContextBuffer>> {
     let buffer = context_buffer.buffer.read(cx);
-    if buffer.version.changed_since(&context_buffer.version) {
+    let file = buffer.file()?;
+    if buffer.version.changed_since(&context_buffer.version)
+        || file.full_path(cx).as_path() != context_buffer.last_full_path.as_ref()
+    {
         load_context_buffer(context_buffer.buffer.clone(), cx).log_err()
     } else {
         None
@@ -1114,7 +1060,10 @@ fn refresh_context_excerpt(
     cx: &App,
 ) -> Option<impl Future<Output = (Range<Point>, ContextBuffer)> + use<>> {
     let buffer = context_buffer.buffer.read(cx);
-    if buffer.version.changed_since(&context_buffer.version) {
+    let file = buffer.file()?;
+    if buffer.version.changed_since(&context_buffer.version)
+        || file.full_path(cx).as_path() != context_buffer.last_full_path.as_ref()
+    {
         let (line_range, context_buffer_task) =
             load_context_buffer_range(context_buffer.buffer.clone(), range, cx).log_err()?;
         Some(context_buffer_task.map(move |context_buffer| (line_range, context_buffer)))
@@ -1129,6 +1078,7 @@ fn refresh_context_symbol(
 ) -> Option<impl Future<Output = ContextSymbol> + use<>> {
     let buffer = context_symbol.buffer.read(cx);
     let project_path = buffer.project_path(cx)?;
+    // TODO: Should refresh text when path has changed.
     if buffer.version.changed_since(&context_symbol.buffer_version) {
         let (_line_range, context_buffer_task) = load_context_buffer_range(
             context_symbol.buffer.clone(),
