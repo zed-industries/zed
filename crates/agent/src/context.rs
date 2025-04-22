@@ -5,8 +5,8 @@ use std::{
 };
 
 use futures::{FutureExt, future::Shared};
-use gpui::{App, Entity, SharedString};
-use language::{Buffer, File};
+use gpui::{App, Entity, SharedString, Task};
+use language::Buffer;
 use language_model::{LanguageModelImage, LanguageModelRequestMessage};
 use project::{ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
