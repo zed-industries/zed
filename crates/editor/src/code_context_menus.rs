@@ -657,6 +657,87 @@ impl CompletionsMenu {
         )
     }
 
+    fn sort_matches<'a>(matches: &mut Vec<SortableMatch<'a>>, query: Option<&str>) {
+        #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+        enum MatchTier<'a> {
+            WordStartMatch {
+                sort_score_int: Reverse<i32>,
+                sort_snippet: Reverse<i32>,
+                sort_text: Option<&'a str>,
+                sort_key: (usize, &'a str),
+            },
+            OtherMatch {
+                sort_score: Reverse<OrderedFloat<f64>>,
+            },
+        }
+
+        // Maximum value for the quantized score.
+        const MAX_INT_SCORE: i32 = 10;
+
+        // Converts a float score (0.0 to 1.0) into an integer bucket.
+        let map_score_to_int = |score: f64, max_int_score: i32| -> i32 {
+            ((score * max_int_score as f64).round() as i32).clamp(0, max_int_score)
+        };
+
+        let query_start_lower = query
+            .and_then(|q| q.chars().next())
+            .and_then(|c| c.to_lowercase().next());
+
+        matches.sort_unstable_by_key(|mat| {
+            // Our goal here is to intelligently sort completion suggestions. We want to
+            // balance the raw fuzzy match score with hints from the language server
+            // (like `sort_text`) and simple heuristics (like preferring matches where
+            // the query starts at the beginning of a word within the suggestion).
+            //
+            // To do this, we first divide matches into two tiers: `WordStartMatch`,
+            // where the query's first character matches the start of any word within the
+            // suggestion string, and `OtherMatch`, where it doesn't. We prioritize
+            // `WordStartMatch` items, sorting them first. `OtherMatch` items come
+            // after, sorted simply by their raw fuzzy score.
+            //
+            // For the prioritized `WordStartMatch` items, we don't sort directly by the
+            // float fuzzy score. Why? Because float scores are often unique, meaning tiny,
+            // almost meaningless differences in score would dominate the sorting, making
+            // LSP hints not important. Instead, we quantize the score: we map the
+            // 0.0-1.0 float score to a small integer range (0 to `MAX_INT_SCORE`).
+            // This creates score "brackets", matches with similar fuzzy relevance fall
+            // into the same bracket.
+            //
+            // This quantization allows other factors to break ties within a bracket.
+            // The `MAX_INT_SCORE` sets the number of brackets. Too few (like 0)
+            // ignores the fuzzy score entirely for primary sorting. Too many (a large number)
+            // makes it behave like sorting by the raw float again. Some what low number offers a balance,
+            // grouping similar scores while still distinguishing clearly better ones.
+
+            let sort_score = Reverse(OrderedFloat(mat.string_match.score));
+
+            let is_other_match = query_start_lower
+                .map(|query_char| {
+                    !split_words(&mat.string_match.string).any(|word| {
+                        word.chars()
+                            .next()
+                            .and_then(|c| c.to_lowercase().next())
+                            .map_or(false, |word_char| word_char == query_char)
+                    })
+                })
+                .unwrap_or(false);
+
+            if is_other_match {
+                MatchTier::OtherMatch { sort_score }
+            } else {
+                let sort_score_int =
+                    Reverse(map_score_to_int(mat.string_match.score, MAX_INT_SCORE));
+                let sort_snippet = Reverse(if mat.is_snippet { 1 } else { 0 });
+                MatchTier::WordStartMatch {
+                    sort_score_int,
+                    sort_snippet,
+                    sort_text: mat.sort_text,
+                    sort_key: mat.sort_key,
+                }
+            }
+        });
+    }
+
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
@@ -682,106 +763,43 @@ impl CompletionsMenu {
         };
 
         if self.sort_completions {
-            let completions = self.completions.borrow_mut();
+            let completions = self.completions.borrow();
 
-            #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-            enum MatchTier<'a> {
-                WordStartMatch {
-                    sort_score_int: Reverse<i32>,
-                    sort_snippet: Reverse<i32>,
-                    sort_text: Option<String>,
-                    sort_key: (usize, &'a str),
-                },
-                OtherMatch {
-                    sort_score: Reverse<OrderedFloat<f64>>,
-                },
-            }
+            let mut sortable_items: Vec<SortableMatch<'_>> = matches
+                .into_iter()
+                .map(|string_match| {
+                    let completion = &completions[string_match.candidate_id];
 
-            // Maximum value for the quantized score.
-            const MAX_INT_SCORE: i32 = 10;
-
-            // Converts a float score (0.0 to 1.0) into an integer bucket.
-            let map_score_to_int = |score: f64, max_int_score: i32| -> i32 {
-                ((score * max_int_score as f64).round() as i32).clamp(0, max_int_score)
-            };
-
-            let query_start_lower = query
-                .and_then(|q| q.chars().next())
-                .and_then(|c| c.to_lowercase().next());
-
-            matches.sort_unstable_by_key(|mat| {
-                // Our goal here is to intelligently sort completion suggestions. We want to
-                // balance the raw fuzzy match score with hints from the language server
-                // (like `sort_text`) and simple heuristics (like preferring matches where
-                // the query starts at the beginning of a word within the suggestion).
-                //
-                // To do this, we first divide matches into two tiers: `WordStartMatch`,
-                // where the query's first character matches the start of any word within the
-                // suggestion string, and `OtherMatch`, where it doesn't. We prioritize
-                // `WordStartMatch` items, sorting them first. `OtherMatch` items come
-                // after, sorted simply by their raw fuzzy score.
-                //
-                // For the prioritized `WordStartMatch` items, we don't sort directly by the
-                // float fuzzy score. Why? Because float scores are often unique, meaning tiny,
-                // almost meaningless differences in score would dominate the sorting, making
-                // LSP hints not important. Instead, we quantize the score: we map the
-                // 0.0-1.0 float score to a small integer range (0 to `MAX_INT_SCORE`).
-                // This creates score "brackets", matches with similar fuzzy relevance fall
-                // into the same bracket.
-                //
-                // This quantization allows other factors to break ties within a bracket.
-                // The `MAX_INT_SCORE` sets the number of brackets. Too few (like 0)
-                // ignores the fuzzy score entirely for primary sorting. Too many (a large number)
-                // makes it behave like sorting by the raw float again. Some what low number offers a balance,
-                // grouping similar scores while still distinguishing clearly better ones.
-
-                let sort_score = Reverse(OrderedFloat(mat.score));
-
-                let is_other_match = query_start_lower
-                    .map(|query_char| {
-                        !split_words(&mat.string).any(|word| {
-                            word.chars()
-                                .next()
-                                .and_then(|c| c.to_lowercase().next())
-                                .map_or(false, |word_char| word_char == query_char)
-                        })
-                    })
-                    .unwrap_or(false);
-
-                if is_other_match {
-                    MatchTier::OtherMatch { sort_score }
-                } else {
-                    let sort_score_int = Reverse(map_score_to_int(mat.score, MAX_INT_SCORE));
-
-                    let completion = &completions[mat.candidate_id];
-                    let sort_snippet = Reverse(match &completion.source {
+                    let is_snippet = matches!(
+                        &completion.source,
                         CompletionSource::Lsp { lsp_completion, .. }
-                            if lsp_completion.kind == Some(CompletionItemKind::SNIPPET) =>
-                        {
-                            1
-                        }
-                        _ => 0,
-                    });
+                        if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
+                    );
+
                     let sort_text =
                         if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
-                            lsp_completion
-                                .sort_text
-                                .as_deref()
-                                .map(|s| s.to_lowercase())
+                            lsp_completion.sort_text.as_deref()
                         } else {
                             None
                         };
+
                     let sort_key = completion.sort_key();
 
-                    MatchTier::WordStartMatch {
-                        sort_score_int,
-                        sort_snippet,
+                    SortableMatch {
+                        string_match,
+                        is_snippet,
                         sort_text,
                         sort_key,
                     }
-                }
-            });
-            drop(completions);
+                })
+                .collect();
+
+            Self::sort_matches(&mut sortable_items, query);
+
+            matches = sortable_items
+                .into_iter()
+                .map(|sortable| sortable.string_match)
+                .collect();
         }
 
         *self.entries.borrow_mut() = matches;
@@ -789,6 +807,14 @@ impl CompletionsMenu {
         // This keeps the display consistent when y_flipped.
         self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
     }
+}
+
+#[derive(Debug)]
+struct SortableMatch<'a> {
+    string_match: StringMatch,
+    is_snippet: bool,
+    sort_text: Option<&'a str>,
+    sort_key: (usize, &'a str),
 }
 
 #[derive(Clone)]
