@@ -160,7 +160,7 @@ pub fn attach_context_to_message<'a>(
 pub fn load_context_text<'a>(
     contexts: impl Iterator<Item = &'a AssistantContext>,
     cx: &App,
-) -> Task<String> {
+) -> Task<Option<String>> {
     let mut file_context = Vec::new();
     /*
     let mut directory_context = Vec::new();
@@ -197,7 +197,7 @@ pub fn load_context_text<'a>(
     && rules_context.is_empty()
     */
     {
-        return Task::ready("".to_string());
+        return Task::ready(None);
     }
 
     cx.background_spawn(async move {
@@ -278,7 +278,7 @@ pub fn load_context_text<'a>(
         */
 
         result.push_str("</context>\n");
-        result
+        Some(result)
     })
 }
 

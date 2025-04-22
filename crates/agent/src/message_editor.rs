@@ -289,7 +289,7 @@ impl MessageEditor {
                     thread.insert_user_message(
                         user_message,
                         new_context,
-                        context_text,
+                        context_text.unwrap_or_else(|| "".to_string()),
                         checkpoint,
                         cx,
                     );
