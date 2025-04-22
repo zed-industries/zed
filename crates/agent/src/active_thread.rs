@@ -670,7 +670,7 @@ fn open_markdown_link(
                 })
                 .detach_and_log_err(cx);
         }
-        Some(MentionLink::Excerpt(path, line_range)) => {
+        Some(MentionLink::Selection(path, line_range)) => {
             let open_task = workspace.update(cx, |workspace, cx| {
                 workspace.open_path(path, None, true, window, cx)
             });
@@ -3329,7 +3329,7 @@ pub(crate) fn open_context(
                     .detach();
             }
         }
-        AssistantContext::Excerpt(excerpt_context) => {
+        AssistantContext::Selection(excerpt_context) => {
             if let Some(project_path) = excerpt_context
                 .context_buffer
                 .buffer

@@ -289,7 +289,7 @@ impl ContextPickerCompletionProvider {
                                     .to_string();
                                 let line_range = range.to_point(&buffer.read(cx).snapshot());
 
-                                let link = MentionLink::for_excerpt(
+                                let link = MentionLink::for_selection(
                                     &file_name,
                                     &full_path.to_string_lossy(),
                                     line_range.start.row as usize..line_range.end.row as usize,
@@ -308,7 +308,7 @@ impl ContextPickerCompletionProvider {
                                 context_store.update(cx, |context_store, cx| {
                                     for (buffer, range) in &selections {
                                         context_store
-                                            .add_excerpt(buffer.clone(), range.clone(), cx)
+                                            .add_selection(buffer.clone(), range.clone(), cx)
                                             .detach_and_log_err(cx)
                                     }
                                 });

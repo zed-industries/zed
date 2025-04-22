@@ -343,7 +343,7 @@ impl AddedContext {
                 render_preview: None,
             },
 
-            AssistantContext::Excerpt(excerpt_context) => {
+            AssistantContext::Selection(excerpt_context) => {
                 let full_path = excerpt_context.context_buffer.full_path(cx);
                 let mut full_path_string = full_path.to_string_lossy().into_owned();
                 let mut name = full_path
@@ -367,7 +367,7 @@ impl AddedContext {
 
                 AddedContext {
                     id: excerpt_context.id,
-                    kind: ContextKind::Excerpt,
+                    kind: ContextKind::Selection,
                     name: name.into(),
                     parent,
                     tooltip: Some(full_path_string.into()),

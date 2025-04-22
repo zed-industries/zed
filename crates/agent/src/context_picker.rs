@@ -623,7 +623,7 @@ fn add_selections_as_context(
     context_store.update(cx, |context_store, cx| {
         for (buffer, range) in selection_ranges {
             context_store
-                .add_excerpt(buffer, range, cx)
+                .add_selection(buffer, range, cx)
                 .detach_and_log_err(cx);
         }
     })
@@ -805,7 +805,7 @@ fn fold_toggle(
 pub enum MentionLink {
     File(ProjectPath, Entry),
     Symbol(ProjectPath, String),
-    Excerpt(ProjectPath, Range<usize>),
+    Selection(ProjectPath, Range<usize>),
     Fetch(String),
     Thread(ThreadId),
     Rules(UserPromptId),
@@ -814,7 +814,7 @@ pub enum MentionLink {
 impl MentionLink {
     const FILE: &str = "@file";
     const SYMBOL: &str = "@symbol";
-    const EXCERPT: &str = "@excerpt";
+    const SELECTION: &str = "@selection";
     const THREAD: &str = "@thread";
     const FETCH: &str = "@fetch";
     const RULES: &str = "@rules";
@@ -825,7 +825,7 @@ impl MentionLink {
         url.starts_with(Self::FILE)
             || url.starts_with(Self::SYMBOL)
             || url.starts_with(Self::FETCH)
-            || url.starts_with(Self::EXCERPT)
+            || url.starts_with(Self::SELECTION)
             || url.starts_with(Self::THREAD)
             || url.starts_with(Self::RULES)
     }
@@ -844,13 +844,13 @@ impl MentionLink {
         )
     }
 
-    pub fn for_excerpt(file_name: &str, full_path: &str, line_range: Range<usize>) -> String {
+    pub fn for_selection(file_name: &str, full_path: &str, line_range: Range<usize>) -> String {
         format!(
             "[@{} ({}-{})]({}:{}:{}-{})",
             file_name,
             line_range.start,
             line_range.end,
-            Self::EXCERPT,
+            Self::SELECTION,
             full_path,
             line_range.start,
             line_range.end
@@ -905,7 +905,7 @@ impl MentionLink {
                 let project_path = extract_project_path_from_link(path, workspace, cx)?;
                 Some(MentionLink::Symbol(project_path, symbol.to_string()))
             }
-            Self::EXCERPT => {
+            Self::SELECTION => {
                 let (path, line_args) = argument.split_once(Self::SEPARATOR)?;
                 let project_path = extract_project_path_from_link(path, workspace, cx)?;
 
@@ -917,7 +917,7 @@ impl MentionLink {
                     start.parse::<usize>().ok()?..end.parse::<usize>().ok()?
                 };
 
-                Some(MentionLink::Excerpt(project_path, line_range))
+                Some(MentionLink::Selection(project_path, line_range))
             }
             Self::THREAD => {
                 let thread_id = ThreadId::from(argument);
