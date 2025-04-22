@@ -30,6 +30,7 @@ pub struct SelectionsCollection {
     buffer: Entity<MultiBuffer>,
     pub next_selection_id: usize,
     pub line_mode: bool,
+    pub vim_mode: bool,
     /// The non-pending, non-overlapping selections.
     /// The [SelectionsCollection::pending] selection could possibly overlap these
     pub disjoint: Arc<[Selection<Anchor>]>,
@@ -44,6 +45,7 @@ impl SelectionsCollection {
             buffer,
             next_selection_id: 1,
             line_mode: false,
+            vim_mode: false,
             disjoint: Arc::default(),
             pending: Some(PendingSelection {
                 selection: Selection {
@@ -69,6 +71,7 @@ impl SelectionsCollection {
     pub fn clone_state(&mut self, other: &SelectionsCollection) {
         self.next_selection_id = other.next_selection_id;
         self.line_mode = other.line_mode;
+        self.vim_mode = other.vim_mode;
         self.disjoint = other.disjoint.clone();
         self.pending.clone_from(&other.pending);
     }
