@@ -135,20 +135,30 @@ impl Tool for EditFileTool {
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
             if input.old_string.is_empty() {
-                return Err(anyhow!("`old_string` cannot be empty. Use a different tool if you want to create a file."));
+                return Err(anyhow!(
+                    "`old_string` can't be empty, use another tool if you want to create a file."
+                ));
             }
 
             if input.old_string == input.new_string {
-                return Err(anyhow!("The `old_string` and `new_string` are identical, so no changes would be made."));
+                return Err(anyhow!(
+                    "The `old_string` and `new_string` are identical, so no changes would be made."
+                ));
             }
 
             let result = cx
                 .background_spawn(async move {
                     // Try to match exactly
                     let diff = replace_exact(&input.old_string, &input.new_string, &snapshot)
-                    .await
-                    // If that fails, try being flexible about indentation
-                    .or_else(|| replace_with_flexible_indent(&input.old_string, &input.new_string, &snapshot))?;
+                        .await
+                        // If that fails, try being flexible about indentation
+                        .or_else(|| {
+                            replace_with_flexible_indent(
+                                &input.old_string,
+                                &input.new_string,
+                                &snapshot,
+                            )
+                        })?;
 
                     if diff.edits.is_empty() {
                         return None;
@@ -178,38 +188,39 @@ impl Tool for EditFileTool {
                     }
                 })?;
 
-                return Err(err)
+                return Err(err);
             };
 
             let snapshot = cx.update(|cx| {
-                action_log.update(cx, |log, cx| {
-                    log.buffer_read(buffer.clone(), cx)
-                });
+                action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
                 let snapshot = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
                     buffer.apply_diff(diff, cx);
                     buffer.finalize_last_transaction();
                     buffer.snapshot()
                 });
-                action_log.update(cx, |log, cx| {
-                    log.buffer_edited(buffer.clone(), cx)
-                });
+                action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
                 snapshot
             })?;
 
-            project.update( cx, |project, cx| {
-                project.save_buffer(buffer, cx)
-            })?.await?;
+            project
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .await?;
 
-            let diff_str = cx.background_spawn(async move {
-                let new_text = snapshot.text();
-                language::unified_diff(&old_text, &new_text)
-            }).await;
+            let diff_str = cx
+                .background_spawn(async move {
+                    let new_text = snapshot.text();
+                    language::unified_diff(&old_text, &new_text)
+                })
+                .await;
 
-
-            Ok(format!("Edited {}:\n\n```diff\n{}\n```", input.path.display(), diff_str))
-
-        }).into()
+            Ok(format!(
+                "Edited {}:\n\n```diff\n{}\n```",
+                input.path.display(),
+                diff_str
+            ))
+        })
+        .into()
     }
 }
 
