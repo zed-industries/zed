@@ -195,7 +195,6 @@ impl ImageCache for SimpleLruCache {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<gpui::RenderImage>, gpui::ImageCacheError>> {
-        dbg!(resource);
         assert_eq!(self.usages.len(), self.cache.len());
         assert!(self.cache.len() <= self.max_items);
 
