@@ -427,22 +427,28 @@ impl SshSocket {
             .env("SSH_ASKPASS", &self.askpass_content)
     }
 
+    // On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
+    // On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
     #[cfg(not(target_os = "windows"))]
-    fn ssh_args(&self) -> Vec<String> {
-        vec![
-            "-o".to_string(),
-            "ControlMaster=no".to_string(),
-            "-o".to_string(),
-            format!("ControlPath={}", self.socket_path.display()),
-            self.connection_options.ssh_url(),
-        ]
+    fn ssh_args(&self) -> (Vec<String>, Option<String>) {
+        (
+            vec![
+                "-o".to_string(),
+                "ControlMaster=no".to_string(),
+                "-o".to_string(),
+                format!("ControlPath={}", self.socket_path.display()),
+                self.connection_options.ssh_url(),
+            ],
+            None,
+        )
     }
 
-    // todo(windows)
-    // This is definitely wrong, we should find a way to use `SSH_ASKPASS`
     #[cfg(target_os = "windows")]
-    fn ssh_args(&self) -> Vec<String> {
-        vec![self.connection_options.ssh_url()]
+    fn ssh_args(&self) -> (Vec<String>, Option<String>) {
+        (
+            vec![self.connection_options.ssh_url()],
+            Some(self.askpass_content.clone()),
+        )
     }
 }
 
@@ -1116,7 +1122,7 @@ impl SshRemoteClient {
         self.client.subscribe_to_entity(remote_id, entity);
     }
 
-    pub fn ssh_args(&self) -> Option<Vec<String>> {
+    pub fn ssh_args(&self) -> Option<(Vec<String>, Option<String>)> {
         self.state
             .lock()
             .as_ref()
@@ -1343,7 +1349,9 @@ trait RemoteConnection: Send + Sync {
     -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
-    fn ssh_args(&self) -> Vec<String>;
+    /// On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
+    /// On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
+    fn ssh_args(&self) -> (Vec<String>, Option<String>);
     fn connection_options(&self) -> SshConnectionOptions;
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1372,7 +1380,7 @@ impl RemoteConnection for SshRemoteConnection {
         self.master_process.lock().is_none()
     }
 
-    fn ssh_args(&self) -> Vec<String> {
+    fn ssh_args(&self) -> (Vec<String>, Option<String>) {
         self.socket.ssh_args()
     }
 
@@ -2518,9 +2526,10 @@ mod fake {
             false
         }
 
-        fn ssh_args(&self) -> Vec<String> {
-            Vec::new()
+        fn ssh_args(&self) -> (Vec<String>, Option<String>) {
+            (Vec::new(), None)
         }
+
         fn upload_directory(
             &self,
             _src_path: PathBuf,
