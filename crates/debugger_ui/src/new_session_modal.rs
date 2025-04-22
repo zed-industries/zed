@@ -13,7 +13,7 @@ use gpui::{
 };
 use project::Project;
 use settings::Settings;
-use task::{DebugTaskDefinition, DebugTaskTemplate, DebugeeDefinition, LaunchRequest};
+use task::{DebugTaskDefinition, DebugeeDefinition, LaunchRequest, TaskTemplate};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -88,12 +88,31 @@ impl NewSessionModal {
         }
     }
 
-    fn debug_config(&self, cx: &App) -> Option<DebugScenario> {
+    fn debug_config(&self, cx: &App) -> Option<DebugTaskDefinition> {
         let request = self.mode.debug_task(cx);
-        Some(DebugScenario {
-            adapter: self.debugger.clone()?,
-            label: suggested_label(&request, self.debugger.as_deref()?),
-            request,
+        let label = suggested_label(&request, self.debugger.as_deref()?);
+        let debugee = match request {
+            DebugRequest::Launch(launch_request) => {
+                let template = TaskTemplate {
+                    label: label.clone(),
+                    command: launch_request.program,
+                    args: launch_request.args,
+                    cwd: launch_request
+                        .cwd
+                        .map(|path| path.to_string_lossy().into_owned()),
+                    ..Default::default()
+                };
+                DebugeeDefinition::Launch(template)
+            }
+            DebugRequest::Attach(attach_request) => {
+                DebugeeDefinition::Attach(attach_request.process_id)
+            }
+        };
+        Some(DebugTaskDefinition {
+            adapter: self.debugger.clone()?.into(),
+            build: None,
+            label,
+            debugee,
             initialize_args: self.initialize_args.clone(),
             tcp_connection: None,
             stop_on_entry: match self.stop_on_entry {
@@ -165,12 +184,13 @@ impl NewSessionModal {
         cx: &mut App,
     ) {
         attach.update(cx, |this, cx| {
-            if selected_debugger != this.scenario.adapter {
-                this.scenario.adapter = selected_debugger.into();
+            if selected_debugger != this.scenario.adapter.as_ref() {
+                let adapter: SharedString = selected_debugger.to_owned().into();
+                this.scenario.adapter = adapter.clone();
 
                 this.attach_picker.update(cx, |this, cx| {
                     this.picker.update(cx, |this, cx| {
-                        this.delegate.scenario.adapter = selected_debugger.into();
+                        this.delegate.scenario.adapter = adapter;
                         this.focus(window, cx);
                     })
                 });
@@ -268,6 +288,7 @@ impl NewSessionModal {
                                         Self::update_attach_picker(&attach, &debugger, window, cx);
                                     }
                                 }
+                                _ => todo!(),
                             }
                             cx.notify();
                         })
@@ -275,7 +296,7 @@ impl NewSessionModal {
                     }
                 };
 
-                let available_adapters: Vec<DebugTaskTemplate> = workspace
+                let available_tasks: Vec<DebugTaskDefinition> = workspace
                     .update(cx, |this, cx| {
                         this.project()
                             .read(cx)
@@ -289,11 +310,11 @@ impl NewSessionModal {
                     .ok()
                     .unwrap_or_default();
 
-                for debug_definition in available_adapters {
+                for debug_definition in available_tasks {
                     menu = menu.entry(
-                        debug_definition.definition.label.clone(),
+                        debug_definition.label.clone(),
                         None,
-                        setter_for_name(debug_definition.definition),
+                        setter_for_name(debug_definition),
                     );
                 }
                 menu
