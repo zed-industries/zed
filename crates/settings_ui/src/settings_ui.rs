@@ -65,10 +65,13 @@ pub fn init(cx: &mut App) {
                         match settings::VsCodeSettings::load_user_settings(fs.clone()).await {
                             Ok(vscode) => vscode,
                             Err(err) => {
-                                println!("Failed to load VsCode settings: {}", err.context(format!(
-                                    "Loading VsCode settings from path: {:?}",
-                                    paths::vscode_settings_file()
-                                )));
+                                println!(
+                                    "Failed to load VsCode settings: {}",
+                                    err.context(format!(
+                                        "Loading VsCode settings from path: {:?}",
+                                        paths::vscode_settings_file()
+                                    ))
+                                );
 
                                 let _ = cx.prompt(
                                     gpui::PromptLevel::Info,
@@ -99,7 +102,8 @@ pub fn init(cx: &mut App) {
                         cx.global::<SettingsStore>()
                             .import_vscode_settings(fs, vscode);
                         log::info!("Imported settings from VsCode");
-                    }).ok();
+                    })
+                    .ok();
                 })
                 .detach();
         });

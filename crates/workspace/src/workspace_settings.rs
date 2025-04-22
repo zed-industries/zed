@@ -372,11 +372,15 @@ impl Settings for TabBarSettings {
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.enum_setting("workbench.editor.showTabs", &mut current.show, |s| match s {
-            "multiple" => Some(true),
-            "single" | "none" => Some(false),
-            _ => None,
-        });
+        vscode.enum_setting(
+            "workbench.editor.showTabs",
+            &mut current.show,
+            |s| match s {
+                "multiple" => Some(true),
+                "single" | "none" => Some(false),
+                _ => None,
+            },
+        );
         if Some("hidden") == vscode.read_string("workbench.editor.editorActionsLocation") {
             current.show_tab_bar_buttons = Some(false)
         }

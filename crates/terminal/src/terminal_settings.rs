@@ -269,12 +269,16 @@ impl settings::Settings for TerminalSettings {
             Some(false) => current.blinking = Some(TerminalBlink::Off),
             None => {}
         }
-        vscode.enum_setting(&name("cursorStyle"), &mut current.cursor_shape, |s| match s {
-            "block" => Some(CursorShape::Block),
-            "line" => Some(CursorShape::Bar),
-            "underline" => Some(CursorShape::Underline),
-            _ => None,
-        });
+        vscode.enum_setting(
+            &name("cursorStyle"),
+            &mut current.cursor_shape,
+            |s| match s {
+                "block" => Some(CursorShape::Block),
+                "line" => Some(CursorShape::Bar),
+                "underline" => Some(CursorShape::Underline),
+                _ => None,
+            },
+        );
         // they also have "none" and "outline" as options but just for the "Inactive" variant
         if let Some(height) = vscode
             .read_value(&name("lineHeight"))
