@@ -49,7 +49,7 @@ impl EvalThread for Thread {
             .unwrap()
             .is_match(&without_filename);
 
-        cx.assert(matches, "Expected path_search glob to start with either \"**/\" or \"zed/\", optionally with \"*/\" in the middle, but glob was {glob:?}")?;
+        cx.assert(matches, "glob starts with either \"**/\" or \"zed/\"")?;
 
         Ok(())
     }

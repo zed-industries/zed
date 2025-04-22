@@ -378,8 +378,10 @@ fn main() {
                                 run_output.assertions.success.len(),
                             );
 
-                            let total = run_output.assertions.failure.len()
+                            let total_run = run_output.assertions.failure.len()
                                 + run_output.assertions.success.len();
+                            let total = total_run
+                                .max(instance.thread.meta().max_assertions.unwrap_or(0) as usize);
                             let pct = run_output.assertions.success.len() / total * 100;
                             assertion_stats.push(pct)
                         }

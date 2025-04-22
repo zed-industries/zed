@@ -40,7 +40,7 @@ pub const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
 #[derive(Clone)]
 pub struct ThreadInstance {
-    thread: Rc<dyn EvalThread>,
+    pub thread: Rc<dyn EvalThread>,
     pub name: String,
     pub run_directory: PathBuf,
     pub log_prefix: String,

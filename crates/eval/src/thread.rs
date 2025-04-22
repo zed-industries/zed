@@ -267,7 +267,7 @@ impl Response {
                 }
             })
         });
-        cx.assert_some(result, format!("Has `{}` tool calls", tool_name))
+        cx.assert_some(result, format!("has `{}` tool calls", tool_name))
     }
 }
 
