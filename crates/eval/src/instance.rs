@@ -11,7 +11,8 @@ use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role, StopReason, TokenUsage,
 };
-use project::{Project, ProjectPath};
+use project::lsp_store::OpenLspBufferHandle;
+use project::{DiagnosticSummary, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -32,9 +33,6 @@ use crate::assertions::Assertions;
 use crate::thread::{EvalThread, FailedAssertion, ThreadContext};
 use crate::{AgentAppState, ToolMetrics};
 
-pub const REPOS_DIR: &str = "./crates/eval/repos";
-pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
-
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
 pub const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
@@ -45,12 +43,20 @@ pub struct ThreadInstance {
     pub name: String,
     pub run_directory: PathBuf,
     pub log_prefix: String,
+    /// The repetition number for this example (0-based)
+    /// When running multiple repetitions of the same example, each instance is assigned a unique repetition number.
+    /// This affects the worktree path and log prefix to avoid clobbering results between runs.
+    pub repetition: usize,
+    pub repo_path: PathBuf,
+    /// Path to the directory containing the requests and responses for the agentic loop
+    worktrees_dir: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct RunOutput {
     pub repository_diff: String,
-    pub ran_diagnostics_check: bool,
+    pub diagnostic_summary_before: DiagnosticSummary,
+    pub diagnostic_summary_after: DiagnosticSummary,
     pub diagnostics_before: Option<String>,
     pub diagnostics_after: Option<String>,
     pub response_count: usize,
@@ -61,9 +67,22 @@ pub struct RunOutput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeDiffInput {
+    pub repository_diff: String,
+    pub criteria: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeThreadInput {
+    pub messages: String,
+    pub criteria: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeResponse {
     pub analysis: String,
-    pub score: u32,
+    pub passing_criteria: u32,
+    pub total_criteria: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,38 +91,30 @@ pub struct JudgeOutput {
     pub diff: Option<JudgeResponse>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct JudgeDiffInput {
-    pub repository_diff: String,
-    pub ran_diagnostics_check: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostics_before: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostics_after: Option<String>,
-    pub criteria: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct JudgeThreadInput {
-    pub messages: String,
-    pub criteria: String,
-}
-
 impl ThreadInstance {
-    pub fn new(thread: Rc<dyn EvalThread>, run_directory: &Path, repetition_number: u32) -> Self {
-        let name = if repetition_number > 0 {
-            format!("{}-{}", thread.meta().name, repetition_number)
-        } else {
-            thread.meta().name.to_string()
-        };
+    pub fn new(
+        thread: Rc<dyn EvalThread>,
+        repos_dir: &Path,
+        run_dir: &Path,
+        worktrees_dir: &Path,
+        repetition: usize,
+    ) -> Self {
+        let name = thread.meta().name.to_string();
+        let run_directory = run_dir
+            .join(&name)
+            .join(repetition.to_string())
+            .to_path_buf();
 
-        let run_directory = run_directory.join(&name).to_path_buf();
+        let repo_path = repo_path_for_url(repos_dir, &thread.meta().url);
 
         Self {
             name,
             thread,
             log_prefix: String::new(),
             run_directory,
+            repetition,
+            repo_path,
+            worktrees_dir: worktrees_dir.to_path_buf(),
         }
     }
 
@@ -115,22 +126,26 @@ impl ThreadInstance {
         self.thread.meta().revision
     }
 
+    pub fn worktree_name(&self) -> String {
+        format!("{}-{}", self.name, self.repetition)
+    }
+
     pub fn set_log_prefix_style(&mut self, color: &str, name_width: usize) {
         self.log_prefix = format!(
             "{}{:<width$}\x1b[0m | ",
             color,
-            self.name,
+            self.worktree_name(),
             width = name_width
         );
     }
 
-    pub async fn setup(&mut self) -> Result<()> {
+    /// Set up the example by checking out the specified Git revision
+    pub async fn fetch(&mut self) -> Result<()> {
         let meta = self.thread.meta();
-        let repo_path = repo_path_for_url(&meta.url);
 
         let revision_exists = run_git(
-            &repo_path,
-            &["rev-parse", &format!("{}^{{commit}}", meta.revision)],
+            &self.repo_path,
+            &["rev-parse", &format!("{}^{{commit}}", &meta.revision)],
         )
         .await
         .is_ok();
@@ -138,14 +153,18 @@ impl ThreadInstance {
         if !revision_exists {
             println!("{}Fetching revision {}", self.log_prefix, &meta.revision);
             run_git(
-                &repo_path,
+                &self.repo_path,
                 &["fetch", "--depth", "1", "origin", &meta.revision],
             )
             .await?;
         }
+        Ok(())
+    }
 
+    /// Set up the example by checking out the specified Git revision
+    pub async fn setup(&mut self) -> Result<()> {
         let worktree_path = self.worktree_path();
-
+        let meta = self.thread.meta();
         if worktree_path.is_dir() {
             println!("{}Resetting existing worktree", self.log_prefix);
 
@@ -160,7 +179,7 @@ impl ThreadInstance {
             let worktree_path_string = worktree_path.to_string_lossy().to_string();
 
             run_git(
-                &repo_path,
+                &self.repo_path,
                 &[
                     "worktree",
                     "add",
@@ -182,11 +201,8 @@ impl ThreadInstance {
     }
 
     pub fn worktree_path(&self) -> PathBuf {
-        Path::new(WORKTREES_DIR)
-            .canonicalize()
-            .context(format!("No such directory {WORKTREES_DIR}"))
-            .unwrap()
-            .join(&self.name)
+        self.worktrees_dir
+            .join(self.worktree_name())
             .join(self.thread.meta().repo_name())
     }
 
@@ -206,9 +222,8 @@ impl ThreadInstance {
             cx,
         );
 
-        let worktree_path = self.worktree_path();
         let worktree = project.update(cx, |project, cx| {
-            project.create_worktree(&worktree_path, true, cx)
+            project.create_worktree(self.worktree_path(), true, cx)
         });
 
         let tools = cx.new(|_| ToolWorkingSet::default());
@@ -226,6 +241,14 @@ impl ThreadInstance {
                     worktree.as_local().unwrap().scan_complete()
                 })?
                 .await;
+
+            struct LanguageServerState {
+                _lsp_open_handle: OpenLspBufferHandle,
+                language_file_buffer: Entity<Buffer>,
+            }
+
+            let mut diagnostics_before = None;
+            let mut diagnostic_summary_before = DiagnosticSummary::default();
 
             let lsp = if let Some(language_server) = &meta.language_server {
                 // Open a file that matches the language to cause LSP to start.
@@ -259,20 +282,32 @@ impl ThreadInstance {
 
                 wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
 
-                let diagnostics_before = query_lsp_diagnostics(project.clone(), cx).await?;
+                diagnostic_summary_before = project.read_with(cx, |project, cx| {
+                      project.diagnostic_summary(false, cx)
+                })?;
+
+                diagnostics_before = query_lsp_diagnostics(project.clone(), cx).await?;
                 if diagnostics_before.is_some() && language_server.allow_preexisting_diagnostics {
                     return Err(anyhow!("Example has pre-existing diagnostics. If you want to run this example regardless, set `allow_preexisting_diagnostics` to `true` in `base.toml`"));
                 }
 
-                Some((lsp_open_handle, language_file_buffer, language_server, diagnostics_before))
+                Some(LanguageServerState {
+                    _lsp_open_handle: lsp_open_handle,
+                    language_file_buffer,
+                })
             } else {
                 None
             };
 
-
             if std::env::var("ZED_EVAL_SETUP_ONLY").is_ok() {
                 return Err(anyhow!("Setup only mode"));
             }
+
+            let last_diff_file_path = this.run_directory.join("last.diff");
+
+            // Write an empty "last.diff" so that it can be opened in Zed for convenient view of the
+            // history using undo/redo.
+            std::fs::write(&last_diff_file_path, "")?;
 
             let thread_store = thread_store.await?;
             let thread =
@@ -281,24 +316,43 @@ impl ThreadInstance {
 
             thread.update(cx, |thread, _cx| {
                 let mut request_count = 0;
-                let example_dir_path = this.run_directory.clone();
-
                 let last_request = Rc::clone(&last_request);
+                let previous_diff = Rc::new(RefCell::new("".to_string()));
+                let example_output_dir = this.run_directory.clone();
+                let last_diff_file_path = last_diff_file_path.clone();
+                let this = this.clone();
                 thread.set_request_callback(move |request, response_events| {
                     *last_request.borrow_mut() = Some(request.clone());
 
                     request_count += 1;
-                    let messages_file_path = example_dir_path.join(format!("{request_count}.messages.md"));
-                    let last_messages_file_path = example_dir_path.join("last.messages.md");
+                    let messages_file_path = example_output_dir.join(format!("{request_count}.messages.md"));
+                    let diff_file_path = example_output_dir.join(format!("{request_count}.diff"));
+                    let last_messages_file_path = example_output_dir.join("last.messages.md");
                     let request_markdown = RequestMarkdown::new(request);
                     let response_events_markdown = response_events_to_markdown(response_events);
 
                     let messages = format!("{}\n\n{}", request_markdown.messages, response_events_markdown);
-                    fs::write(messages_file_path, messages.clone()).expect("failed to write messages file");
-                    fs::write(last_messages_file_path, messages).expect("failed to write last messages file");
+                    fs::write(&messages_file_path, messages.clone()).expect("failed to write messages file");
+                    fs::write(&last_messages_file_path, messages).expect("failed to write last messages file");
+
+                    let diff_result = smol::block_on(this.repository_diff());
+                    match diff_result {
+                        Ok(diff) => {
+                            if diff != previous_diff.borrow().clone() {
+                                fs::write(&diff_file_path, &diff).expect("failed to write diff file");
+                                fs::write(&last_diff_file_path, &diff).expect("failed to write last diff file");
+                                *previous_diff.borrow_mut() = diff;
+                            }
+                        }
+                        Err(err) => {
+                            let error_message = format!("{err:?}");
+                            fs::write(&diff_file_path, &error_message).expect("failed to write diff error to file");
+                            fs::write(&last_diff_file_path, &error_message).expect("failed to write last diff file");
+                        }
+                    }
 
                     if request_count == 1 {
-                        let tools_file_path = example_dir_path.join("tools.md");
+                        let tools_file_path = example_output_dir.join("tools.md");
                         fs::write(tools_file_path, request_markdown.tools).expect("failed to write tools file");
                     }
                 });
@@ -365,6 +419,8 @@ impl ThreadInstance {
                     ThreadEvent::MessageDeleted(_) |
                     ThreadEvent::SummaryChanged |
                     ThreadEvent::SummaryGenerated |
+                    ThreadEvent::ReceivedTextChunk |
+                    ThreadEvent::StreamedToolUse { .. } |
                     ThreadEvent::CheckpointChanged |
                     ThreadEvent::UsageUpdated(_) |
                     ThreadEvent::ShowError(_) => {
@@ -397,25 +453,29 @@ impl ThreadInstance {
             println!("{}Getting repository diff", this.log_prefix);
             let repository_diff = this.repository_diff().await?;
 
-            let repository_diff_path = this.run_directory.join("patch.diff");
-            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
-            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
+            std::fs::write(last_diff_file_path, &repository_diff)?;
 
-            let (diagnostics_before, diagnostics_after) = if let Some((_, language_file_buffer, _, diagnostics_before)) = lsp {
-                wait_for_lang_server(&project, &language_file_buffer, this.log_prefix.clone(), cx).await?;
+
+            let mut diagnostics_after = None;
+            let mut diagnostic_summary_after = Default::default();
+
+            if let Some(language_server_state) = lsp {
+                wait_for_lang_server(&project, &language_server_state.language_file_buffer, this.log_prefix.clone(), cx).await?;
 
                 println!("{}Getting diagnostics", this.log_prefix);
-                let diagnostics_after = cx
-                    .update(move |cx| {
+                diagnostics_after = cx
+                    .update(|cx| {
+                        let project = project.clone();
                         cx.spawn(async move |cx| query_lsp_diagnostics(project, cx).await)
                     })?
                     .await?;
                 println!("{}Got diagnostics", this.log_prefix);
 
-                (diagnostics_before, diagnostics_after)
-            } else {
-                (None, None)
-            };
+                diagnostic_summary_after = project.read_with(cx, |project, cx| {
+                      project.diagnostic_summary(false, cx)
+                })?;
+
+            }
 
             let Some(last_request) = last_request.borrow_mut().take() else {
                 return Err(anyhow!("No requests ran."));
@@ -438,8 +498,9 @@ impl ThreadInstance {
                     .filter(|message| message.role == language_model::Role::Assistant)
                     .count();
                 RunOutput {
-                    repository_diff: "".to_string(),
-                    ran_diagnostics_check: meta.language_server.is_some(),
+                    repository_diff,
+                    diagnostic_summary_before,
+                    diagnostic_summary_after,
                     diagnostics_before,
                     diagnostics_after,
                     response_count,
@@ -466,19 +527,15 @@ impl ThreadInstance {
         &self,
         model: Arc<dyn LanguageModel>,
         run_output: &RunOutput,
-        judge_number: u32,
         cx: &AsyncApp,
     ) -> Result<JudgeOutput> {
-        let mut output_file = File::create(
-            self.run_directory
-                .join(format!("judge_{}.md", judge_number)),
-        )
-        .expect("failed to create judge.md");
+        let mut output_file =
+            File::create(self.run_directory.join("judge.md")).expect("failed to create judge.md");
 
-        println!("{}Running judge #{judge_number}", self.log_prefix);
+        println!("{}Running judge", self.log_prefix);
 
-        let diff_task = self.judge_diff(model.clone(), &run_output, judge_number, cx);
-        let thread_task = self.judge_thread(model.clone(), &run_output, judge_number, cx);
+        let diff_task = self.judge_diff(model.clone(), &run_output, 1, cx);
+        let thread_task = self.judge_thread(model.clone(), &run_output, 1, cx);
 
         let (diff_result, thread_result) = futures::join!(diff_task, thread_task);
 
@@ -519,9 +576,6 @@ impl ThreadInstance {
             judge_diff_prompt_name,
             &JudgeDiffInput {
                 repository_diff: run_output.repository_diff.clone(),
-                ran_diagnostics_check: run_output.ran_diagnostics_check,
-                diagnostics_before: run_output.diagnostics_before.clone(),
-                diagnostics_after: run_output.diagnostics_after.clone(),
                 criteria: diff_criteria,
             },
         )?;
@@ -544,7 +598,8 @@ impl ThreadInstance {
 
         println!(
             "{}Judge #{judge_number} - Diff score: {}",
-            self.log_prefix, diff_output.score
+            self.log_prefix,
+            diff_output.score()
         );
 
         Ok((diff_response, Some(diff_output)))
@@ -595,7 +650,8 @@ impl ThreadInstance {
 
         println!(
             "{}Judge #{judge_number} - Thread score: {}",
-            self.log_prefix, thread_output.score
+            self.log_prefix,
+            thread_output.score()
         );
 
         Ok((thread_response, Some(thread_output)))
@@ -736,11 +792,21 @@ pub async fn query_lsp_diagnostics(
 impl JudgeResponse {
     fn parse(response: &str) -> Result<Self> {
         let analysis = get_tag("analysis", response)?.to_string();
-        let score = get_tag("score", response)?
+        let passing_criteria = get_tag("passing_criteria", response)?
             .parse()
             .context("error parsing score")?;
+        let total_criteria = get_tag("total_criteria", response)?
+            .parse()
+            .context("error parsing score")?;
+        Ok(Self {
+            analysis,
+            total_criteria,
+            passing_criteria,
+        })
+    }
 
-        Ok(Self { analysis, score })
+    pub fn score(&self) -> u32 {
+        (100.0 * self.passing_criteria as f32 / self.total_criteria as f32).round() as u32
     }
 }
 
@@ -763,15 +829,11 @@ fn get_tag(name: &'static str, response: &str) -> Result<String> {
     anyhow::Ok(content)
 }
 
-pub fn repo_path_for_url(repo_url: &str) -> PathBuf {
+pub fn repo_path_for_url(repos_dir: &Path, repo_url: &str) -> PathBuf {
     let repo_name = repo_url
         .trim_start_matches("https://")
         .replace(|c: char| !c.is_alphanumeric(), "-");
-    Path::new(REPOS_DIR)
-        .canonicalize()
-        .context(format!("No such directory {REPOS_DIR}"))
-        .unwrap()
-        .join(repo_name)
+    Path::new(repos_dir).join(repo_name)
 }
 
 pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
@@ -973,13 +1035,13 @@ pub fn response_events_to_markdown(
 #[cfg(test)]
 mod test {
     use super::*;
-    use handlebars::Handlebars;
 
     #[test]
     fn test_parse_judge_output() {
         let response = r#"
             <analysis>The model did a good job but there were still compilations errors.</analysis>
-            <score>3</score>
+            <passing_criteria>3</passing_criteria>
+            <total_criteria>5</total_criteria>
         "#
         .unindent();
 
@@ -988,7 +1050,8 @@ mod test {
             output.analysis,
             "The model did a good job but there were still compilations errors."
         );
-        assert_eq!(output.score, 3);
+        assert_eq!(output.passing_criteria, 3);
+        assert_eq!(output.total_criteria, 5);
 
         let response = r#"
             Text around ignored
@@ -999,162 +1062,15 @@ mod test {
                 - Error 2
             </analysis>
 
-            <score>1</score>
+            <passing_criteria>1</passing_criteria>
+
+            <total_criteria>3</total_criteria>
         "#
         .unindent();
 
         let output = JudgeResponse::parse(&response).unwrap();
         assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
-        assert_eq!(output.score, 1);
-    }
-
-    #[test]
-    fn test_judge_prompt_with_diagnostics() {
-        // Case 1: Both diagnostics before and after are present
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: true,
-            diagnostics_before: Some("Error at line 10: variable not found".to_string()),
-            diagnostics_after: Some("Error at line 15: missing semicolon".to_string()),
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates().render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        let expected_diagnostics_section = r#"
-            Take into account the diagnostics before and after applying the change:
-
-            <diagnostics_before>
-            Error at line 10: variable not found
-            </diagnostics_before>
-
-            <diagnostics_after>
-            Error at line 15: missing semicolon
-            </diagnostics_after>
-            "#
-        .unindent();
-
-        assert!(rendered.contains(&expected_diagnostics_section));
-    }
-
-    #[test]
-    fn test_judge_prompt_with_empty_diagnostics() {
-        // Case 2: Diagnostics check run but no diagnostics found
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: true,
-            diagnostics_before: None,
-            diagnostics_after: None,
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates().render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        let expected_diagnostics_section = r#"
-            Take into account the diagnostics before and after applying the change:
-
-            <diagnostics_before>
-            No diagnostics before applying the edits.
-            </diagnostics_before>
-
-            <diagnostics_after>
-            No diagnostics after applying the edits.
-            </diagnostics_after>
-            "#
-        .unindent();
-
-        assert!(rendered.contains(&expected_diagnostics_section));
-    }
-
-    #[test]
-    fn test_judge_prompt_with_mixed_diagnostics() {
-        let templates = templates();
-
-        // Case 3: Before diagnostics present, after diagnostics absent
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: true,
-            diagnostics_before: Some("Error at line 10: variable not found".to_string()),
-            diagnostics_after: None,
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        let expected_diagnostics_section = r#"
-            Take into account the diagnostics before and after applying the change:
-
-            <diagnostics_before>
-            Error at line 10: variable not found
-            </diagnostics_before>
-
-            <diagnostics_after>
-            No diagnostics after applying the edits.
-            </diagnostics_after>
-            "#
-        .unindent();
-
-        assert!(rendered.contains(&expected_diagnostics_section));
-
-        // Case 4: Before diagnostics absent, after diagnostics present
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: true,
-            diagnostics_before: None,
-            diagnostics_after: Some("Error at line 15: missing semicolon".to_string()),
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        let expected_diagnostics_section = r#"
-            Take into account the diagnostics before and after applying the change:
-
-            <diagnostics_before>
-            No diagnostics before applying the edits.
-            </diagnostics_before>
-
-            <diagnostics_after>
-            Error at line 15: missing semicolon
-            </diagnostics_after>
-            "#
-        .unindent();
-
-        assert!(rendered.contains(&expected_diagnostics_section));
-    }
-
-    #[test]
-    fn test_judge_prompt_without_diagnostics() {
-        let templates = templates();
-
-        // Case 5: No diagnostics check run
-        let input = JudgeDiffInput {
-            repository_diff: "diff content goes here".to_string(),
-            ran_diagnostics_check: false,
-            diagnostics_before: None,
-            diagnostics_after: None,
-            criteria: "Fix all bugs".to_string(),
-        };
-
-        let rendered = templates.render(JUDGE_PROMPT_NAME, &input).unwrap();
-
-        // Check for the message when no diagnostics were performed
-        let diagnostics_message = "No diagnostic checks were performed.";
-
-        assert!(rendered.contains(diagnostics_message));
-        assert!(!rendered.contains("<diagnostics_before>"));
-        assert!(!rendered.contains("<diagnostics_after>"));
-    }
-
-    const JUDGE_PROMPT_NAME: &str = "judge_prompt";
-
-    fn templates() -> Handlebars<'static> {
-        let mut judge_prompt = include_str!("judge_diff_prompt.hbs").to_string();
-        language::LineEnding::normalize(&mut judge_prompt);
-        let mut handlebars = Handlebars::new();
-        handlebars
-            .register_template_string(JUDGE_PROMPT_NAME, judge_prompt)
-            .unwrap();
-        handlebars
+        assert_eq!(output.passing_criteria, 1);
+        assert_eq!(output.total_criteria, 3);
     }
 }

@@ -7,10 +7,10 @@ edition.workspace = true
 [dependencies]
 agent.workspace = true
 anyhow.workspace = true
-async-watch.workspace = true
-async-trait.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
+async-trait.workspace = true
+async-watch.workspace = true
 chrono.workspace = true
 clap.workspace = true
 client.workspace = true
@@ -30,6 +30,7 @@ language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
+parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
@@ -40,13 +41,13 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
+smol.workspace = true
 telemetry.workspace = true
 toml.workspace = true
 unindent.workspace = true
 util.workspace = true
 uuid = { version = "1.6", features = ["v4"] }
 workspace-hack.workspace = true
-
 [[bin]]
 name = "eval"
 path = "src/eval.rs"

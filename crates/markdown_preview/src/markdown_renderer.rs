@@ -8,7 +8,7 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
     Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img, px, rems,
+    StyledText, TextStyle, WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -18,10 +18,10 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    ButtonCommon, Checkbox, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, StatefulInteractiveElement,
-    StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover, h_flex, relative,
-    tooltip_container, v_flex,
+    ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
+    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
+    StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
+    h_flex, relative, tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
@@ -36,6 +36,7 @@ pub struct RenderContext {
     text_style: TextStyle,
     border_color: Hsla,
     text_color: Hsla,
+    window_rem_size: Pixels,
     text_muted_color: Hsla,
     code_block_background_color: Hsla,
     code_span_background_color: Hsla,
@@ -56,6 +57,7 @@ impl RenderContext {
         let buffer_font_family = settings.buffer_font.family.clone();
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
+        buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
 
         RenderContext {
             workspace,
@@ -67,6 +69,7 @@ impl RenderContext {
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
             text_color: theme.colors().text,
+            window_rem_size: window.rem_size(),
             text_muted_color: theme.colors().text_muted,
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
@@ -88,6 +91,17 @@ impl RenderContext {
         ElementId::from(SharedString::from(id))
     }
 
+    /// HACK: used to have rems relative to buffer font size, so that things scale appropriately as
+    /// buffer font size changes. The callees of this function should be reimplemented to use real
+    /// relative sizing once that is implemented in GPUI
+    pub fn scaled_rems(&self, rems: f32) -> Rems {
+        return self
+            .buffer_text_style
+            .font_size
+            .to_rems(self.window_rem_size)
+            .mul(rems);
+    }
+
     /// This ensures that children inside of block quotes
     /// have padding between them.
     ///
@@ -103,7 +117,7 @@ impl RenderContext {
     /// and "And this is the next paragraph."
     fn with_common_p(&self, element: Div) -> Div {
         if self.indent > 0 {
-            element.pb_3()
+            element.pb(self.scaled_rems(0.75))
         } else {
             element
         }
@@ -141,27 +155,38 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
 
 fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContext) -> AnyElement {
     let size = match parsed.level {
-        HeadingLevel::H1 => rems(2.),
-        HeadingLevel::H2 => rems(1.5),
-        HeadingLevel::H3 => rems(1.25),
-        HeadingLevel::H4 => rems(1.),
-        HeadingLevel::H5 => rems(0.875),
-        HeadingLevel::H6 => rems(0.85),
+        HeadingLevel::H1 => 2.,
+        HeadingLevel::H2 => 1.5,
+        HeadingLevel::H3 => 1.25,
+        HeadingLevel::H4 => 1.,
+        HeadingLevel::H5 => 0.875,
+        HeadingLevel::H6 => 0.85,
     };
+
+    let text_size = cx.scaled_rems(size);
+
+    // was `DefiniteLength::from(text_size.mul(1.25))`
+    // let line_height = DefiniteLength::from(text_size.mul(1.25));
+    let line_height = text_size * 1.25;
+
+    // was `rems(0.15)`
+    // let padding_top = cx.scaled_rems(0.15);
+    let padding_top = rems(0.15);
+
+    // was `.pb_1()` = `rems(0.25)`
+    // let padding_bottom = cx.scaled_rems(0.25);
+    let padding_bottom = rems(0.25);
 
     let color = match parsed.level {
         HeadingLevel::H6 => cx.text_muted_color,
         _ => cx.text_color,
     };
-
-    let line_height = DefiniteLength::from(size.mul(1.25));
-
     div()
         .line_height(line_height)
-        .text_size(size)
+        .text_size(text_size)
         .text_color(color)
-        .pt(rems(0.15))
-        .pb_1()
+        .pt(padding_top)
+        .pb(padding_bottom)
         .children(render_markdown_text(&parsed.contents, cx))
         .whitespace_normal()
         .into_any()
@@ -173,22 +198,23 @@ fn render_markdown_list_item(
 ) -> AnyElement {
     use ParsedMarkdownListItemType::*;
 
-    let padding = rems((parsed.depth - 1) as f32);
+    let padding = cx.scaled_rems((parsed.depth - 1) as f32);
 
     let bullet = match &parsed.item_type {
         Ordered(order) => format!("{}.", order).into_any_element(),
         Unordered => "•".into_any_element(),
         Task(checked, range) => div()
             .id(cx.next_id(range))
-            .mt(px(3.))
+            .mt(cx.scaled_rems(3.0 / 16.0))
             .child(
-                Checkbox::new(
+                MarkdownCheckbox::new(
                     "checkbox",
                     if *checked {
                         ToggleState::Selected
                     } else {
                         ToggleState::Unselected
                     },
+                    cx.clone(),
                 )
                 .when_some(
                     cx.checkbox_clicked_callback.clone(),
@@ -216,7 +242,7 @@ fn render_markdown_list_item(
             })
             .into_any_element(),
     };
-    let bullet = div().mr_2().child(bullet);
+    let bullet = div().mr(cx.scaled_rems(0.5)).child(bullet);
 
     let contents: Vec<AnyElement> = parsed
         .content
@@ -227,9 +253,173 @@ fn render_markdown_list_item(
     let item = h_flex()
         .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
         .items_start()
-        .children(vec![bullet, div().children(contents).pr_4().w_full()]);
+        .children(vec![
+            bullet,
+            div().children(contents).pr(cx.scaled_rems(1.0)).w_full(),
+        ]);
 
     cx.with_common_p(item).into_any()
+}
+
+/// # MarkdownCheckbox ///
+/// HACK: Copied from `ui/src/components/toggle.rs` to deal with scaling issues in markdown preview
+/// changes should be integrated into `Checkbox` in `toggle.rs` while making sure checkboxes elsewhere in the
+/// app are not visually affected
+#[derive(gpui::IntoElement)]
+struct MarkdownCheckbox {
+    id: ElementId,
+    toggle_state: ToggleState,
+    disabled: bool,
+    placeholder: bool,
+    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>>,
+    filled: bool,
+    style: ui::ToggleStyle,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> gpui::AnyView>>,
+    label: Option<SharedString>,
+    render_cx: RenderContext,
+}
+
+impl MarkdownCheckbox {
+    /// Creates a new [`Checkbox`].
+    fn new(id: impl Into<ElementId>, checked: ToggleState, render_cx: RenderContext) -> Self {
+        Self {
+            id: id.into(),
+            toggle_state: checked,
+            disabled: false,
+            on_click: None,
+            filled: false,
+            style: ui::ToggleStyle::default(),
+            tooltip: None,
+            label: None,
+            placeholder: false,
+            render_cx,
+        }
+    }
+
+    /// Binds a handler to the [`Checkbox`] that will be called when clicked.
+    fn on_click(mut self, handler: impl Fn(&ToggleState, &mut Window, &mut App) + 'static) -> Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    fn bg_color(&self, cx: &App) -> Hsla {
+        let style = self.style.clone();
+        match (style, self.filled) {
+            (ui::ToggleStyle::Ghost, false) => cx.theme().colors().ghost_element_background,
+            (ui::ToggleStyle::Ghost, true) => cx.theme().colors().element_background,
+            (ui::ToggleStyle::ElevationBased(_), false) => gpui::transparent_black(),
+            (ui::ToggleStyle::ElevationBased(elevation), true) => elevation.darker_bg(cx),
+            (ui::ToggleStyle::Custom(_), false) => gpui::transparent_black(),
+            (ui::ToggleStyle::Custom(color), true) => color.opacity(0.2),
+        }
+    }
+
+    fn border_color(&self, cx: &App) -> Hsla {
+        if self.disabled {
+            return cx.theme().colors().border_variant;
+        }
+
+        match self.style.clone() {
+            ui::ToggleStyle::Ghost => cx.theme().colors().border,
+            ui::ToggleStyle::ElevationBased(_) => cx.theme().colors().border,
+            ui::ToggleStyle::Custom(color) => color.opacity(0.3),
+        }
+    }
+}
+
+impl gpui::RenderOnce for MarkdownCheckbox {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let group_id = format!("checkbox_group_{:?}", self.id);
+        let color = if self.disabled {
+            Color::Disabled
+        } else {
+            Color::Selected
+        };
+        let icon_size_small = IconSize::Custom(self.render_cx.scaled_rems(14. / 16.)); // was IconSize::Small
+        let icon = match self.toggle_state {
+            ToggleState::Selected => {
+                if self.placeholder {
+                    None
+                } else {
+                    Some(
+                        ui::Icon::new(IconName::Check)
+                            .size(icon_size_small)
+                            .color(color),
+                    )
+                }
+            }
+            ToggleState::Indeterminate => Some(
+                ui::Icon::new(IconName::Dash)
+                    .size(icon_size_small)
+                    .color(color),
+            ),
+            ToggleState::Unselected => None,
+        };
+
+        let bg_color = self.bg_color(cx);
+        let border_color = self.border_color(cx);
+        let hover_border_color = border_color.alpha(0.7);
+
+        let size = self.render_cx.scaled_rems(1.25); // was Self::container_size(); (20px)
+
+        let checkbox = h_flex()
+            .id(self.id.clone())
+            .justify_center()
+            .items_center()
+            .size(size)
+            .group(group_id.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .justify_center()
+                    .items_center()
+                    .m(self.render_cx.scaled_rems(0.25)) // was .m_1
+                    .size(self.render_cx.scaled_rems(1.0)) // was .size_4
+                    .rounded(self.render_cx.scaled_rems(0.125)) // was .rounded_xs
+                    .border_1()
+                    .bg(bg_color)
+                    .border_color(border_color)
+                    .when(self.disabled, |this| this.cursor_not_allowed())
+                    .when(self.disabled, |this| {
+                        this.bg(cx.theme().colors().element_disabled.opacity(0.6))
+                    })
+                    .when(!self.disabled, |this| {
+                        this.group_hover(group_id.clone(), |el| el.border_color(hover_border_color))
+                    })
+                    .when(self.placeholder, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .rounded_full()
+                                .bg(color.color(cx).alpha(0.5))
+                                .size(self.render_cx.scaled_rems(0.25)), // was .size_1
+                        )
+                    })
+                    .children(icon),
+            );
+
+        h_flex()
+            .id(self.id)
+            .gap(ui::DynamicSpacing::Base06.rems(cx))
+            .child(checkbox)
+            .when_some(
+                self.on_click.filter(|_| !self.disabled),
+                |this, on_click| {
+                    this.on_click(move |_, window, cx| {
+                        on_click(&self.toggle_state.inverse(), window, cx)
+                    })
+                },
+            )
+            // TODO: Allow label size to be different from default.
+            // TODO: Allow label color to be different from muted.
+            .when_some(self.label, |this, label| {
+                this.child(Label::new(label).color(Color::Muted))
+            })
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |window, cx| tooltip(window, cx))
+            })
+    }
 }
 
 fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
@@ -578,8 +768,8 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
 }
 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
-    let rule = div().w_full().h(px(2.)).bg(cx.border_color);
-    div().pt_3().pb_3().child(rule).into_any()
+    let rule = div().w_full().h(cx.scaled_rems(0.125)).bg(cx.border_color);
+    div().py(cx.scaled_rems(0.5)).child(rule).into_any()
 }
 
 struct InteractiveMarkdownElementTooltip {

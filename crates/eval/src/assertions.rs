@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter, Result};
+use std::fmt::{Display, Formatter, Result, Write};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Assertions {
@@ -34,38 +34,60 @@ impl Assertions {
     }
 }
 
-const ASSERTIONS_WIDTH: usize = 50;
+const ROUND_WIDTH: usize = "Round".len();
+const ASSERTIONS_WIDTH: usize = 40;
 const RESULTS_WIDTH: usize = 8;
 
+pub fn print_table_header() {
+    println!(
+        "┌─{}─┬─{}─┬─{}─┐",
+        "─".repeat(ROUND_WIDTH),
+        "─".repeat(ASSERTIONS_WIDTH),
+        "─".repeat(RESULTS_WIDTH)
+    );
+
+    println!(
+        "│ {:^ROUND_WIDTH$} │ {:^ASSERTIONS_WIDTH$} │ {:^RESULTS_WIDTH$} │",
+        "Round", "Assertion", "Result"
+    );
+
+    println!(
+        "├─{}─┼─{}─┼─{}─┤",
+        "─".repeat(ROUND_WIDTH),
+        "─".repeat(ASSERTIONS_WIDTH),
+        "─".repeat(RESULTS_WIDTH)
+    )
+}
+
+pub fn display_table_row(f: &mut String, round: usize, name: &str, passed: bool) -> Result {
+    writeln!(
+        f,
+        "│ {:^ROUND_WIDTH$} │ {:<ASSERTIONS_WIDTH$} │ {} │",
+        round,
+        truncate_assertion(name),
+        if passed {
+            "\x1b[32m✔︎ Passed\x1b[0m"
+        } else {
+            "\x1b[31m✘ Failed\x1b[0m"
+        }
+    )
+}
+
+pub fn print_table_footer() {
+    println!(
+        "└─{}─┴─{}─┴─{}─┘",
+        "─".repeat(ROUND_WIDTH),
+        "─".repeat(ASSERTIONS_WIDTH),
+        "─".repeat(RESULTS_WIDTH)
+    )
+}
+
+// todo! clean up
 impl Display for Assertions {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        // Do nothing if no assertions
         if self.total_count() == 0 {
             return Ok(());
         }
-
-        // Write table top border
-        writeln!(
-            f,
-            "┌─{}─┬─{}─┐",
-            "─".repeat(ASSERTIONS_WIDTH),
-            "─".repeat(RESULTS_WIDTH)
-        )?;
-
-        // Write header row
-        writeln!(
-            f,
-            "│ {:^ASSERTIONS_WIDTH$} │ {:^RESULTS_WIDTH$} │",
-            "Assertion", "Result"
-        )?;
-
-        // Write header-data separator
-        writeln!(
-            f,
-            "├─{}─┼─{}─┤",
-            "─".repeat(ASSERTIONS_WIDTH),
-            "─".repeat(RESULTS_WIDTH)
-        )?;
 
         // Print successful assertions
         for assertion in &self.success {

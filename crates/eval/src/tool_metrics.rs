@@ -79,7 +79,7 @@ impl Display for ToolMetrics {
             let failure_count = self.failure_counts.get(&tool_name).cloned().unwrap_or(0);
             writeln!(
                 f,
-                "│{:^30}│{:^10}│{:^10}│{:^10}│",
+                "│{:<30}│{:^10}│{:^10}│{:^10}│",
                 tool_name,
                 use_count,
                 failure_count,

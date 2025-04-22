@@ -139,6 +139,7 @@ pub enum IconName {
     Globe,
     Hash,
     HistoryRerun,
+    Image,
     Indicator,
     Info,
     InlayHint,

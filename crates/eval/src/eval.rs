@@ -5,18 +5,17 @@ mod thread;
 mod threads;
 mod tool_metrics;
 
-use instance::{
-    JudgeOutput, REPOS_DIR, RunOutput, ThreadInstance, WORKTREES_DIR, repo_path_for_url, run_git,
-};
+use instance::{JudgeOutput, RunOutput, ThreadInstance, run_git};
+use parking_lot::Mutex;
 pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use client::{Client, ProxySettings, UserStore};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
-use futures::{StreamExt, future};
+use futures::future;
 use gpui::http_client::{Uri, read_proxy_from_env};
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
 use gpui_tokio::Tokio;
@@ -29,12 +28,12 @@ use prompt_store::PromptBuilder;
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
+use std::collections::VecDeque;
+use std::env;
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::usize;
 use util::ResultExt as _;
-
-pub const RUNS_DIR: &str = "./crates/eval/runs";
 
 #[derive(Parser, Debug)]
 #[command(name = "eval", disable_version_flag = true)]
@@ -45,15 +44,11 @@ struct Args {
     /// Model to use (default: "claude-3-7-sonnet-latest")
     #[arg(long, default_value = "claude-3-7-sonnet-latest")]
     model: String,
-    #[arg(long, value_delimiter = ',')]
-    languages: Option<Vec<String>>,
-    /// How many times to run each example. Note that this is currently not very efficient as N
-    /// worktrees will be created for the examples.
+    #[arg(long, value_delimiter = ',', default_value = "rs,ts")]
+    languages: Vec<String>,
+    /// How many times to run each example.
     #[arg(long, default_value = "1")]
-    repetitions: u32,
-    /// How many times to run the judge on each example run.
-    #[arg(long, default_value = "3")]
-    judge_repetitions: u32,
+    repetitions: usize,
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "10")]
     concurrency: usize,
@@ -62,12 +57,39 @@ struct Args {
 fn main() {
     env_logger::init();
 
+    let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
+    let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let run_timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+    let run_id = match env::var("GITHUB_RUN_ID") {
+        Ok(run_id) => format!("github/{}", run_id),
+        Err(_) => format!("local/{}", run_timestamp),
+    };
+
+    let root_dir = Path::new(std::env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .unwrap();
+    let eval_crate_dir = root_dir.join("crates/eval");
+    let repos_dir = eval_crate_dir.join("repos");
+    let worktrees_dir = eval_crate_dir.join("worktrees");
+    let examples_dir = eval_crate_dir.join("examples");
+    let run_dir = eval_crate_dir
+        .join("runs")
+        .join(format!("{}", run_timestamp));
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::create_dir_all(&repos_dir).unwrap();
+    std::fs::create_dir_all(&worktrees_dir).unwrap();
+    std::fs::create_dir_all(&examples_dir).unwrap();
+    std::fs::create_dir_all(&paths::config_dir()).unwrap();
+
+    let zed_commit_sha = commit_sha_for_path(&root_dir);
+    let zed_branch_name = git_branch_for_path(&root_dir);
     let args = Args::parse();
-    let languages: HashSet<String> = args
-        .languages
-        .unwrap_or_else(|| vec!["rs".to_string()])
-        .into_iter()
-        .collect();
+    let languages: HashSet<String> = args.languages.into_iter().collect();
 
     let http_client = Arc::new(ReqwestClient::new());
     let app = Application::headless().with_http_client(http_client.clone());
@@ -76,14 +98,20 @@ fn main() {
     app.run(move |cx| {
         let app_state = init(cx);
 
-        let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
-        let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
-        let session_id = uuid::Uuid::new_v4().to_string();
+        let telemetry = app_state.client.telemetry();
+        telemetry.start(system_id, installation_id, session_id, cx);
 
-        app_state
-            .client
-            .telemetry()
-            .start(system_id, installation_id, session_id, cx);
+        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
+            && telemetry.has_checksum_seed();
+        if enable_telemetry {
+            println!("Telemetry enabled");
+            telemetry::event!(
+                "Agent Eval Started",
+                zed_commit_sha = zed_commit_sha,
+                zed_branch_name = zed_branch_name,
+                run_id = run_id,
+            );
+        }
 
         let mut cumulative_tool_metrics = ToolMetrics::default();
 
@@ -107,14 +135,7 @@ fn main() {
         cx.spawn(async move |cx| {
             authenticate_task.await.unwrap();
 
-            std::fs::create_dir_all(REPOS_DIR)?;
-            std::fs::create_dir_all(WORKTREES_DIR)?;
-
-            let run_id = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-
-            let run_dir = Path::new(RUNS_DIR).join(&run_id);
-            std::fs::create_dir_all(&run_dir)?;
-
+            // todo! rename to examples
             let mut included = Vec::new();
 
             const COLORS: [&str; 12] = [
@@ -132,7 +153,6 @@ fn main() {
                 "\x1b[96m", // Bright Cyan
             ];
 
-            let mut max_name_width = 0;
             let mut skipped = Vec::new();
 
             for thread in all_threads {
@@ -153,13 +173,13 @@ fn main() {
                 // either be run sequentially on the same worktree, or reuse worktrees when there
                 // are more examples to run than the concurrency limit.
                 for repetition_number in 0..args.repetitions {
-                    let thread_instance =
-                        ThreadInstance::new(thread.clone(), &run_dir, repetition_number);
-
-                    let name_len = meta.name.len();
-                    if name_len > max_name_width {
-                        max_name_width = meta.name.len();
-                    }
+                    let thread_instance = ThreadInstance::new(
+                        thread.clone(),
+                        &repos_dir,
+                        &run_dir,
+                        &worktrees_dir,
+                        repetition_number,
+                    );
 
                     included.push(thread_instance);
                 }
@@ -175,6 +195,12 @@ fn main() {
             let mut repo_urls = HashSet::default();
             let mut clone_tasks = Vec::new();
 
+            let max_name_width = included
+                .iter()
+                .map(|e| e.worktree_name().len())
+                .max()
+                .unwrap_or(0);
+
             for (i, thread_instance) in included.iter_mut().enumerate() {
                 let color = COLORS[i % COLORS.len()].to_string();
                 thread_instance.set_log_prefix_style(&color, max_name_width);
@@ -187,7 +213,7 @@ fn main() {
 
                 let repo_url = thread_instance.repo_url();
                 if repo_urls.insert(repo_url.clone()) {
-                    let repo_path = repo_path_for_url(&repo_url);
+                    let repo_path = thread_instance.repo_path.clone();
 
                     if !repo_path.join(".git").is_dir() {
                         println!(
@@ -228,43 +254,53 @@ fn main() {
             future::join_all(clone_tasks).await;
 
             for thread_instance in included.iter_mut() {
-                thread_instance.setup().await?;
+                thread_instance.fetch().await?;
             }
 
-            let judge_repetitions = args.judge_repetitions;
-            let concurrency = args.concurrency;
+            let examples = Arc::new(Mutex::new(VecDeque::from(included)));
+            let results_by_example_name = Arc::new(Mutex::new(HashMap::default()));
 
-            let tasks = included.into_iter().map(|thread| {
+            future::join_all((0..args.concurrency).map(|_| {
                 let app_state = app_state.clone();
                 let model = model.clone();
+                let zed_commit_sha = zed_commit_sha.clone();
+                let zed_branch_name = zed_branch_name.clone();
                 let run_id = run_id.clone();
+                let examples = examples.clone();
+                let results = results_by_example_name.clone();
                 cx.spawn(async move |cx| {
-                    let result = async {
-                        let run_output = cx
-                            .update(|cx| thread.run(model.clone(), app_state.clone(), cx))?
-                            .await?;
-                        let judge_tasks = (0..judge_repetitions).map(|round| {
-                            run_judge_repetition(
-                                run_id.clone(),
-                                thread.clone(),
+                    loop {
+                        let Some(mut example) = examples.lock().pop_front() else {
+                            break;
+                        };
+                        let result = async {
+                            example.setup().await?;
+                            let run_output = cx
+                                .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
+                                .await?;
+                            let judge_output = judge_example(
+                                example.clone(),
                                 model.clone(),
+                                &zed_commit_sha,
+                                &zed_branch_name,
+                                &run_id,
                                 &run_output,
-                                round,
+                                enable_telemetry,
                                 cx,
                             )
-                        });
-                        let judge_outputs = future::join_all(judge_tasks).await;
-                        anyhow::Ok((run_output, judge_outputs))
+                            .await;
+                            anyhow::Ok((run_output, judge_output))
+                        }
+                        .await;
+                        results
+                            .lock()
+                            .entry(example.name.clone())
+                            .or_insert(Vec::new())
+                            .push((example.clone(), result));
                     }
-                    .await;
-                    (thread, result)
                 })
-            });
-
-            let results = futures::stream::iter(tasks)
-                .buffer_unordered(concurrency)
-                .collect::<Vec<_>>()
-                .await;
+            }))
+            .await;
 
             print_h1("EVAL RESULTS");
 
@@ -273,112 +309,144 @@ fn main() {
             let mut assertion_stats = Vec::new();
             let mut error_count = 0;
 
-            for (instance, result) in results {
-                print_h2(&instance.name);
+            for (example_name, results) in results_by_example_name.lock().iter_mut() {
+                print_h1(&example_name);
 
-                match result {
-                    Err(err) => {
-                        println!("💥 {}{:?}", instance.log_prefix, err);
-                        error_count += 1;
-                    }
-                    Ok((run_output, judge_results)) => {
-                        cumulative_tool_metrics.merge(&run_output.tool_metrics);
+                results.sort_unstable_by_key(|(example, _)| example.repetition);
+                let mut example_cumulative_tool_metrics = ToolMetrics::default();
 
-                        let any_judge_results = judge_results.iter().any(|result| {
-                            result
-                                .iter()
-                                .any(|output| output.diff.is_some() || output.thread.is_some())
-                        });
+                let mut judge_table_rows = String::new();
+                let mut assertions_table_rows = String::new();
 
-                        if any_judge_results {
-                            println!("┌───────┬──────┬────────┐");
-                            println!("│ Judge │ Diff │ Thread │");
-                            println!("├───────┼──────┼────────┤");
+                for (example, result) in results {
+                    let relative_run_dir_path =
+                        example.run_directory.strip_prefix(&root_dir).unwrap();
 
-                            for (i, judge_result) in judge_results.iter().enumerate() {
-                                match judge_result {
-                                    Ok(judge_output) => {
-                                        let diff_display =
-                                            if let Some(diff) = judge_output.diff.as_ref() {
-                                                diff_scores.push(diff.score);
-                                                format!("{}", diff.score)
-                                            } else {
-                                                "N/A".to_string()
-                                            };
+                    match result {
+                        Err(err) => {
+                            writeln!(
+                                &mut judge_table_rows,
+                                "|{:^7}│{:^6}│{:^8}│ {:?}{}",
+                                example.repetition,
+                                "N/A",
+                                "N/A",
+                                err,
+                                relative_run_dir_path.display()
+                            )?;
+                            error_count += 1;
+                        }
+                        Ok((run_output, judge_result)) => {
+                            cumulative_tool_metrics.merge(&run_output.tool_metrics);
+                            example_cumulative_tool_metrics.merge(&run_output.tool_metrics);
 
-                                        let thread_display =
-                                            if let Some(instance) = &judge_output.thread {
-                                                let thread_score = instance.score;
-                                                thread_scores.push(thread_score);
-                                                format!("{}", thread_score)
-                                            } else {
-                                                "N/A".to_string()
-                                            };
-
-                                        println!(
-                                            "|{:^7}│{:^6}│{:^8}│",
-                                            i + 1,
-                                            diff_display,
-                                            thread_display
-                                        );
-                                    }
-                                    Err(err) => {
-                                        println!(
-                                            "|{:^7}│{:^6}│{:^8}│{:?}",
-                                            i + 1,
-                                            "N/A",
-                                            "N/A",
-                                            err
-                                        );
-                                    }
+                            if !run_output.assertions.total_count() > 0 {
+                                for assertion in &run_output.assertions.success {
+                                    assertions::display_table_row(
+                                        &mut assertions_table_rows,
+                                        example.repetition,
+                                        assertion,
+                                        true,
+                                    )?;
                                 }
+
+                                for assertion in &run_output.assertions.failure {
+                                    assertions::display_table_row(
+                                        &mut assertions_table_rows,
+                                        example.repetition,
+                                        assertion,
+                                        false,
+                                    )?;
+                                }
+
+                                assertion_stats.push(run_output.assertions.success_percentage())
                             }
 
-                            println!("└───────┴──────┴────────┘");
-                        }
-
-                        println!("{}", run_output.tool_metrics);
-
-                        if !run_output.assertions.total_count() > 0 {
-                            println!("{}", run_output.assertions);
-                            assertion_stats.push(run_output.assertions.success_percentage())
+                            match judge_result {
+                                Ok(judge_output) => {
+                                    if let Some(diff) = &judge_output.diff {
+                                        diff_scores.push(diff.score());
+                                    }
+                                    if let Some(thread) = &judge_output.thread {
+                                        thread_scores.push(thread.score());
+                                    }
+                                    writeln!(
+                                        &mut judge_table_rows,
+                                        "|{:^7}│{:^6}│{:^8}│ {}",
+                                        example.repetition,
+                                        judge_output.diff.as_ref().map_or(
+                                            "N/A".to_string(),
+                                            |diff| format!("{}%", diff.score())
+                                        ),
+                                        judge_output.thread.as_ref().map_or(
+                                            "N/A".to_string(),
+                                            |thread| format!("{}%", thread.score())
+                                        ),
+                                        relative_run_dir_path.display()
+                                    )?;
+                                }
+                                Err(err) => {
+                                    writeln!(
+                                        &mut judge_table_rows,
+                                        "|{:^7}│{:^6}│{:^8}│{:?}│ {}",
+                                        example.repetition,
+                                        "N/A",
+                                        "N/A",
+                                        err,
+                                        relative_run_dir_path.display()
+                                    )?;
+                                }
+                            }
                         }
                     }
                 }
-                println!("> {}", instance.run_directory.display());
+
+                if !judge_table_rows.is_empty() {
+                    println!("┌───────┬──────┬────────┐");
+                    println!("│ Round │ Diff │ Thread │");
+                    println!("├───────┼──────┼────────┤");
+                    print!("{}", judge_table_rows);
+                    println!("└───────┴──────┴────────┘");
+                }
+
+                if !judge_table_rows.is_empty() || !assertions_table_rows.is_empty() {
+                    println!("\n");
+                }
+
+                if !assertions_table_rows.is_empty() {
+                    assertions::print_table_header();
+                    print!("{}", assertions_table_rows);
+                    assertions::print_table_footer();
+                }
             }
 
             print_h2("AGGREGATE");
-
-            let assertion_stats_count = assertion_stats.len();
-            let avg_assertion_success_pct = assertion_stats
-                .into_iter()
-                .map(|pct| pct as f32)
-                .sum::<f32>()
-                / (assertion_stats_count as f32);
-
-            if assertion_stats_count > 0 {
-                println!("\nAverage assertion success: {avg_assertion_success_pct}%");
-            }
-
-            let diff_score_count = diff_scores.len();
-            let average_diff_score = diff_scores
-                .into_iter()
-                .map(|score| score as f32)
-                .sum::<f32>()
-                / (diff_score_count as f32);
 
             if error_count > 0 {
                 println!("\n{error_count} examples failed to run!");
             }
 
+            let assertion_stats_count = assertion_stats.len();
+            if assertion_stats_count > 0 {
+                let avg_assertion_success_pct = assertion_stats
+                    .into_iter()
+                    .map(|pct| pct as f32)
+                    .sum::<f32>()
+                    / (assertion_stats_count as f32);
+                println!("\nAverage assertion success: {avg_assertion_success_pct}%");
+            }
+
+            let diff_score_count = diff_scores.len();
             if diff_score_count > 0 {
+                let average_diff_score = diff_scores
+                    .into_iter()
+                    .map(|score| score as f32)
+                    .sum::<f32>()
+                    / (diff_score_count as f32);
                 println!("\nAverage code diff score: {average_diff_score}");
             }
 
             let thread_score_count = thread_scores.len();
 
-            // We might have gotten no thread scores if we weren't asked to judge the thread.
             if thread_score_count > 0 {
                 let average_thread_score = thread_scores
                     .into_iter()
@@ -386,17 +454,13 @@ fn main() {
                     .sum::<f32>()
                     / (thread_score_count as f32);
 
-                if diff_score_count > 0 {
-                    println!("\nAverage thread score: {average_thread_score}");
-                }
+                println!("\nAverage thread score: {average_thread_score}");
             }
 
             print_h1("CUMULATIVE TOOL METRICS");
             println!("{}", cumulative_tool_metrics);
 
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            app_state.client.telemetry().flush_events();
+            app_state.client.telemetry().flush_events().await;
 
             cx.update(|cx| cx.quit())
         })
@@ -545,53 +609,67 @@ pub fn find_model(
     Ok(model)
 }
 
-pub async fn get_current_commit_id(repo_path: &Path) -> Option<String> {
-    (run_git(repo_path, &["rev-parse", "HEAD"]).await).ok()
+pub fn commit_sha_for_path(repo_path: &Path) -> String {
+    futures::executor::block_on(run_git(repo_path, &["rev-parse", "HEAD"])).unwrap()
 }
 
-pub fn get_current_commit_id_sync(repo_path: &Path) -> String {
-    futures::executor::block_on(async {
-        get_current_commit_id(repo_path).await.unwrap_or_default()
-    })
+pub fn git_branch_for_path(repo_path: &Path) -> String {
+    match std::env::var("GITHUB_REF_NAME") {
+        Ok(branch) => branch,
+        Err(_) => {
+            futures::executor::block_on(run_git(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"]))
+                .unwrap_or_else(|_| "unknown".to_string())
+        }
+    }
 }
 
-async fn run_judge_repetition(
-    run_id: String,
-    instance: ThreadInstance,
+async fn judge_example(
+    example: ThreadInstance,
     model: Arc<dyn LanguageModel>,
+    zed_commit_sha: &str,
+    zed_branch_name: &str,
+    run_id: &str,
     run_output: &RunOutput,
-    round: u32,
+    enable_telemetry: bool,
     cx: &AsyncApp,
 ) -> Result<JudgeOutput> {
-    let judge_result = instance.judge(model.clone(), &run_output, round, cx).await;
+    let judge_output = example.judge(model.clone(), &run_output, cx).await;
 
-    if let Ok(judge_output) = &judge_result {
-        let path = std::path::Path::new(".");
-        let commit_id = get_current_commit_id(path).await.unwrap_or_default();
+    let diff_evaluation;
+    let thread_evaluation;
+    if let Ok(output) = judge_output.as_ref() {
+        diff_evaluation = Some(output.diff.clone());
+        thread_evaluation = Some(output.thread.clone());
+    } else {
+        diff_evaluation = None;
+        thread_evaluation = None;
+    }
 
+    if enable_telemetry {
         telemetry::event!(
-            "Agent Eval Completed",
-            cohort_id = run_id,
-            example_name = instance.name.clone(),
-            round = round,
-            diff_score = judge_output.diff.clone().map(|diff| diff.score),
-            diff_analysis = judge_output.diff.clone().map(|diff| diff.analysis),
-            thread_score = judge_output.thread.clone().map(|thread| thread.score),
-            thread_analysis = judge_output.thread.clone().map(|thread| thread.analysis),
+            "Agent Example Evaluated",
+            zed_commit_sha = zed_commit_sha,
+            zed_branch_name = zed_branch_name,
+            run_id = run_id,
+            example_name = example.name.clone(),
+            example_repetition = example.repetition,
+            diff_evaluation = diff_evaluation,
+            thread_evaluation = thread_evaluation,
             tool_metrics = run_output.tool_metrics,
             response_count = run_output.response_count,
             token_usage = run_output.token_usage,
             model = model.telemetry_id(),
             model_provider = model.provider_id().to_string(),
-            repository_url = instance.repo_url(),
-            repository_revision = instance.revision(),
+            repository_url = example.repo_url(),
+            repository_revision = example.revision(),
+            diagnostic_summary_before = run_output.diagnostic_summary_before,
+            diagnostic_summary_after = run_output.diagnostic_summary_after,
             diagnostics_before = run_output.diagnostics_before,
             diagnostics_after = run_output.diagnostics_after,
-            commit_id = commit_id
         );
     }
 
-    judge_result
+    judge_output
 }
 
 const HEADER_WIDTH: usize = 65;
