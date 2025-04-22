@@ -864,7 +864,9 @@ impl Render for AgentDiffToolbar {
 
         let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
         if is_generating {
-            return div().w_24().child(AnimatedLabel::new("Generating"));
+            return div()
+                .w(rems(6.5625)) // Arbitrary 105px size—so the label doesn't dance around
+                .child(AnimatedLabel::new("Generating"));
         }
 
         let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
