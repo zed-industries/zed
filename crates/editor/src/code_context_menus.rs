@@ -657,7 +657,7 @@ impl CompletionsMenu {
         )
     }
 
-    fn sort_matches<'a>(matches: &mut Vec<SortableMatch<'a>>, query: Option<&str>) {
+    fn sort_matches(matches: &mut Vec<SortableMatch<'_>>, query: Option<&str>) {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
