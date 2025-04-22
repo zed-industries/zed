@@ -100,16 +100,10 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        CopilotChat::global(cx)
-            .and_then(|m| m.read(cx).models())
-            .and_then(|models| {
-                models.first().map(|model| {
-                    Arc::new(CopilotChatLanguageModel {
-                        model: model.clone(),
-                        request_limiter: RateLimiter::new(4),
-                    }) as Arc<dyn LanguageModel>
-                })
-            })
+        let models = CopilotChat::global(cx).and_then(|m| m.read(cx).models())?;
+        models
+            .first()
+            .map(|model| self.create_language_model(model.clone()))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -119,19 +113,13 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        if let Some(models) = CopilotChat::global(cx).and_then(|m| m.read(cx).models()) {
-            models
-                .iter()
-                .map(|model| {
-                    Arc::new(CopilotChatLanguageModel {
-                        model: model.clone(),
-                        request_limiter: RateLimiter::new(4),
-                    }) as Arc<dyn LanguageModel>
-                })
-                .collect()
-        } else {
-            Vec::new()
-        }
+        let Some(models) = CopilotChat::global(cx).and_then(|m| m.read(cx).models()) else {
+            return Vec::new();
+        };
+        models
+            .iter()
+            .map(|model| self.create_language_model(model.clone()))
+            .collect()
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
