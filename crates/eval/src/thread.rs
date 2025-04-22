@@ -334,13 +334,9 @@ impl Response {
 
     pub fn expect_tool(&self, tool_name: &'static str, cx: &mut ThreadContext) -> Result<&ToolUse> {
         let result = self.messages.iter().find_map(|msg| {
-            msg.tool_use.iter().find_map(|tool_use| {
-                if tool_use.name == tool_name {
-                    Some(tool_use)
-                } else {
-                    None
-                }
-            })
+            msg.tool_use
+                .iter()
+                .find(|tool_use| tool_use.name == tool_name)
         });
         cx.assert_some(result, format!("called `{}`", tool_name))
     }

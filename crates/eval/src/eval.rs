@@ -135,7 +135,6 @@ fn main() {
         cx.spawn(async move |cx| {
             authenticate_task.await.unwrap();
 
-            // todo! rename to examples
             let mut included = Vec::new();
 
             const COLORS: [&str; 12] = [
