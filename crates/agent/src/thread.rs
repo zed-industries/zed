@@ -523,7 +523,7 @@ impl Thread {
         self.messages.iter().find(|message| message.id == id)
     }
 
-    pub fn messages(&self) -> impl Iterator<Item = &Message> {
+    pub fn messages(&self) -> impl ExactSizeIterator<Item = &Message> {
         self.messages.iter()
     }
 

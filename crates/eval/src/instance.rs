@@ -28,7 +28,7 @@ use util::ResultExt as _;
 use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
-use crate::thread::EvalThread;
+use crate::thread::{EvalThread, ThreadContext};
 use crate::{AgentAppState, ToolMetrics};
 
 pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
@@ -393,12 +393,10 @@ impl ThreadInstance {
                 }
             });
 
-            thread.update(cx, |thread, cx| {
-                // let context = vec![];
-                // todo!
-                // thread.insert_user_message(this.prompt.clone(), context, None, cx);
-                thread.send_to_model(model, cx);
-            })?;
+            let mut thread_cx = ThreadContext::new(meta.clone(), thread.clone(), model.clone(), cx.clone());
+            let result = this.thread.conversation(&mut thread_cx).await;
+            // todo!
+            dbg!(thread_cx.report());
 
             event_handler_task.await?;
 

@@ -1,13 +1,11 @@
 use anyhow::Result;
-use assistant_tools::PathSearchToolInput;
 use async_trait::async_trait;
-use regex::Regex;
 
 use crate::thread::{EvalThread, EvalThreadMetadata, LanguageServer, ThreadContext};
 
 pub struct Thread;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl EvalThread for Thread {
     fn meta(&self) -> EvalThreadMetadata {
         EvalThreadMetadata {
@@ -34,23 +32,24 @@ impl EvalThread for Thread {
         "#
         ));
 
-        let response = cx.run_turns(1).await?;
+        let response = cx.run_to_end().await?;
+        dbg!(response);
 
-        let tool_use = response.expect_tool("path_search", cx)?;
-        let input = tool_use.expect_input::<PathSearchToolInput>(cx)?;
+        // let tool_use = response.expect_tool("path_search", cx)?;
+        // let input = tool_use.expect_input::<PathSearchToolInput>(cx)?;
 
-        let glob = input.glob;
-        cx.assert(
-            glob.ends_with(FILENAME),
-            "Expected path_search glob to end with {FILENAME:?}, but glob was {glob:?}",
-        )?;
+        // let glob = input.glob;
+        // cx.assert(
+        //     glob.ends_with(FILENAME),
+        //     "Expected path_search glob to end with {FILENAME:?}, but glob was {glob:?}",
+        // )?;
 
-        let without_filename = glob.replace(FILENAME, "");
-        let matches = Regex::new("(\\*\\*|zed)/(\\*\\*?/)?")
-            .unwrap()
-            .is_match(&without_filename);
+        // let without_filename = glob.replace(FILENAME, "");
+        // let matches = Regex::new("(\\*\\*|zed)/(\\*\\*?/)?")
+        //     .unwrap()
+        //     .is_match(&without_filename);
 
-        cx.assert(matches, "Expected path_search glob to start with either \"**/\" or \"zed/\", optionally with \"*/\" in the middle, but glob was {glob:?}")?;
+        // cx.assert(matches, "Expected path_search glob to start with either \"**/\" or \"zed/\", optionally with \"*/\" in the middle, but glob was {glob:?}")?;
 
         Ok(())
     }

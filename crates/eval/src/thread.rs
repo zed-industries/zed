@@ -1,11 +1,13 @@
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, sync::Arc};
 
+use agent::ThreadEvent;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use language_model::Role;
-use unindent::Unindent;
+use futures::{StreamExt, channel::mpsc};
+use gpui::{AppContext, AsyncApp, Entity};
+use language_model::{LanguageModel, Role, StopReason};
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait EvalThread {
     fn meta(&self) -> EvalThreadMetadata;
     async fn conversation(&self, cx: &mut ThreadContext) -> Result<()>;
@@ -17,6 +19,7 @@ pub trait EvalThread {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct EvalThreadMetadata {
     pub name: &'static str,
     pub url: &'static str,
@@ -25,6 +28,7 @@ pub struct EvalThreadMetadata {
     pub max_assertions: u32,
 }
 
+#[derive(Clone, Debug)]
 pub struct LanguageServer {
     pub file_extension: &'static str,
     pub allow_preexisting_diagnostics: bool,
@@ -59,14 +63,36 @@ impl Error for FailedAssertion {}
 
 pub struct ThreadContext {
     meta: EvalThreadMetadata,
-    messages: Vec<Message>,
+    agent_thread: Entity<agent::Thread>,
     successful_assertions: u32,
     assertions_run: u32,
+    app: AsyncApp,
+    model: Arc<dyn LanguageModel>,
 }
 
 impl ThreadContext {
+    pub fn new(
+        meta: EvalThreadMetadata,
+        agent_thread: Entity<agent::Thread>,
+        model: Arc<dyn LanguageModel>,
+        app: AsyncApp,
+    ) -> Self {
+        Self {
+            meta,
+            agent_thread,
+            successful_assertions: 0,
+            assertions_run: 0,
+            model,
+            app,
+        }
+    }
+
     pub fn push_user_message(&mut self, text: impl ToString) {
-        self.messages.push(Message::user(text))
+        self.app
+            .update_entity(&self.agent_thread, |thread, cx| {
+                thread.insert_user_message(text.to_string(), vec![], None, cx);
+            })
+            .unwrap();
     }
 
     pub fn assert(&mut self, expected: bool, message: impl ToString) -> Result<()> {
@@ -104,12 +130,58 @@ impl ThreadContext {
         }
     }
 
+    pub async fn run_to_end(&mut self) -> Result<Response> {
+        let (mut tx, mut rx) = mpsc::channel(1);
+
+        let _subscription = self.app.subscribe(
+            &self.agent_thread,
+            move |_thread, event: &ThreadEvent, _cx| match event {
+                ThreadEvent::Stopped(Ok(StopReason::EndTurn)) => {
+                    tx.try_send(()).ok();
+                }
+                _ => {}
+            },
+        );
+
+        let model = self.model.clone();
+
+        let message_count_before = self.app.update_entity(&self.agent_thread, |thread, cx| {
+            thread.send_to_model(model, cx);
+            thread.messages().len()
+        })?;
+
+        rx.next().await;
+
+        let messages = self.app.read_entity(&self.agent_thread, |thread, cx| {
+            let mut messages = Vec::new();
+            for message in thread.messages().skip(message_count_before) {
+                messages.push(Message {
+                    role: message.role,
+                    text: message.to_string(),
+                    tool_use: thread
+                        .tool_uses_for_message(message.id, cx)
+                        .into_iter()
+                        .map(|tool_use| ToolUse {
+                            name: tool_use.name.to_string(),
+                            value: tool_use.input,
+                        })
+                        .collect(),
+                });
+            }
+            messages
+        })?;
+
+        let response = Response::new(messages);
+
+        Ok(response)
+    }
+
     async fn run_turn(&self, response: &mut Response) -> Result<Response> {
         todo!()
     }
 
     pub async fn run_turns(&self, iterations: usize) -> Result<Response> {
-        let mut response = Response::new();
+        let mut response = Response::new(vec![]);
 
         for _ in 0..iterations {
             self.run_turn(&mut response).await?;
@@ -117,22 +189,25 @@ impl ThreadContext {
 
         Ok(response)
     }
+
+    pub fn report(&self) -> String {
+        format!("{}/{}", self.successful_assertions, self.assertions_run)
+    }
 }
 
+#[derive(Debug)]
 pub struct Response {
     messages: Vec<Message>,
 }
 
 impl Response {
-    pub fn new() -> Self {
-        Self {
-            messages: Vec::new(),
-        }
+    pub fn new(messages: Vec<Message>) -> Self {
+        Self { messages }
     }
 
     pub fn expect_tool(&self, tool_name: &'static str, cx: &mut ThreadContext) -> Result<&ToolUse> {
         let result = self.messages.iter().find_map(|msg| {
-            msg.tool_use.as_ref().and_then(|tool_use| {
+            msg.tool_use.iter().find_map(|tool_use| {
                 if tool_use.name == tool_name {
                     Some(tool_use)
                 } else {
@@ -148,28 +223,14 @@ impl Response {
     }
 }
 
+#[derive(Debug)]
 pub struct Message {
     role: Role,
     text: String,
-    tool_use: Option<ToolUse>,
+    tool_use: Vec<ToolUse>,
 }
 
-impl Message {
-    pub fn expect_tool(&self) -> &ToolUse {
-        self.tool_use
-            .as_ref()
-            .expect("Message was expected to have a tool_use, but it had none.")
-    }
-
-    pub fn user(text: impl ToString) -> Self {
-        Self {
-            role: Role::User,
-            text: text.to_string().unindent(),
-            tool_use: None,
-        }
-    }
-}
-
+#[derive(Debug)]
 pub struct ToolUse {
     name: String,
     value: serde_json::Value,
