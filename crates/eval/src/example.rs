@@ -630,8 +630,9 @@ impl Example {
         let thread_output = JudgeResponse::parse(&thread_response)?;
 
         println!(
-            "{}Judge - Thread score: {}",
-            self.log_prefix, thread_output.passing_criteria
+            "{}Judge - Thread score: {}%",
+            self.log_prefix,
+            thread_output.score()
         );
 
         Ok((thread_response, thread_output))
