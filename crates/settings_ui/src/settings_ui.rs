@@ -6,7 +6,12 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use fs::Fs;
-use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, actions};
+use gpui::{
+    App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions,
+    impl_actions,
+};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use settings::SettingsStore;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -20,7 +25,14 @@ impl FeatureFlag for SettingsUiFeatureFlag {
     const NAME: &'static str = "settings-ui";
 }
 
-actions!(zed, [OpenSettingsEditor, ImportVsCodeSettings]);
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+pub struct ImportVsCodeSettings {
+    #[serde(default)]
+    pub skip_prompt: bool,
+}
+
+impl_actions!(zed, [ImportVsCodeSettings]);
+actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -43,10 +55,53 @@ pub fn init(cx: &mut App) {
             }
         });
 
-        workspace.register_action(|_workspace, _: &ImportVsCodeSettings, _window, cx| {
+        workspace.register_action(|_workspace, action: &ImportVsCodeSettings, window, cx| {
             let fs = <dyn Fs>::global(cx);
-            cx.global::<SettingsStore>().import_vscode_settings(fs);
-            log::info!("Imported settings from VsCode");
+            let action = *action;
+
+            window
+                .spawn(cx, async move |cx: &mut AsyncWindowContext| {
+                    let vscode =
+                        match settings::VsCodeSettings::load_user_settings(fs.clone()).await {
+                            Ok(vscode) => vscode,
+                            Err(err) => {
+                                println!("Failed to load VsCode settings: {}", err.context(format!(
+                                    "Loading VsCode settings from path: {:?}",
+                                    paths::vscode_settings_file()
+                                )));
+
+                                let _ = cx.prompt(
+                                    gpui::PromptLevel::Info,
+                                    "Could not find or load a VsCode settings file",
+                                    None,
+                                    &["Ok"],
+                                );
+                                return;
+                            }
+                        };
+
+                    let prompt = if action.skip_prompt {
+                        Task::ready(Some(0))
+                    } else {
+                        let prompt = cx.prompt(
+                            gpui::PromptLevel::Warning,
+                            "Importing settings may overwrite your existing settings",
+                            None,
+                            &["Ok", "Cancel"],
+                        );
+                        cx.spawn(async move |_| prompt.await.ok())
+                    };
+                    if prompt.await != Some(0) {
+                        return;
+                    }
+
+                    cx.update(|_, cx| {
+                        cx.global::<SettingsStore>()
+                            .import_vscode_settings(fs, vscode);
+                        log::info!("Imported settings from VsCode");
+                    }).ok();
+                })
+                .detach();
         });
 
         let settings_ui_actions = [TypeId::of::<OpenSettingsEditor>()];

@@ -13041,15 +13041,21 @@ dependencies = [
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "command_palette_hooks",
  "editor",
  "feature_flags",
  "fs",
  "gpui",
  "log",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_derive",
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
 ]

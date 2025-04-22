@@ -211,7 +211,7 @@ impl Render for WelcomePage {
                                             .on_click(cx.listener(|_, _, window, cx| {
                                                 telemetry::event!("VsCode Settings Imported");
                                                 window.dispatch_action(Box::new(
-                                                    settings_ui::ImportVsCodeSettings
+                                                    settings_ui::ImportVsCodeSettings { skip_prompt: true }
                                                 ), cx);
                                             })),
                                     ),

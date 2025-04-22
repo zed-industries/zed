@@ -541,7 +541,9 @@ impl Settings for EditorSettings {
                 old_gutter.line_numbers = gutter.line_numbers
             }
         } else {
-            old.gutter = Some(gutter)
+            if gutter != GutterContent::default() {
+                old.gutter = Some(gutter)
+            }
         }
 
         // TODO: map editor.scrollbar.horizontal/vertical to our scrollbar.axes and scrollbar.show

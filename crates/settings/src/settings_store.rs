@@ -474,14 +474,13 @@ impl SettingsStore {
             .ok();
     }
 
-    pub fn import_vscode_settings(&self, fs: Arc<dyn Fs>) {
+    pub fn import_vscode_settings(&self, fs: Arc<dyn Fs>, vscode_settings: VsCodeSettings) {
         self.setting_file_updates_tx
             .unbounded_send(Box::new(move |cx: AsyncApp| {
                 async move {
                     let old_text = Self::load_settings(&fs).await?;
-                    let vscode = VsCodeSettings::load_user_settings(fs.clone()).await?;
                     let new_text = cx.read_global(|store: &SettingsStore, _cx| {
-                        store.get_vscode_edits(old_text, &vscode)
+                        store.get_vscode_edits(old_text, &vscode_settings)
                     })?;
                     let settings_path = paths::settings_file().as_path();
                     if fs.is_file(settings_path).await {
