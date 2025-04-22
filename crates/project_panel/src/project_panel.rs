@@ -331,15 +331,19 @@ impl ProjectPanel {
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                        this.reveal_entry(project.clone(), *entry_id, true, cx);
+                        this.reveal_entry(project.clone(), *entry_id, true, cx).ok();
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
                     this.marked_entries.clear();
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
-                    this.reveal_entry(project.clone(), *entry_id, false, cx);
-                    cx.emit(PanelEvent::Activate);
+                    if let Some(()) = this
+                        .reveal_entry(project.clone(), *entry_id, false, cx)
+                        .log_err()
+                    {
+                        cx.emit(PanelEvent::Activate);
+                    }
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(PanelEvent::Activate);
@@ -4422,7 +4426,7 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         skip_ignored: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<()> {
         if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
             let worktree = worktree.read(cx);
             if skip_ignored
@@ -4430,7 +4434,9 @@ impl ProjectPanel {
                     .entry_for_id(entry_id)
                     .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
             {
-                return;
+                return Err(anyhow!(
+                    "can't reveal an ignored entry in the project panel"
+                ));
             }
 
             let worktree_id = worktree.id();
@@ -4443,6 +4449,11 @@ impl ProjectPanel {
             });
             self.autoscroll(cx);
             cx.notify();
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "can't reveal a non-existent entry in the project panel"
+            ))
         }
     }
 
