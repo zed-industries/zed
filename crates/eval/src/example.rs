@@ -31,10 +31,6 @@ use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 use util::serde::default_true;
 
-pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
-pub const REPOS_DIR: &str = "./crates/eval/repos";
-pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
-
 const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
 const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
@@ -77,6 +73,8 @@ pub struct Example {
     pub run_directory_path: PathBuf,
     /// Prefix used for logging that identifies this example
     pub log_prefix: String,
+    pub worktree_path: PathBuf,
+    pub repo_path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -122,7 +120,12 @@ pub struct JudgeOutput {
 
 impl Example {
     /// Load an example from a directory containing base.toml, prompt.md, and criteria.md
-    pub fn load_from_directory(dir_path: &Path, run_dir: &Path) -> Result<Self> {
+    pub fn load_from_directory(
+        dir_path: &Path,
+        run_dir: &Path,
+        worktrees_dir: &Path,
+        repos_dir: &Path,
+    ) -> Result<Self> {
         let name = Self::name_from_path(dir_path);
         let base_path = dir_path.join("base.toml");
         let prompt_path = dir_path.join("prompt.md");
@@ -134,13 +137,25 @@ impl Example {
             None
         };
 
+        let base: ExampleBase = toml::from_str(&fs::read_to_string(&base_path)?)?;
+
+        let repo_path = repo_path_for_url(repos_dir, &base.url);
+
+        let worktree_path = worktrees_dir
+            .canonicalize()
+            .unwrap()
+            .join(&name)
+            .join(&base.repo_name());
+
         Ok(Example {
             name: name.clone(),
-            base: toml::from_str(&fs::read_to_string(&base_path)?)?,
+            base,
             prompt: fs::read_to_string(prompt_path.clone())?,
             thread_criteria,
             diff_criteria: fs::read_to_string(diff_criteria_path.clone())?,
             run_directory_path: run_dir.to_path_buf(),
+            worktree_path,
+            repo_path,
             log_prefix: name,
         })
     }
@@ -168,21 +183,10 @@ impl Example {
         path.file_name().unwrap().to_string_lossy().to_string()
     }
 
-    pub fn worktree_path(&self) -> PathBuf {
-        Path::new(WORKTREES_DIR)
-            .canonicalize()
-            .context(format!("No such directory {WORKTREES_DIR}"))
-            .unwrap()
-            .join(&self.name)
-            .join(self.base.repo_name())
-    }
-
     /// Set up the example by checking out the specified Git revision
     pub async fn setup(&mut self) -> Result<()> {
-        let repo_path = repo_path_for_url(&self.base.url);
-
         let revision_exists = run_git(
-            &repo_path,
+            &self.repo_path,
             &["rev-parse", &format!("{}^{{commit}}", self.base.revision)],
         )
         .await
@@ -194,29 +198,27 @@ impl Example {
                 self.log_prefix, &self.base.revision
             );
             run_git(
-                &repo_path,
+                &self.repo_path,
                 &["fetch", "--depth", "1", "origin", &self.base.revision],
             )
             .await?;
         }
 
-        let worktree_path = self.worktree_path();
-
-        if worktree_path.is_dir() {
+        if self.worktree_path.is_dir() {
             println!("{}Resetting existing worktree", self.log_prefix);
 
             // TODO: consider including "-x" to remove ignored files. The downside of this is that
             // it will also remove build artifacts, and so prevent incremental reuse there.
-            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
-            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&worktree_path, &["checkout", &self.base.revision]).await?;
+            run_git(&self.worktree_path, &["clean", "--force", "-d"]).await?;
+            run_git(&self.worktree_path, &["reset", "--hard", "HEAD"]).await?;
+            run_git(&self.worktree_path, &["checkout", &self.base.revision]).await?;
         } else {
             println!("{}Creating worktree", self.log_prefix);
 
-            let worktree_path_string = worktree_path.to_string_lossy().to_string();
+            let worktree_path_string = self.worktree_path.to_string_lossy().to_string();
 
             run_git(
-                &repo_path,
+                &self.repo_path,
                 &[
                     "worktree",
                     "add",
@@ -229,7 +231,7 @@ impl Example {
         }
 
         if self.base.url == ZED_REPO_URL {
-            std::fs::write(worktree_path.join(".rules"), std::fs::read(".rules")?)?;
+            std::fs::write(self.worktree_path.join(".rules"), std::fs::read(".rules")?)?;
         }
 
         std::fs::create_dir_all(self.example_output_directory())?;
@@ -253,9 +255,8 @@ impl Example {
             cx,
         );
 
-        let worktree_path = self.worktree_path();
         let worktree = project.update(cx, |project, cx| {
-            project.create_worktree(&worktree_path, true, cx)
+            project.create_worktree(&self.worktree_path, true, cx)
         });
 
         let tools = cx.new(|_| ToolWorkingSet::default());
@@ -460,6 +461,7 @@ impl Example {
                             ThreadEvent::SummaryChanged |
                             ThreadEvent::SummaryGenerated |
                             ThreadEvent::CheckpointChanged |
+                            ThreadEvent::ReceivedTextChunk |
                             ThreadEvent::UsageUpdated(_) => {
                                 if std::env::var("ZED_EVAL_DEBUG").is_ok() {
                                     println!("{}Event: {:#?}", log_prefix, event);
@@ -664,13 +666,12 @@ impl Example {
     }
 
     async fn repository_diff(&self) -> Result<String> {
-        let worktree_path = self.worktree_path();
-        run_git(&worktree_path, &["add", "."]).await?;
+        run_git(&self.worktree_path, &["add", "."]).await?;
         let mut diff_args = vec!["diff", "--staged"];
         if self.base.url == ZED_REPO_URL {
             diff_args.push(":(exclude).rules");
         }
-        run_git(&worktree_path, &diff_args).await
+        run_git(&self.worktree_path, &diff_args).await
     }
 }
 
@@ -831,13 +832,13 @@ fn get_tag(name: &'static str, response: &str) -> Result<String> {
     anyhow::Ok(content)
 }
 
-pub fn repo_path_for_url(repo_url: &str) -> PathBuf {
+pub fn repo_path_for_url(repos_dir: &Path, repo_url: &str) -> PathBuf {
     let repo_name = repo_url
         .trim_start_matches("https://")
         .replace(|c: char| !c.is_alphanumeric(), "-");
-    Path::new(REPOS_DIR)
+    Path::new(repos_dir)
         .canonicalize()
-        .context(format!("No such directory {REPOS_DIR}"))
+        .context(format!("No such directory {}", repos_dir.display()))
         .unwrap()
         .join(repo_name)
 }
