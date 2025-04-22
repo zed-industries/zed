@@ -1,22 +1,23 @@
 use std::cell::RefCell;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
-use editor::{CompletionProvider, Editor, ExcerptId};
+use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
+use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
 use prompt_store::PromptId;
 use rope::Point;
-use text::{Anchor, ToPoint};
+use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -32,8 +33,8 @@ use super::rules_context_picker::{RulesContextEntry, search_rules};
 use super::symbol_context_picker::SymbolMatch;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
-    ContextPickerMode, MentionLink, RecentEntry, recent_context_picker_entries,
-    supported_context_picker_modes,
+    ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
+    available_context_picker_entries, recent_context_picker_entries, selection_ranges,
 };
 
 pub(crate) enum Match {
@@ -42,19 +43,19 @@ pub(crate) enum Match {
     Thread(ThreadMatch),
     Fetch(SharedString),
     Rules(RulesContextEntry),
-    Mode(ModeMatch),
+    Entry(EntryMatch),
 }
 
-pub struct ModeMatch {
+pub struct EntryMatch {
     mat: Option<StringMatch>,
-    mode: ContextPickerMode,
+    entry: ContextPickerEntry,
 }
 
 impl Match {
     pub fn score(&self) -> f64 {
         match self {
             Match::File(file) => file.mat.score,
-            Match::Mode(mode) => mode.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
+            Match::Entry(mode) => mode.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
             Match::Thread(_) => 1.,
             Match::Symbol(_) => 1.,
             Match::Fetch(_) => 1.,
@@ -162,9 +163,14 @@ fn search(
                     .collect::<Vec<_>>();
 
                 matches.extend(
-                    supported_context_picker_modes(&thread_store)
+                    available_context_picker_entries(&thread_store, &workspace, cx)
                         .into_iter()
-                        .map(|mode| Match::Mode(ModeMatch { mode, mat: None })),
+                        .map(|mode| {
+                            Match::Entry(EntryMatch {
+                                entry: mode,
+                                mat: None,
+                            })
+                        }),
                 );
 
                 Task::ready(matches)
@@ -174,11 +180,11 @@ fn search(
                 let search_files_task =
                     search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
 
-                let modes = supported_context_picker_modes(&thread_store);
-                let mode_candidates = modes
+                let entries = available_context_picker_entries(&thread_store, &workspace, cx);
+                let entry_candidates = entries
                     .iter()
                     .enumerate()
-                    .map(|(ix, mode)| StringMatchCandidate::new(ix, mode.mention_prefix()))
+                    .map(|(ix, entry)| StringMatchCandidate::new(ix, entry.keyword()))
                     .collect::<Vec<_>>();
 
                 cx.background_spawn(async move {
@@ -188,8 +194,8 @@ fn search(
                         .map(Match::File)
                         .collect::<Vec<_>>();
 
-                    let mode_matches = fuzzy::match_strings(
-                        &mode_candidates,
+                    let entry_matches = fuzzy::match_strings(
+                        &entry_candidates,
                         &query,
                         false,
                         100,
@@ -198,9 +204,9 @@ fn search(
                     )
                     .await;
 
-                    matches.extend(mode_matches.into_iter().map(|mat| {
-                        Match::Mode(ModeMatch {
-                            mode: modes[mat.candidate_id],
+                    matches.extend(entry_matches.into_iter().map(|mat| {
+                        Match::Entry(EntryMatch {
+                            entry: entries[mat.candidate_id],
                             mat: Some(mat),
                         })
                     }));
@@ -240,19 +246,137 @@ impl ContextPickerCompletionProvider {
         }
     }
 
-    fn completion_for_mode(source_range: Range<Anchor>, mode: ContextPickerMode) -> Completion {
-        Completion {
-            replace_range: source_range.clone(),
-            new_text: format!("@{} ", mode.mention_prefix()),
-            label: CodeLabel::plain(mode.label().to_string(), None),
-            icon_path: Some(mode.icon().path().into()),
-            documentation: None,
-            source: project::CompletionSource::Custom,
-            insert_text_mode: None,
-            // This ensures that when a user accepts this completion, the
-            // completion menu will still be shown after "@category " is
-            // inserted
-            confirm: Some(Arc::new(|_, _, _| true)),
+    fn completion_for_entry(
+        entry: ContextPickerEntry,
+        excerpt_id: ExcerptId,
+        source_range: Range<Anchor>,
+        editor: Entity<Editor>,
+        context_store: Entity<ContextStore>,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        match entry {
+            ContextPickerEntry::Mode(mode) => Some(Completion {
+                replace_range: source_range.clone(),
+                new_text: format!("@{} ", mode.keyword()),
+                label: CodeLabel::plain(mode.label().to_string(), None),
+                icon_path: Some(mode.icon().path().into()),
+                documentation: None,
+                source: project::CompletionSource::Custom,
+                insert_text_mode: None,
+                // This ensures that when a user accepts this completion, the
+                // completion menu will still be shown after "@category " is
+                // inserted
+                confirm: Some(Arc::new(|_, _, _| true)),
+            }),
+            ContextPickerEntry::Action(action) => {
+                let (new_text, on_action) = match action {
+                    ContextPickerAction::AddSelections => {
+                        let selections = selection_ranges(workspace, cx);
+
+                        let selection_infos = selections
+                            .iter()
+                            .map(|(buffer, range)| {
+                                let full_path = buffer
+                                    .read(cx)
+                                    .file()
+                                    .map(|file| file.full_path(cx))
+                                    .unwrap_or_else(|| PathBuf::from("untitled"));
+                                let file_name = full_path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                let line_range = range.to_point(&buffer.read(cx).snapshot());
+
+                                let link = MentionLink::for_selection(
+                                    &file_name,
+                                    &full_path.to_string_lossy(),
+                                    line_range.start.row as usize..line_range.end.row as usize,
+                                );
+                                (file_name, link, line_range)
+                            })
+                            .collect::<Vec<_>>();
+
+                        let new_text = selection_infos.iter().map(|(_, link, _)| link).join(" ");
+
+                        let callback = Arc::new({
+                            let context_store = context_store.clone();
+                            let selections = selections.clone();
+                            let selection_infos = selection_infos.clone();
+                            move |_, _: &mut Window, cx: &mut App| {
+                                context_store.update(cx, |context_store, cx| {
+                                    for (buffer, range) in &selections {
+                                        context_store
+                                            .add_selection(buffer.clone(), range.clone(), cx)
+                                            .detach_and_log_err(cx)
+                                    }
+                                });
+
+                                let editor = editor.clone();
+                                let selection_infos = selection_infos.clone();
+                                cx.defer(move |cx| {
+                                    let mut current_offset = 0;
+                                    for (file_name, link, line_range) in selection_infos.iter() {
+                                        let snapshot =
+                                            editor.read(cx).buffer().read(cx).snapshot(cx);
+                                        let Some(start) = snapshot
+                                            .anchor_in_excerpt(excerpt_id, source_range.start)
+                                        else {
+                                            return;
+                                        };
+
+                                        let offset = start.to_offset(&snapshot) + current_offset;
+                                        let text_len = link.len();
+
+                                        let range = snapshot.anchor_after(offset)
+                                            ..snapshot.anchor_after(offset + text_len);
+
+                                        let crease = super::crease_for_mention(
+                                            format!(
+                                                "{} ({}-{})",
+                                                file_name,
+                                                line_range.start.row + 1,
+                                                line_range.end.row + 1
+                                            )
+                                            .into(),
+                                            IconName::Context.path().into(),
+                                            range,
+                                            editor.downgrade(),
+                                        );
+
+                                        editor.update(cx, |editor, cx| {
+                                            editor.display_map.update(cx, |display_map, cx| {
+                                                display_map.fold(vec![crease], cx);
+                                            });
+                                        });
+
+                                        current_offset += text_len + 1;
+                                    }
+                                });
+
+                                false
+                            }
+                        });
+
+                        (new_text, callback)
+                    }
+                };
+
+                Some(Completion {
+                    replace_range: source_range.clone(),
+                    new_text,
+                    label: CodeLabel::plain(action.label().to_string(), None),
+                    icon_path: Some(action.icon().path().into()),
+                    documentation: None,
+                    source: project::CompletionSource::Custom,
+                    insert_text_mode: None,
+                    // This ensures that when a user accepts this completion, the
+                    // completion menu will still be shown after "@category " is
+                    // inserted
+                    confirm: Some(on_action),
+                })
+            }
         }
     }
 
@@ -686,9 +810,15 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             context_store.clone(),
                             http_client.clone(),
                         )),
-                        Match::Mode(ModeMatch { mode, .. }) => {
-                            Some(Self::completion_for_mode(source_range.clone(), mode))
-                        }
+                        Match::Entry(EntryMatch { entry, .. }) => Self::completion_for_entry(
+                            entry,
+                            excerpt_id,
+                            source_range.clone(),
+                            editor.clone(),
+                            context_store.clone(),
+                            &workspace,
+                            cx,
+                        ),
                     })
                     .collect()
             })?))

@@ -670,6 +670,26 @@ fn open_markdown_link(
                 })
                 .detach_and_log_err(cx);
         }
+        Some(MentionLink::Selection(path, line_range)) => {
+            let open_task = workspace.update(cx, |workspace, cx| {
+                workspace.open_path(path, None, true, window, cx)
+            });
+            window
+                .spawn(cx, async move |cx| {
+                    let active_editor = open_task
+                        .await?
+                        .downcast::<Editor>()
+                        .context("Item is not an editor")?;
+                    active_editor.update_in(cx, |editor, window, cx| {
+                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
+                            s.select_ranges([Point::new(line_range.start as u32, 0)
+                                ..Point::new(line_range.start as u32, 0)])
+                        });
+                        anyhow::Ok(())
+                    })
+                })
+                .detach_and_log_err(cx);
+        }
         Some(MentionLink::Thread(thread_id)) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 panel.update(cx, |panel, cx| {
@@ -3309,15 +3329,15 @@ pub(crate) fn open_context(
                     .detach();
             }
         }
-        AssistantContext::Excerpt(excerpt_context) => {
-            if let Some(project_path) = excerpt_context
+        AssistantContext::Selection(selection_context) => {
+            if let Some(project_path) = selection_context
                 .context_buffer
                 .buffer
                 .read(cx)
                 .project_path(cx)
             {
-                let snapshot = excerpt_context.context_buffer.buffer.read(cx).snapshot();
-                let target_position = excerpt_context.range.start.to_point(&snapshot);
+                let snapshot = selection_context.context_buffer.buffer.read(cx).snapshot();
+                let target_position = selection_context.range.start.to_point(&snapshot);
 
                 open_editor_at_position(project_path, target_position, &workspace, window, cx)
                     .detach();
