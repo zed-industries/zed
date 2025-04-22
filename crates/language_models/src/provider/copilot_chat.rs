@@ -240,9 +240,35 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn stream_completion(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+        // Ensure that tool-related messages have some text content
+        if let Some(message) = request.messages.last_mut() {
+            // Check if the message has only tool-related content
+            let has_tool_content = message.content.iter().any(|content| {
+                matches!(
+                    content,
+                    MessageContent::ToolUse(_) | MessageContent::ToolResult(_)
+                )
+            });
+
+            let has_text_content = message.content.iter().any(|content| {
+                matches!(
+                    content,
+                    MessageContent::Text(_) | MessageContent::Thinking { .. }
+                )
+            });
+
+            // If we have tool content but no text content, add a small placeholder text
+            if has_tool_content && !has_text_content && message.role == Role::User {
+                message.content.push(MessageContent::Text(
+                    "Continue the conversation.".to_string(),
+                ));
+            }
+        }
+
+        // Check for empty prompts after our adjustments
         if let Some(message) = request.messages.last() {
             if message.contents_empty() {
                 const EMPTY_PROMPT_MSG: &str =
@@ -424,7 +450,7 @@ impl CopilotChatLanguageModel {
 
         let mut messages: Vec<ChatMessage> = Vec::new();
         for message in request_messages {
-            let text_content = {
+            let mut text_content = {
                 let mut buffer = String::new();
                 for string in message.content.iter().filter_map(|content| match content {
                     MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
@@ -443,13 +469,21 @@ impl CopilotChatLanguageModel {
 
             match message.role {
                 Role::User => {
+                    let mut has_tool_result = false;
+
                     for content in &message.content {
                         if let MessageContent::ToolResult(tool_result) = content {
+                            has_tool_result = true;
                             messages.push(ChatMessage::Tool {
                                 tool_call_id: tool_result.tool_use_id.to_string(),
                                 content: tool_result.content.to_string(),
                             });
                         }
+                    }
+
+                    // Add a placeholder text if there's no text content but there are tool results
+                    if has_tool_result && text_content.is_empty() {
+                        text_content = "Continue the conversation.".to_string();
                     }
 
                     messages.push(ChatMessage::User {
