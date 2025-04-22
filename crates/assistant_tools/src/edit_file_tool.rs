@@ -274,9 +274,24 @@ pub struct EditFileToolCard {
     project: Entity<Project>,
     diff_task: Option<Task<Result<()>>>,
     expanded: bool,
+    full_height: bool,
+    index: usize,
 }
 
 impl EditFileToolCard {
+    thread_local! {
+        static NEXT_INDEX: std::cell::RefCell<usize> = std::cell::RefCell::new(0);
+    }
+
+    fn next_index() -> usize {
+        Self::NEXT_INDEX.with(|cell| {
+            let mut index = cell.borrow_mut();
+            let current = *index;
+            *index = index.wrapping_add(1);
+            current
+        })
+    }
+
     fn new(
         path: PathBuf,
         description: String,
@@ -305,7 +320,9 @@ impl EditFileToolCard {
             editor,
             multibuffer,
             diff_task: None,
-            expanded: false,
+            expanded: true,
+            full_height: false,
+            index: Self::next_index(),
         }
     }
 
@@ -353,12 +370,12 @@ impl EditFileToolCard {
 impl ToolCard for EditFileToolCard {
     fn render(
         &mut self,
-        status: &ToolUseStatus,
+        _status: &ToolUseStatus,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let header_label = h_flex()
-            .id("code-block-header-label")
+        let path_label_button = h_flex()
+            .id(("code-block-header-label", self.index))
             .w_full()
             .max_w_full()
             .px_1()
@@ -392,26 +409,42 @@ impl ToolCard for EditFileToolCard {
             .theme()
             .colors()
             .element_background
-            .blend(cx.theme().colors().editor_foreground.opacity(0.01));
+            .blend(cx.theme().colors().editor_foreground.opacity(0.025));
 
         let codeblock_header = h_flex()
+            .flex_none()
             .p_1()
             .gap_1()
             .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border.opacity(0.6))
             .bg(codeblock_header_bg)
             .rounded_t_md()
-            .child(header_label)
+            .when(self.expanded, |header| {
+                header
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border.opacity(0.6))
+            })
+            .child(path_label_button)
             .child(
-                Disclosure::new("path-search-disclosure", self.expanded)
+                Disclosure::new(("edit-file-disclosure", self.index), self.expanded)
                     .opened_icon(IconName::ChevronUp)
                     .closed_icon(IconName::ChevronDown)
-                    // .disabled(self.paths.is_empty()) // TODO: disable if the code editor is small and there is no reason to expand??
                     .on_click(cx.listener(move |this, _event, _window, _cx| {
                         this.expanded = !this.expanded;
                     })),
             );
+
+        let gradient_overlay = div()
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .w_full()
+            .h_1_4()
+            .rounded_b_lg()
+            .bg(gpui::linear_gradient(
+                0.,
+                gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
+                gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
+            ));
 
         let editor = self.editor.update(cx, |editor, cx| {
             editor.render(window, cx).into_any_element()
@@ -423,15 +456,17 @@ impl ToolCard for EditFileToolCard {
             .border_color(cx.theme().colors().border.opacity(0.6))
             .rounded_lg()
             .overflow_hidden()
-            .map(|container| {
-                if self.expanded {
-                    container.h_full()
-                } else {
-                    container.h_96()
-                }
-            })
             .child(codeblock_header)
-            .child(editor)
+            .when(self.expanded, |card| {
+                card.child(
+                    div()
+                        .relative()
+                        .min_h_64()
+                        .child(editor)
+                        .child(gradient_overlay),
+                )
+            })
+        // .child(div().pl_2().child(editor))
     }
 }
 
@@ -564,5 +599,16 @@ mod tests {
         let input = serde_json::Value::Null;
 
         assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
+    }
+
+    #[test]
+    fn unique_card_indices() {
+        let index1 = EditFileToolCard::next_index();
+        let index2 = EditFileToolCard::next_index();
+        let index3 = EditFileToolCard::next_index();
+
+        assert_ne!(index1, index2);
+        assert_ne!(index2, index3);
+        assert_ne!(index1, index3);
     }
 }
