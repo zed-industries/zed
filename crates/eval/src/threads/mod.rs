@@ -97,8 +97,6 @@ impl EvalThread for ExampleThread {
     async fn conversation(&self, cx: &mut ThreadContext) -> Result<()> {
         cx.push_user_message(&self.prompt);
         let _ = cx.run_to_end().await;
-        //
-
         Ok(())
     }
 
