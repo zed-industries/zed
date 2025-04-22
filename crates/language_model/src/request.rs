@@ -221,23 +221,16 @@ impl LanguageModelRequestMessage {
     }
 
     pub fn contents_empty(&self) -> bool {
-        self.content.is_empty()
-            || self
-                .content
-                .first()
-                .map(|content| match content {
-                    MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
-                    MessageContent::Thinking { text, .. } => {
-                        text.chars().all(|c| c.is_whitespace())
-                    }
-                    MessageContent::ToolResult(tool_result) => {
-                        tool_result.content.chars().all(|c| c.is_whitespace())
-                    }
-                    MessageContent::RedactedThinking(_)
-                    | MessageContent::ToolUse(_)
-                    | MessageContent::Image(_) => true,
-                })
-                .unwrap_or(false)
+        self.content.iter().all(|content| match content {
+            MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::Thinking { text, .. } => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::ToolResult(tool_result) => {
+                tool_result.content.chars().all(|c| c.is_whitespace())
+            }
+            MessageContent::RedactedThinking(_)
+            | MessageContent::ToolUse(_)
+            | MessageContent::Image(_) => false,
+        })
     }
 }
 
