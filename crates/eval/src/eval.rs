@@ -341,16 +341,15 @@ fn main() {
                         if !run_output.assertions.success.is_empty()
                             || !run_output.assertions.failure.is_empty()
                         {
-                            println!("\n┌──────────────────────────────────────────┐");
-                            println!("│             Assertions Report            │");
-                            println!("├───────────────────────────────────────────┤");
-                            println!("│ Assertion                    │ Status    │");
-                            println!("├───────────────────────────────────────────┤");
+                            println!("");
+                            println!("┌────────────────────────────────────────────┬───────────┐");
+                            println!("│ Assertion                                  │ Result    │");
+                            println!("├────────────────────────────────────────────┼───────────┤");
 
                             // Print successful assertions
                             for assertion in &run_output.assertions.success {
                                 println!(
-                                    "│ {:<27} │ {:<10}│",
+                                    "│ {:<42} │ {}  │",
                                     truncate_assertion(assertion),
                                     "\x1b[32m✔︎ Passed\x1b[0m"
                                 );
@@ -359,13 +358,13 @@ fn main() {
                             // Print failed assertions
                             for assertion in &run_output.assertions.failure {
                                 println!(
-                                    "│ {:<27} │ {:<10}│",
+                                    "│ {:<42} │ {}  │",
                                     truncate_assertion(assertion),
                                     "\x1b[31m✗ Failed\x1b[0m"
                                 );
                             }
 
-                            println!("└───────────────────────────────────────────┘");
+                            println!("└────────────────────────────────────────────┴───────────┘");
                         }
                     }
                 }
@@ -565,7 +564,7 @@ pub async fn get_current_commit_id(repo_path: &Path) -> Option<String> {
 }
 
 fn truncate_assertion(assertion: &str) -> String {
-    const MAX_WIDTH: usize = 27;
+    const MAX_WIDTH: usize = 42;
     if assertion.len() <= MAX_WIDTH {
         assertion.to_string()
     } else {

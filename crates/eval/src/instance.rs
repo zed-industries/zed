@@ -28,7 +28,7 @@ use util::ResultExt as _;
 use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
-use crate::thread::{Assertions, EvalThread, ThreadContext};
+use crate::thread::{Assertions, EvalThread, FailedAssertion, ThreadContext};
 use crate::{AgentAppState, ToolMetrics};
 
 pub const REPOS_DIR: &str = "./crates/eval/repos";
@@ -378,7 +378,12 @@ impl ThreadInstance {
 
             let assertions = select_biased! {
                 result = this.thread.conversation(&mut thread_cx).fuse() => {
-                    result?;
+                    if let Err(err) = result {
+                        if !err.is::<FailedAssertion>() {
+                            return Err(err);
+                        }
+                    }
+
                     thread_cx.report()
                 },
                 _ = cx.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
@@ -602,6 +607,10 @@ pub fn wait_for_lang_server(
     log_prefix: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
+    if std::env::var("ZED_EVAL_SKIP_LS").is_ok() {
+        return Task::ready(Ok(()));
+    }
+
     println!("{}⏵ Waiting for language server", log_prefix);
 
     let (mut tx, mut rx) = mpsc::channel(1);
