@@ -12,7 +12,7 @@ use super::dap_command::{
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
-use dap::adapters::DebugAdapterBinary;
+use dap::adapters::{DebugAdapterBinary, DebugScenario};
 use dap::messages::Response;
 use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
@@ -162,7 +162,7 @@ enum Mode {
 #[derive(Clone)]
 pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
-    definition: DebugTaskDefinition,
+    definition: DebugScenario,
     binary: DebugAdapterBinary,
     root_binary: Option<Arc<DebugAdapterBinary>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
@@ -191,7 +191,7 @@ impl LocalMode {
         parent_session: Option<Entity<Session>>,
         worktree: WeakEntity<Worktree>,
         breakpoint_store: Entity<BreakpointStore>,
-        config: DebugTaskDefinition,
+        config: DebugScenario,
         binary: DebugAdapterBinary,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         cx: AsyncApp,
@@ -376,7 +376,7 @@ impl LocalMode {
     }
 
     fn request_initialization(&self, cx: &App) -> Task<Result<Capabilities>> {
-        let adapter_id = self.definition.adapter.clone();
+        let adapter_id = self.definition.adapter.clone().into();
 
         self.request(Initialize { adapter_id }, cx.background_executor().clone())
     }
@@ -728,7 +728,7 @@ impl Session {
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         binary: DebugAdapterBinary,
-        config: DebugTaskDefinition,
+        config: DebugScenario,
         start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
         initialized_tx: oneshot::Sender<()>,
         cx: &mut App,
@@ -844,7 +844,7 @@ impl Session {
         }
     }
 
-    pub fn configuration(&self) -> Option<DebugTaskDefinition> {
+    pub fn configuration(&self) -> Option<DebugScenario> {
         if let Mode::Local(local_mode) = &self.mode {
             Some(local_mode.definition.clone())
         } else {

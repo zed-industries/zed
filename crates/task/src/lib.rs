@@ -19,8 +19,7 @@ pub use debug_format::{
     LaunchRequest, TcpArgumentsTemplate,
 };
 pub use task_template::{
-    DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,
-    TaskTemplates, TaskType,
+    DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates,
 };
 pub use vscode_format::VsCodeTaskFile;
 pub use zed_actions::RevealTarget;

@@ -40,7 +40,7 @@ use client::{
 use clock::ReplicaId;
 
 use dap::{
-    adapters::{DebugAdapterBinary, TcpArguments},
+    adapters::{DebugAdapterBinary, DebugScenario, TcpArguments},
     client::DebugAdapterClient,
 };
 
@@ -1465,7 +1465,7 @@ impl Project {
 
     pub fn start_debug_session(
         &mut self,
-        definition: DebugTaskDefinition,
+        definition: DebugScenario,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
         let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {

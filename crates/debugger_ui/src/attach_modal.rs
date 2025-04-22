@@ -1,4 +1,5 @@
 use dap::DebugRequest;
+use dap::adapters::DebugScenario;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
@@ -23,19 +24,19 @@ pub(crate) struct AttachModalDelegate {
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
     project: Entity<project::Project>,
-    pub(crate) debug_config: task::DebugTaskDefinition,
+    pub(crate) scenario: DebugScenario,
     candidates: Arc<[Candidate]>,
 }
 
 impl AttachModalDelegate {
     fn new(
         project: Entity<project::Project>,
-        debug_config: task::DebugTaskDefinition,
+        scenario: DebugScenario,
         candidates: Arc<[Candidate]>,
     ) -> Self {
         Self {
             project,
-            debug_config,
+            scenario,
             candidates,
             selected_index: 0,
             matches: Vec::default(),
@@ -52,7 +53,7 @@ pub struct AttachModal {
 impl AttachModal {
     pub fn new(
         project: Entity<project::Project>,
-        debug_config: task::DebugTaskDefinition,
+        scenario: DebugScenario,
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -75,12 +76,12 @@ impl AttachModal {
             .collect();
         processes.sort_by_key(|k| k.name.clone());
         let processes = processes.into_iter().collect();
-        Self::with_processes(project, debug_config, processes, modal, window, cx)
+        Self::with_processes(project, scenario, processes, modal, window, cx)
     }
 
     pub(super) fn with_processes(
         project: Entity<project::Project>,
-        debug_config: task::DebugTaskDefinition,
+        scenario: DebugScenario,
         processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,
@@ -88,7 +89,7 @@ impl AttachModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                AttachModalDelegate::new(project, debug_config, processes),
+                AttachModalDelegate::new(project, scenario, processes),
                 window,
                 cx,
             )
@@ -215,7 +216,7 @@ impl PickerDelegate for AttachModalDelegate {
             return cx.emit(DismissEvent);
         };
 
-        match &mut self.debug_config.request {
+        match &mut self.scenario.request {
             DebugRequest::Attach(config) => {
                 config.process_id = Some(candidate.pid);
             }
@@ -225,7 +226,7 @@ impl PickerDelegate for AttachModalDelegate {
             }
         }
 
-        let config = self.debug_config.clone();
+        let config = self.scenario.clone();
         self.project
             .update(cx, |project, cx| {
                 let ret = project.start_debug_session(config, cx);

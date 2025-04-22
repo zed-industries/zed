@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use dap::{DapRegistry, DebugRequest};
+use dap::{DapRegistry, DebugRequest, adapters::DebugScenario};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
@@ -13,7 +13,7 @@ use gpui::{
 };
 use project::Project;
 use settings::Settings;
-use task::{DebugTaskDefinition, DebugTaskTemplate, LaunchRequest};
+use task::{DebugTaskDefinition, DebugTaskTemplate, DebugeeDefinition, LaunchRequest};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -56,7 +56,7 @@ fn suggested_label(request: &DebugRequest, debugger: &str) -> String {
 
 impl NewSessionModal {
     pub(super) fn new(
-        past_debug_definition: Option<DebugTaskDefinition>,
+        past_debug_definition: Option<DebugScenario>,
         debug_panel: WeakEntity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -88,10 +88,10 @@ impl NewSessionModal {
         }
     }
 
-    fn debug_config(&self, cx: &App) -> Option<DebugTaskDefinition> {
+    fn debug_config(&self, cx: &App) -> Option<DebugScenario> {
         let request = self.mode.debug_task(cx);
-        Some(DebugTaskDefinition {
-            adapter: self.debugger.clone()?.to_string(),
+        Some(DebugScenario {
+            adapter: self.debugger.clone()?,
             label: suggested_label(&request, self.debugger.as_deref()?),
             request,
             initialize_args: self.initialize_args.clone(),
@@ -130,7 +130,7 @@ impl NewSessionModal {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
 
             let task = project.update(cx, |this, cx| {
-                let template = DebugTaskTemplate {
+                let template = DebugScenario {
                     locator: None,
                     definition: config.clone(),
                 };
@@ -165,12 +165,12 @@ impl NewSessionModal {
         cx: &mut App,
     ) {
         attach.update(cx, |this, cx| {
-            if selected_debugger != this.debug_definition.adapter {
-                this.debug_definition.adapter = selected_debugger.into();
+            if selected_debugger != this.scenario.adapter {
+                this.scenario.adapter = selected_debugger.into();
 
                 this.attach_picker.update(cx, |this, cx| {
                     this.picker.update(cx, |this, cx| {
-                        this.delegate.debug_config.adapter = selected_debugger.into();
+                        this.delegate.scenario.adapter = selected_debugger.into();
                         this.focus(window, cx);
                     })
                 });
@@ -240,15 +240,15 @@ impl NewSessionModal {
                             this.last_selected_profile_name = Some(SharedString::from(&task.label));
                             this.debugger = Some(task.adapter.clone().into());
                             this.initialize_args = task.initialize_args.clone();
-                            match &task.request {
-                                DebugRequest::Launch(launch_config) => {
+                            match &task.debugee {
+                                DebugeeDefinition::Launch(launch_config) => {
                                     this.mode = NewSessionMode::launch(
                                         Some(launch_config.clone()),
                                         window,
                                         cx,
                                     );
                                 }
-                                DebugRequest::Attach(_) => {
+                                DebugeeDefinition::Attach(_) => {
                                     let Ok(project) = this
                                         .workspace
                                         .read_with(cx, |this, _| this.project().clone())
@@ -348,7 +348,7 @@ impl LaunchMode {
 
 #[derive(Clone)]
 struct AttachMode {
-    debug_definition: DebugTaskDefinition,
+    scenario: DebugScenario,
     attach_picker: Entity<AttachModal>,
 }
 
@@ -359,7 +359,7 @@ impl AttachMode {
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Entity<Self> {
-        let debug_definition = DebugTaskDefinition {
+        let debug_definition = DebugScenario {
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
             tcp_connection: None,
@@ -374,7 +374,7 @@ impl AttachMode {
             modal
         });
         cx.new(|_| Self {
-            debug_definition,
+            scenario: debug_definition,
             attach_picker,
         })
     }

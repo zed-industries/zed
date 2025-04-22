@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{net::Ipv4Addr, path::Path};
 
-use crate::{TaskTemplate, TaskType, task_template::DebugArgs};
+use crate::TaskTemplate;
 
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
@@ -143,14 +143,17 @@ pub struct DebugTaskDefinition {
     #[serde(flatten)]
     pub debugee: DebugeeDefinition,
     /// Additional initialization arguments to be sent on DAP initialization
+    #[serde(default)]
     pub initialize_args: Option<serde_json::Value>,
     /// Optional TCP connection information
     ///
     /// If provided, this will be used to connect to the debug adapter instead of
     /// spawning a new process. This is useful for connecting to a debug adapter
     /// that is already running or is started by another process.
+    #[serde(default)]
     pub tcp_connection: Option<TcpArgumentsTemplate>,
     /// Whether to tell the debug adapter to stop on entry
+    #[serde(default)]
     pub stop_on_entry: Option<bool>,
 }
 
@@ -161,60 +164,6 @@ impl DebugTaskDefinition {
         } else {
             None
         }
-    }
-    pub fn to_proto(&self) -> proto::DebugTaskDefinition {
-        proto::DebugTaskDefinition {
-            adapter: self.adapter.clone(),
-            request: Some(match &self.debugee {
-                DebugeeDefinition::Launch(config) => {
-                    proto::debug_task_definition::Request::DebugLaunchRequest(
-                        proto::DebugLaunchRequest {
-                            program: config.command.clone(),
-                            cwd: config.cwd.as_ref().map(ToOwned::to_owned),
-                            args: config.args.clone(),
-                        },
-                    )
-                }
-                DebugeeDefinition::Attach(attach_request) => {
-                    proto::debug_task_definition::Request::DebugAttachRequest(
-                        proto::DebugAttachRequest {
-                            process_id: attach_request.unwrap_or_default(),
-                        },
-                    )
-                }
-                _ => todo!(),
-            }),
-            label: self.label.clone(),
-            initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
-            tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
-            stop_on_entry: self.stop_on_entry,
-        }
-    }
-
-    pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
-        let request = proto
-            .request
-            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
-        Ok(Self {
-            label: proto.label,
-            initialize_args: proto.initialize_args.map(|v| v.into()),
-            tcp_connection: proto
-                .tcp_connection
-                .map(TcpArgumentsTemplate::from_proto)
-                .transpose()?,
-            stop_on_entry: proto.stop_on_entry,
-            adapter: proto.adapter.clone(),
-            debugee: match request {
-                proto::debug_task_definition::Request::DebugAttachRequest(config) => {
-                    DebugeeDefinition::Attach(Some(config.process_id))
-                }
-
-                proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
-                    DebugeeDefinition::Launch(todo!())
-                }
-            },
-            build: todo!(),
-        })
     }
 }
 

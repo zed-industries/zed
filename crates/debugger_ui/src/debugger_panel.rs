@@ -6,6 +6,7 @@ use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
+use dap::adapters::DebugScenario;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
@@ -62,7 +63,7 @@ pub struct DebugPanel {
     sessions: Vec<Entity<DebugSession>>,
     active_session: Option<Entity<DebugSession>>,
     /// This represents the last debug definition that was created in the new session modal
-    pub(crate) past_debug_definition: Option<DebugTaskDefinition>,
+    pub(crate) past_debug_definition: Option<DebugScenario>,
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,

@@ -84,34 +84,6 @@ pub enum DebugArgsRequest {
     Attach(AttachRequest),
 }
 
-#[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
-/// This represents the arguments for the debug task.
-pub struct DebugArgs {
-    /// The launch type
-    pub request: DebugArgsRequest,
-    /// Adapter choice
-    pub adapter: String,
-    /// TCP connection to make with debug adapter
-    pub tcp_connection: Option<TcpArgumentsTemplate>,
-    /// Args to send to debug adapter
-    pub initialize_args: Option<serde_json::value::Value>,
-    /// the locator to use
-    pub locator: Option<String>,
-    /// Whether to tell the debug adapter to stop on entry
-    pub stop_on_entry: Option<bool>,
-}
-
-/// Represents the type of task that is being ran
-#[derive(Default, Eq, PartialEq, Clone, Debug)]
-#[allow(clippy::large_enum_variant)]
-pub enum TaskType {
-    /// Act like a typically task that runs commands
-    #[default]
-    Script,
-    /// This task starts the debugger for a language
-    Debug(DebugArgs),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// The type of task modal to spawn
 pub enum TaskModal {

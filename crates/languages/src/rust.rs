@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
-use task::{TaskTemplate, TaskTemplates, TaskType, TaskVariables, VariableName};
+use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
 

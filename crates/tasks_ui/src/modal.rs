@@ -12,7 +12,7 @@ use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMa
 use project::{TaskSourceKind, task_store::TaskStore};
 use task::{
     DebugRequest, DebugTaskDefinition, ResolvedTask, RevealTarget, TaskContext, TaskModal,
-    TaskTemplate, TaskType,
+    TaskTemplate,
 };
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,

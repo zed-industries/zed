@@ -20,7 +20,8 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::task_file_name;
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
+    DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
+    TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_inc};
@@ -134,7 +135,7 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
-    pub fn list_debug_tasks(&self) -> Vec<DebugTaskTemplate> {
+    pub fn list_debug_tasks(&self) -> Vec<DebugTaskDefinition> {
         self.templates_from_settings
             .worktree
             .values()

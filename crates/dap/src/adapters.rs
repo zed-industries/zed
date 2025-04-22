@@ -14,10 +14,17 @@ use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use smol::{self, fs::File, lock::Mutex};
 use std::{
-    borrow::Borrow, collections::HashSet, ffi::OsStr, fmt::Debug, net::Ipv4Addr, ops::Deref,
-    path::PathBuf, sync::Arc,
+    borrow::Borrow,
+    collections::HashSet,
+    ffi::OsStr,
+    fmt::Debug,
+    net::Ipv4Addr,
+    ops::Deref,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
 };
-use task::{DebugRequest, DebugTaskDefinition, TcpArgumentsTemplate};
+use task::{AttachRequest, DebugRequest, DebugTaskDefinition, LaunchRequest, TcpArgumentsTemplate};
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,8 +116,15 @@ impl TcpArguments {
     }
 }
 
+/// Represents a debuggable binary/process.
+///
+/// We start off with a [DebugTaskDefinition], a user-facing type that can define how a debug target is built; once
+/// an optional build step is completed, we turn it's result into a DebugScenario by running a locator (or using a user-provided task).
+/// Finally, a [DebugScenario] has to be turned into a concrete debugger invokation.
+#[derive(Clone, Debug)]
 pub struct DebugScenario {
     pub label: String,
+    pub adapter: SharedString,
     pub request: DebugRequest,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
@@ -122,6 +136,55 @@ pub struct DebugScenario {
     pub tcp_connection: Option<TcpArgumentsTemplate>,
     /// Whether to tell the debug adapter to stop on entry
     pub stop_on_entry: Option<bool>,
+}
+
+impl DebugScenario {
+    pub fn from_proto(payload: proto::DebugScenario) -> Result<Self> {
+        let Some(request) = payload.request else {
+            return Err(anyhow!("Missing request in debug scenario"));
+        };
+        let request = match request {
+            proto::debug_scenario::Request::DebugAttachRequest(config) => {
+                DebugRequest::Attach(AttachRequest {
+                    process_id: Some(config.process_id),
+                })
+            }
+
+            proto::debug_scenario::Request::DebugLaunchRequest(config) => {
+                DebugRequest::Launch(LaunchRequest {
+                    program: config.program,
+                    cwd: config.cwd.map(|cwd| cwd.into()),
+                    args: config.args,
+                })
+            }
+        };
+        Ok(Self {
+            adapter: payload.adapter.into(),
+            label: payload.label,
+            request,
+            initialize_args: payload
+                .configuration
+                .as_deref()
+                .map(serde_json::Value::from_str)
+                .transpose()?,
+            tcp_connection: payload
+                .connection
+                .map(TcpArgumentsTemplate::from_proto)
+                .transpose()?,
+            stop_on_entry: payload.stop_on_entry,
+        })
+    }
+
+    pub fn to_proto(&self) -> proto::DebugScenario {
+        todo!()
+    }
+    pub fn cwd(&self) -> Option<&Path> {
+        if let DebugRequest::Launch(config) = &self.request {
+            config.cwd.as_ref().map(Path::new)
+        } else {
+            None
+        }
+    }
 }
 
 impl TryFrom<DebugTaskDefinition> for DebugScenario {
@@ -147,6 +210,7 @@ impl TryFrom<DebugTaskDefinition> for DebugScenario {
         };
         Ok(Self {
             request,
+            adapter: value.adapter.into(),
             label: value.label,
             stop_on_entry: value.stop_on_entry,
             initialize_args: value.initialize_args,
