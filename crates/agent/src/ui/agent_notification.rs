@@ -12,6 +12,7 @@ pub struct AgentNotification {
     title: SharedString,
     caption: SharedString,
     icon: IconName,
+    project_name: Option<SharedString>,
 }
 
 impl AgentNotification {
@@ -19,11 +20,13 @@ impl AgentNotification {
         title: impl Into<SharedString>,
         caption: impl Into<SharedString>,
         icon: IconName,
+        project_name: Option<impl Into<SharedString>>,
     ) -> Self {
         Self {
             title: title.into(),
             caption: caption.into(),
             icon,
+            project_name: project_name.map(|name| name.into()),
         }
     }
 
@@ -130,11 +133,34 @@ impl Render for AgentNotification {
                                     .child(gradient_overflow()),
                             )
                             .child(
-                                div()
+                                h_flex()
                                     .relative()
+                                    .gap_1()
                                     .text_size(px(12.))
                                     .text_color(cx.theme().colors().text_muted)
                                     .truncate()
+                                    .when_some(
+                                        self.project_name.clone(),
+                                        |description, project_name| {
+                                            description.child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(
+                                                        Icon::new(IconName::Folder)
+                                                            .size(IconSize::XSmall)
+                                                            .color(Color::Muted),
+                                                    )
+                                                    .child(div().truncate().child(project_name))
+                                                    .child(
+                                                        div().size(px(3.)).rounded_full().bg(cx
+                                                            .theme()
+                                                            .colors()
+                                                            .text
+                                                            .opacity(0.2)),
+                                                    ),
+                                            )
+                                        },
+                                    )
                                     .child(self.caption.clone())
                                     .child(gradient_overflow()),
                             ),

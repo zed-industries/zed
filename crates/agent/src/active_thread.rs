@@ -1093,9 +1093,21 @@ impl ActiveThread {
     ) {
         let options = AgentNotification::window_options(screen, cx);
 
+        let project_name = self.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).root_name().to_string())
+        });
+
         if let Some(screen_window) = cx
             .open_window(options, |_, cx| {
-                cx.new(|_| AgentNotification::new(title.clone(), caption.clone(), icon))
+                cx.new(|_| {
+                    AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
+                })
             })
             .log_err()
         {
