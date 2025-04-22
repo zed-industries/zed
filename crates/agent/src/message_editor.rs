@@ -195,6 +195,7 @@ impl MessageEditor {
                 editor.set_mode(EditorMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
+                    sized_by_content: false,
                 })
             } else {
                 editor.set_mode(EditorMode::AutoHeight {

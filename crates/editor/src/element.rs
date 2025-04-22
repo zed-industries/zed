@@ -6573,10 +6573,21 @@ impl Element for EditorElement {
                             },
                         )
                     }
-                    EditorMode::Full { .. } => {
+                    EditorMode::Full {
+                        sized_by_content, ..
+                    } => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
-                        style.size.height = relative(1.).into();
+                        if sized_by_content {
+                            let snapshot = editor.snapshot(window, cx);
+                            let line_height =
+                                self.style.text.line_height_in_pixels(window.rem_size());
+                            let scroll_height =
+                                (snapshot.max_point().row().next_row().0 as f32) * line_height;
+                            style.size.height = scroll_height.into();
+                        } else {
+                            style.size.height = relative(1.).into();
+                        }
                         window.request_layout(style, None, cx)
                     }
                 };

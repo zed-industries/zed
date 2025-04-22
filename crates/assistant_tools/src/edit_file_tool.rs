@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, MultiBuffer, PathKey};
+use editor::{Editor, EditorMode, MultiBuffer, PathKey};
 use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, Task};
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
@@ -301,8 +301,17 @@ impl EditFileToolCard {
     ) -> Self {
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadOnly));
         let editor = cx.new(|cx| {
-            let mut editor =
-                Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
+            let mut editor = Editor::new(
+                EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sized_by_content: true,
+                },
+                multibuffer.clone(),
+                Some(project.clone()),
+                window,
+                cx,
+            );
             editor.set_show_scrollbars(false, cx);
             editor.set_show_expand_excerpt_buttons(false, cx);
             editor.set_show_gutter(false, cx);
@@ -452,7 +461,7 @@ impl ToolCard for EditFileToolCard {
                             if self.full_height {
                                 buffer_container.h_full()
                             } else {
-                                buffer_container.min_h_64()
+                                buffer_container.max_h_64()
                             }
                         })
                         .child(editor)
