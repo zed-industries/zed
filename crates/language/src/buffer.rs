@@ -3173,7 +3173,7 @@ impl BufferSnapshot {
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
         let mut scope = None;
-        let mut smallest_range: Option<Range<usize>> = None;
+        let mut smallest_range_and_depth: Option<(Range<usize>, usize)> = None;
 
         // Use the layer that has the smallest node intersecting the given point.
         for layer in self
@@ -3185,7 +3185,7 @@ impl BufferSnapshot {
             let mut range = None;
             loop {
                 let child_range = cursor.node().byte_range();
-                if !child_range.to_inclusive().contains(&offset) {
+                if !child_range.contains(&offset) {
                     break;
                 }
 
@@ -3196,11 +3196,19 @@ impl BufferSnapshot {
             }
 
             if let Some(range) = range {
-                if smallest_range
-                    .as_ref()
-                    .map_or(true, |smallest_range| range.len() < smallest_range.len())
-                {
-                    smallest_range = Some(range);
+                if smallest_range_and_depth.as_ref().map_or(
+                    true,
+                    |(smallest_range, smallest_range_depth)| {
+                        if layer.depth > *smallest_range_depth {
+                            true
+                        } else if layer.depth == *smallest_range_depth {
+                            range.len() < smallest_range.len()
+                        } else {
+                            false
+                        }
+                    },
+                ) {
+                    smallest_range_and_depth = Some((range, layer.depth));
                     scope = Some(LanguageScope {
                         language: layer.language.clone(),
                         override_id: layer.override_id(offset, &self.text),

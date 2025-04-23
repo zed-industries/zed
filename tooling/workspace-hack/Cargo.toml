@@ -90,7 +90,7 @@ regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["fs", "net"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
@@ -176,7 +176,7 @@ heck = { version = "0.4", features = ["unicode"] }
 hmac = { version = "0.12", default-features = false, features = ["reset"] }
 hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "server", "stream"] }
 indexmap = { version = "2", features = ["serde"] }
-itertools = { version = "0.13" }
+itertools-594e8ee84c453af0 = { package = "itertools", version = "0.13" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 libsqlite3-sys = { version = "0.30", features = ["bundled", "unlock_notify"] }
@@ -205,7 +205,7 @@ regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["fs", "net"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
@@ -253,12 +253,13 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "23", features = ["msl-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -276,13 +277,14 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "23", features = ["msl-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -299,12 +301,13 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "23", features = ["msl-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -322,13 +325,14 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "23", features = ["msl-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -351,7 +355,9 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
+linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
@@ -362,8 +368,8 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
@@ -390,7 +396,9 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
+linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
@@ -400,8 +408,8 @@ object = { version = "0.36", default-features = false, features = ["archive", "r
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
@@ -427,7 +435,9 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
+linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
@@ -438,8 +448,8 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
@@ -466,7 +476,9 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
+linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
@@ -476,8 +488,8 @@ object = { version = "0.36", default-features = false, features = ["archive", "r
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
@@ -495,9 +507,10 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }
 scopeguard = { version = "1" }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
@@ -505,9 +518,9 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 winapi = { version = "0.3", default-features = false, features = ["cfg", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "in6addr", "inaddr", "knownfolders", "minwinbase", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "sysinfoapi", "winbase", "windef", "winerror", "winioctl"] }
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
-windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
-windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Time", "Win32_UI_Shell"] }
+windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Time", "Win32_UI_Shell"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
 flate2 = { version = "1" }
@@ -516,10 +529,11 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }
 scopeguard = { version = "1" }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
@@ -527,9 +541,9 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 winapi = { version = "0.3", default-features = false, features = ["cfg", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "in6addr", "inaddr", "knownfolders", "minwinbase", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "sysinfoapi", "winbase", "windef", "winerror", "winioctl"] }
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
-windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
-windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Time", "Win32_UI_Shell"] }
+windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Time", "Win32_UI_Shell"] }
 
 [target.x86_64-unknown-linux-musl.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
@@ -546,7 +560,9 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
+linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
@@ -557,8 +573,8 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
@@ -585,7 +601,9 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-linux-raw-sys = { version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
+linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
@@ -595,8 +613,8 @@ object = { version = "0.36", default-features = false, features = ["archive", "r
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["event", "mm", "param", "pipe", "process", "procfs", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }

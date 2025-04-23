@@ -40,6 +40,8 @@ mod selections_collection;
 pub mod tasks;
 
 #[cfg(test)]
+mod code_completion_tests;
+#[cfg(test)]
 mod editor_tests;
 #[cfg(test)]
 mod inline_completion_tests;
@@ -218,6 +220,7 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -286,6 +289,12 @@ enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
 enum SelectedTextHighlight {}
+
+pub enum ConflictsOuter {}
+pub enum ConflictsOurs {}
+pub enum ConflictsTheirs {}
+pub enum ConflictsOursMarker {}
+pub enum ConflictsTheirsMarker {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
@@ -445,6 +454,8 @@ pub enum EditorMode {
         scale_ui_elements_with_buffer_font_size: bool,
         /// When set to `true`, the editor will render a background for the active line.
         show_active_line_background: bool,
+        /// When set to `true`, the editor's height will be determined by its content.
+        sized_by_content: bool,
     },
 }
 
@@ -453,6 +464,7 @@ impl EditorMode {
         Self::Full {
             scale_ui_elements_with_buffer_font_size: true,
             show_active_line_background: true,
+            sized_by_content: false,
         }
     }
 
@@ -712,6 +724,10 @@ pub trait Addon: 'static {
     }
 
     fn to_any(&self) -> &dyn std::any::Any;
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
 }
 
 /// A set of caret positions, registered when the editor was edited.
@@ -806,6 +822,8 @@ pub struct Editor {
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_scrollbars: bool,
+    disable_scrolling: bool,
+    disable_expand_excerpt_buttons: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -832,7 +850,8 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
-    selection_highlight_task: Option<Task<()>>,
+    quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
+    debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -1101,11 +1120,27 @@ impl SelectionHistory {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct RowHighlightOptions {
+    pub autoscroll: bool,
+    pub include_gutter: bool,
+}
+
+impl Default for RowHighlightOptions {
+    fn default() -> Self {
+        Self {
+            autoscroll: Default::default(),
+            include_gutter: true,
+        }
+    }
+}
+
 struct RowHighlight {
     index: usize,
     range: Range<Anchor>,
     color: Hsla,
-    should_autoscroll: bool,
+    options: RowHighlightOptions,
+    type_id: TypeId,
 }
 
 #[derive(Clone, Debug)]
@@ -1583,11 +1618,13 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             show_scrollbars: true,
+            disable_scrolling: true,
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
             show_line_numbers: None,
             use_relative_line_numbers: None,
+            disable_expand_excerpt_buttons: false,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -1614,7 +1651,8 @@ impl Editor {
             code_action_providers,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
-            selection_highlight_task: Default::default(),
+            quick_selection_highlight_task: Default::default(),
+            debounced_selection_highlight_task: Default::default(),
             document_highlights_task: Default::default(),
             linked_editing_range_task: Default::default(),
             pending_rename: Default::default(),
@@ -1745,6 +1783,7 @@ impl Editor {
                                 new_anchor.offset,
                             );
                         });
+                        editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
                     }
                 }
                 EditorEvent::Edited { .. } => {
@@ -3154,6 +3193,13 @@ impl Editor {
             s.select_ranges(selection_ranges);
         });
         cx.notify();
+    }
+
+    pub fn has_non_empty_selection(&self, cx: &mut App) -> bool {
+        self.selections
+            .all_adjusted(cx)
+            .iter()
+            .any(|selection| !selection.is_empty())
     }
 
     pub fn has_pending_nonempty_selection(&self) -> bool {
@@ -5174,44 +5220,21 @@ impl Editor {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
                 match resolved_task.task_type() {
                     task::TaskType::Script => workspace.update(cx, |workspace, cx| {
-                        workspace::tasks::schedule_resolved_task(
-                            workspace,
+                        workspace.schedule_resolved_task(
                             task_source_kind,
                             resolved_task,
                             false,
+                            window,
                             cx,
                         );
 
                         Some(Task::ready(Ok(())))
                     }),
-                    task::TaskType::Debug(debug_args) => {
-                        if debug_args.locator.is_some() {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace::tasks::schedule_resolved_task(
-                                    workspace,
-                                    task_source_kind,
-                                    resolved_task,
-                                    false,
-                                    cx,
-                                );
-                            });
-
-                            return Some(Task::ready(Ok(())));
-                        }
-
-                        if let Some(project) = self.project.as_ref() {
-                            project
-                                .update(cx, |project, cx| {
-                                    project.start_debug_session(
-                                        resolved_task.resolved_debug_adapter_config().unwrap(),
-                                        cx,
-                                    )
-                                })
-                                .detach_and_log_err(cx);
-                            Some(Task::ready(Ok(())))
-                        } else {
-                            Some(Task::ready(Ok(())))
-                        }
+                    task::TaskType::Debug(_) => {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.schedule_debug_task(resolved_task, window, cx);
+                        });
+                        Some(Task::ready(Ok(())))
                     }
                 }
             }
@@ -5542,111 +5565,169 @@ impl Editor {
         None
     }
 
-    pub fn refresh_selected_text_highlights(
+    fn prepare_highlight_query_from_selection(
         &mut self,
-        window: &mut Window,
         cx: &mut Context<Editor>,
-    ) {
+    ) -> Option<(String, Range<Anchor>)> {
         if matches!(self.mode, EditorMode::SingleLine { .. }) {
-            return;
+            return None;
         }
-        self.selection_highlight_task.take();
         if !EditorSettings::get_global(cx).selection_highlight {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
+            return None;
         }
         if self.selections.count() != 1 || self.selections.line_mode {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
+            return None;
         }
         let selection = self.selections.newest::<Point>(cx);
         if selection.is_empty() || selection.start.row != selection.end.row {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
+            return None;
         }
-        let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
-        self.selection_highlight_task = Some(cx.spawn_in(window, async move |editor, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(debounce))
-                .await;
-            let Some(Some(matches_task)) = editor
-                .update_in(cx, |editor, _, cx| {
-                    if editor.selections.count() != 1 || editor.selections.line_mode {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                        return None;
-                    }
-                    let selection = editor.selections.newest::<Point>(cx);
-                    if selection.is_empty() || selection.start.row != selection.end.row {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                        return None;
-                    }
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let query = buffer.text_for_range(selection.range()).collect::<String>();
-                    if query.trim().is_empty() {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                        return None;
-                    }
-                    Some(cx.background_spawn(async move {
-                        let mut ranges = Vec::new();
-                        let selection_anchors = selection.range().to_anchors(&buffer);
-                        for range in [buffer.anchor_before(0)..buffer.anchor_after(buffer.len())] {
-                            for (search_buffer, search_range, excerpt_id) in
-                                buffer.range_to_buffer_ranges(range)
-                            {
-                                ranges.extend(
-                                    project::search::SearchQuery::text(
-                                        query.clone(),
-                                        false,
-                                        false,
-                                        false,
-                                        Default::default(),
-                                        Default::default(),
-                                        None,
-                                    )
-                                    .unwrap()
-                                    .search(search_buffer, Some(search_range.clone()))
-                                    .await
-                                    .into_iter()
-                                    .filter_map(
-                                        |match_range| {
-                                            let start = search_buffer.anchor_after(
-                                                search_range.start + match_range.start,
-                                            );
-                                            let end = search_buffer.anchor_before(
-                                                search_range.start + match_range.end,
-                                            );
-                                            let range = Anchor::range_in_buffer(
-                                                excerpt_id,
-                                                search_buffer.remote_id(),
-                                                start..end,
-                                            );
-                                            (range != selection_anchors).then_some(range)
-                                        },
-                                    ),
-                                );
-                            }
-                        }
-                        ranges
-                    }))
-                })
-                .log_err()
-            else {
-                return;
-            };
-            let matches = matches_task.await;
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let selection_anchor_range = selection.range().to_anchors(&multi_buffer_snapshot);
+        let query = multi_buffer_snapshot
+            .text_for_range(selection_anchor_range.clone())
+            .collect::<String>();
+        if query.trim().is_empty() {
+            return None;
+        }
+        Some((query, selection_anchor_range))
+    }
+
+    fn update_selection_occurrence_highlights(
+        &mut self,
+        query_text: String,
+        query_range: Range<Anchor>,
+        multi_buffer_range_to_query: Range<Point>,
+        use_debounce: bool,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<()> {
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        cx.spawn_in(window, async move |editor, cx| {
+            if use_debounce {
+                cx.background_executor()
+                    .timer(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT)
+                    .await;
+            }
+            let match_task = cx.background_spawn(async move {
+                let buffer_ranges = multi_buffer_snapshot
+                    .range_to_buffer_ranges(multi_buffer_range_to_query)
+                    .into_iter()
+                    .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty());
+                let mut match_ranges = Vec::new();
+                for (buffer_snapshot, search_range, excerpt_id) in buffer_ranges {
+                    match_ranges.extend(
+                        project::search::SearchQuery::text(
+                            query_text.clone(),
+                            false,
+                            false,
+                            false,
+                            Default::default(),
+                            Default::default(),
+                            false,
+                            None,
+                        )
+                        .unwrap()
+                        .search(&buffer_snapshot, Some(search_range.clone()))
+                        .await
+                        .into_iter()
+                        .filter_map(|match_range| {
+                            let match_start = buffer_snapshot
+                                .anchor_after(search_range.start + match_range.start);
+                            let match_end =
+                                buffer_snapshot.anchor_before(search_range.start + match_range.end);
+                            let match_anchor_range = Anchor::range_in_buffer(
+                                excerpt_id,
+                                buffer_snapshot.remote_id(),
+                                match_start..match_end,
+                            );
+                            (match_anchor_range != query_range).then_some(match_anchor_range)
+                        }),
+                    );
+                }
+                match_ranges
+            });
+            let match_ranges = match_task.await;
             editor
                 .update_in(cx, |editor, _, cx| {
                     editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                    if !matches.is_empty() {
+                    if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
-                            &matches,
+                            &match_ranges,
                             |theme| theme.editor_document_highlight_bracket_background,
                             cx,
                         )
                     }
                 })
                 .log_err();
-        }));
+        })
+    }
+
+    fn refresh_selected_text_highlights(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        let Some((query_text, query_range)) = self.prepare_highlight_query_from_selection(cx)
+        else {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            self.quick_selection_highlight_task.take();
+            self.debounced_selection_highlight_task.take();
+            return;
+        };
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        if self
+            .quick_selection_highlight_task
+            .as_ref()
+            .map_or(true, |(prev_anchor_range, _)| {
+                prev_anchor_range != &query_range
+            })
+        {
+            let multi_buffer_visible_start = self
+                .scroll_manager
+                .anchor()
+                .anchor
+                .to_point(&multi_buffer_snapshot);
+            let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
+                multi_buffer_visible_start
+                    + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
+                Bias::Left,
+            );
+            let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
+            self.quick_selection_highlight_task = Some((
+                query_range.clone(),
+                self.update_selection_occurrence_highlights(
+                    query_text.clone(),
+                    query_range.clone(),
+                    multi_buffer_visible_range,
+                    false,
+                    window,
+                    cx,
+                ),
+            ));
+        }
+        if self
+            .debounced_selection_highlight_task
+            .as_ref()
+            .map_or(true, |(prev_anchor_range, _)| {
+                prev_anchor_range != &query_range
+            })
+        {
+            let multi_buffer_start = multi_buffer_snapshot
+                .anchor_before(0)
+                .to_point(&multi_buffer_snapshot);
+            let multi_buffer_end = multi_buffer_snapshot
+                .anchor_after(multi_buffer_snapshot.len())
+                .to_point(&multi_buffer_snapshot);
+            let multi_buffer_full_range = multi_buffer_start..multi_buffer_end;
+            self.debounced_selection_highlight_task = Some((
+                query_range.clone(),
+                self.update_selection_occurrence_highlights(
+                    query_text,
+                    query_range,
+                    multi_buffer_full_range,
+                    true,
+                    window,
+                    cx,
+                ),
+            ));
+        }
     }
 
     pub fn refresh_inline_completion(
@@ -5961,7 +6042,10 @@ impl Editor {
                         self.highlight_rows::<EditPredictionPreview>(
                             target..target,
                             cx.theme().colors().editor_highlighted_line_background,
-                            true,
+                            RowHighlightOptions {
+                                autoscroll: true,
+                                ..Default::default()
+                            },
                             cx,
                         );
                         self.request_autoscroll(Autoscroll::fit(), cx);
@@ -6850,12 +6934,12 @@ impl Editor {
             resolved.reveal = reveal_strategy;
 
             workspace
-                .update(cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
-                        workspace,
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.schedule_resolved_task(
                         task_source_kind,
                         resolved_task,
                         false,
+                        window,
                         cx,
                     );
                 })
@@ -11817,6 +11901,7 @@ impl Editor {
         fn select_next_match_ranges(
             this: &mut Editor,
             range: Range<usize>,
+            reversed: bool,
             replace_newest: bool,
             auto_scroll: Option<Autoscroll>,
             window: &mut Window,
@@ -11827,7 +11912,11 @@ impl Editor {
                 if replace_newest {
                     s.delete(s.newest_anchor().id);
                 }
-                s.insert_range(range.clone());
+                if reversed {
+                    s.insert_range(range.end..range.start);
+                } else {
+                    s.insert_range(range);
+                }
             });
         }
 
@@ -11878,6 +11967,7 @@ impl Editor {
                     select_next_match_ranges(
                         self,
                         next_selected_range,
+                        last_selection.reversed,
                         replace_newest,
                         autoscroll,
                         window,
@@ -11936,6 +12026,7 @@ impl Editor {
                     select_next_match_ranges(
                         self,
                         selection.start..selection.end,
+                        selection.reversed,
                         replace_newest,
                         autoscroll,
                         window,
@@ -12103,7 +12194,11 @@ impl Editor {
                         if action.replace_newest {
                             s.delete(s.newest_anchor().id);
                         }
-                        s.insert_range(next_selected_range);
+                        if last_selection.reversed {
+                            s.insert_range(next_selected_range.end..next_selected_range.start);
+                        } else {
+                            s.insert_range(next_selected_range);
+                        }
                     });
                 } else {
                     select_prev_state.done = true;
@@ -13468,7 +13563,7 @@ impl Editor {
             start..end,
             highlight_color
                 .unwrap_or_else(|| cx.theme().colors().editor_highlighted_line_background),
-            false,
+            Default::default(),
             cx,
         );
         self.request_autoscroll(Autoscroll::center().for_anchor(start), cx);
@@ -16165,8 +16260,18 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn disable_scrolling(&mut self, cx: &mut Context<Self>) {
+        self.disable_scrolling = true;
+        cx.notify();
+    }
+
     pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut Context<Self>) {
         self.show_line_numbers = Some(show_line_numbers);
+        cx.notify();
+    }
+
+    pub fn disable_expand_excerpt_buttons(&mut self, cx: &mut Context<Self>) {
+        self.disable_expand_excerpt_buttons = true;
         cx.notify();
     }
 
@@ -16784,7 +16889,7 @@ impl Editor {
         &mut self,
         range: Range<Anchor>,
         color: Hsla,
-        should_autoscroll: bool,
+        options: RowHighlightOptions,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer().read(cx).snapshot(cx);
@@ -16816,7 +16921,7 @@ impl Editor {
                     merged = true;
                     prev_highlight.index = index;
                     prev_highlight.color = color;
-                    prev_highlight.should_autoscroll = should_autoscroll;
+                    prev_highlight.options = options;
                 }
             }
 
@@ -16827,7 +16932,8 @@ impl Editor {
                         range: range.clone(),
                         index,
                         color,
-                        should_autoscroll,
+                        options,
+                        type_id: TypeId::of::<T>(),
                     },
                 );
             }
@@ -16933,7 +17039,15 @@ impl Editor {
                             used_highlight_orders.entry(row).or_insert(highlight.index);
                         if highlight.index >= *used_index {
                             *used_index = highlight.index;
-                            unique_rows.insert(DisplayRow(row), highlight.color.into());
+                            unique_rows.insert(
+                                DisplayRow(row),
+                                LineHighlight {
+                                    include_gutter: highlight.options.include_gutter,
+                                    border: None,
+                                    background: highlight.color.into(),
+                                    type_id: Some(highlight.type_id),
+                                },
+                            );
                         }
                     }
                     unique_rows
@@ -16949,7 +17063,7 @@ impl Editor {
             .values()
             .flat_map(|highlighted_rows| highlighted_rows.iter())
             .filter_map(|highlight| {
-                if highlight.should_autoscroll {
+                if highlight.options.autoscroll {
                     Some(highlight.range.start.to_display_point(snapshot).row())
                 } else {
                     None
@@ -17505,13 +17619,19 @@ impl Editor {
                 });
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             }
-            multi_buffer::Event::ExcerptsRemoved { ids } => {
+            multi_buffer::Event::ExcerptsRemoved {
+                ids,
+                removed_buffer_ids,
+            } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 let buffer = self.buffer.read(cx);
                 self.registered_buffers
                     .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
-                cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
+                cx.emit(EditorEvent::ExcerptsRemoved {
+                    ids: ids.clone(),
+                    removed_buffer_ids: removed_buffer_ids.clone(),
+                })
             }
             multi_buffer::Event::ExcerptsEdited {
                 excerpt_ids,
@@ -18317,6 +18437,13 @@ impl Editor {
         self.addons
             .get(&type_id)
             .and_then(|item| item.to_any().downcast_ref::<T>())
+    }
+
+    pub fn addon_mut<T: Addon>(&mut self) -> Option<&mut T> {
+        let type_id = std::any::TypeId::of::<T>();
+        self.addons
+            .get_mut(&type_id)
+            .and_then(|item| item.to_any_mut()?.downcast_mut::<T>())
     }
 
     fn character_size(&self, window: &mut Window) -> gpui::Size<Pixels> {
@@ -19859,6 +19986,7 @@ pub enum EditorEvent {
     },
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
+        removed_buffer_ids: Vec<BufferId>,
     },
     BufferFoldToggled {
         ids: Vec<ExcerptId>,
@@ -20799,24 +20927,8 @@ impl Render for MissingEditPredictionKeybindingTooltip {
 pub struct LineHighlight {
     pub background: Background,
     pub border: Option<gpui::Hsla>,
-}
-
-impl From<Hsla> for LineHighlight {
-    fn from(hsla: Hsla) -> Self {
-        Self {
-            background: hsla.into(),
-            border: None,
-        }
-    }
-}
-
-impl From<Background> for LineHighlight {
-    fn from(background: Background) -> Self {
-        Self {
-            background,
-            border: None,
-        }
-    }
+    pub include_gutter: bool,
+    pub type_id: Option<TypeId>,
 }
 
 fn render_diff_hunk_controls(

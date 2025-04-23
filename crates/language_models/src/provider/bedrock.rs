@@ -286,6 +286,18 @@ impl BedrockLanguageModelProvider {
             state,
         }
     }
+
+    fn create_language_model(&self, model: bedrock::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(BedrockModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            http_client: self.http_client.clone(),
+            handler: self.handler.clone(),
+            state: self.state.clone(),
+            client: OnceCell::new(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProvider for BedrockLanguageModelProvider {
@@ -302,16 +314,11 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = bedrock::Model::default();
-        Some(Arc::new(BedrockModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            http_client: self.http_client.clone(),
-            handler: self.handler.clone(),
-            state: self.state.clone(),
-            client: OnceCell::new(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(bedrock::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(bedrock::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -343,17 +350,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(BedrockModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    http_client: self.http_client.clone(),
-                    handler: self.handler.clone(),
-                    state: self.state.clone(),
-                    client: OnceCell::new(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -742,9 +739,10 @@ pub fn get_bedrock_tokens(
 
                 for content in message.content {
                     match content {
-                        MessageContent::Text(text) => {
+                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                             string_contents.push_str(&text);
                         }
+                        MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(image) => {
                             tokens_from_images += image.estimate_tokens();
                         }
@@ -830,25 +828,36 @@ pub fn map_to_language_model_completion_events(
                                                         redacted,
                                                     ) => {
                                                         let thinking_event =
-                                                            LanguageModelCompletionEvent::Thinking(
-                                                                String::from_utf8(
+                                                            LanguageModelCompletionEvent::Thinking {
+                                                                text: String::from_utf8(
                                                                     redacted.into_inner(),
                                                                 )
                                                                 .unwrap_or("REDACTED".to_string()),
-                                                            );
+                                                                signature: None,
+                                                            };
 
                                                         return Some((
                                                             Some(Ok(thinking_event)),
                                                             state,
                                                         ));
                                                     }
-                                                    ReasoningContentBlockDelta::Signature(_sig) => {
+                                                    ReasoningContentBlockDelta::Signature(
+                                                        signature,
+                                                    ) => {
+                                                        return Some((
+                                                            Some(Ok(LanguageModelCompletionEvent::Thinking {
+                                                                text: "".to_string(),
+                                                                signature: Some(signature)
+                                                            })),
+                                                            state,
+                                                        ));
                                                     }
                                                     ReasoningContentBlockDelta::Text(thoughts) => {
                                                         let thinking_event =
-                                                            LanguageModelCompletionEvent::Thinking(
-                                                                thoughts.to_string(),
-                                                            );
+                                                            LanguageModelCompletionEvent::Thinking {
+                                                                text: thoughts.to_string(),
+                                                                signature: None
+                                                            };
 
                                                         return Some((
                                                             Some(Ok(thinking_event)),
@@ -884,6 +893,7 @@ pub fn map_to_language_model_completion_events(
                                             let tool_use_event = LanguageModelToolUse {
                                                 id: tool_use.id.into(),
                                                 name: tool_use.name.into(),
+                                                is_input_complete: true,
                                                 input: if tool_use.input_json.is_empty() {
                                                     Value::Null
                                                 } else {

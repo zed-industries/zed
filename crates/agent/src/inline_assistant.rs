@@ -24,6 +24,7 @@ use gpui::{
     WeakEntity, Window, point,
 };
 use language::{Buffer, Point, Selection, TransactionId};
+use language_model::ConfiguredModel;
 use language_model::{LanguageModelRegistry, report_assistant_event};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -1221,9 +1222,15 @@ impl InlineAssistant {
             self.prompt_history.pop_front();
         }
 
+        let Some(ConfiguredModel { model, .. }) =
+            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        else {
+            return;
+        };
+
         assist
             .codegen
-            .update(cx, |codegen, cx| codegen.start(user_prompt, cx))
+            .update(cx, |codegen, cx| codegen.start(model, user_prompt, cx))
             .log_err();
     }
 
@@ -1321,7 +1328,7 @@ impl InlineAssistant {
                 editor.highlight_rows::<InlineAssist>(
                     row_range,
                     cx.theme().status().info_background,
-                    false,
+                    Default::default(),
                     cx,
                 );
             }
@@ -1386,7 +1393,7 @@ impl InlineAssistant {
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..Anchor::max(),
                         cx.theme().status().deleted_background,
-                        false,
+                        Default::default(),
                         cx,
                     );
                     editor

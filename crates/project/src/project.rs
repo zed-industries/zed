@@ -25,12 +25,14 @@ mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git_store::{Repository, RepositoryId};
-use task::DebugTaskDefinition;
 pub mod search_history;
 mod yarn;
 
 use crate::git_store::GitStore;
-pub use git_store::git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal};
+pub use git_store::{
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
+    git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
+};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -62,7 +64,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
     AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
-    SharedString, Task, WeakEntity, Window,
+    SharedString, Task, WeakEntity, Window, prelude::FluentBuilder,
 };
 use itertools::Itertools;
 use language::{
@@ -165,7 +167,6 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
-    debug_adapters: Arc<DapRegistry>,
     dap_store: Entity<DapStore>,
 
     breakpoint_store: Entity<BreakpointStore>,
@@ -834,7 +835,6 @@ impl Project {
         node: NodeRuntime,
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
-        debug_adapters: Arc<DapRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
         cx: &mut App,
@@ -873,6 +873,7 @@ impl Project {
                     languages.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
+                    worktree_store.clone(),
                     breakpoint_store.clone(),
                     cx,
                 )
@@ -955,7 +956,6 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
-                debug_adapters,
                 client,
                 task_store,
                 user_store,
@@ -1065,13 +1065,15 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into()));
+                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone()));
 
-            let dap_store = cx.new(|_| {
-                DapStore::new_remote(
+            let dap_store = cx.new(|cx| {
+                DapStore::new_ssh(
                     SSH_PROJECT_ID,
-                    client.clone().into(),
+                    ssh.clone(),
                     breakpoint_store.clone(),
+                    worktree_store.clone(),
+                    cx,
                 )
             });
 
@@ -1113,7 +1115,6 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
-                debug_adapters: Arc::new(DapRegistry::default()),
                 client,
                 task_store,
                 user_store,
@@ -1251,8 +1252,14 @@ impl Project {
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
-        let dap_store = cx.new(|_cx| {
-            DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())
+        let dap_store = cx.new(|cx| {
+            DapStore::new_collab(
+                remote_id,
+                client.clone().into(),
+                breakpoint_store.clone(),
+                worktree_store.clone(),
+                cx,
+            )
         })?;
 
         let lsp_store = cx.new(|cx| {
@@ -1337,7 +1344,6 @@ impl Project {
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
                 languages,
-                debug_adapters: Arc::new(DapRegistry::default()),
                 user_store: user_store.clone(),
                 task_store,
                 snippets,
@@ -1457,60 +1463,6 @@ impl Project {
         }
     }
 
-    pub fn start_debug_session(
-        &mut self,
-        config: DebugTaskDefinition,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Session>>> {
-        let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
-        };
-
-        let Some(adapter) = self.debug_adapters.adapter(&config.adapter) else {
-            return Task::ready(Err(anyhow!("Failed to find a debug adapter")));
-        };
-
-        let user_installed_path = ProjectSettings::get_global(cx)
-            .dap
-            .get(&adapter.name())
-            .and_then(|s| s.binary.as_ref().map(PathBuf::from));
-
-        let result = cx.spawn(async move |this, cx| {
-            let delegate = this.update(cx, |project, cx| {
-                project
-                    .dap_store
-                    .update(cx, |dap_store, cx| dap_store.delegate(&worktree, cx))
-            })?;
-
-            let task = this.update(cx, |project, cx| {
-                project.dap_store.read(cx).as_local().and_then(|local| {
-                    config.locator.is_some().then(|| {
-                        local.locate_binary(config.clone(), cx.background_executor().clone())
-                    })
-                })
-            })?;
-            let config = if let Some(task) = task {
-                task.await
-            } else {
-                config
-            };
-            let binary = adapter
-                .get_binary(&delegate, &config, user_installed_path, cx)
-                .await?;
-
-            let ret = this
-                .update(cx, |project, cx| {
-                    project.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.new_session(binary, config, worktree.downgrade(), None, cx)
-                    })
-                })?
-                .1
-                .await;
-            ret
-        });
-        result
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1520,7 +1472,6 @@ impl Project {
 
         let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
         let languages = LanguageRegistry::test(cx.background_executor().clone());
-        let debug_adapters = DapRegistry::default().into();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx
@@ -1534,7 +1485,6 @@ impl Project {
                     node_runtime::NodeRuntime::unavailable(),
                     user_store,
                     Arc::new(languages),
-                    debug_adapters,
                     fs,
                     None,
                     cx,
@@ -1565,7 +1515,6 @@ impl Project {
         use clock::FakeSystemClock;
 
         let languages = LanguageRegistry::test(cx.executor());
-        let debug_adapters = DapRegistry::fake();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
@@ -1576,7 +1525,6 @@ impl Project {
                 node_runtime::NodeRuntime::unavailable(),
                 user_store,
                 Arc::new(languages),
-                Arc::new(debug_adapters),
                 fs,
                 None,
                 cx,
@@ -1627,10 +1575,6 @@ impl Project {
 
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
-    }
-
-    pub fn debug_adapters(&self) -> &Arc<DapRegistry> {
-        &self.debug_adapters
     }
 
     pub fn client(&self) -> Arc<Client> {
@@ -3562,8 +3506,8 @@ impl Project {
 
         let Some(inline_value_provider) = session
             .read(cx)
-            .configuration()
-            .and_then(|config| self.debug_adapters().adapter(&config.adapter))
+            .adapter_name()
+            .map(|adapter_name| DapRegistry::global(cx).adapter(&adapter_name))
             .and_then(|adapter| adapter.inline_value_provider())
         else {
             return Task::ready(Err(anyhow::anyhow!("Inline value provider not found")));
@@ -3737,7 +3681,7 @@ impl Project {
             .filter(|buffer| {
                 let b = buffer.read(cx);
                 if let Some(file) = b.file() {
-                    if !search_query.file_matches(file.path()) {
+                    if !search_query.match_path(file.path()) {
                         return false;
                     }
                     if let Some(entry) = b
@@ -5138,7 +5082,7 @@ impl Completion {
     /// A key that can be used to sort completions when displaying
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
-        const DEFAULT_KIND_KEY: usize = 2;
+        const DEFAULT_KIND_KEY: usize = 3;
         let kind_key = self
             .source
             // `lsp::CompletionListItemDefaults` has no `kind` field
@@ -5147,6 +5091,7 @@ impl Completion {
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
                 lsp::CompletionItemKind::VARIABLE => Some(1),
+                lsp::CompletionItemKind::CONSTANT => Some(2),
                 _ => None,
             })
             .unwrap_or(DEFAULT_KIND_KEY);

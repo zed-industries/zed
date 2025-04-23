@@ -16,6 +16,7 @@ use release_channel::ReleaseChannel;
 use rope::Rope;
 use settings::Settings;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{
@@ -75,6 +76,7 @@ pub fn open_prompt_library(
     language_registry: Arc<LanguageRegistry>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
     make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
+    prompt_to_select: Option<PromptId>,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<PromptLibrary>>> {
     let store = PromptStore::global(cx);
@@ -88,7 +90,12 @@ pub fn open_prompt_library(
                     .find_map(|window| window.downcast::<PromptLibrary>());
                 if let Some(existing_window) = existing_window {
                     existing_window
-                        .update(cx, |_, window, _| window.activate_window())
+                        .update(cx, |prompt_library, window, cx| {
+                            if let Some(prompt_to_select) = prompt_to_select {
+                                prompt_library.load_prompt(prompt_to_select, true, window, cx);
+                            }
+                            window.activate_window()
+                        })
                         .ok();
 
                     Some(existing_window)
@@ -125,6 +132,7 @@ pub fn open_prompt_library(
                             language_registry,
                             inline_assist_delegate,
                             make_completion_provider,
+                            prompt_to_select,
                             window,
                             cx,
                         )
@@ -211,7 +219,8 @@ impl PickerDelegate for PromptPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let search = self.store.read(cx).search(query, cx);
+        let cancellation_flag = Arc::new(AtomicBool::default());
+        let search = self.store.read(cx).search(query, cancellation_flag, cx);
         let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
         cx.spawn_in(window, async move |this, cx| {
             let (matches, selected_index) = cx
@@ -343,13 +352,26 @@ impl PromptLibrary {
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
         make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
+        prompt_to_select: Option<PromptId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (selected_index, matches) = if let Some(prompt_to_select) = prompt_to_select {
+            let matches = store.read(cx).all_prompt_metadata();
+            let selected_index = matches
+                .iter()
+                .enumerate()
+                .find(|(_, metadata)| metadata.id == prompt_to_select)
+                .map_or(0, |(ix, _)| ix);
+            (selected_index, matches)
+        } else {
+            (0, vec![])
+        };
+
         let delegate = PromptPickerDelegate {
             store: store.clone(),
-            selected_index: 0,
-            matches: Vec::new(),
+            selected_index,
+            matches,
         };
 
         let picker = cx.new(|cx| {
@@ -914,6 +936,8 @@ impl PromptLibrary {
                         .update(|_, cx| {
                             model.count_tokens(
                                 LanguageModelRequest {
+                                    thread_id: None,
+                                    prompt_id: None,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],

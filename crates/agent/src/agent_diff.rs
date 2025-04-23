@@ -1,4 +1,4 @@
-use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent};
+use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
@@ -8,8 +8,8 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Subscription, Task, WeakEntity, Window, prelude::*,
+    Action, AnyElement, AnyView, App, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 use language::{Capability, DiskState, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
@@ -307,6 +307,10 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.thread.read(cx).is_generating() {
+            return;
+        }
+
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
         let diff_hunks_in_ranges = self
             .editor
@@ -339,6 +343,10 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.thread.read(cx).is_generating() {
+            return;
+        }
+
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
         let diff_hunks_in_ranges = self
             .editor
@@ -650,6 +658,11 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
+
+    if agent_diff.read(cx).thread.read(cx).is_generating() {
+        return Empty.into_any();
+    }
+
     h_flex()
         .h(line_height)
         .mr_0p5()
@@ -857,8 +870,14 @@ impl Render for AgentDiffToolbar {
             None => return div(),
         };
 
-        let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
+        let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
+        if is_generating {
+            return div()
+                .w(rems(6.5625)) // Arbitrary 105px size—so the label doesn't dance around
+                .child(AnimatedLabel::new("Generating"));
+        }
 
+        let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
         if is_empty {
             return div();
         }
@@ -969,7 +988,7 @@ mod tests {
             .await
             .unwrap();
         cx.update(|_, cx| {
-            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit(

@@ -201,7 +201,7 @@ impl AnthropicLanguageModelProvider {
             state: self.state.clone(),
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
-        }) as Arc<dyn LanguageModel>
+        })
     }
 }
 
@@ -227,14 +227,11 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = anthropic::Model::default();
-        Some(Arc::new(AnthropicModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(anthropic::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(anthropic::Model::default_fast()))
     }
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -335,6 +332,12 @@ pub fn count_anthropic_tokens(
                 match content {
                     MessageContent::Text(text) => {
                         string_contents.push_str(&text);
+                    }
+                    MessageContent::Thinking { .. } => {
+                        // Thinking blocks are not included in the input token count.
+                    }
+                    MessageContent::RedactedThinking(_) => {
+                        // Thinking blocks are not included in the input token count.
                     }
                     MessageContent::Image(image) => {
                         tokens_from_images += image.estimate_tokens();
@@ -515,6 +518,29 @@ pub fn into_anthropic(
                                 None
                             }
                         }
+                        MessageContent::Thinking {
+                            text: thinking,
+                            signature,
+                        } => {
+                            if !thinking.is_empty() {
+                                Some(anthropic::RequestContent::Thinking {
+                                    thinking,
+                                    signature: signature.unwrap_or_default(),
+                                    cache_control,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::RedactedThinking(data) => {
+                            if !data.is_empty() {
+                                Some(anthropic::RequestContent::RedactedThinking {
+                                    data: String::from_utf8(data).ok()?,
+                                })
+                            } else {
+                                None
+                            }
+                        }
                         MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
                             source: anthropic::ImageSource {
                                 source_type: "base64".to_string(),
@@ -637,7 +663,10 @@ pub fn map_to_language_model_completion_events(
                             }
                             ResponseContent::Thinking { thinking } => {
                                 return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Thinking(thinking))],
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: thinking,
+                                        signature: None,
+                                    })],
                                     state,
                                 ));
                             }
@@ -665,34 +694,68 @@ pub fn map_to_language_model_completion_events(
                             }
                             ContentDelta::ThinkingDelta { thinking } => {
                                 return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Thinking(thinking))],
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: thinking,
+                                        signature: None,
+                                    })],
                                     state,
                                 ));
                             }
-                            ContentDelta::SignatureDelta { .. } => {}
+                            ContentDelta::SignatureDelta { signature } => {
+                                return Some((
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: "".to_string(),
+                                        signature: Some(signature),
+                                    })],
+                                    state,
+                                ));
+                            }
                             ContentDelta::InputJsonDelta { partial_json } => {
                                 if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
                                     tool_use.input_json.push_str(&partial_json);
+
+                                    // Try to convert invalid (incomplete) JSON into
+                                    // valid JSON that serde can accept, e.g. by closing
+                                    // unclosed delimiters. This way, we can update the
+                                    // UI with whatever has been streamed back so far.
+                                    if let Ok(input) = serde_json::Value::from_str(
+                                        &partial_json_fixer::fix_json(&tool_use.input_json),
+                                    ) {
+                                        return Some((
+                                            vec![Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_use.id.clone().into(),
+                                                    name: tool_use.name.clone().into(),
+                                                    is_input_complete: false,
+                                                    input,
+                                                },
+                                            ))],
+                                            state,
+                                        ));
+                                    }
                                 }
                             }
                         },
                         Event::ContentBlockStop { index } => {
                             if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
+                                let input_json = tool_use.input_json.trim();
+
                                 return Some((
                                     vec![maybe!({
                                         Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
                                                 id: tool_use.id.into(),
                                                 name: tool_use.name.into(),
-                                                input: if tool_use.input_json.is_empty() {
+                                                is_input_complete: true,
+                                                input: if input_json.is_empty() {
                                                     serde_json::Value::Object(
                                                         serde_json::Map::default(),
                                                     )
                                                 } else {
                                                     serde_json::Value::from_str(
-                                                        &tool_use.input_json,
+                                                        input_json
                                                     )
-                                                    .map_err(|err| anyhow!(err))?
+                                                    .map_err(|err| anyhow!("Error parsing tool call input JSON: {err:?} - JSON string was: {input_json:?}"))?
                                                 },
                                             },
                                         ))

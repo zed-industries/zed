@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{AnyWindowHandle, App, AsyncApp, Entity, Task};
 use language::{self, Anchor, Buffer, BufferSnapshot, Location, Point, ToPoint, ToPointUtf16};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -121,6 +121,7 @@ impl Tool for SymbolInfoTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<SymbolInfoToolInput>(input) {
@@ -140,7 +141,7 @@ impl Tool for SymbolInfoTool {
             };
 
             action_log.update(cx, |action_log, cx| {
-                action_log.buffer_read(buffer.clone(), cx);
+                action_log.track_buffer(buffer.clone(), cx);
             })?;
 
             let position = {

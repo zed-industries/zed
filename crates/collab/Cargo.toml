@@ -128,6 +128,7 @@ serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 sqlx = { version = "0.8", features = ["sqlite"] }
+task.workspace = true
 theme.workspace = true
 unindent.workspace = true
 util.workspace = true

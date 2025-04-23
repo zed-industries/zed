@@ -103,11 +103,11 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let Some(threads) = self.thread_store.upgrade() else {
+        let Some(thread_store) = self.thread_store.upgrade() else {
             return Task::ready(());
         };
 
-        let search_task = search_threads(query, Arc::new(AtomicBool::default()), threads, cx);
+        let search_task = search_threads(query, Arc::new(AtomicBool::default()), thread_store, cx);
         cx.spawn_in(window, async move |this, cx| {
             let matches = search_task.await;
             this.update(cx, |this, cx| {
@@ -217,15 +217,15 @@ pub(crate) fn search_threads(
     thread_store: Entity<ThreadStore>,
     cx: &mut App,
 ) -> Task<Vec<ThreadMatch>> {
-    let threads = thread_store.update(cx, |this, _cx| {
-        this.threads()
-            .into_iter()
-            .map(|thread| ThreadContextEntry {
-                id: thread.id,
-                summary: thread.summary,
-            })
-            .collect::<Vec<_>>()
-    });
+    let threads = thread_store
+        .read(cx)
+        .threads()
+        .into_iter()
+        .map(|thread| ThreadContextEntry {
+            id: thread.id,
+            summary: thread.summary,
+        })
+        .collect::<Vec<_>>();
 
     let executor = cx.background_executor().clone();
     cx.background_spawn(async move {

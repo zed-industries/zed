@@ -125,6 +125,8 @@ impl Settings for SshSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 pub struct SshPrompt {
@@ -570,7 +572,6 @@ pub async fn open_ssh_project(
                 app_state.node_runtime.clone(),
                 app_state.user_store.clone(),
                 app_state.languages.clone(),
-                app_state.debug_adapters.clone(),
                 app_state.fs.clone(),
                 None,
                 cx,

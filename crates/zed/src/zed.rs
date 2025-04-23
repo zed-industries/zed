@@ -444,7 +444,7 @@ fn initialize_panels(
                     window,
                     async move |workspace: gpui::WeakEntity<Workspace>,
                                 cx: &mut AsyncWindowContext| {
-                        let debug_panel = DebugPanel::load(workspace.clone(), cx.clone()).await?;
+                        let debug_panel = DebugPanel::load(workspace.clone(), cx).await?;
                         workspace.update_in(cx, |workspace, window, cx| {
                             workspace.add_panel(debug_panel, window, cx);
                         })?;
@@ -1224,9 +1224,9 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+    let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
     cx.on_keyboard_layout_change(move |cx| {
-        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+        let next_mapping = settings::get_key_equivalents(cx.keyboard_layout().id());
         if next_mapping != current_mapping {
             current_mapping = next_mapping;
             keyboard_layout_tx.unbounded_send(()).ok();

@@ -413,4 +413,6 @@ impl settings::Settings for AllLanguageModelSettings {
 
         Ok(settings)
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
