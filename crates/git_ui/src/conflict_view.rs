@@ -44,6 +44,13 @@ impl editor::Addon for ConflictAddon {
 }
 
 pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mut Context<Editor>) {
+    // Only show conflict UI for singletons and in the project diff.
+    if !editor.buffer().read(cx).is_singleton()
+        && !editor.buffer().read(cx).all_diff_hunks_expanded()
+    {
+        return;
+    }
+
     editor.register_addon(ConflictAddon {
         buffers: Default::default(),
     });
