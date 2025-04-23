@@ -27,7 +27,6 @@ project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-settings_ui.workspace = true
 telemetry.workspace = true
 ui.workspace = true
 util.workspace = true
