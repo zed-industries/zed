@@ -143,7 +143,7 @@ impl PickerDelegate for RulesContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, cx| {
-                        context_store.add_rules(prompt_id, title, text, true, cx)
+                        context_store.add_rules(prompt_id, true, cx)
                     })
                     .ok();
             })
@@ -179,8 +179,8 @@ pub fn render_thread_context_entry(
     context_store: WeakEntity<ContextStore>,
     cx: &mut App,
 ) -> Div {
-    let added = context_store.upgrade().map_or(false, |ctx_store| {
-        ctx_store
+    let added = context_store.upgrade().map_or(false, |context_store| {
+        context_store
             .read(cx)
             .includes_user_rules(&user_rules.prompt_id)
             .is_some()

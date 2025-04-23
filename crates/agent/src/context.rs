@@ -1,9 +1,10 @@
 use std::hash::{Hash, Hasher};
+use std::usize;
 use std::{ops::Range, path::Path, sync::Arc};
 
 use anyhow::Context as _;
 use anyhow::Result;
-use collections::HashSet;
+use collections::{FxHasher, HashSet};
 use fs::Fs;
 use futures::future;
 use futures::{FutureExt, future::Shared};
@@ -14,13 +15,34 @@ use language_model::{LanguageModelImage, LanguageModelRequestMessage};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::{Point, Rope};
-use text::Anchor;
+use text::{Anchor, OffsetRangeExt as _};
 use ui::{ElementId, IconName};
-use util::ResultExt as _;
+use util::{ResultExt as _, post_inc};
 
-use crate::thread::Thread;
+use crate::ThreadStore;
+use crate::context_store::ContextStore;
+use crate::thread::{DetailedSummaryState, Thread, ThreadId};
 
 pub const RULES_ICON: IconName = IconName::Context;
+
+/// ID created at time of context add, for use in ElementId. This is not the stable identity of a
+/// context, instead that's handled by the `Eq` and `Hash` of `ContextSetEntry`.
+#[derive(Debug, Clone)]
+pub struct ContextElementId(usize);
+
+impl ContextElementId {
+    pub fn zero() -> Self {
+        ContextElementId(0)
+    }
+
+    pub fn for_query() -> Self {
+        ContextElementId(usize::MAX)
+    }
+
+    pub fn post_inc(&mut self) -> Self {
+        Self(post_inc(&mut self.0))
+    }
+}
 
 pub enum ContextKind {
     File,
@@ -57,41 +79,32 @@ impl ContextKind {
 /// * Use IDs that are stable enough for tracking renames and identifying when context has already
 /// been added to the thread. For example, `ProjectEntryId` is used instead of `ProjectPath` for
 /// `DirectoryContext` so that it follows renames.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub enum AssistantContext {
     File(FileContext),
     Directory(DirectoryContext),
     Symbol(SymbolContext),
-    /*
+    Selection(SelectionContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
-    Selection(SelectionContext),
     Rules(RulesContext),
+    /*
     Image(ImageContext),
     */
 }
 
 impl AssistantContext {
-    pub fn element_id(&self, name: &'static str) -> ElementId {
-        // TODO: Ideally ElementId would have types that can avoid building a name String here.
-        match self {
-            Self::File(context) => ElementId::NamedInteger(
-                (name.to_string() + "-file").into(),
-                // TODO: avoid potential panic here on 32 bit machines
-                context.buffer.entity_id().as_u64().try_into().unwrap(),
-            ),
-            Self::Directory(context) => ElementId::NamedInteger(
-                (name.to_string() + "-directory").into(),
-                context.entry_id.to_usize(),
-            ),
-            Self::Symbol(context) => {
-                ElementId::NamedInteger(
-                    (name.to_string() + "-symbol-" + &context.symbol).into(),
-                    // TODO: avoid potential panic here on 32 bit machines
-                    context.buffer.entity_id().as_u64().try_into().unwrap(),
-                )
-            }
-        }
+    pub fn element_id(&self, name: SharedString) -> ElementId {
+        let context_element_id = match self {
+            Self::File(context) => &context.element_id,
+            Self::Directory(context) => &context.element_id,
+            Self::Symbol(context) => &context.element_id,
+            Self::Selection(context) => &context.element_id,
+            Self::FetchedUrl(context) => &context.element_id,
+            Self::Thread(context) => &context.element_id,
+            Self::Rules(context) => &context.element_id,
+        };
+        ElementId::NamedInteger(name, context_element_id.0)
     }
 }
 
@@ -100,18 +113,19 @@ impl AssistantContext {
 /// This holds an `Entity<Buffer>` so that file path renames affect its display and so that it can
 /// be opened even if the file has been deleted. An alternative might be to use `ProjectEntryId`,
 /// but then when deleted there is no path info or ability to open.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct FileContext {
     pub buffer: Entity<Buffer>,
+    pub element_id: ContextElementId,
 }
 
 impl FileContext {
     pub fn eq_for_context_set(&self, other: &Self) -> bool {
-        self == other
+        self.buffer == other.buffer
     }
 
     pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
-        self.hash(state)
+        self.buffer.hash(state)
     }
 
     // todo! inline?
@@ -131,7 +145,7 @@ impl FileContext {
         };
         let full_path = file.full_path(cx);
         let rope = buffer_ref.as_rope().clone();
-        let buffer = self.buffer.clone();
+        let buffer = self.buffer;
         Some(
             cx.background_spawn(
                 async move { (to_fenced_codeblock(&full_path, rope, None), buffer) },
@@ -143,18 +157,19 @@ impl FileContext {
 /// Directory contents provides the entire contents of text files in a directory.
 ///
 /// This has a `ProjectEntryId` so that it follows renames.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct DirectoryContext {
     pub entry_id: ProjectEntryId,
+    pub element_id: ContextElementId,
 }
 
 impl DirectoryContext {
     pub fn eq_for_context_set(&self, other: &Self) -> bool {
-        self == other
+        self.entry_id == other.entry_id
     }
 
     pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
-        self.hash(state)
+        self.entry_id.hash(state)
     }
 
     // todo! remove?
@@ -206,7 +221,7 @@ impl DirectoryContext {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct SymbolContext {
     pub buffer: Entity<Buffer>,
     pub symbol: SharedString,
@@ -216,6 +231,7 @@ pub struct SymbolContext {
     ///
     /// Note: not used by Eq and Hash for ContextSetEntry
     pub enclosing_range: Range<Anchor>,
+    pub element_id: ContextElementId,
 }
 
 impl SymbolContext {
@@ -237,36 +253,147 @@ impl SymbolContext {
         };
         let full_path = file.full_path(cx);
         let rope = buffer_ref
-            .text_for_range(self.range.clone())
+            .text_for_range(self.enclosing_range.clone())
             .collect::<Rope>();
-        let buffer = self.buffer.clone();
-        Some(cx.background_spawn(
-            // todo! codeblock should mention it's for a particular symbol
-            async move { (to_fenced_codeblock(&full_path, rope, None), buffer) },
-        ))
+        let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
+        let buffer = self.buffer;
+        Some(cx.background_spawn(async move {
+            (
+                to_fenced_codeblock(&full_path, rope, Some(line_range)),
+                buffer,
+            )
+        }))
     }
 }
 
-/*
+#[derive(Debug, Clone)]
+pub struct SelectionContext {
+    pub buffer: Entity<Buffer>,
+    pub range: Range<Anchor>,
+    pub element_id: ContextElementId,
+}
+
+impl SelectionContext {
+    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+        self.buffer == other.buffer && self.range == other.range
+    }
+
+    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+        self.buffer.hash(state);
+        self.range.hash(state);
+    }
+
+    fn load(self, cx: &mut App) -> Option<Task<(String, Entity<Buffer>)>> {
+        let buffer_ref = self.buffer.read(cx);
+        let Some(file) = buffer_ref.file() else {
+            log::error!("selection context's file has no path");
+            return None;
+        };
+        let full_path = file.full_path(cx);
+        let rope = buffer_ref
+            .text_for_range(self.range.clone())
+            .collect::<Rope>();
+        let line_range = self.range.to_point(&buffer_ref.snapshot());
+        let buffer = self.buffer;
+        Some(cx.background_spawn(async move {
+            (
+                to_fenced_codeblock(&full_path, rope, Some(line_range)),
+                buffer,
+            )
+        }))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FetchedUrlContext {
     pub url: SharedString,
+    /// Text contents of the fetched url. Unlike other context types, the contents of this gets
+    /// populated when added rather than when sending the message.
+    ///
+    /// Note: not used by Eq and Hash for ContextSetEntry
+    pub text: SharedString,
+    pub element_id: ContextElementId,
+}
+
+impl FetchedUrlContext {
+    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+        self.url == other.url
+    }
+
+    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+        self.url.hash(state);
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct ThreadContext {
-    pub thread_id: ThreadId,
+    pub thread: Entity<Thread>,
+    pub element_id: ContextElementId,
 }
 
 impl ThreadContext {
-    pub fn summary(&self, cx: &App) -> SharedString {
+    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+        self.thread == other.thread
+    }
+
+    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+        self.thread.hash(state)
+    }
+
+    pub fn name(&self, cx: &App) -> SharedString {
         self.thread
             .read(cx)
             .summary()
-            .unwrap_or("New thread".into())
+            .unwrap_or_else(|| "New thread".into())
+    }
+
+    pub fn load(&self, cx: &App) -> String {
+        let name = self.name(cx);
+        let contents = self.thread.read(cx).latest_detailed_summary_or_text();
+        // todo! better format
+        let mut text = String::new();
+        text.push_str(&name);
+        text.push('\n');
+        text.push_str(&contents.trim());
+        text.push('\n');
+        text
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RulesContext {
+    pub prompt_id: UserPromptId,
+    pub element_id: ContextElementId,
+}
+
+impl RulesContext {
+    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+        self.prompt_id == other.prompt_id
+    }
+
+    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+        self.prompt_id.hash(state)
+    }
+
+    pub fn load(&self, thread_store: &Entity<ThreadStore>, cx: &App) -> Task<Option<String>> {
+        let rules_task = thread_store.read(cx).load_rules(self.prompt_id, cx);
+        cx.background_spawn(async move {
+            let (metadata, contents) = rules_task.await.log_err()?;
+            let mut text = String::new();
+            if let Some(title) = metadata.title {
+                text.push_str("Rules title: ");
+                text.push_str(&title);
+                text.push('\n');
+            }
+            text.push_str("``````\n");
+            text.push_str(contents.trim());
+            text.push_str("\n``````\n");
+            Some(text)
+        })
+    }
+}
+
+/*
 #[derive(Debug, Clone)]
 pub struct ImageContext {
     pub id: ContextId,
@@ -291,46 +418,22 @@ impl ImageContext {
             .unwrap_or(false)
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct SelectionContext {
-    pub id: ContextId,
-    pub range: Range<Anchor>,
-    pub line_range: Range<Point>,
-    pub context_buffer: ContextBuffer,
-}
-
-#[derive(Debug, Clone)]
-pub struct RulesContext {
-    pub prompt_id: UserPromptId,
-}
-
-pub fn attach_context_to_message<'a>(
-    message: &mut LanguageModelRequestMessage,
-    contexts: impl Iterator<Item = &'a AssistantContext>,
-    cx: &App,
-) {
-    if let Some(context_string) = load_context_string(contexts, cx) {
-        message.content.push(context_string.into());
-    }
-}
 */
 
 /// Loads and formats a collection of contexts.
 pub fn load_context<'a>(
     contexts: impl Iterator<Item = &'a AssistantContext>,
     project: Entity<Project>,
+    thread_store: Entity<ThreadStore>,
     cx: &mut App,
 ) -> Task<(Option<String>, HashSet<Entity<Buffer>>)> {
     let mut file_context_tasks = Vec::new();
     let mut directory_context_tasks = Vec::new();
     let mut symbol_context_tasks = Vec::new();
-    /*
-    let mut excerpt_context = Vec::new();
+    let mut selection_context_tasks = Vec::new();
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
-    let mut rules_context = Vec::new();
-    */
+    let mut rules_context_tasks = Vec::new();
 
     let contexts = contexts.cloned().collect::<Vec<_>>();
 
@@ -341,36 +444,40 @@ pub fn load_context<'a>(
                 directory_context_tasks.extend(context.load(project.clone(), cx))
             }
             AssistantContext::Symbol(context) => symbol_context_tasks.extend(context.load(cx)),
-            /*
-            AssistantContext::Excerpt(context) => excerpt_context.push(context.load(cx)),
-            AssistantContext::FetchedUrl(context) => fetch_context.push(context.load(cx)),
+            AssistantContext::Selection(context) => {
+                selection_context_tasks.extend(context.load(cx))
+            }
+            AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context.load(cx)),
-            AssistantContext::Rules(context) => rules_context.push(context.load(cx)),
-            */
+            AssistantContext::Rules(context) => {
+                rules_context_tasks.push(context.load(&thread_store, cx))
+            }
         }
     }
 
-    if file_context_tasks.is_empty()
-        && directory_context_tasks.is_empty()
-        && symbol_context_tasks.is_empty()
-    /*
-    && excerpt_context.is_empty()
-    && fetch_context.is_empty()
-    && thread_context.is_empty()
-    && rules_context.is_empty()
-    */
-    {
-        return Task::ready((None, HashSet::default()));
-    }
-
     cx.background_spawn(async move {
-        let (file_context, directory_context, symbol_context) =
+        let (file_context, directory_context, symbol_context, selection_context, rules_context) =
             futures::join!(
                 future::join_all(file_context_tasks),
                 future::join_all(directory_context_tasks),
-                future::join_all(symbol_context_tasks));
+                future::join_all(symbol_context_tasks),
+                future::join_all(selection_context_tasks),
+                future::join_all(rules_context_tasks),
+            );
 
         let directory_context = directory_context.into_iter().flat_map(|context| context).collect::<Vec<_>>();
+        let rules_context = rules_context.into_iter().flatten().collect::<Vec<_>>();
+
+        if file_context.is_empty()
+            && directory_context.is_empty()
+            && symbol_context.is_empty()
+            && selection_context.is_empty()
+            && fetch_context.is_empty()
+            && thread_context.is_empty()
+            && rules_context.is_empty()
+        {
+            return (None, HashSet::default());
+        }
 
         let mut buffers = HashSet::default();
 
@@ -408,43 +515,33 @@ pub fn load_context<'a>(
             result.push_str("</symbols>\n");
         }
 
-        /*
-        if !excerpt_context.is_empty() {
-            result.push_str("<excerpts>\n");
-            for context in excerpt_context {
-                result.push_str(&context.context_buffer.text);
-                result.push('\n');
-            }
-            result.push_str("</excerpts>\n");
-        }
-
         if !selection_context.is_empty() {
-            result.push_str("<selections>\n");
-            for context in selection_context {
-                result.push_str(&context.context_buffer.text);
+            result.push_str("<selections>");
+            for (text, buffer) in selection_context {
                 result.push('\n');
+                result.push_str(&text);
+                buffers.insert(buffer);
             }
             result.push_str("</selections>\n");
         }
 
         if !fetch_context.is_empty() {
-            result.push_str("<fetched_urls>\n");
-            for context in &fetch_context {
+            result.push_str("<fetched_urls>");
+            for context in fetch_context {
+                // todo! Better formatting
+                result.push('\n');
                 result.push_str(&context.url);
                 result.push('\n');
                 result.push_str(&context.text);
-                result.push('\n');
             }
             result.push_str("</fetched_urls>\n");
         }
 
         if !thread_context.is_empty() {
-            result.push_str("<conversation_threads>\n");
-            for context in &thread_context {
-                result.push_str(&context.summary(cx));
+            result.push_str("<conversation_threads>");
+            for text in thread_context {
                 result.push('\n');
-                result.push_str(&context.text);
-                result.push('\n');
+                result.push_str(&text);
             }
             result.push_str("</conversation_threads>\n");
         }
@@ -452,15 +549,14 @@ pub fn load_context<'a>(
         if !rules_context.is_empty() {
             result.push_str(
                 "<user_rules>\n\
-                The user has specified the following rules that should be applied:\n\n",
+                The user has specified the following rules that should be applied:\n",
             );
-            for context in &rules_context {
-                result.push_str(&context.text);
+            for text in rules_context {
                 result.push('\n');
+                result.push_str(&text);
             }
             result.push_str("</user_rules>\n");
         }
-        */
 
         result.push_str("</context>\n");
         (Some(result), buffers)

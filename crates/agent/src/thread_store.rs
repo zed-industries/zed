@@ -358,16 +358,27 @@ impl ThreadStore {
         prompt_id: UserPromptId,
         cx: &App,
     ) -> Task<Result<(PromptMetadata, String)>> {
-        let prompt_id = PromptId::User { uuid: prompt_id };
         let Some(prompt_store) = self.prompt_store.as_ref() else {
             return Task::ready(Err(anyhow!("Prompt store unexpectedly missing.")));
         };
         let prompt_store = prompt_store.read(cx);
+        let prompt_id: PromptId = prompt_id.into();
         let Some(metadata) = prompt_store.metadata(prompt_id) else {
             return Task::ready(Err(anyhow!("User rules not found in library.")));
         };
         let text_task = prompt_store.load(prompt_id, cx);
         cx.background_spawn(async move { Ok((metadata, text_task.await?)) })
+    }
+
+    pub fn rules_metadata(&self, prompt_id: UserPromptId, cx: &App) -> Result<PromptMetadata> {
+        let Some(prompt_store) = self.prompt_store.as_ref() else {
+            return Err(anyhow!("Prompt store unexpectedly missing."));
+        };
+        let prompt_store = prompt_store.read(cx);
+        let Some(metadata) = prompt_store.metadata(prompt_id.into()) else {
+            return Err(anyhow!("User rules not found in library."));
+        };
+        Ok(metadata)
     }
 
     pub fn tools(&self) -> Entity<ToolWorkingSet> {
@@ -379,14 +390,10 @@ impl ThreadStore {
         self.threads.len()
     }
 
-    pub fn threads(&self) -> Vec<SerializedThreadMetadata> {
+    pub fn reverse_chronological_threads(&self) -> Vec<SerializedThreadMetadata> {
         let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
         threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
         threads
-    }
-
-    pub fn recent_threads(&self, limit: usize) -> Vec<SerializedThreadMetadata> {
-        self.threads().into_iter().take(limit).collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {

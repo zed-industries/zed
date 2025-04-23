@@ -1482,6 +1482,7 @@ impl ActiveThread {
         let context_store = self.context_store.clone();
         let workspace = self.workspace.clone();
         let thread = self.thread.read(cx);
+        let thread_store = self.thread_store.read(cx);
 
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
@@ -1489,7 +1490,7 @@ impl ActiveThread {
             let project = workspace.read(cx).project().read(cx);
             thread
                 .context_for_message(message_id)
-                .flat_map(|context| AddedContext::new(context.clone(), project, cx))
+                .flat_map(|context| AddedContext::new(context.clone(), thread_store, project, cx))
                 .collect::<Vec<_>>()
         } else {
             return Empty.into_any();
@@ -3231,6 +3232,7 @@ pub(crate) fn open_context(
                 });
             }
         }
+
         AssistantContext::Directory(directory_context) => {
             let entry_id = directory_context.entry_id;
             workspace.update(cx, |workspace, cx| {
@@ -3239,51 +3241,50 @@ pub(crate) fn open_context(
                 })
             })
         }
+
         AssistantContext::Symbol(symbol_context) => {
-            if let Some(project_path) = symbol_context.buffer.read(cx).project_path(cx) {
-                let snapshot = symbol_context.buffer.read(cx).snapshot();
+            let buffer = symbol_context.buffer.read(cx);
+            if let Some(project_path) = buffer.project_path(cx) {
+                let snapshot = buffer.snapshot();
                 let target_position = symbol_context.range.start.to_point(&snapshot);
                 open_editor_at_position(project_path, target_position, &workspace, window, cx)
                     .detach();
             }
-        } /*
-          AssistantContext::Selection(selection_context) => {
-              if let Some(project_path) = selection_context
-                  .context_buffer
-                  .buffer
-                  .read(cx)
-                  .project_path(cx)
-              {
-                  let snapshot = selection_context.context_buffer.buffer.read(cx).snapshot();
-                  let target_position = selection_context.range.start.to_point(&snapshot);
+        }
 
-                  open_editor_at_position(project_path, target_position, &workspace, window, cx)
-                      .detach();
-              }
-          }
-          AssistantContext::FetchedUrl(fetched_url_context) => {
-              cx.open_url(&fetched_url_context.url);
-          }
-          AssistantContext::Thread(thread_context) => {
-              let thread_id = thread_context.thread.read(cx).id().clone();
-              workspace.update(cx, |workspace, cx| {
-                  if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                      panel.update(cx, |panel, cx| {
-                          panel
-                              .open_thread(&thread_id, window, cx)
-                              .detach_and_log_err(cx)
-                      });
-                  }
-              })
-          }
-          AssistantContext::Rules(rules_context) => window.dispatch_action(
-              Box::new(OpenPromptLibrary {
-                  prompt_to_select: Some(rules_context.prompt_id.0),
-              }),
-              cx,
-          ),
-          AssistantContext::Image(_) => {}
-          */
+        AssistantContext::Selection(selection_context) => {
+            let buffer = selection_context.buffer.read(cx);
+            if let Some(project_path) = buffer.project_path(cx) {
+                let snapshot = buffer.snapshot();
+                let target_position = selection_context.range.start.to_point(&snapshot);
+
+                open_editor_at_position(project_path, target_position, &workspace, window, cx)
+                    .detach();
+            }
+        }
+
+        AssistantContext::FetchedUrl(fetched_url_context) => {
+            cx.open_url(&fetched_url_context.url);
+        }
+
+        AssistantContext::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    let thread_id = thread_context.thread.read(cx).id().clone();
+                    panel
+                        .open_thread(&thread_id, window, cx)
+                        .detach_and_log_err(cx)
+                });
+            }
+        }),
+
+        AssistantContext::Rules(rules_context) => window.dispatch_action(
+            Box::new(OpenPromptLibrary {
+                prompt_to_select: Some(rules_context.prompt_id.0),
+            }),
+            cx,
+        ),
+        // AssistantContext::Image(_) => {}
     }
 }
 

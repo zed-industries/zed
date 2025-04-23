@@ -18,7 +18,10 @@ use text::{Anchor, BufferId, OffsetRangeExt};
 use util::ResultExt as _;
 
 use crate::ThreadStore;
-use crate::context::{AssistantContext, DirectoryContext, FileContext, SymbolContext};
+use crate::context::{
+    AssistantContext, ContextElementId, DirectoryContext, FetchedUrlContext, FileContext,
+    RulesContext, SelectionContext, SymbolContext, ThreadContext,
+};
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
 
@@ -26,6 +29,7 @@ pub struct ContextStore {
     project: WeakEntity<Project>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     thread_summary_tasks: Vec<Task<()>>,
+    next_context_element_id: ContextElementId,
     // todo! rename to context_set?
     context: IndexSet<ContextSetEntry>,
 }
@@ -39,6 +43,7 @@ impl ContextStore {
             project,
             thread_store,
             thread_summary_tasks: Vec::new(),
+            next_context_element_id: ContextElementId::zero(),
             context: IndexSet::default(),
         }
     }
@@ -78,13 +83,15 @@ impl ContextStore {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
+        let element_id = self.next_context_element_id.post_inc();
+
         cx.spawn(async move |this, cx| {
             let open_buffer_task = project.update(cx, |project, cx| {
                 project.open_buffer(project_path.clone(), cx)
             })?;
 
             let buffer = open_buffer_task.await?;
-            let context = AssistantContext::File(FileContext { buffer });
+            let context = AssistantContext::File(FileContext { buffer, element_id });
 
             let already_included = this.update(cx, |this, cx| {
                 if this.has_context(&context) {
@@ -97,13 +104,11 @@ impl ContextStore {
                 }
             })?;
 
-            if already_included {
-                return anyhow::Ok(());
+            if !already_included {
+                this.update(cx, |this, cx| {
+                    this.insert_context(context, cx);
+                })?;
             }
-
-            this.update(cx, |this, cx| {
-                this.insert_context(context, cx);
-            })?;
 
             anyhow::Ok(())
         })
@@ -127,18 +132,19 @@ impl ContextStore {
             return Err(anyhow!("no entry found for directory context"));
         };
 
-        let context = AssistantContext::Directory(DirectoryContext { entry_id });
+        let element_id = self.next_context_element_id.post_inc();
+        let context = AssistantContext::Directory(DirectoryContext {
+            entry_id,
+            element_id,
+        });
 
         if self.has_context(&context) {
             if remove_if_exists {
                 self.remove_context(&context, cx);
             }
-            return Ok(());
-        } else if self.path_included_in_directory(&project_path, cx).is_some() {
-            return Ok(());
+        } else if !self.path_included_in_directory(&project_path, cx).is_some() {
+            self.insert_context(context, cx);
         }
-
-        self.insert_context(context, cx);
 
         anyhow::Ok(())
     }
@@ -152,11 +158,13 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> bool {
+        let element_id = self.next_context_element_id.post_inc();
         let context = AssistantContext::Symbol(SymbolContext {
             buffer,
             symbol,
             range,
             enclosing_range,
+            element_id,
         });
 
         if self.has_context(&context) {
@@ -169,22 +177,26 @@ impl ContextStore {
         self.insert_context(context, cx)
     }
 
-    /*
     pub fn add_thread(
         &mut self,
         thread: Entity<Thread>,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) {
-        if let Some(context_id) = self.includes_thread(&thread.read(cx).id()) {
+        let element_id = self.next_context_element_id.post_inc();
+        let context = AssistantContext::Thread(ThreadContext { thread, element_id });
+
+        if self.has_context(&context) {
             if remove_if_exists {
-                self.remove_context(context_id, cx);
+                self.remove_context(&context, cx);
             }
         } else {
-            self.insert_thread(thread, cx);
+            self.insert_context(context, cx);
+            // todo! handle summaries tasks
         }
     }
 
+    /*
     pub fn wait_for_summaries(&mut self, cx: &App) -> Task<()> {
         let tasks = std::mem::take(&mut self.thread_summary_tasks);
 
@@ -224,41 +236,27 @@ impl ContextStore {
             .push(AssistantContext::Thread(ThreadContext { id, thread, text }));
         cx.notify();
     }
+    */
 
     pub fn add_rules(
         &mut self,
         prompt_id: UserPromptId,
-        title: impl Into<SharedString>,
-        text: impl Into<SharedString>,
         remove_if_exists: bool,
         cx: &mut Context<ContextStore>,
     ) {
-        if let Some(context_id) = self.includes_user_rules(&prompt_id) {
+        let element_id = self.next_context_element_id.post_inc();
+        let context = AssistantContext::Rules(RulesContext {
+            prompt_id,
+            element_id,
+        });
+
+        if self.has_context(&context) {
             if remove_if_exists {
-                self.remove_context(context_id, cx);
+                self.remove_context(&context, cx);
             }
         } else {
-            self.insert_user_rules(prompt_id, title, text, cx);
+            self.insert_context(&context, cx);
         }
-    }
-
-    pub fn insert_user_rules(
-        &mut self,
-        prompt_id: UserPromptId,
-        title: impl Into<SharedString>,
-        text: impl Into<SharedString>,
-        cx: &mut Context<ContextStore>,
-    ) {
-        let id = self.next_context_id.post_inc();
-
-        self.user_rules.insert(prompt_id, id);
-        self.context.push(AssistantContext::Rules(RulesContext {
-            id,
-            prompt_id,
-            title: title.into(),
-            text: text.into(),
-        }));
-        cx.notify();
     }
 
     pub fn add_fetched_url(
@@ -267,29 +265,16 @@ impl ContextStore {
         text: impl Into<SharedString>,
         cx: &mut Context<ContextStore>,
     ) {
-        if self.includes_url(&url).is_none() {
-            self.insert_fetched_url(url, text, cx);
-        }
+        let context = AssistantContext::FetchedUrl(FetchedUrlContext {
+            url: url.into(),
+            text: text.into(),
+            element_id: self.next_context_element_id.post_inc(),
+        });
+
+        self.insert_context(context, cx);
     }
 
-    fn insert_fetched_url(
-        &mut self,
-        url: String,
-        text: impl Into<SharedString>,
-        cx: &mut Context<ContextStore>,
-    ) {
-        let id = self.next_context_id.post_inc();
-
-        self.fetched_urls.insert(url.clone(), id);
-        self.context
-            .push(AssistantContext::FetchedUrl(FetchedUrlContext {
-                id,
-                url: url.into(),
-                text: text.into(),
-            }));
-        cx.notify();
-    }
-
+    /*
     pub fn add_image(&mut self, image: Arc<Image>, cx: &mut Context<ContextStore>) {
         let image_task = LanguageModelImage::from_image(image.clone(), cx).shared();
         let id = self.next_context_id.post_inc();
@@ -315,46 +300,22 @@ impl ContextStore {
             join_all(tasks).await;
         })
     }
+    */
 
     pub fn add_selection(
         &mut self,
         buffer: Entity<Buffer>,
         range: Range<Anchor>,
         cx: &mut Context<ContextStore>,
-    ) -> Task<Result<()>> {
-        cx.spawn(async move |this, cx| {
-            let (line_range, context_buffer_task) = this.update(cx, |_, cx| {
-                load_context_buffer_range(buffer, range.clone(), cx)
-            })??;
-
-            let context_buffer = context_buffer_task.await;
-
-            this.update(cx, |this, cx| {
-                this.insert_selection(context_buffer, range, line_range, cx)
-            })?;
-
-            anyhow::Ok(())
-        })
-    }
-
-    fn insert_selection(
-        &mut self,
-        context_buffer: ContextBuffer,
-        range: Range<Anchor>,
-        line_range: Range<Point>,
-        cx: &mut Context<Self>,
     ) {
-        let id = self.next_context_id.post_inc();
-        self.context
-            .push(AssistantContext::Selection(SelectionContext {
-                id,
-                range,
-                line_range,
-                context_buffer,
-            }));
-        cx.notify();
+        let element_id = self.next_context_element_id.post_inc();
+        let context = AssistantContext::Selection(SelectionContext {
+            buffer,
+            range,
+            element_id,
+        });
+        self.insert_context(context, cx);
     }
-    */
 
     pub fn accept_suggested_context(
         &mut self,
@@ -368,15 +329,22 @@ impl ContextStore {
                 name: _,
             } => {
                 if let Some(buffer) = buffer.upgrade() {
-                    self.insert_context(AssistantContext::File(FileContext { buffer }), cx);
+                    let element_id = self.next_context_element_id.post_inc();
+                    self.insert_context(
+                        AssistantContext::File(FileContext { buffer, element_id }),
+                        cx,
+                    );
                 };
-            } /*
-              SuggestedContext::Thread { thread, name: _ } => {
-                  if let Some(thread) = thread.upgrade() {
-                      self.insert_thread(thread, cx);
-                  };
-              }
-              */
+            }
+            SuggestedContext::Thread { thread, name: _ } => {
+                if let Some(thread) = thread.upgrade() {
+                    let element_id = self.next_context_element_id.post_inc();
+                    self.insert_context(
+                        AssistantContext::Thread(ThreadContext { thread, element_id }),
+                        cx,
+                    );
+                }
+            }
         }
     }
 
@@ -442,19 +410,37 @@ impl ContextStore {
     pub fn buffer_for_symbol(&self, symbol_id: &ContextSymbolId) -> Option<Entity<Buffer>> {
         self.symbol_buffers.get(symbol_id).cloned()
     }
+    */
 
-    pub fn includes_thread(&self, thread_id: &ThreadId) -> Option<ContextId> {
-        self.threads.get(thread_id).copied()
+    pub fn includes_thread(&self, thread_id: ThreadId) -> bool {
+        let context_query = AssistantContext::Rules(ThreadContext {
+            thread_id,
+            element_id: ContextElementId::for_query(),
+        });
+        self.context
+            .contains(ContextSetEntry::ref_cast(&context_query))
     }
 
-    pub fn includes_user_rules(&self, prompt_id: &UserPromptId) -> Option<ContextId> {
-        self.user_rules.get(prompt_id).copied()
+    pub fn includes_user_rules(&self, prompt_id: UserPromptId) -> bool {
+        let context_query = AssistantContext::Rules(RulesContext {
+            prompt_id,
+            element_id: ContextElementId::for_query(),
+        });
+        self.context
+            .contains(ContextSetEntry::ref_cast(&context_query))
     }
 
-    pub fn includes_url(&self, url: &str) -> Option<ContextId> {
-        self.fetched_urls.get(url).copied()
+    pub fn includes_url(&self, url: impl Into<SharedString>) -> bool {
+        let context_query = AssistantContext::FetchedUrl(FetchedUrlContext {
+            url: url.into(),
+            text: "".into(),
+            element_id: ContextElementId::for_query(),
+        });
+        self.context
+            .contains(ContextSetEntry::ref_cast(&context_query))
     }
 
+    /*
     /// Replaces the context that matches the ID of the new context, if any match.
     fn replace_context(&mut self, new_context: AssistantContext) {
         let id = new_context.id();
@@ -564,7 +550,26 @@ impl PartialEq for ContextSetEntry {
                     return context.eq_for_context_set(other_context);
                 }
             }
-            _ => {}
+            AssistantContext::Selection(context) => {
+                if let AssistantContext::Selection(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::FetchedUrl(context) => {
+                if let AssistantContext::FetchedUrl(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Thread(context) => {
+                if let AssistantContext::Thread(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Rules(context) => {
+                if let AssistantContext::Rules(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
         }
         return false;
     }
@@ -576,58 +581,10 @@ impl Hash for ContextSetEntry {
             AssistantContext::File(context) => context.hash_for_context_set(state),
             AssistantContext::Directory(context) => context.hash_for_context_set(state),
             AssistantContext::Symbol(context) => context.hash_for_context_set(state),
+            AssistantContext::Selection(context) => context.hash_for_context_set(state),
+            AssistantContext::FetchedUrl(context) => context.hash_for_context_set(state),
+            AssistantContext::Thread(context) => context.hash_for_context_set(state),
+            AssistantContext::Rules(context) => context.hash_for_context_set(state),
         }
     }
 }
-
-/*
-fn make_context_symbol(
-    context_buffer: ContextBuffer,
-    path: ProjectPath,
-    name: SharedString,
-    range: Range<Anchor>,
-    enclosing_range: Range<Anchor>,
-) -> ContextSymbol {
-    ContextSymbol {
-        id: ContextSymbolId { name, range, path },
-        buffer_version: context_buffer.version,
-        enclosing_range,
-        buffer: context_buffer.buffer,
-        text: context_buffer.text,
-    }
-}
-
-fn load_context_buffer_range(
-    buffer: Entity<Buffer>,
-    range: Range<Anchor>,
-    cx: &App,
-) -> Result<(Range<Point>, Task<ContextBuffer>)> {
-    let buffer_ref = buffer.read(cx);
-    let id = buffer_ref.remote_id();
-
-    let file = buffer_ref.file().context("context buffer missing path")?;
-    let full_path = file.full_path(cx);
-
-    // Important to collect version at the same time as content so that staleness logic is correct.
-    let version = buffer_ref.version();
-    let content = buffer_ref.text_for_range(range.clone()).collect::<Rope>();
-    let line_range = range.to_point(&buffer_ref.snapshot());
-
-    // Build the text on a background thread.
-    let task = cx.background_spawn({
-        let line_range = line_range.clone();
-        async move {
-            let text = to_fenced_codeblock(&full_path, content, Some(line_range));
-            ContextBuffer {
-                id,
-                buffer,
-                last_full_path: full_path.into(),
-                version,
-                text,
-            }
-        }
-    });
-
-    Ok((line_range, task))
-}
-*/

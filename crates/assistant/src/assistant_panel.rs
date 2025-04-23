@@ -1060,9 +1060,9 @@ impl AssistantPanel {
                     None,
                 ))
             }),
-            action.prompt_to_select.map(|uuid| PromptId::User {
-                uuid: UserPromptId(uuid),
-            }),
+            action
+                .prompt_to_select
+                .map(|uuid| UserPromptId(uuid).into()),
             cx,
         )
         .detach_and_log_err(cx);

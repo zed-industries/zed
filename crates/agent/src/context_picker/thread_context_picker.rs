@@ -219,7 +219,7 @@ pub(crate) fn search_threads(
 ) -> Task<Vec<ThreadMatch>> {
     let threads = thread_store
         .read(cx)
-        .threads()
+        .reverse_chronological_threads()
         .into_iter()
         .map(|thread| ThreadContextEntry {
             id: thread.id,

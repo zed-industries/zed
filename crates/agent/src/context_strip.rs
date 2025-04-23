@@ -18,7 +18,7 @@ use workspace::{Workspace, notifications::NotifyResultExt};
 use crate::context::{AssistantContext, ContextKind};
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
-use crate::thread::Thread;
+use crate::thread::{Thread, ThreadId};
 use crate::thread_store::ThreadStore;
 use crate::ui::{AddedContext, ContextPill};
 use crate::{
@@ -27,6 +27,7 @@ use crate::{
 };
 
 pub struct ContextStrip {
+    thread_store: Entity<ThreadStore>,
     context_store: Entity<ContextStore>,
     context_picker: Entity<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
@@ -82,11 +83,12 @@ impl ContextStrip {
 
     fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
         if let Some(workspace) = self.workspace.upgrade() {
+            let thread_store = self.thread_store.read(cx);
             let project = workspace.read(cx).project().read(cx);
             self.context_store
                 .read(cx)
                 .context()
-                .flat_map(|context| AddedContext::new(context.clone(), project, cx))
+                .flat_map(|context| AddedContext::new(context.clone(), thread_store, project, cx))
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
@@ -96,7 +98,7 @@ impl ContextStrip {
     fn suggested_context(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
         match self.suggest_context_kind {
             SuggestContextKind::File => self.suggested_file(cx),
-            // SuggestContextKind::Thread => self.suggested_thread(cx),
+            SuggestContextKind::Thread => self.suggested_thread(cx),
         }
     }
 
@@ -127,7 +129,6 @@ impl ContextStrip {
         })
     }
 
-    /*
     fn suggested_thread(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
         if !self.context_picker.read(cx).allow_threads() {
             return None;
@@ -157,7 +158,6 @@ impl ContextStrip {
             thread: weak_active_thread,
         })
     }
-    */
 
     fn handle_context_picker_event(
         &mut self,
@@ -556,7 +556,7 @@ impl EventEmitter<ContextStripEvent> for ContextStrip {}
 
 pub enum SuggestContextKind {
     File,
-    // Thread,
+    Thread,
 }
 
 #[derive(Clone)]
@@ -566,31 +566,31 @@ pub enum SuggestedContext {
         icon_path: Option<SharedString>,
         buffer: WeakEntity<Buffer>,
     },
-    // Thread {
-    //     name: SharedString,
-    //     thread: WeakEntity<Thread>,
-    // },
+    Thread {
+        name: SharedString,
+        thread: WeakEntity<Thread>,
+    },
 }
 
 impl SuggestedContext {
     pub fn name(&self) -> &SharedString {
         match self {
             Self::File { name, .. } => name,
-            // Self::Thread { name, .. } => name,
+            Self::Thread { name, .. } => name,
         }
     }
 
     pub fn icon_path(&self) -> Option<SharedString> {
         match self {
             Self::File { icon_path, .. } => icon_path.clone(),
-            // Self::Thread { .. } => None,
+            Self::Thread { .. } => None,
         }
     }
 
     pub fn kind(&self) -> ContextKind {
         match self {
             Self::File { .. } => ContextKind::File,
-            // Self::Thread { .. } => ContextKind::Thread,
+            Self::Thread { .. } => ContextKind::Thread,
         }
     }
 }
