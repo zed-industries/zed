@@ -55,6 +55,7 @@ use crate::rename_tool::RenameTool;
 use crate::symbol_info_tool::SymbolInfoTool;
 use crate::terminal_tool::TerminalTool;
 use crate::thinking_tool::ThinkingTool;
+pub use schema::json_schema_for;
 
 pub use path_search_tool::PathSearchToolInput;
 
