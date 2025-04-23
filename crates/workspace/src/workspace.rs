@@ -5879,7 +5879,8 @@ fn resize_bottom_dock(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let size = new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
+    let size =
+        new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
         bottom_dock.resize_active_panel(Some(size), window, cx);
     });
