@@ -2257,7 +2257,6 @@ impl BufferGitState {
             self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
                 let (snapshot, changed_range) = cx
                     .background_spawn(async move {
-                        // FIXME don't reload conflict stuff unless has_conflict bit changed
                         let new_snapshot = ConflictSet::parse(&buffer);
                         let changed_range = old_snapshot.compare(&new_snapshot, &buffer);
                         (new_snapshot, changed_range)
