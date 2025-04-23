@@ -93,24 +93,19 @@ impl ContextStrip {
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
         let active_buffer_entity = editor.buffer().read(cx).as_singleton()?;
         let active_buffer = active_buffer_entity.read(cx);
-
         let project_path = active_buffer.project_path(cx)?;
 
-        /* todo!
         if self
             .context_store
             .read(cx)
-            .will_include_buffer(active_buffer.remote_id(), &project_path)
+            .file_path_included(&project_path, cx)
             .is_some()
         {
             return None;
         }
-        */
 
         let file_name = active_buffer.file()?.file_name(cx);
-
         let icon_path = FileIcons::get_icon(&Path::new(&file_name), cx);
-
         Some(SuggestedContext::File {
             name: file_name.to_string_lossy().into_owned().into(),
             buffer: active_buffer_entity.downgrade(),

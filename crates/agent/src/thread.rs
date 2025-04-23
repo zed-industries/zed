@@ -712,6 +712,7 @@ impl Thread {
     pub fn remove_already_added_context<'a>(&self, context_set: &mut IndexSet<AssistantContext>) {
         for message in &self.messages {
             for context in &message.context {
+                // todo! this perturbs ordering
                 context_set.swap_remove(context);
             }
         }

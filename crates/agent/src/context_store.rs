@@ -1,5 +1,5 @@
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -24,6 +24,7 @@ pub struct ContextStore {
     project: WeakEntity<Project>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     thread_summary_tasks: Vec<Task<()>>,
+    // todo! rename to context_set?
     context: IndexSet<AssistantContext>,
 }
 
@@ -64,29 +65,25 @@ impl ContextStore {
             })?;
 
             let buffer = open_buffer_task.await?;
-            let buffer_id = this.update(cx, |_, cx| buffer.read(cx).remote_id())?;
+            let context = AssistantContext::File(FileContext { buffer });
 
-            /* todo!
             let already_included = this.update(cx, |this, cx| {
-                match this.will_include_buffer(buffer_id, &project_path) {
-                    Some(FileInclusion::Direct(context_id)) => {
-                        if remove_if_exists {
-                            this.remove_context(context_id, cx);
-                        }
-                        true
+                if this.context.contains(&context) {
+                    if remove_if_exists {
+                        this.remove_context(&context, cx);
                     }
-                    Some(FileInclusion::InDirectory(_)) => true,
-                    None => false,
+                    true
+                } else {
+                    this.path_included_in_directory(&project_path, cx).is_some()
                 }
             })?;
 
             if already_included {
                 return anyhow::Ok(());
             }
-            */
 
             this.update(cx, |this, cx| {
-                this.insert_file(buffer, cx);
+                this.insert_context(context, cx);
             })?;
 
             anyhow::Ok(())
@@ -111,43 +108,20 @@ impl ContextStore {
             return Err(anyhow!("no entry found for directory context"));
         };
 
-        /* todo!
-        let already_included = match self.includes_directory(&project_path) {
-            Some(FileInclusion::Direct(context_id)) => {
-                if remove_if_exists {
-                    self.remove_context(context_id, cx);
-                }
-                true
+        let context = AssistantContext::Directory(DirectoryContext { entry_id });
+
+        if self.context.contains(&context) {
+            if remove_if_exists {
+                self.remove_context(&context, cx);
             }
-            Some(FileInclusion::InDirectory(_)) => true,
-            None => false,
-        };
-        if already_included {
+            return Ok(());
+        } else if self.path_included_in_directory(&project_path, cx).is_some() {
             return Ok(());
         }
-        */
 
-        self.insert_directory(entry_id, cx);
+        self.insert_context(context, cx);
 
         anyhow::Ok(())
-    }
-
-    pub fn insert_file(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let inserted = self
-            .context
-            .insert(AssistantContext::File(FileContext { buffer }));
-        if inserted {
-            cx.notify();
-        }
-    }
-
-    fn insert_directory(&mut self, entry_id: ProjectEntryId, cx: &mut Context<Self>) {
-        let inserted = self
-            .context
-            .insert(AssistantContext::Directory(DirectoryContext { entry_id }));
-        if inserted {
-            cx.notify();
-        }
     }
 
     /*
@@ -424,7 +398,7 @@ impl ContextStore {
                 name: _,
             } => {
                 if let Some(buffer) = buffer.upgrade() {
-                    self.insert_file(buffer, cx);
+                    self.insert_context(AssistantContext::File(FileContext { buffer }), cx);
                 };
             } /*
               SuggestedContext::Thread { thread, name: _ } => {
@@ -436,87 +410,60 @@ impl ContextStore {
         }
     }
 
-    pub fn remove_context(&mut self, context: &AssistantContext, cx: &mut Context<Self>) {
-        self.context.swap_remove(context);
-        cx.notify();
+    fn insert_context(&mut self, context: AssistantContext, cx: &mut Context<Self>) {
+        if self.context.insert(context) {
+            cx.notify();
+        }
     }
 
-    /*
-    /// Returns whether the buffer is already included directly in the context, or if it will be
-    /// included in the context via a directory. Directory inclusion is based on paths rather than
-    /// buffer IDs as the directory will be re-scanned.
-    pub fn will_include_buffer(
-        &self,
-        buffer_id: BufferId,
-        project_path: &ProjectPath,
-    ) -> Option<FileInclusion> {
-        if let Some(context_id) = self.files.get(&buffer_id) {
-            return Some(FileInclusion::Direct(*context_id));
+    pub fn remove_context(&mut self, context: &AssistantContext, cx: &mut Context<Self>) {
+        if self.context.shift_remove(context) {
+            cx.notify();
         }
-
-        self.will_include_file_path_via_directory(project_path)
     }
 
     /// Returns whether this file path is already included directly in the context, or if it will be
     /// included in the context via a directory.
-    pub fn will_include_file_path(
+    pub fn file_path_included(&self, path: &ProjectPath, cx: &App) -> Option<FileInclusion> {
+        let project = self.project.upgrade()?.read(cx);
+        self.context.iter().find_map(|context| match context {
+            AssistantContext::File(file_context) => {
+                FileInclusion::check_file(file_context, path, cx)
+            }
+            AssistantContext::Directory(directory_context) => {
+                FileInclusion::check_directory(directory_context, path, project, cx)
+            }
+            _ => None,
+        })
+    }
+
+    pub fn buffer_included(&self, buffer: Entity<Buffer>, cx: &App) -> Option<FileInclusion> {
+        let path = buffer.read(cx).project_path(cx);
+        if self
+            .context
+            .contains(&AssistantContext::File(FileContext { buffer }))
+        {
+            Some(FileInclusion::Direct)
+        } else {
+            self.path_included_in_directory(&path?, cx)
+        }
+    }
+
+    pub fn path_included_in_directory(
         &self,
-        project_path: &ProjectPath,
+        path: &ProjectPath,
         cx: &App,
     ) -> Option<FileInclusion> {
-        if !self.files.is_empty() {
-            let found_file_context = self.context.iter().find(|context| match &context {
-                AssistantContext::File(file_context) => {
-                    let buffer = file_context.context_buffer.buffer.read(cx);
-                    if let Some(context_path) = buffer.project_path(cx) {
-                        &context_path == project_path
-                    } else {
-                        false
-                    }
-                }
-                _ => false,
-            });
-            if let Some(context) = found_file_context {
-                return Some(FileInclusion::Direct(context.id()));
+        let project = self.project.upgrade()?.read(cx);
+        self.context.iter().find_map(|context| match context {
+            AssistantContext::Directory(directory_context) => {
+                FileInclusion::check_directory(directory_context, path, project, cx)
             }
-        }
-
-        self.will_include_file_path_via_directory(project_path)
+            _ => None,
+        })
     }
 
-    fn will_include_file_path_via_directory(
-        &self,
-        project_path: &ProjectPath,
-    ) -> Option<FileInclusion> {
-        if self.directories.is_empty() {
-            return None;
-        }
-
-        let mut path_buf = project_path.path.to_path_buf();
-
-        while path_buf.pop() {
-            // TODO: This isn't very efficient. Consider using a better representation of the
-            // directories map.
-            let directory_project_path = ProjectPath {
-                worktree_id: project_path.worktree_id,
-                path: path_buf.clone().into(),
-            };
-            if let Some(_) = self.directories.get(&directory_project_path) {
-                return Some(FileInclusion::InDirectory(directory_project_path));
-            }
-        }
-
-        None
-    }
-
-    pub fn includes_directory(&self, project_path: &ProjectPath) -> Option<FileInclusion> {
-        if let Some(context_id) = self.directories.get(project_path) {
-            return Some(FileInclusion::Direct(*context_id));
-        }
-
-        self.will_include_file_path_via_directory(project_path)
-    }
-
+    /*
     pub fn included_symbol(&self, symbol_id: &ContextSymbolId) -> Option<ContextId> {
         self.symbols.get(symbol_id).copied()
     }
@@ -577,12 +524,50 @@ impl ContextStore {
     */
 }
 
-/*
 pub enum FileInclusion {
-    Direct(ContextId),
-    InDirectory(ProjectPath),
+    Direct,
+    InDirectory { full_path: PathBuf },
 }
 
+impl FileInclusion {
+    fn check_file(file_context: &FileContext, path: &ProjectPath, cx: &App) -> Option<Self> {
+        let file_path = file_context.buffer.read(cx).project_path(cx)?;
+        if path == &file_path {
+            Some(FileInclusion::Direct)
+        } else {
+            None
+        }
+    }
+
+    fn check_directory(
+        directory_context: &DirectoryContext,
+        path: &ProjectPath,
+        project: &Project,
+        cx: &App,
+    ) -> Option<Self> {
+        let worktree = project
+            .worktree_for_entry(directory_context.entry_id, cx)?
+            .read(cx);
+        let entry = worktree.entry_for_id(directory_context.entry_id)?;
+        let directory_path = ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        };
+        if path.starts_with(&directory_path) {
+            if path == &directory_path {
+                Some(FileInclusion::Direct)
+            } else {
+                Some(FileInclusion::InDirectory {
+                    full_path: worktree.full_path(&entry.path),
+                })
+            }
+        } else {
+            None
+        }
+    }
+}
+
+/*
 fn make_context_symbol(
     context_buffer: ContextBuffer,
     path: ProjectPath,
