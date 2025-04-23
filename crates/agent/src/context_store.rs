@@ -30,8 +30,7 @@ pub struct ContextStore {
     thread_store: Option<WeakEntity<ThreadStore>>,
     thread_summary_tasks: Vec<Task<()>>,
     next_context_element_id: ContextElementId,
-    // todo! rename to context_set?
-    context: IndexSet<ContextSetEntry>,
+    context_set: IndexSet<ContextSetEntry>,
     context_thread_ids: HashSet<ThreadId>,
 }
 
@@ -45,21 +44,21 @@ impl ContextStore {
             thread_store,
             thread_summary_tasks: Vec::new(),
             next_context_element_id: ContextElementId::zero(),
-            context: IndexSet::default(),
+            context_set: IndexSet::default(),
             context_thread_ids: HashSet::default(),
         }
     }
 
     pub fn context(&self) -> impl Iterator<Item = &AssistantContext> {
-        self.context.iter().map(|entry| entry.as_ref())
+        self.context_set.iter().map(|entry| entry.as_ref())
     }
 
     pub fn context_set(&self) -> &IndexSet<ContextSetEntry> {
-        &self.context
+        &self.context_set
     }
 
     pub fn clear(&mut self) {
-        self.context.clear();
+        self.context_set.clear();
         self.context_thread_ids.clear();
     }
 
@@ -69,7 +68,7 @@ impl ContextStore {
             .flat_map(|message| &message.context)
             .map(ContextSetEntry::ref_cast)
             .collect::<HashSet<_>>();
-        self.context
+        self.context_set
             .iter()
             .filter(|context| !existing_context.contains(context))
             .map(|entry| entry.0.clone())
@@ -359,7 +358,7 @@ impl ContextStore {
             }
             _ => {}
         }
-        let inserted = self.context.insert(ContextSetEntry(context));
+        let inserted = self.context_set.insert(ContextSetEntry(context));
         if inserted {
             cx.notify();
         }
@@ -368,7 +367,7 @@ impl ContextStore {
 
     pub fn remove_context(&mut self, context: &AssistantContext, cx: &mut Context<Self>) {
         if self
-            .context
+            .context_set
             .shift_remove(ContextSetEntry::ref_cast(context))
         {
             match context {
@@ -383,7 +382,8 @@ impl ContextStore {
     }
 
     pub fn has_context(&mut self, context: &AssistantContext) -> bool {
-        self.context.contains(ContextSetEntry::ref_cast(context))
+        self.context_set
+            .contains(ContextSetEntry::ref_cast(context))
     }
 
     /// Returns whether this file path is already included directly in the context, or if it will be
@@ -438,7 +438,7 @@ impl ContextStore {
             prompt_id,
             element_id: ContextElementId::for_query(),
         });
-        self.context
+        self.context_set
             .contains(ContextSetEntry::ref_cast(&context_query))
     }
 
@@ -448,7 +448,7 @@ impl ContextStore {
             text: "".into(),
             element_id: ContextElementId::for_query(),
         });
-        self.context
+        self.context_set
             .contains(ContextSetEntry::ref_cast(&context_query))
     }
 
