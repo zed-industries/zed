@@ -210,7 +210,7 @@ impl ToolCard for PathSearchToolCard {
             format!("{} matches", self.total_matches).into()
         };
 
-        let glob_label = format!("{}", self.glob).to_string();
+        let glob_label = self.glob.to_string();
 
         let content = if !self.paths.is_empty() && self.expanded {
             Some(
