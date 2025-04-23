@@ -432,8 +432,10 @@ pub struct CargoRunnableArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<PathBuf>,
     // command, --package and --lib stuff
+    #[serde(default)]
     pub cargo_args: Vec<String>,
     // stuff after --
+    #[serde(default)]
     pub executable_args: Vec<String>,
 }
 
