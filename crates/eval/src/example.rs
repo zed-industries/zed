@@ -278,7 +278,7 @@ impl ExampleContext {
 
         let message_count_before = self.app.update_entity(&self.agent_thread, |thread, cx| {
             thread.set_remaining_turns(iterations);
-            thread.send_to_model(model, cx);
+            thread.send_to_model(model, None, cx);
             thread.messages().len()
         })?;
 
