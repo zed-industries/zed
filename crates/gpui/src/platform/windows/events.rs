@@ -89,7 +89,7 @@ pub(crate) fn handle_msg(
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, lparam, state_ptr),
         WM_CHAR => handle_char_msg(wparam, state_ptr),
-        WM_DEADCHAR => handle_dead_char_msg(wparam, lparam, state_ptr),
+        WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
@@ -345,9 +345,7 @@ fn handle_syskeydown_msg(
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    println!("\nWM_SYSKEYDOWN");
     let platform_input = parse_keystroke(wparam, lparam, |keystroke| {
-        println!("SysKeydown: {:#?}", keystroke);
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
@@ -372,9 +370,7 @@ fn handle_syskeyup_msg(
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    println!("\nWM_SYSKEYUP");
     let platform_input = parse_keystroke(wparam, lparam, |keystroke| {
-        println!("SysKeyup: {:#?}", keystroke);
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     })?;
     let mut func = state_ptr.state.borrow_mut().callbacks.input.take()?;
@@ -395,9 +391,7 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("\nWM_KEYDOWN: {:?}, {:x}", wparam, wparam.0);
     let Some(platform_input) = parse_keystroke(wparam, lparam, |keystroke| {
-        println!("Keydown: {:#?}", keystroke);
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
@@ -426,9 +420,7 @@ fn handle_keyup_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("\nWM_KEYUP, {:?}, {:x}", wparam, wparam.0);
     let Some(platform_input) = parse_keystroke(wparam, lparam, |keystroke| {
-        println!("Keyup: {:#?}", keystroke);
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     }) else {
         return Some(1);
@@ -450,7 +442,6 @@ fn handle_keyup_msg(
 }
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    println!("\nWM_CHAR: {:?}, {:x}", wparam, wparam.0);
     let input = {
         let ch = char::from_u32(wparam.0 as u32)?;
         if ch.is_control() {
@@ -465,14 +456,8 @@ fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opti
     Some(0)
 }
 
-fn handle_dead_char_msg(
-    wparam: WPARAM,
-    lparam: LPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
-    println!("\nWM_DEADCHAR: {:?}, {:x}", wparam, wparam.0);
+fn handle_dead_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let ch = char::from_u32(wparam.0 as u32)?.to_string();
-    println!("DeadChar: {}<->{:X}", ch, lparam.0 as u32);
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_and_mark_text_in_range(None, &ch, Some(1..1));
     });
@@ -1221,7 +1206,6 @@ fn handle_system_settings_changed(
 }
 
 fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    println!("\nWM_SYSCOMMAND: {:?}, {:x}", wparam, wparam.0);
     if wparam.0 == SC_KEYMENU as usize {
         let mut lock = state_ptr.state.borrow_mut();
         if lock.system_key_handled {
@@ -1252,7 +1236,6 @@ fn handle_input_language_changed(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("\nWM_INPUTLANGCHANGE: {:?}, {:x}", lparam, lparam.0);
     let thread = state_ptr.main_thread_id_win32;
     let validation = state_ptr.validation_number;
     unsafe {

@@ -195,9 +195,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        // let key_equivalents =
-        // crate::key_equivalents::get_key_equivalents(cx.keyboard_layout().id());
-
         if content.is_empty() {
             return KeymapFileLoadResult::Success {
                 key_bindings: Vec::new(),
@@ -315,7 +312,6 @@ impl KeymapFile {
         keystrokes: &str,
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
-        // key_equivalents: Option<&HashMap<char, char>>,
         use_key_equivalents: bool,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {

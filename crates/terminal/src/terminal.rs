@@ -1253,7 +1253,7 @@ impl Terminal {
         let keystroke = keyboard_mapper.to_vim_keystroke(keystroke);
         let key = keystroke.key.as_str();
         let motion: Option<ViMotion> = match key {
-            "h" | "left" => Some(ViMotion::Left), // shift-left -> "LEFT"
+            "h" | "left" => Some(ViMotion::Left),
             "j" | "down" => Some(ViMotion::Down),
             "k" | "up" => Some(ViMotion::Up),
             "l" | "right" => Some(ViMotion::Right),
@@ -1261,7 +1261,7 @@ impl Terminal {
             "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
             "e" => Some(ViMotion::WordRightEnd),
             "%" => Some(ViMotion::Bracket),
-            "$" => Some(ViMotion::Last), // Russian layout alt-4 will not work
+            "$" => Some(ViMotion::Last),
             "0" => Some(ViMotion::First),
             "^" => Some(ViMotion::FirstOccupied),
             "H" => Some(ViMotion::High),

@@ -1089,7 +1089,6 @@ pub(crate) struct WindowParams {
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub display_id: Option<DisplayId>,
 
-    #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub window_min_size: Option<Size<Pixels>>,
 }
 
