@@ -4,12 +4,12 @@ use anyhow::Context as _;
 use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
-use futures::FutureExt;
+use futures::{FutureExt, future::Shared};
 use futures::future;
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::Buffer;
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelImage, LanguageModelRequestMessage};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::{Point, Rope};
@@ -25,10 +25,11 @@ pub enum ContextKind {
     File,
     Directory,
     Symbol,
-    Excerpt,
+    Selection,
     FetchedUrl,
     Thread,
     Rules,
+    Image,
 }
 
 impl ContextKind {
@@ -37,10 +38,11 @@ impl ContextKind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
-            ContextKind::Excerpt => IconName::Code,
+            ContextKind::Selection => IconName::Context,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
             ContextKind::Rules => RULES_ICON,
+            ContextKind::Image => IconName::Image,
         }
     }
 }
@@ -62,8 +64,9 @@ pub enum AssistantContext {
     Symbol(SymbolContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
-    Excerpt(ExcerptContext),
+    Selection(SelectionContext),
     Rules(RulesContext),
+    Image(ImageContext),
     */
 }
 
@@ -213,6 +216,39 @@ impl ThreadContext {
 }
 
 #[derive(Debug, Clone)]
+pub struct ImageContext {
+    pub id: ContextId,
+    pub original_image: Arc<gpui::Image>,
+    pub image_task: Shared<Task<Option<LanguageModelImage>>>,
+}
+
+impl ImageContext {
+    pub fn image(&self) -> Option<LanguageModelImage> {
+        self.image_task.clone().now_or_never().flatten()
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.image_task.clone().now_or_never().is_none()
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.image_task
+            .clone()
+            .now_or_never()
+            .map(|result| result.is_none())
+            .unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectionContext {
+    pub id: ContextId,
+    pub range: Range<Anchor>,
+    pub line_range: Range<Point>,
+    pub context_buffer: ContextBuffer,
+}
+
+#[derive(Debug, Clone)]
 pub struct RulesContext {
     pub prompt_id: UserPromptId,
 }
@@ -322,6 +358,15 @@ pub fn load_context<'a>(
                 result.push('\n');
             }
             result.push_str("</excerpts>\n");
+        }
+
+        if !selection_context.is_empty() {
+            result.push_str("<selections>\n");
+            for context in selection_context {
+                result.push_str(&context.context_buffer.text);
+                result.push('\n');
+            }
+            result.push_str("</selections>\n");
         }
 
         if !fetch_context.is_empty() {

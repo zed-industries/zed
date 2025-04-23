@@ -22,6 +22,7 @@ mod schema;
 mod symbol_info_tool;
 mod terminal_tool;
 mod thinking_tool;
+mod ui;
 mod web_search_tool;
 
 use std::sync::Arc;

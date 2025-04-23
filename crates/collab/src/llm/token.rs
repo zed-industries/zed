@@ -1,4 +1,5 @@
 use crate::Cents;
+use crate::db::billing_subscription::SubscriptionKind;
 use crate::db::{billing_subscription, user};
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::{Config, db::billing_preference};
@@ -43,7 +44,6 @@ impl LlmTokenClaims {
         billing_preferences: Option<billing_preference::Model>,
         feature_flags: &Vec<String>,
         has_legacy_llm_subscription: bool,
-        plan: rpc::proto::Plan,
         subscription: Option<billing_subscription::Model>,
         system_id: Option<String>,
         config: &Config,
@@ -78,11 +78,14 @@ impl LlmTokenClaims {
             custom_llm_monthly_allowance_in_cents: user
                 .custom_llm_monthly_allowance_in_cents
                 .map(|allowance| allowance as u32),
-            plan: match plan {
-                rpc::proto::Plan::Free => Plan::Free,
-                rpc::proto::Plan::ZedPro => Plan::ZedPro,
-                rpc::proto::Plan::ZedProTrial => Plan::ZedProTrial,
-            },
+            plan: subscription
+                .as_ref()
+                .and_then(|subscription| subscription.kind)
+                .map_or(Plan::Free, |kind| match kind {
+                    SubscriptionKind::ZedFree => Plan::Free,
+                    SubscriptionKind::ZedPro => Plan::ZedPro,
+                    SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
+                }),
             subscription_period: maybe!({
                 let subscription = subscription?;
                 let period_start_at = subscription.current_period_start_at()?;

@@ -6,8 +6,9 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap, HashSet, IndexSet};
 use futures::future::join_all;
 use futures::{self, Future, FutureExt, future};
-use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, Image, SharedString, Task, WeakEntity};
 use language::Buffer;
+use language_model::LanguageModelImage;
 use project::{Project, ProjectEntryId, ProjectItem, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::{Point, Rope};
@@ -402,10 +403,36 @@ impl ContextStore {
         cx.notify();
     }
 
-    pub fn add_excerpt(
+    pub fn add_image(&mut self, image: Arc<Image>, cx: &mut Context<ContextStore>) {
+        let image_task = LanguageModelImage::from_image(image.clone(), cx).shared();
+        let id = self.next_context_id.post_inc();
+        self.context.push(AssistantContext::Image(ImageContext {
+            id,
+            original_image: image,
+            image_task,
+        }));
+        cx.notify();
+    }
+
+    pub fn wait_for_images(&self, cx: &App) -> Task<()> {
+        let tasks = self
+            .context
+            .iter()
+            .filter_map(|ctx| match ctx {
+                AssistantContext::Image(ctx) => Some(ctx.image_task.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |_cx| {
+            join_all(tasks).await;
+        })
+    }
+
+    pub fn add_selection(
         &mut self,
-        range: Range<Anchor>,
         buffer: Entity<Buffer>,
+        range: Range<Anchor>,
         cx: &mut Context<ContextStore>,
     ) -> Task<Result<()>> {
         cx.spawn(async move |this, cx| {
@@ -416,14 +443,14 @@ impl ContextStore {
             let context_buffer = context_buffer_task.await;
 
             this.update(cx, |this, cx| {
-                this.insert_excerpt(context_buffer, range, line_range, cx)
+                this.insert_selection(context_buffer, range, line_range, cx)
             })?;
 
             anyhow::Ok(())
         })
     }
 
-    fn insert_excerpt(
+    fn insert_selection(
         &mut self,
         context_buffer: ContextBuffer,
         range: Range<Anchor>,
@@ -431,12 +458,13 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) {
         let id = self.next_context_id.post_inc();
-        self.context.push(AssistantContext::Excerpt(ExcerptContext {
-            id,
-            range,
-            line_range,
-            context_buffer,
-        }));
+        self.context
+            .push(AssistantContext::Selection(SelectionContext {
+                id,
+                range,
+                line_range,
+                context_buffer,
+            }));
         cx.notify();
     }
     */
@@ -591,10 +619,11 @@ impl ContextStore {
                 }
                 AssistantContext::Directory(_)
                 | AssistantContext::Symbol(_)
-                | AssistantContext::Excerpt(_)
+                | AssistantContext::Selection(_)
                 | AssistantContext::FetchedUrl(_)
                 | AssistantContext::Thread(_)
-                | AssistantContext::Rules(_) => None,
+                | AssistantContext::Rules(_)
+                | AssistantContext::Image(_) => None,
             })
             .collect()
     }

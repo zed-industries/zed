@@ -29,6 +29,7 @@ language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
+parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true

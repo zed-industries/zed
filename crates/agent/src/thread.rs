@@ -17,7 +17,7 @@ use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, W
 use language::Buffer;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelImage, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
@@ -99,6 +99,7 @@ pub struct Message {
     pub segments: Vec<MessageSegment>,
     pub context: IndexSet<AssistantContext>,
     pub context_text: String,
+    pub images: Vec<LanguageModelImage>,
 }
 
 impl Message {
@@ -415,6 +416,7 @@ impl Thread {
                     context_text: message.context,
                     // TODO: Handle context serialization / deserialization
                     context: IndexSet::default(),
+                    images: Vec::new(),
                 })
                 .collect(),
             next_message_id,
@@ -733,6 +735,19 @@ impl Thread {
             });
         }
 
+        /* todo!
+                message.images = new_context
+                    .iter()
+                    .filter_map(|context| {
+                        if let AssistantContext::Image(image_context) = context {
+                            image_context.image_task.clone().now_or_never().flatten()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+        */
+
         let message_id = self.insert_message(
             Role::User,
             vec![MessageSegment::Text(text)],
@@ -768,6 +783,7 @@ impl Thread {
             segments,
             context,
             context_text,
+            images: Vec::new(),
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -990,6 +1006,21 @@ impl Thread {
                     .push(MessageContent::Text(message.context_text.to_string()));
             }
 
+            if !message.images.is_empty() {
+                // Some providers only support image parts after an initial text part
+                if request_message.content.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text("Images attached by user:".to_string()));
+                }
+
+                for image in &message.images {
+                    request_message
+                        .content
+                        .push(MessageContent::Image(image.clone()))
+                }
+            }
+
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(text) => {
@@ -1186,6 +1217,7 @@ impl Thread {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
+                                cx.emit(ThreadEvent::ReceivedTextChunk);
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
                                         last_message.push_text(&chunk);
@@ -1745,7 +1777,7 @@ impl Thread {
                 thread_data,
                 final_project_snapshot
             );
-            client.telemetry().flush_events();
+            client.telemetry().flush_events().await;
 
             Ok(())
         })
@@ -1790,7 +1822,7 @@ impl Thread {
                     thread_data,
                     final_project_snapshot
                 );
-                client.telemetry().flush_events();
+                client.telemetry().flush_events().await;
 
                 Ok(())
             })
@@ -2046,7 +2078,7 @@ impl Thread {
                             github_login = github_login
                         );
 
-                        client.telemetry().flush_events();
+                        client.telemetry().flush_events().await;
                     }
                 }
             })
@@ -2164,6 +2196,7 @@ pub enum ThreadEvent {
     ShowError(ThreadError),
     UsageUpdated(RequestUsage),
     StreamedCompletion,
+    ReceivedTextChunk,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
     StreamedToolUse {

@@ -129,7 +129,7 @@ impl LspAdapter for RustLspAdapter {
             })
             .await;
         if let Err(err) = result {
-            log::error!(
+            log::debug!(
                 "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
                 path,
                 err

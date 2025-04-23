@@ -218,25 +218,9 @@ fn main() {
         };
     }
 
-    log::info!("========== starting zed ==========");
-
-    let app = Application::new().with_assets(Assets);
-
-    let system_id = app.background_executor().block(system_id()).ok();
-    let installation_id = app.background_executor().block(installation_id()).ok();
-    let session_id = Uuid::new_v4().to_string();
-    let session = app.background_executor().block(Session::new());
-    let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
+    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
-
-    reliability::init_panic_hook(
-        app_version,
-        app_commit_sha.clone(),
-        system_id.as_ref().map(|id| id.to_string()),
-        installation_id.as_ref().map(|id| id.to_string()),
-        session_id.clone(),
-    );
 
     if args.system_specs {
         let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
@@ -247,6 +231,23 @@ fn main() {
         println!("Zed System Specs (from CLI):\n{}", system_specs);
         return;
     }
+
+    log::info!("========== starting zed ==========");
+
+    let app = Application::new().with_assets(Assets);
+
+    let system_id = app.background_executor().block(system_id()).ok();
+    let installation_id = app.background_executor().block(installation_id()).ok();
+    let session_id = Uuid::new_v4().to_string();
+    let session = app.background_executor().block(Session::new());
+
+    reliability::init_panic_hook(
+        app_version,
+        app_commit_sha.clone(),
+        system_id.as_ref().map(|id| id.to_string()),
+        installation_id.as_ref().map(|id| id.to_string()),
+        session_id.clone(),
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -604,7 +605,7 @@ fn main() {
             setting = "keymap",
             value = BaseKeymap::get_global(cx).to_string()
         );
-        telemetry.flush_events();
+        telemetry.flush_events().detach();
 
         let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
