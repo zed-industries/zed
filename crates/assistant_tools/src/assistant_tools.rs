@@ -29,7 +29,6 @@ use std::sync::Arc;
 
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
-use feature_flags::FeatureFlagAppExt;
 use gpui::App;
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
