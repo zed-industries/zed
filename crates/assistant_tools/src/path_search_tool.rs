@@ -156,13 +156,11 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Result<Ve
         let root_name = snapshot.root_name();
 
         for entry in snapshot.entries(false, 0) {
-            if path_matcher.is_match(&entry.path) {
-                matches.push(
-                    PathBuf::from(root_name)
-                        .join(&entry.path)
-                        .to_string_lossy()
-                        .to_string(),
-                );
+            let full_path = PathBuf::from(root_name).join(&entry.path);
+            let full_path_str = full_path.to_string_lossy().to_string();
+
+            if path_matcher.is_match(&entry.path) || path_matcher.is_match(&full_path) {
+                matches.push(full_path_str);
             }
         }
     }
