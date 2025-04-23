@@ -1489,6 +1489,8 @@ impl Editor {
                             if editor.go_to_active_debug_line(window, cx) {
                                 cx.stop_propagation();
                             }
+
+                            editor.refresh_debugger_hints(cx);
                         }
                         _ => {}
                     },
@@ -1809,11 +1811,6 @@ impl Editor {
                         .insert(buffer.read(cx).remote_id(), handle);
                 }
             }
-        }
-
-        // TODO get the "am I in the debugger context?"
-        if false {
-            this.refresh_debugger_hints(cx);
         }
 
         this.report_editor_event("Editor Opened", None, cx);
@@ -4309,7 +4306,7 @@ impl Editor {
                 (InvalidationStrategy::BufferEdited, Some(buffer_languages))
             }
             InlayHintRefreshReason::RefreshRequested => {
-                (InvalidationStrategy::DebuggerRefresh, None)
+                (InvalidationStrategy::RefreshRequested, None)
             }
         };
 
@@ -16330,6 +16327,7 @@ impl Editor {
 
                 cx.notify();
             }
+
             handled.then_some(())
         })
         .is_some()
@@ -17334,13 +17332,10 @@ impl Editor {
             return;
         };
 
-        let Some(current_execution_position) = self
+        let current_execution_position = self
             .highlighted_rows
             .get(&TypeId::of::<DebugCurrentRowHighlight>())
-            .and_then(|lines| lines.last().map(|line| line.range.end))
-        else {
-            return;
-        };
+            .and_then(|lines| lines.last().map(|line| line.range.start));
 
         self.debugger_inlays_refresh = cx.spawn(async move |editor, cx| {
             let snapshot = editor
@@ -17349,12 +17344,14 @@ impl Editor {
 
             let inline_values = editor
                 .update(cx, |_, cx| {
-                    let range = {
-                        let buffer = buffer.read(cx);
-                        // todo(debugger) when introducing multi buffer inline values check execution position's buffer id to make sure the text
-                        // anchor is in the same buffer
-                        buffer.anchor_before(0)..current_execution_position.text_anchor
+                    let Some(current_execution_position) = current_execution_position else {
+                        return Some(Task::ready(Ok(Vec::new())));
                     };
+
+                    // todo(debugger) when introducing multi buffer inline values check execution position's buffer id to make sure the text
+                    // anchor is in the same buffer
+                    let range =
+                        buffer.read(cx).anchor_before(0)..current_execution_position.text_anchor;
                     project.inline_values(buffer, range, cx)
                 })
                 .ok()
@@ -17367,7 +17364,6 @@ impl Editor {
                 .excerpts()
                 .next()
                 .map(|excerpt| (excerpt.0, excerpt.1.remote_id()))?;
-
             editor
                 .update(cx, |editor, cx| {
                     let new_inlays = inline_values
@@ -17379,10 +17375,11 @@ impl Editor {
                                 debugger_value.text(),
                             )
                         })
-                        .collect();
+                        .collect::<Vec<_>>();
+                    let mut inlay_ids = new_inlays.iter().map(|inlay| inlay.id).collect();
+                    std::mem::swap(&mut editor.debug_inlays, &mut inlay_ids);
 
-                    let old_inlays = std::mem::take(&mut editor.debug_inlays);
-                    editor.splice_inlays(&old_inlays, new_inlays, cx);
+                    editor.splice_inlays(&inlay_ids, new_inlays, cx);
                 })
                 .ok()?;
             Some(())

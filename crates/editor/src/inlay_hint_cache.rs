@@ -68,7 +68,6 @@ pub(super) enum InvalidationStrategy {
     ///
     /// Despite nothing forbids language server from sending this request on every edit, it is expected to be sent only when certain internal server state update, invisible for the editor otherwise.
     RefreshRequested,
-    DebuggerRefresh,
     /// Multibuffer excerpt(s) and/or singleton buffer(s) were edited at least on one place.
     /// Neither editor nor LSP is able to tell which open file hints' are not affected, so all of them have to be invalidated, re-queried and do that fast enough to avoid being slow, but also debounce to avoid loading hints on every fast keystroke sequence.
     BufferEdited,
@@ -1002,17 +1001,10 @@ fn fetch_and_update_hints(
                     }
                 }
 
-                if matches!(query.invalidate, InvalidationStrategy::DebuggerRefresh) {
-                    editor
-                        .semantics_provider
-                        .as_ref()?
-                        .inline_values(buffer, fetch_range.clone(), cx)
-                } else {
-                    editor
-                        .semantics_provider
-                        .as_ref()?
-                        .inlay_hints(buffer, fetch_range.clone(), cx)
-                }
+                editor
+                    .semantics_provider
+                    .as_ref()?
+                    .inlay_hints(buffer, fetch_range.clone(), cx)
             })
             .ok()
             .flatten();
