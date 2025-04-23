@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::{AssistantContext, load_context_text};
+use crate::context::{AssistantContext, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -274,7 +274,7 @@ impl MessageEditor {
         self.thread
             .read(cx)
             .remove_already_added_context(&mut new_context);
-        let context_text_task = load_context_text(new_context.iter(), cx);
+        let context_text_task = load_context(new_context.iter(), self.project.clone(), cx);
 
         let thread = self.thread.clone();
         let git_store = self.project.read(cx).git_store().clone();
@@ -282,7 +282,7 @@ impl MessageEditor {
 
         cx.spawn(async move |_this, cx| {
             let checkpoint = checkpoint.await.ok();
-            let context_text = context_text_task.await;
+            let (context_text, context_buffers) = context_text_task.await;
 
             thread
                 .update(cx, |thread, cx| {
@@ -290,6 +290,7 @@ impl MessageEditor {
                         user_message,
                         new_context,
                         context_text.unwrap_or_else(|| "".to_string()),
+                        context_buffers,
                         checkpoint,
                         cx,
                     );

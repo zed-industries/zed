@@ -660,18 +660,4 @@ fn load_context_buffer_range(
 
     Ok((line_range, task))
 }
-
-fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
-    let mut files = Vec::new();
-
-    for entry in worktree.child_entries(path) {
-        if entry.is_dir() {
-            files.extend(collect_files_in_path(worktree, &entry.path));
-        } else if entry.is_file() {
-            files.push(entry.path.clone());
-        }
-    }
-
-    files
-}
 */

@@ -1,6 +1,6 @@
 // use crate::context::attach_context_to_message;
 use crate::inline_prompt_editor::CodegenStatus;
-use crate::{context::load_context_text, context_store::ContextStore};
+use crate::{context::load_context, context_store::ContextStore};
 use anyhow::Result;
 use client::telemetry::Telemetry;
 use collections::HashSet;
@@ -408,10 +408,9 @@ impl CodegenAlternative {
             .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
-        let context_task = self
-            .context_store
-            .as_ref()
-            .map(|context_store| load_context_text(context_store.read(cx).context().iter(), cx));
+        let context_task = self.context_store.as_ref().map(|context_store| {
+            load_context(context_store.read(cx).context().iter(), todo!(), cx)
+        });
 
         Ok(cx.spawn(async move |_cx| {
             let mut request_message = LanguageModelRequestMessage {
@@ -421,7 +420,7 @@ impl CodegenAlternative {
             };
 
             if let Some(context_task) = context_task {
-                if let Some(context) = context_task.await {
+                if let (Some(context), _context_buffers) = context_task.await {
                     request_message.content.push(context.into());
                 }
             }

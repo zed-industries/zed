@@ -5,12 +5,12 @@ use collections::{HashSet, IndexSet};
 use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
-    App, Bounds, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    App, Bounds, ClickEvent, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, WeakEntity,
 };
 use itertools::Itertools;
 use language::Buffer;
-use project::ProjectItem;
+use project::{ProjectEntryId, ProjectItem};
 use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::{Workspace, notifications::NotifyResultExt};
 
@@ -365,10 +365,15 @@ impl Render for ContextStrip {
 
         let suggested_context = self.suggested_context(cx);
 
-        let added_contexts = context
-            .iter()
-            .flat_map(|c| AddedContext::new(c.clone(), cx))
-            .collect::<Vec<_>>();
+        let added_contexts = if let Some(workspace) = self.workspace.upgrade() {
+            let project = workspace.read(cx).project().read(cx);
+            context
+                .iter()
+                .flat_map(|context| AddedContext::new(context.clone(), project, cx))
+                .collect::<Vec<_>>()
+        } else {
+            return Empty.into_any();
+        };
         let dupe_names = added_contexts
             .iter()
             .map(|c| c.name.clone())
@@ -532,6 +537,7 @@ impl Render for ContextStrip {
                     )
                 }
             })
+            .into_any()
     }
 }
 

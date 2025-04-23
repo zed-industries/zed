@@ -8,12 +8,13 @@ use anyhow::{Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
-use collections::{BTreeMap, HashMap, IndexMap, IndexSet};
+use collections::{BTreeMap, HashMap, HashSet, IndexMap, IndexSet};
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use language::Buffer;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
@@ -719,37 +720,15 @@ impl Thread {
         text: String,
         context: IndexSet<AssistantContext>,
         context_text: String,
+        context_buffers: HashSet<Entity<Buffer>>,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        if !context.is_empty() {
+        // Track all buffers added as context
+        if !context_buffers.is_empty() {
             self.action_log.update(cx, |log, cx| {
-                // Track all buffers added as context
-                for ctx in &context {
-                    match ctx {
-                        AssistantContext::File(file_ctx) => {
-                            log.buffer_added_as_context(file_ctx.buffer.clone(), cx);
-                        } // AssistantContext::Directory(dir_ctx) => {
-                          //     for context_buffer in &dir_ctx.context_buffers {
-                          //         log.buffer_added_as_context(context_buffer.buffer.clone(), cx);
-                          //     }
-                          // }
-                          // AssistantContext::Symbol(symbol_ctx) => {
-                          //     log.buffer_added_as_context(
-                          //         symbol_ctx.context_symbol.buffer.clone(),
-                          //         cx,
-                          //     );
-                          // }
-                          // AssistantContext::Excerpt(excerpt_context) => {
-                          //     log.buffer_added_as_context(
-                          //         excerpt_context.context_buffer.buffer.clone(),
-                          //         cx,
-                          //     );
-                          // }
-                          // AssistantContext::FetchedUrl(_)
-                          // | AssistantContext::Thread(_)
-                          // | AssistantContext::Rules(_) => {}
-                    }
+                for buffer in context_buffers {
+                    log.buffer_added_as_context(buffer, cx);
                 }
             });
         }

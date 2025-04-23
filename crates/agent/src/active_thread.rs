@@ -1450,7 +1450,15 @@ impl ActiveThread {
 
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
-        let context = thread.context_for_message(message_id).collect::<Vec<_>>();
+        let added_context = if let Some(workspace) = workspace.upgrade() {
+            let project = workspace.read(cx).project().read(cx);
+            thread
+                .context_for_message(message_id)
+                .flat_map(|context| AddedContext::new(context.clone(), project, cx))
+                .collect::<Vec<_>>()
+        } else {
+            return Empty.into_any();
+        };
 
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
@@ -1662,7 +1670,7 @@ impl ActiveThread {
         };
 
         let message_is_empty = message.should_display_content();
-        let has_content = !message_is_empty || !context.is_empty();
+        let has_content = !message_is_empty || !added_context.is_empty();
 
         let message_content = has_content.then(|| {
             v_flex()
@@ -1717,18 +1725,12 @@ impl ActiveThread {
                         },
                     )
                 })
-                .when(!context.is_empty(), |parent| {
+                .when(!added_context.is_empty(), |parent| {
                     parent.child(h_flex().flex_wrap().gap_1().children(
-                        context.into_iter().flat_map(|context| {
-                            Some(
-                                ContextPill::added(
-                                    AddedContext::new(context.clone(), cx)?,
-                                    false,
-                                    false,
-                                    None,
-                                )
-                                .on_click(Rc::new(cx.listener({
-                                    let context = context.clone();
+                        added_context.into_iter().map(|added_context| {
+                            let context = added_context.context.clone();
+                            ContextPill::added(added_context, false, false, None).on_click(Rc::new(
+                                cx.listener({
                                     let workspace = workspace.clone();
                                     let context_store = context_store.clone();
                                     move |_, _, window, cx| {
@@ -1743,8 +1745,8 @@ impl ActiveThread {
                                             cx.notify();
                                         }
                                     }
-                                }))),
-                            )
+                                }),
+                            ))
                         }),
                     ))
                 })
@@ -3271,22 +3273,23 @@ pub(crate) fn open_context(
 ) {
     match context {
         AssistantContext::File(file_context) => {
-            if let Some(project_path) = file_context.buffer.read(cx).project_path(cx) {
+            let project = workspace.read(cx).project().read(cx);
+            if let Some(project_path) = file_context.project_path(project, cx) {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .open_path(project_path, None, true, window, cx)
                         .detach_and_log_err(cx);
                 });
             }
+        }
+        AssistantContext::Directory(directory_context) => {
+            let entry_id = directory_context.entry_id;
+            workspace.update(cx, |workspace, cx| {
+                workspace.project().update(cx, |_project, cx| {
+                    cx.emit(project::Event::RevealInProjectPanel(entry_id));
+                })
+            })
         } /*
-          AssistantContext::Directory(directory_context) => {
-              let entry_id = directory_context.entry_id;
-              workspace.update(cx, |workspace, cx| {
-                  workspace.project().update(cx, |_project, cx| {
-                      cx.emit(project::Event::RevealInProjectPanel(entry_id));
-                  })
-              })
-          }
           AssistantContext::Symbol(symbol_context) => {
               if let Some(project_path) = symbol_context
                   .context_symbol

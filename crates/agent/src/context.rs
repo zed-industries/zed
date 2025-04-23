@@ -1,11 +1,16 @@
-use std::{ops::Range, path::Path};
+use std::{ops::Range, path::Path, sync::Arc};
 
 use anyhow::Context as _;
+use anyhow::Result;
+use collections::HashSet;
+use fs::Fs;
+use futures::FutureExt;
 use futures::future;
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
+use itertools::Itertools;
 use language::Buffer;
 use language_model::LanguageModelRequestMessage;
-use project::ProjectEntryId;
+use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
 use rope::{Point, Rope};
 use text::Anchor;
@@ -52,8 +57,8 @@ impl ContextKind {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum AssistantContext {
     File(FileContext),
-    /*
     Directory(DirectoryContext),
+    /*
     Symbol(SymbolContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
@@ -64,51 +69,118 @@ pub enum AssistantContext {
 
 impl AssistantContext {
     pub fn element_id(&self, name: &'static str) -> ElementId {
+        // TODO: Ideally ElementId would have types that can avoid building a name String here.
         match self {
             Self::File(context) => ElementId::NamedInteger(
-                name.into(),
+                (name.to_string() + "-file").into(),
+                // TODO: avoid potential panic here on 32 bit machines
                 context.buffer.entity_id().as_u64().try_into().unwrap(),
+            ),
+            Self::Directory(context) => ElementId::NamedInteger(
+                (name.to_string() + "-directory").into(),
+                context.entry_id.to_usize(),
             ),
         }
     }
 }
 
-/// todo! document decisions
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct FileContext {
     pub buffer: Entity<Buffer>,
 }
 
+/// File
 impl FileContext {
-    fn loader(self, cx: &App) -> Option<impl FnOnce() -> String + Send + 'static> {
+    pub fn project_path(&self, project: &Project, cx: &App) -> Option<ProjectPath> {
+        /*
+        let worktree = project.worktree_for_entry(self.entry_id, cx)?.read(cx);
+        let entry = worktree.entry_for_id(self.entry_id)?;
+        Some(ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        })
+        */
+        todo!()
+    }
+
+    fn load(self, cx: &mut App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("file context missing path");
             return None;
         };
         let full_path = file.full_path(cx);
-        let content = buffer_ref.as_rope().clone();
-        Some(move || to_fenced_codeblock(&full_path, content, None))
+        let rope = buffer_ref.as_rope().clone();
+        let buffer = self.buffer.clone();
+        Some(
+            cx.background_spawn(
+                async move { (to_fenced_codeblock(&full_path, rope, None), buffer) },
+            ),
+        )
     }
 }
 
-/*
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct DirectoryContext {
-    entry_id: ProjectEntryId,
+    pub entry_id: ProjectEntryId,
 }
 
 impl DirectoryContext {
+    /* todo!
     pub fn entry<'a>(&self, cx: &'a App) -> Option<&'a project::Entry> {
         self.worktree.read(cx).entry_for_id(self.entry_id)
     }
 
-    fn loader(&self, cx: &App) -> Option<impl FnOnce() -> String> {
-        todo!()
+    pub fn project_path(&self, project: &Project, cx: &App) -> Option<ProjectPath> {
+        let worktree = project.worktree_for_entry(self.entry_id, cx)?.read(cx);
+        let entry = worktree.entry_for_id(self.entry_id)?;
+        Some(ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path,
+        })
     }
+    */
 
+    fn load(
+        self,
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Option<Task<Vec<(String, Entity<Buffer>)>>> {
+        let worktree = project.read(cx).worktree_for_entry(self.entry_id, cx)?;
+        let worktree_ref = worktree.read(cx);
+        let entry = worktree_ref.entry_for_id(self.entry_id)?;
+        if entry.is_file() {
+            log::error!("DirectoryContext unexpectedly refers to a file.");
+            return None;
+        }
+
+        // todo! Make sure this handles all descendants
+        let file_paths = worktree_ref
+            .child_entries(entry.path.as_ref())
+            .filter_map(|entry| {
+                if entry.is_file() {
+                    Some(entry.path.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let texts_future = future::join_all(file_paths.into_iter().map(|path| {
+            load_file_path_text_as_fenced_codeblock(project.clone(), worktree.clone(), path, cx)
+        }));
+
+        Some(cx.background_spawn(async move {
+            texts_future
+                .await
+                .into_iter()
+                .filter_map(|option| option)
+                .collect::<Vec<_>>()
+        }))
+    }
 }
 
+/*
 #[derive(Debug, Clone)]
 pub struct SymbolContext {
     pub name: SharedString,
@@ -157,13 +229,14 @@ pub fn attach_context_to_message<'a>(
 */
 
 /// Loads and formats a collection of contexts.
-pub fn load_context_text<'a>(
+pub fn load_context<'a>(
     contexts: impl Iterator<Item = &'a AssistantContext>,
-    cx: &App,
-) -> Task<Option<String>> {
-    let mut file_context = Vec::new();
+    project: Entity<Project>,
+    cx: &mut App,
+) -> Task<(Option<String>, HashSet<Entity<Buffer>>)> {
+    let mut file_context_tasks = Vec::new();
+    let mut directory_context_tasks = Vec::new();
     /*
-    let mut directory_context = Vec::new();
     let mut symbol_context = Vec::new();
     let mut excerpt_context = Vec::new();
     let mut fetch_context = Vec::new();
@@ -175,21 +248,21 @@ pub fn load_context_text<'a>(
 
     for context in contexts {
         match context {
-            AssistantContext::File(context) => file_context.extend(context.loader(cx)),
-            /*
-            AssistantContext::Directory(context) => directory_context.push(context.loader(cx)),
-            AssistantContext::Symbol(context) => symbol_context.push(context.loader(cx)),
-            AssistantContext::Excerpt(context) => excerpt_context.push(context.loader(cx)),
-            AssistantContext::FetchedUrl(context) => fetch_context.push(context.loader(cx)),
-            AssistantContext::Thread(context) => thread_context.push(context.loader(cx)),
-            AssistantContext::Rules(context) => rules_context.push(context.loader(cx)),
-            */
+            AssistantContext::File(context) => file_context_tasks.extend(context.load(cx)),
+            AssistantContext::Directory(context) => {
+                directory_context_tasks.extend(context.load(project.clone(), cx))
+            } /*
+              AssistantContext::Symbol(context) => symbol_context.push(context.load(cx)),
+              AssistantContext::Excerpt(context) => excerpt_context.push(context.load(cx)),
+              AssistantContext::FetchedUrl(context) => fetch_context.push(context.load(cx)),
+              AssistantContext::Thread(context) => thread_context.push(context.load(cx)),
+              AssistantContext::Rules(context) => rules_context.push(context.load(cx)),
+              */
         }
     }
 
-    if file_context.is_empty()
+    if file_context_tasks.is_empty() && directory_context_tasks.is_empty()
     /*
-    && directory_context.is_empty()
     && symbol_context.is_empty()
     && excerpt_context.is_empty()
     && fetch_context.is_empty()
@@ -197,33 +270,42 @@ pub fn load_context_text<'a>(
     && rules_context.is_empty()
     */
     {
-        return Task::ready(None);
+        return Task::ready((None, HashSet::default()));
     }
 
     cx.background_spawn(async move {
+        let (file_context, directory_context) =
+            futures::join!(
+                future::join_all(file_context_tasks),
+                future::join_all(directory_context_tasks));
+
+        let directory_context = directory_context.into_iter().flat_map(|context| context).collect::<Vec<_>>();
+
+        let mut buffers = HashSet::default();
+
         let mut result = String::new();
         result.push_str("\n<context>\n\
             The following items were attached by the user. You don't need to use other tools to read them.\n\n");
 
         if !file_context.is_empty() {
             result.push_str("<files>\n");
-            for loader in file_context {
-                result.push_str(&loader());
+            for (text, buffer) in file_context {
+                result.push_str(&text);
+                buffers.insert(buffer);
             }
             result.push_str("</files>\n");
         }
 
-        /*
         if !directory_context.is_empty() {
             result.push_str("<directories>\n");
-            for context in directory_context {
-                for context_buffer in &context.context_buffers {
-                    result.push_str(&context_buffer.text);
-                }
+            for (text, buffer) in directory_context {
+                result.push_str(&text);
+                buffers.insert(buffer);
             }
             result.push_str("</directories>\n");
         }
 
+        /*
         if !symbol_context.is_empty() {
             result.push_str("<symbols>\n");
             for context in symbol_context {
@@ -278,11 +360,62 @@ pub fn load_context_text<'a>(
         */
 
         result.push_str("</context>\n");
-        Some(result)
+        (Some(result), buffers)
     })
 }
 
-fn to_fenced_codeblock(path: &Path, content: Rope, line_range: Option<Range<Point>>) -> String {
+/* todo!
+fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
+    let mut files = Vec::new();
+
+    for entry in worktree.child_entries(path) {
+        if entry.is_dir() {
+            files.extend(collect_files_in_path(worktree, &entry.path));
+        } else if entry.is_file() {
+            files.push(entry.path.clone());
+        }
+    }
+
+    files
+}
+*/
+
+fn load_file_path_text_as_fenced_codeblock(
+    project: Entity<Project>,
+    worktree: Entity<Worktree>,
+    path: Arc<Path>,
+    cx: &mut App,
+) -> Task<Option<(String, Entity<Buffer>)>> {
+    let worktree_ref = worktree.read(cx);
+    let worktree_id = worktree_ref.id();
+    let full_path = worktree_ref.full_path(&path);
+
+    let open_task = project.update(cx, |project, cx| {
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            let project_path = ProjectPath { worktree_id, path };
+            buffer_store.open_buffer(project_path, cx)
+        })
+    });
+
+    let rope_task = cx.spawn(async move |cx| {
+        let buffer = open_task.await.log_err()?;
+        let rope = buffer
+            .read_with(cx, |buffer, _cx| buffer.as_rope().clone())
+            .log_err()?;
+        Some((rope, buffer))
+    });
+
+    cx.background_spawn(async move {
+        let (rope, buffer) = rope_task.await?;
+        Some((to_fenced_codeblock(&full_path, rope, None), buffer))
+    })
+}
+
+fn to_fenced_codeblock(
+    full_path: &Path,
+    content: Rope,
+    line_range: Option<Range<Point>>,
+) -> String {
     let line_range_text = line_range.map(|range| {
         if range.start.row == range.end.row {
             format!(":{}", range.start.row + 1)
@@ -291,8 +424,8 @@ fn to_fenced_codeblock(path: &Path, content: Rope, line_range: Option<Range<Poin
         }
     });
 
-    let path_extension = path.extension().and_then(|ext| ext.to_str());
-    let path_string = path.to_string_lossy();
+    let path_extension = full_path.extension().and_then(|ext| ext.to_str());
+    let path_string = full_path.to_string_lossy();
     let capacity = 3
         + path_extension.map_or(0, |extension| extension.len() + 1)
         + path_string.len()
@@ -316,7 +449,7 @@ fn to_fenced_codeblock(path: &Path, content: Rope, line_range: Option<Range<Poin
 
     buffer.push('\n');
     for chunk in content.chunks() {
-        buffer.push_str(&chunk);
+        buffer.push_str(chunk);
     }
 
     if !buffer.ends_with('\n') {

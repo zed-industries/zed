@@ -4,6 +4,7 @@ use std::{rc::Rc, time::Duration};
 use file_icons::FileIcons;
 use gpui::ClickEvent;
 use gpui::{Animation, AnimationExt as _, pulsating_between};
+use project::Project;
 use ui::{IconButtonShape, Tooltip, prelude::*};
 
 use crate::context::{AssistantContext, ContextKind};
@@ -237,7 +238,7 @@ pub struct AddedContext {
 }
 
 impl AddedContext {
-    pub fn new(context: AssistantContext, cx: &App) -> Option<AddedContext> {
+    pub fn new(context: AssistantContext, project: &Project, cx: &App) -> Option<AddedContext> {
         match context {
             AssistantContext::File(ref file_context) => {
                 let full_path = file_context.buffer.read(cx).file()?.full_path(cx);
@@ -260,37 +261,36 @@ impl AddedContext {
                     icon_path: FileIcons::get_icon(&full_path, cx),
                     summarizing: false,
                 })
+            }
+            AssistantContext::Directory(directory_context) => {
+                let worktree = directory_context.worktree.read(cx);
+                // If the directory no longer exists, use its last known path.
+                let full_path = worktree
+                    .entry_for_id(directory_context.entry_id)
+                    .map_or_else(
+                        || directory_context.last_path.clone(),
+                        |entry| worktree.full_path(&entry.path).into(),
+                    );
+                let full_path_string: SharedString =
+                    full_path.to_string_lossy().into_owned().into();
+                let name = full_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned().into())
+                    .unwrap_or_else(|| full_path_string.clone());
+                let parent = full_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned().into());
+                Some(AddedContext {
+                    context: context.clone(),
+                    kind: ContextKind::Directory,
+                    name,
+                    parent,
+                    tooltip: Some(full_path_string),
+                    icon_path: None,
+                    summarizing: false,
+                })
             } /*
-              AssistantContext::Directory(directory_context) => {
-                  let worktree = directory_context.worktree.read(cx);
-                  // If the directory no longer exists, use its last known path.
-                  let full_path = worktree
-                      .entry_for_id(directory_context.entry_id)
-                      .map_or_else(
-                          || directory_context.last_path.clone(),
-                          |entry| worktree.full_path(&entry.path).into(),
-                      );
-                  let full_path_string: SharedString =
-                      full_path.to_string_lossy().into_owned().into();
-                  let name = full_path
-                      .file_name()
-                      .map(|n| n.to_string_lossy().into_owned().into())
-                      .unwrap_or_else(|| full_path_string.clone());
-                  let parent = full_path
-                      .parent()
-                      .and_then(|p| p.file_name())
-                      .map(|n| n.to_string_lossy().into_owned().into());
-                  AddedContext {
-                      id: directory_context.id,
-                      kind: ContextKind::Directory,
-                      name,
-                      parent,
-                      tooltip: Some(full_path_string),
-                      icon_path: None,
-                      summarizing: false,
-                  }
-              }
-
               AssistantContext::Symbol(symbol_context) => AddedContext {
                   id: symbol_context.id,
                   kind: ContextKind::Symbol,
