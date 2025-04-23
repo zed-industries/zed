@@ -393,6 +393,7 @@ impl lsp::request::Request for Runnables {
 #[serde(rename_all = "camelCase")]
 pub struct RunnablesParams {
     pub text_document: lsp::TextDocumentIdentifier,
+    #[serde(default)]
     pub position: Option<lsp::Position>,
 }
 
@@ -400,7 +401,7 @@ pub struct RunnablesParams {
 #[serde(rename_all = "camelCase")]
 pub struct Runnable {
     pub label: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<lsp::LocationLink>,
     pub kind: RunnableKind,
     pub args: RunnableArgs,
@@ -428,8 +429,9 @@ pub struct CargoRunnableArgs {
     pub environment: HashMap<String, String>,
     pub cwd: PathBuf,
     /// Command to be executed instead of cargo
+    #[serde(default)]
     pub override_cargo: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<PathBuf>,
     // command, --package and --lib stuff
     #[serde(default)]
@@ -442,10 +444,11 @@ pub struct CargoRunnableArgs {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellRunnableArgs {
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub environment: HashMap<String, String>,
     pub cwd: PathBuf,
     pub program: String,
+    #[serde(default)]
     pub args: Vec<String>,
 }
 
