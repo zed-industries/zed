@@ -3,6 +3,7 @@ name = "eval"
 version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
+default-run = "eval"
 
 [dependencies]
 agent.workspace = true
@@ -48,9 +49,14 @@ unindent.workspace = true
 util.workspace = true
 uuid = { version = "1.6", features = ["v4"] }
 workspace-hack.workspace = true
+
 [[bin]]
 name = "eval"
 path = "src/eval.rs"
+
+[[bin]]
+name = "explorer"
+path = "src/explorer.rs"
 
 [lints]
 workspace = true
