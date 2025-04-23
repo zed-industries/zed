@@ -2184,13 +2184,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Option<(AnyElement, gpui::Point<Pixels>)>> {
-        let show_expand_excerpts_buttons = self
-            .editor
-            .read(cx)
-            .show_expand_excerpt_buttons
-            .unwrap_or(false); // TODO: unwrap_or is wrong here, default is true
-
-        if !show_expand_excerpts_buttons {
+        if self.editor.read(cx).disable_expand_excerpt_buttons {
             return vec![];
         }
 
@@ -5547,7 +5541,7 @@ impl EditorElement {
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
-        if self.editor.read(cx).allow_scrolling {
+        if !self.editor.read(cx).disable_scrolling {
             self.paint_scroll_wheel_listener(layout, window, cx);
         }
 

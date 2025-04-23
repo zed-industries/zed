@@ -801,7 +801,8 @@ pub struct Editor {
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_scrollbars: bool,
-    allow_scrolling: bool,
+    disable_scrolling: bool,
+    disable_expand_excerpt_buttons: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -810,7 +811,6 @@ pub struct Editor {
     show_breakpoints: Option<bool>,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
-    show_expand_excerpt_buttons: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
@@ -1594,13 +1594,13 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             show_scrollbars: true,
-            allow_scrolling: true,
+            disable_scrolling: true,
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
             show_line_numbers: None,
             use_relative_line_numbers: None,
-            show_expand_excerpt_buttons: None,
+            disable_expand_excerpt_buttons: false,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -16182,8 +16182,8 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_allow_scrolling(&mut self, allow_scrolling: bool, cx: &mut Context<Self>) {
-        self.allow_scrolling = allow_scrolling;
+    pub fn disable_scrolling(&mut self, cx: &mut Context<Self>) {
+        self.disable_scrolling = true;
         cx.notify();
     }
 
@@ -16192,12 +16192,8 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_show_expand_excerpt_buttons(
-        &mut self,
-        show_expand_excerpt_buttons: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.show_expand_excerpt_buttons = Some(show_expand_excerpt_buttons);
+    pub fn disable_expand_excerpt_buttons(&mut self, cx: &mut Context<Self>) {
+        self.disable_expand_excerpt_buttons = true;
         cx.notify();
     }
 
