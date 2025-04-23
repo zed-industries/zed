@@ -16,7 +16,7 @@ use text::{Anchor, BufferId, OffsetRangeExt};
 use util::ResultExt as _;
 
 use crate::ThreadStore;
-use crate::context::{AssistantContext, FileContext};
+use crate::context::{AssistantContext, DirectoryContext, FileContext};
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
 
@@ -86,31 +86,21 @@ impl ContextStore {
             */
 
             this.update(cx, |this, cx| {
-                this.add_file_from_buffer(buffer, cx);
+                this.insert_file(buffer, cx);
             })?;
 
             anyhow::Ok(())
         })
     }
 
-    pub fn add_file_from_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let inserted = self
-            .context
-            .insert(AssistantContext::File(FileContext { buffer }));
-        if inserted {
-            cx.notify();
-        }
-    }
-
-    /*
     pub fn add_directory(
         &mut self,
         project_path: ProjectPath,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Result<()> {
         let Some(project) = self.project.upgrade() else {
-            return Task::ready(Err(anyhow!("failed to read project")));
+            return Err(anyhow!("failed to read project"));
         };
 
         let Some(entry_id) = project
@@ -118,9 +108,10 @@ impl ContextStore {
             .entry_for_path(&project_path, cx)
             .map(|entry| entry.id)
         else {
-            return Task::ready(Err(anyhow!("no entry found for directory context")));
+            return Err(anyhow!("no entry found for directory context"));
         };
 
+        /* todo!
         let already_included = match self.includes_directory(&project_path) {
             Some(FileInclusion::Direct(context_id)) => {
                 if remove_if_exists {
@@ -132,82 +123,34 @@ impl ContextStore {
             None => false,
         };
         if already_included {
-            return Task::ready(Ok(()));
+            return Ok(());
         }
+        */
 
-        let worktree_id = project_path.worktree_id;
-        cx.spawn(async move |this, cx| {
-            let worktree = project.update(cx, |project, cx| {
-                project
-                    .worktree_for_id(worktree_id, cx)
-                    .ok_or_else(|| anyhow!("no worktree found for {worktree_id:?}"))
-            })??;
+        self.insert_directory(entry_id, cx);
 
-            let files = worktree.update(cx, |worktree, _cx| {
-                collect_files_in_path(worktree, &project_path.path)
-            })?;
-
-            let open_buffers_task = project.update(cx, |project, cx| {
-                let tasks = files.iter().map(|file_path| {
-                    project.open_buffer(
-                        ProjectPath {
-                            worktree_id,
-                            path: file_path.clone(),
-                        },
-                        cx,
-                    )
-                });
-                future::join_all(tasks)
-            })?;
-
-            let buffers = open_buffers_task.await;
-
-            let context_buffer_tasks = this.update(cx, |_, cx| {
-                buffers
-                    .into_iter()
-                    .flatten()
-                    .flat_map(move |buffer| load_context_buffer(buffer, cx).log_err())
-                    .collect::<Vec<_>>()
-            })?;
-
-            let context_buffers = future::join_all(context_buffer_tasks).await;
-
-            if context_buffers.is_empty() {
-                let full_path = cx.update(|cx| worktree.read(cx).full_path(&project_path.path))?;
-                return Err(anyhow!("No text files found in {}", &full_path.display()));
-            }
-
-            this.update(cx, |this, cx| {
-                this.insert_directory(worktree, entry_id, project_path, context_buffers, cx);
-            })?;
-
-            anyhow::Ok(())
-        })
+        anyhow::Ok(())
     }
 
-    fn insert_directory(
-        &mut self,
-        worktree: Entity<Worktree>,
-        entry_id: ProjectEntryId,
-        project_path: ProjectPath,
-        context_buffers: Vec<ContextBuffer>,
-        cx: &mut Context<Self>,
-    ) {
-        let id = self.next_context_id.post_inc();
-        let last_path = project_path.path.clone();
-        self.directories.insert(project_path, id);
-
-        self.context
-            .push(AssistantContext::Directory(DirectoryContext {
-                id,
-                worktree,
-                entry_id,
-                last_path,
-                context_buffers,
-            }));
-        cx.notify();
+    pub fn insert_file(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let inserted = self
+            .context
+            .insert(AssistantContext::File(FileContext { buffer }));
+        if inserted {
+            cx.notify();
+        }
     }
 
+    fn insert_directory(&mut self, entry_id: ProjectEntryId, cx: &mut Context<Self>) {
+        let inserted = self
+            .context
+            .insert(AssistantContext::Directory(DirectoryContext { entry_id }));
+        if inserted {
+            cx.notify();
+        }
+    }
+
+    /*
     pub fn add_symbol(
         &mut self,
         buffer: Entity<Buffer>,
@@ -481,7 +424,7 @@ impl ContextStore {
                 name: _,
             } => {
                 if let Some(buffer) = buffer.upgrade() {
-                    self.add_file_from_buffer(buffer, cx);
+                    self.insert_file(buffer, cx);
                 };
             } /*
               SuggestedContext::Thread { thread, name: _ } => {

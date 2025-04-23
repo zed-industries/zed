@@ -3223,8 +3223,7 @@ pub(crate) fn open_context(
 ) {
     match context {
         AssistantContext::File(file_context) => {
-            let project = workspace.read(cx).project().read(cx);
-            if let Some(project_path) = file_context.project_path(project, cx) {
+            if let Some(project_path) = file_context.project_path(cx) {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .open_path(project_path, None, true, window, cx)

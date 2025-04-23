@@ -273,6 +273,8 @@ pub struct AddedContext {
 }
 
 impl AddedContext {
+    /// Creates an `AddedContext` by retrieving relevant details of `AssistantContext`. This returns
+    /// a `None` if `DirectoryContext` no longer exists.
     pub fn new(context: AssistantContext, project: &Project, cx: &App) -> Option<AddedContext> {
         match context {
             AssistantContext::File(ref file_context) => {
@@ -299,17 +301,12 @@ impl AddedContext {
                 })
             }
 
-            AssistantContext::Directory(directory_context) => {
-                None
-                /* todo!
-                let worktree = directory_context.worktree.read(cx);
-                // If the directory no longer exists, use its last known path.
-                let full_path = worktree
-                    .entry_for_id(directory_context.entry_id)
-                    .map_or_else(
-                        || directory_context.last_path.clone(),
-                        |entry| worktree.full_path(&entry.path).into(),
-                    );
+            AssistantContext::Directory(ref directory_context) => {
+                let worktree = project
+                    .worktree_for_entry(directory_context.entry_id, cx)?
+                    .read(cx);
+                let entry = worktree.entry_for_id(directory_context.entry_id)?;
+                let full_path = worktree.full_path(&entry.path);
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path
@@ -330,7 +327,6 @@ impl AddedContext {
                     status: ContextStatus::Ready,
                     render_preview: None,
                 })
-                */
             } /*
               AssistantContext::Symbol(symbol_context) => AddedContext {
                   id: symbol_context.id,

@@ -98,16 +98,13 @@ pub struct FileContext {
 }
 
 impl FileContext {
-    pub fn project_path(&self, project: &Project, cx: &App) -> Option<ProjectPath> {
-        /*
-        let worktree = project.worktree_for_entry(self.entry_id, cx)?.read(cx);
-        let entry = worktree.entry_for_id(self.entry_id)?;
+    // todo! inline?
+    pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let file = self.buffer.read(cx).file()?;
         Some(ProjectPath {
-            worktree_id: worktree.id(),
-            path: entry.path.clone(),
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
         })
-        */
-        todo!()
     }
 
     fn load(self, cx: &mut App) -> Option<Task<(String, Entity<Buffer>)>> {
@@ -136,20 +133,15 @@ pub struct DirectoryContext {
 }
 
 impl DirectoryContext {
-    /* todo!
-    pub fn entry<'a>(&self, cx: &'a App) -> Option<&'a project::Entry> {
-        self.worktree.read(cx).entry_for_id(self.entry_id)
-    }
-
+    // todo! remove?
     pub fn project_path(&self, project: &Project, cx: &App) -> Option<ProjectPath> {
         let worktree = project.worktree_for_entry(self.entry_id, cx)?.read(cx);
         let entry = worktree.entry_for_id(self.entry_id)?;
         Some(ProjectPath {
             worktree_id: worktree.id(),
-            path: entry.path,
+            path: entry.path.clone(),
         })
     }
-    */
 
     fn load(
         self,

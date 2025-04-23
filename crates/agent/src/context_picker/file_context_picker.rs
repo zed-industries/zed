@@ -133,13 +133,11 @@ impl PickerDelegate for FileContextPickerDelegate {
         let Some(task) = self
             .context_store
             .update(cx, |context_store, cx| {
-                /* todo!
                 if is_directory {
-                    context_store.add_directory(project_path, true, cx)
+                    Task::ready(context_store.add_directory(project_path, true, cx))
                 } else {
-                */
-                context_store.add_file_from_path(project_path, true, cx)
-                // }
+                    context_store.add_file_from_path(project_path, true, cx)
+                }
             })
             .ok()
         else {
