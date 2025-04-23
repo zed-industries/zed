@@ -83,36 +83,11 @@ impl Tool for PathSearchTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        let path_matcher = match PathMatcher::new([
-            // Sometimes models try to search for "". In this case, return all paths in the project.
-            if glob.is_empty() { "*" } else { &glob },
-        ]) {
-            Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))).into(),
+        let matches = match search_paths(&glob, project, cx) {
+            Ok(matches) => matches,
+            Err(err) => return Task::ready(Err(err)).into(),
         };
 
-        let project_handle = project.read(cx);
-        let worktrees: Vec<_> = project_handle.worktrees(cx).collect();
-
-        let mut matches = Vec::new();
-        for worktree_handle in &worktrees {
-            let worktree = worktree_handle.read(cx);
-            let snapshot = worktree.snapshot();
-            let root_name = snapshot.root_name();
-
-            for entry in snapshot.entries(false, 0) {
-                if path_matcher.is_match(&entry.path) {
-                    matches.push(
-                        PathBuf::from(root_name)
-                            .join(&entry.path)
-                            .to_string_lossy()
-                            .to_string(),
-                    );
-                }
-            }
-        }
-
-        matches.sort();
         let total_matches = matches.len();
 
         let card = if !matches.is_empty() {
@@ -124,12 +99,14 @@ impl Tool for PathSearchTool {
                 .collect();
 
             Some(
-                cx.new(|cx| PathSearchToolCard::new(total_matches, matches_for_card, cx))
-                    .into(),
+                cx.new(|cx| {
+                    PathSearchToolCard::new(total_matches, matches_for_card, glob.clone(), cx)
+                })
+                .into(),
             )
         } else {
             Some(
-                cx.new(|cx| PathSearchToolCard::new(0, Vec::new(), cx))
+                cx.new(|cx| PathSearchToolCard::new(0, Vec::new(), glob.clone(), cx))
                     .into(),
             )
         };
@@ -163,18 +140,56 @@ impl Tool for PathSearchTool {
     }
 }
 
+fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Result<Vec<String>> {
+    let path_matcher = match PathMatcher::new([if glob.is_empty() { "*" } else { glob }]) {
+        Ok(matcher) => matcher,
+        Err(err) => return Err(anyhow!("Invalid glob: {err}")),
+    };
+
+    let project_handle = project.read(cx);
+    let worktrees: Vec<_> = project_handle.worktrees(cx).collect();
+
+    let mut matches = Vec::new();
+    for worktree_handle in &worktrees {
+        let worktree = worktree_handle.read(cx);
+        let snapshot = worktree.snapshot();
+        let root_name = snapshot.root_name();
+
+        for entry in snapshot.entries(false, 0) {
+            if path_matcher.is_match(&entry.path) {
+                matches.push(
+                    PathBuf::from(root_name)
+                        .join(&entry.path)
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    matches.sort();
+    Ok(matches)
+}
+
 struct PathSearchToolCard {
     total_matches: usize,
     paths: Vec<String>,
     expanded: bool,
+    glob: String,
 }
 
 impl PathSearchToolCard {
-    fn new(total_matches: usize, paths: Vec<String>, _cx: &mut Context<Self>) -> Self {
+    fn new(
+        total_matches: usize,
+        paths: Vec<String>,
+        glob: String,
+        _cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             total_matches,
             paths,
             expanded: false,
+            glob,
         }
     }
 }
@@ -190,10 +205,12 @@ impl ToolCard for PathSearchToolCard {
         let matches_label: SharedString = if self.total_matches == 0 {
             "No matches".into()
         } else if self.total_matches == 1 {
-            "1 match for".into()
+            "1 match".into()
         } else {
-            format!("{} matches for", self.total_matches).into()
+            format!("{} matches", self.total_matches).into()
         };
+
+        let glob_label = format!("{}", self.glob);
 
         let content = if !self.paths.is_empty() && self.expanded {
             Some(
@@ -266,15 +283,17 @@ impl ToolCard for PathSearchToolCard {
             .mb_2()
             .gap_1()
             .child(
-                ToolCallCardHeader::new(IconName::SearchCode, matches_label).disclosure_slot(
-                    Disclosure::new("path-search-disclosure", self.expanded)
-                        .opened_icon(IconName::ChevronUp)
-                        .closed_icon(IconName::ChevronDown)
-                        .disabled(self.paths.is_empty())
-                        .on_click(cx.listener(move |this, _event, _window, _cx| {
-                            this.expanded = !this.expanded;
-                        })),
-                ),
+                ToolCallCardHeader::new(IconName::SearchCode, matches_label)
+                    .with_code_path(glob_label)
+                    .disclosure_slot(
+                        Disclosure::new("path-search-disclosure", self.expanded)
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown)
+                            .disabled(self.paths.is_empty())
+                            .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                this.expanded = !this.expanded;
+                            })),
+                    ),
             )
             .children(content)
     }
@@ -298,12 +317,14 @@ impl Component for PathSearchTool {
                 "tests/test.rs".to_string(),
             ],
             expanded: true,
+            glob: "*.rs".to_string(),
         });
 
         let empty_card = cx.new(|_| PathSearchToolCard {
             total_matches: 0,
             paths: Vec::new(),
             expanded: false,
+            glob: "*.nonexistent".to_string(),
         });
 
         Some(
@@ -343,5 +364,66 @@ impl Component for PathSearchTool {
                 ])])
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use settings::SettingsStore;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_path_search_tool(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({
+                "apple": {
+                    "banana": {
+                        "carrot": "1",
+                    },
+                    "bandana": {
+                        "carbonara": "2",
+                    },
+                    "endive": "3"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let matches = cx
+            .update(|cx| search_paths("root/**/car*", project.clone(), cx))
+            .unwrap();
+        assert_eq!(
+            matches,
+            &[
+                "root/apple/banana/carrot".to_string(),
+                "root/apple/bandana/carbonara".to_string()
+            ]
+        );
+
+        let matches = cx
+            .update(|cx| search_paths("**/car*", project.clone(), cx))
+            .unwrap();
+        assert_eq!(
+            matches,
+            &[
+                "root/apple/banana/carrot".to_string(),
+                "root/apple/bandana/carbonara".to_string()
+            ]
+        );
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
     }
 }
