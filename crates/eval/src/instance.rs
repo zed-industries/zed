@@ -29,15 +29,15 @@ use util::ResultExt as _;
 use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
-use crate::assertions::{AssertionsReport, RanAssertion, RanAssertionResult};
-use crate::example::{Example, ExampleContext, FailedAssertion, JudgeAssertion};
+use crate::assertions::{Assertion, AssertionsReport, RanAssertionResult};
+use crate::example::{AssertionGroupId, Example, ExampleContext, FailedAssertion, JudgeAssertion};
 use crate::{AgentAppState, ToolMetrics};
 
 pub const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
 #[derive(Clone)]
 pub struct ExampleInstance {
-    pub thread: Rc<dyn Example>,
+    pub example: Rc<dyn Example>,
     pub name: String,
     pub run_directory: PathBuf,
     pub log_prefix: String,
@@ -100,7 +100,7 @@ impl ExampleInstance {
 
         Self {
             name,
-            thread,
+            example: thread,
             log_prefix: String::new(),
             run_directory,
             repetition,
@@ -110,11 +110,11 @@ impl ExampleInstance {
     }
 
     pub fn repo_url(&self) -> String {
-        self.thread.meta().url
+        self.example.meta().url
     }
 
     pub fn revision(&self) -> String {
-        self.thread.meta().revision
+        self.example.meta().revision
     }
 
     pub fn worktree_name(&self) -> String {
@@ -132,7 +132,7 @@ impl ExampleInstance {
 
     /// Set up the example by checking out the specified Git revision
     pub async fn fetch(&mut self) -> Result<()> {
-        let meta = self.thread.meta();
+        let meta = self.example.meta();
 
         let revision_exists = run_git(
             &self.repo_path,
@@ -155,7 +155,7 @@ impl ExampleInstance {
     /// Set up the example by checking out the specified Git revision
     pub async fn setup(&mut self) -> Result<()> {
         let worktree_path = self.worktree_path();
-        let meta = self.thread.meta();
+        let meta = self.example.meta();
         if worktree_path.is_dir() {
             println!("{}Resetting existing worktree", self.log_prefix);
 
@@ -194,7 +194,7 @@ impl ExampleInstance {
     pub fn worktree_path(&self) -> PathBuf {
         self.worktrees_dir
             .join(self.worktree_name())
-            .join(self.thread.meta().repo_name())
+            .join(self.example.meta().repo_name())
     }
 
     pub fn run(
@@ -220,7 +220,7 @@ impl ExampleInstance {
         let tools = cx.new(|_| ToolWorkingSet::default());
         let thread_store =
             ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
-        let meta = self.thread.meta();
+        let meta = self.example.meta();
         let this = self.clone();
 
         cx.spawn(async move |cx| {
@@ -354,7 +354,7 @@ impl ExampleInstance {
             })?;
 
             let mut example_cx = ExampleContext::new(meta.clone(), this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
-            let result = this.thread.conversation(&mut example_cx).await;
+            let result = this.example.conversation(&mut example_cx).await;
 
             if let Err(err) = result {
                 if !err.is::<FailedAssertion>() {
@@ -428,7 +428,7 @@ impl ExampleInstance {
         let worktree_path = self.worktree_path();
         run_git(&worktree_path, &["add", "."]).await?;
         let mut diff_args = vec!["diff", "--staged"];
-        if self.thread.meta().url == ZED_REPO_URL {
+        if self.example.meta().url == ZED_REPO_URL {
             diff_args.push(":(exclude).rules");
         }
         run_git(&worktree_path, &diff_args).await
@@ -469,7 +469,7 @@ impl ExampleInstance {
         run_output: &RunOutput,
         cx: &AsyncApp,
     ) -> (String, AssertionsReport) {
-        let diff_assertions = self.thread.diff_assertions();
+        let diff_assertions = self.example.diff_assertions();
 
         if diff_assertions.is_empty() {
             return (
@@ -516,7 +516,7 @@ impl ExampleInstance {
         run_output: &RunOutput,
         cx: &AsyncApp,
     ) -> (String, AssertionsReport) {
-        let thread_assertions = self.thread.thread_assertions();
+        let thread_assertions = self.example.thread_assertions();
 
         if thread_assertions.is_empty() {
             return (
@@ -591,15 +591,15 @@ impl ExampleInstance {
                 };
 
                 if result.is_ok() {
-                    println!("{}✅ {}", log_prefix, assertion.id);
+                    println!("{}✅ {}", log_prefix, assertion.group_id);
                 } else {
-                    println!("{}❌ {}", log_prefix, assertion.id);
+                    println!("{}❌ {}", log_prefix, assertion.group_id);
                 }
 
                 (
                     response,
-                    RanAssertion {
-                        id: assertion.id,
+                    Assertion {
+                        group_id: AssertionGroupId(assertion.group_id.clone().into()),
                         result,
                     },
                 )
@@ -610,7 +610,7 @@ impl ExampleInstance {
         let mut report = AssertionsReport::default();
 
         for (response, assertion) in future::join_all(assertions).await {
-            writeln!(&mut responses, "# {}", assertion.id).unwrap();
+            writeln!(&mut responses, "# {}", assertion.group_id.to_string()).unwrap();
             writeln!(&mut responses, "{}\n\n", response).unwrap();
             report.ran.push(assertion);
         }

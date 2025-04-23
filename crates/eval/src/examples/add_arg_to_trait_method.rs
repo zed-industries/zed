@@ -19,11 +19,15 @@ impl Example for AddArgToTraitMethod {
                 file_extension: "rs".to_string(),
                 allow_preexisting_diagnostics: false,
             }),
-            max_assertions: None,
         }
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
+        let read_before_edit = cx.assertion("read_before_edit");
+        let added_any_param = cx.assertion("added_any_param");
+        let added_unused_param = cx.assertion("added_unused_param");
+        let added_used_param_to_batch_tool = cx.assertion("added_used_param_to_batch_tool");
+
         const FILENAME: &str = "assistant_tool.rs";
         cx.push_user_message(format!(
             r#"
@@ -52,14 +56,16 @@ impl Example for AddArgToTraitMethod {
                 }
                 "edit_file" => {
                     if let Ok(input) = tool_use.parse_input::<EditFileToolInput>() {
-                        cx.assert(
-                            read_files.contains(input.path.to_str().unwrap()),
-                            format!(
-                                "Read before edit: {}",
-                                &input.path.file_stem().unwrap().to_str().unwrap()
-                            ),
-                        )
-                        .ok();
+                        read_before_edit
+                            .assert(
+                                read_files.contains(input.path.to_str().unwrap()),
+                                format!(
+                                    "Read before edit: {}",
+                                    &input.path.file_stem().unwrap().to_str().unwrap()
+                                ),
+                                cx,
+                            )
+                            .ok();
                     }
                 }
                 _ => {}
@@ -106,10 +112,16 @@ impl Example for AddArgToTraitMethod {
                 edits.has_added_line("        window: Option<gpui::AnyWindowHandle>,\n")
             });
 
-            cx.assert(ignored || uningored, format!("Argument:   {}", tool_name))
+            added_any_param
+                .assert(
+                    ignored || uningored,
+                    format!("Argument:   {}", tool_name),
+                    cx,
+                )
                 .ok();
 
-            cx.assert(ignored, format!("`_` prefix: {}", tool_name))
+            added_unused_param
+                .assert(ignored, format!("`_` prefix: {}", tool_name), cx)
                 .ok();
         }
 
@@ -117,13 +129,15 @@ impl Example for AddArgToTraitMethod {
 
         let batch_tool_edits = edits.get(Path::new("crates/assistant_tools/src/batch_tool.rs"));
 
-        cx.assert(
-            batch_tool_edits.map_or(false, |edits| {
-                edits.has_added_line("        window: Option<gpui::AnyWindowHandle>,\n")
-            }),
-            "Argument:   batch_tool",
-        )
-        .ok();
+        added_used_param_to_batch_tool
+            .assert(
+                batch_tool_edits.map_or(false, |edits| {
+                    edits.has_added_line("        window: Option<gpui::AnyWindowHandle>,\n")
+                }),
+                "Argument:   batch_tool",
+                cx,
+            )
+            .ok();
 
         Ok(())
     }
@@ -131,13 +145,13 @@ impl Example for AddArgToTraitMethod {
     fn diff_assertions(&self) -> Vec<JudgeAssertion> {
         vec![
             JudgeAssertion {
-                id: "batch tool passes window to each".to_string(),
+                group_id: "batch tool passes window to each".to_string(),
                 description:
                     "batch_tool is modified to pass a clone of the window to each tool it calls."
                         .to_string(),
             },
             JudgeAssertion {
-                id: "tool tests updated".to_string(),
+                group_id: "tool tests updated".to_string(),
                 description:
                     "tool tests are updated to pass the new `window` argument (`None` is ok)."
                         .to_string(),

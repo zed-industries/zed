@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     ToolMetrics,
-    assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
+    assertions::{Assertion, AssertionsReport, RanAssertionResult},
 };
 use agent::ThreadEvent;
 use anyhow::{Result, anyhow};
@@ -18,6 +18,7 @@ use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
+use serde::{Deserialize, Serialize};
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
@@ -35,7 +36,7 @@ pub trait Example {
 
 #[derive(Clone, Debug)]
 pub struct JudgeAssertion {
-    pub id: String,
+    pub group_id: String,
     pub description: String,
 }
 
@@ -45,7 +46,6 @@ pub struct ExampleMetadata {
     pub url: String,
     pub revision: String,
     pub language_server: Option<LanguageServer>,
-    pub max_assertions: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -99,7 +99,7 @@ impl ExampleContext {
         model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
-        let assertions = AssertionsReport::new(meta.max_assertions);
+        let assertions = AssertionsReport::default();
 
         Self {
             meta,
@@ -120,60 +120,20 @@ impl ExampleContext {
             .unwrap();
     }
 
-    pub fn assert(&mut self, expected: bool, message: impl ToString) -> Result<()> {
-        let message = message.to_string();
-        self.log_assertion(
-            if expected {
-                Ok(())
-            } else {
-                Err(anyhow::Error::from(FailedAssertion(message.clone())))
-            },
-            message,
-        )
+    pub fn assertion(&mut self, key: impl Into<String>) -> AssertionGroupId {
+        let group_id = AssertionGroupId(key.into());
+        self.assertions.groups.insert(group_id.clone());
+        group_id
     }
 
-    pub fn assert_some<T>(&mut self, option: Option<T>, message: impl ToString) -> Result<T> {
-        let message = message.to_string();
-        self.log_assertion(
-            match option {
-                Some(value) => Ok(value),
-                None => Err(anyhow::Error::from(FailedAssertion(message.clone()))),
-            },
-            message,
-        )
-    }
-
-    #[allow(dead_code)]
-    pub fn assert_eq<T: PartialEq + Debug>(
+    fn log_assertion<T>(
         &mut self,
-        left: T,
-        right: T,
-        message: impl ToString,
-    ) -> Result<()> {
-        let message = message.to_string();
-        self.log_assertion(
-            if left == right {
-                Ok(())
-            } else {
-                println!("{}{:#?} != {:#?}", self.log_prefix, left, right);
-                Err(anyhow::Error::from(FailedAssertion(message.clone())))
-            },
-            message,
-        )
-    }
-
-    fn log_assertion<T>(&mut self, result: Result<T>, message: String) -> Result<T> {
-        if let Some(max) = self.meta.max_assertions {
-            if self.assertions.run_count() > max {
-                return Err(anyhow!(
-                    "More assertions were run than the stated max_assertions of {}",
-                    max
-                ));
-            }
-        }
-
-        self.assertions.ran.push(RanAssertion {
-            id: message.clone(),
+        group_id: AssertionGroupId,
+        result: Result<T>,
+        message: String,
+    ) -> Result<T> {
+        self.assertions.ran.push(Assertion {
+            group_id,
             result: Ok(RanAssertionResult {
                 analysis: None,
                 passed: result.is_ok(),
@@ -355,6 +315,73 @@ impl ExampleContext {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Ord, PartialOrd, PartialEq, Eq)]
+pub struct AssertionGroupId(pub String);
+
+impl AssertionGroupId {
+    pub fn assert(
+        &self,
+        expected: bool,
+        message: impl ToString,
+        cx: &mut ExampleContext,
+    ) -> Result<()> {
+        let message = message.to_string();
+        cx.log_assertion(
+            self.clone(),
+            if expected {
+                Ok(())
+            } else {
+                Err(anyhow::Error::from(FailedAssertion(message.clone())))
+            },
+            message,
+        )
+    }
+
+    pub fn assert_some<T>(
+        &self,
+        option: Option<T>,
+        message: impl ToString,
+        cx: &mut ExampleContext,
+    ) -> Result<T> {
+        let message = message.to_string();
+        cx.log_assertion(
+            self.clone(),
+            match option {
+                Some(value) => Ok(value),
+                None => Err(anyhow::Error::from(FailedAssertion(message.clone()))),
+            },
+            message,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub fn assert_eq<T: PartialEq + Debug>(
+        &self,
+        left: T,
+        right: T,
+        message: impl ToString,
+        cx: &mut ExampleContext,
+    ) -> Result<()> {
+        let message = message.to_string();
+        cx.log_assertion(
+            self.clone(),
+            if left == right {
+                Ok(())
+            } else {
+                println!("{}{:#?} != {:#?}", cx.log_prefix, left, right);
+                Err(anyhow::Error::from(FailedAssertion(message.clone())))
+            },
+            message,
+        )
+    }
+}
+
+impl fmt::Display for AssertionGroupId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
 #[derive(Debug)]
 pub struct Response {
     messages: Vec<Message>,
@@ -365,8 +392,10 @@ impl Response {
         Self { messages }
     }
 
+    // todo! move this to assertion group id method maybe?
     pub fn expect_tool(
         &self,
+        group_id: AssertionGroupId,
         tool_name: &'static str,
         cx: &mut ExampleContext,
     ) -> Result<&ToolUse> {
@@ -375,7 +404,7 @@ impl Response {
                 .iter()
                 .find(|tool_use| tool_use.name == tool_name)
         });
-        cx.assert_some(result, format!("called `{}`", tool_name))
+        group_id.assert_some(result, format!("called `{}`", tool_name), cx)
     }
 
     pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {

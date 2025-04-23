@@ -37,14 +37,14 @@ struct DeclarativeExample {
 impl DeclarativeExample {
     pub fn load(example_path: &Path) -> Result<Self> {
         let name = Self::name_from_path(example_path);
-        let base: ExampleToml = toml::from_str(&fs::read_to_string(&example_path)?)?;
+        let toml: ExampleToml = toml::from_str(&fs::read_to_string(&example_path)?)?;
 
-        let language_server = if base.require_lsp {
+        let language_server = if toml.require_lsp {
             Some(crate::example::LanguageServer {
-                file_extension: base
+                file_extension: toml
                     .language_extension
                     .expect("Language extension is required when require_lsp = true"),
-                allow_preexisting_diagnostics: base.allow_preexisting_diagnostics,
+                allow_preexisting_diagnostics: toml.allow_preexisting_diagnostics,
             })
         } else {
             None
@@ -52,24 +52,29 @@ impl DeclarativeExample {
 
         let metadata = ExampleMetadata {
             name,
-            url: base.url,
-            revision: base.revision,
+            url: toml.url,
+            revision: toml.revision,
             language_server,
-            max_assertions: None,
         };
 
         Ok(DeclarativeExample {
             metadata,
-            prompt: base.prompt,
-            thread_assertions: base
+            prompt: toml.prompt,
+            thread_assertions: toml
                 .thread_assertions
                 .into_iter()
-                .map(|(id, description)| JudgeAssertion { id, description })
+                .map(|(id, description)| JudgeAssertion {
+                    group_id: id,
+                    description,
+                })
                 .collect(),
-            diff_assertions: base
+            diff_assertions: toml
                 .diff_assertions
                 .into_iter()
-                .map(|(id, description)| JudgeAssertion { id, description })
+                .map(|(id, description)| JudgeAssertion {
+                    group_id: id,
+                    description,
+                })
                 .collect(),
         })
     }
