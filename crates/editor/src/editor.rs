@@ -11834,6 +11834,7 @@ impl Editor {
         fn select_next_match_ranges(
             this: &mut Editor,
             range: Range<usize>,
+            reversed: bool,
             replace_newest: bool,
             auto_scroll: Option<Autoscroll>,
             window: &mut Window,
@@ -11844,7 +11845,11 @@ impl Editor {
                 if replace_newest {
                     s.delete(s.newest_anchor().id);
                 }
-                s.insert_range(range.clone());
+                if reversed {
+                    s.insert_range(range.end..range.start);
+                } else {
+                    s.insert_range(range);
+                }
             });
         }
 
@@ -11895,6 +11900,7 @@ impl Editor {
                     select_next_match_ranges(
                         self,
                         next_selected_range,
+                        last_selection.reversed,
                         replace_newest,
                         autoscroll,
                         window,
@@ -11953,6 +11959,7 @@ impl Editor {
                     select_next_match_ranges(
                         self,
                         selection.start..selection.end,
+                        selection.reversed,
                         replace_newest,
                         autoscroll,
                         window,
@@ -12120,7 +12127,11 @@ impl Editor {
                         if action.replace_newest {
                             s.delete(s.newest_anchor().id);
                         }
-                        s.insert_range(next_selected_range);
+                        if last_selection.reversed {
+                            s.insert_range(next_selected_range.end..next_selected_range.start);
+                        } else {
+                            s.insert_range(next_selected_range);
+                        }
                     });
                 } else {
                     select_prev_state.done = true;
