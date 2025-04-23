@@ -3578,11 +3578,17 @@ impl Project {
             .and_then(|config| self.debug_adapters().adapter(&config.adapter))
             .and_then(|adapter| adapter.inline_value_provider());
 
+        let mut text_objects =
+            snapshot.text_object_ranges(range.end..range.end, Default::default());
+        let text_object_range = text_objects
+            .find(|(_, obj)| matches!(obj, language::TextObject::AroundFunction))
+            .map(|(range, _)| snapshot.anchor_before(range.start))
+            .unwrap_or(range.start);
+
         let inline_value_task = if let Some(inline_value_provider) = inline_value_provider {
             let variable_ranges = snapshot
                 .debug_variable_ranges(
-                    range.start.to_offset(&snapshot)
-                        ..active_stack_frame.position.to_offset(&snapshot),
+                    text_object_range.to_offset(&snapshot)..range.end.to_offset(&snapshot),
                 )
                 .filter_map(|range| {
                     let lsp_range = language::range_to_lsp(
