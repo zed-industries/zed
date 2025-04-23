@@ -9,7 +9,7 @@ use gpui::{
     WeakEntity,
 };
 use language::{Anchor, Buffer, BufferId};
-use project::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
+use project::{ConflictRegion, ConflictSet, ConflictSetUpdate};
 use std::{ops::Range, sync::Arc};
 use ui::{
     ActiveTheme, AnyElement, Element as _, StatefulInteractiveElement, Styled,
@@ -83,7 +83,6 @@ fn excerpt_for_buffer_updated(
     cx: &mut Context<Editor>,
 ) {
     let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
-    dbg!("excerpt for buffer updated", conflicts_len);
     conflicts_updated(
         editor,
         conflict_set,
@@ -122,7 +121,6 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
     let conflict_set = buffer_conflicts.conflict_set.clone();
     let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
     let addon_conflicts_len = buffer_conflicts.block_ids.len();
-    dbg!("buffer added", conflicts_len);
     conflicts_updated(
         editor,
         conflict_set,
@@ -158,7 +156,6 @@ fn conflicts_updated(
     event: &ConflictSetUpdate,
     cx: &mut Context<Editor>,
 ) {
-    dbg!("conflicts updated", &event.old_range, &event.new_range);
     let buffer_id = conflict_set.read(cx).snapshot.buffer_id;
     let conflict_set = conflict_set.read(cx).snapshot();
     let multibuffer = editor.buffer().read(cx);
@@ -252,16 +249,7 @@ fn conflicts_updated(
             style: BlockStyle::Fixed,
             render: Arc::new({
                 let conflict = conflict.clone();
-                let conflict_set = conflict_set.clone();
-                move |cx| {
-                    render_conflict_buttons(
-                        &conflict_set,
-                        &conflict,
-                        excerpt_id,
-                        editor_handle.clone(),
-                        cx,
-                    )
-                }
+                move |cx| render_conflict_buttons(&conflict, excerpt_id, editor_handle.clone(), cx)
             }),
             priority: 0,
         })
@@ -342,7 +330,6 @@ fn update_conflict_highlighting(
 }
 
 fn render_conflict_buttons(
-    conflict_set: &ConflictSetSnapshot,
     conflict: &ConflictRegion,
     excerpt_id: ExcerptId,
     editor: WeakEntity<Editor>,
@@ -358,14 +345,7 @@ fn render_conflict_buttons(
             div()
                 .id("ours")
                 .px_1()
-                .child(format!(
-                    "Accept Ours ({})",
-                    conflict_set
-                        .ours_info
-                        .as_ref()
-                        .and_then(|info| info.message.lines().next())
-                        .unwrap_or("unknown"),
-                ))
+                .child("Take Ours")
                 .rounded_t(rems(0.2))
                 .text_ui_sm(cx)
                 .hover(|this| this.bg(cx.theme().colors().element_background))
@@ -383,7 +363,7 @@ fn render_conflict_buttons(
             div()
                 .id("theirs")
                 .px_1()
-                .child("Accept Theirs")
+                .child("Take Theirs")
                 .rounded_t(rems(0.2))
                 .text_ui_sm(cx)
                 .hover(|this| this.bg(cx.theme().colors().element_background))
@@ -407,7 +387,7 @@ fn render_conflict_buttons(
             div()
                 .id("both")
                 .px_1()
-                .child("Accept Both")
+                .child("Take Both")
                 .rounded_t(rems(0.2))
                 .text_ui_sm(cx)
                 .hover(|this| this.bg(cx.theme().colors().element_background))

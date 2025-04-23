@@ -88,7 +88,6 @@ struct SharedDiffs {
 }
 
 struct BufferGitState {
-    git_store: WeakEntity<GitStore>,
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
     conflict_set: Option<WeakEntity<ConflictSet>>,
@@ -312,7 +311,6 @@ pub enum GitStoreEvent {
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
     JobsUpdated,
-    // FIXME scope
     ConflictsUpdated,
 }
 
@@ -2204,9 +2202,8 @@ impl GitStore {
 }
 
 impl BufferGitState {
-    fn new(git_store: WeakEntity<GitStore>) -> Self {
+    fn new(_git_store: WeakEntity<GitStore>) -> Self {
         Self {
-            git_store,
             unstaged_diff: Default::default(),
             uncommitted_diff: Default::default(),
             recalculate_diff_task: Default::default(),
@@ -2760,6 +2757,10 @@ impl MergeDetails {
 }
 
 impl Repository {
+    pub fn snapshot(&self) -> RepositorySnapshot {
+        self.snapshot.clone()
+    }
+
     fn local(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
@@ -3962,7 +3963,6 @@ impl Repository {
             .map(proto_to_commit_details);
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
-        // FIXME others
 
         let edits = update
             .removed_statuses

@@ -21,17 +21,15 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, Capability, LineEnding, OffsetRangeExt, Point, Rope, TextBuffer};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    Project, ProjectPath, WorktreeId,
+    Project, ProjectPath,
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
 use std::{
     any::{Any, TypeId},
     ops::Range,
-    path::Path,
-    sync::Arc,
 };
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
@@ -54,7 +52,6 @@ pub struct ProjectDiff {
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
     pending_scroll: Option<PathKey>,
-    current_branch: Option<Branch>,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -67,67 +64,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-/// Pseudo-file providing a multibuffer excerpt at the top of the project diff to describe the merge conflict situation.
-struct ConflictMetadataFile {
-    path: Arc<Path>,
-    worktree_id: WorktreeId,
-}
-
-const MERGE_DETAILS_NAMESPACE: u32 = 0;
 const CONFLICT_NAMESPACE: u32 = 1;
 const TRACKED_NAMESPACE: u32 = 2;
 const NEW_NAMESPACE: u32 = 3;
-
-impl ConflictMetadataFile {
-    fn new(worktree_id: WorktreeId) -> Self {
-        Self {
-            path: Path::new("conflicted merge").into(),
-            worktree_id,
-        }
-    }
-
-    fn path_key(&self) -> PathKey {
-        PathKey::namespaced(MERGE_DETAILS_NAMESPACE, self.path.clone())
-    }
-
-    fn content(&self) -> Rope {
-        format!("oh no a merge conflict").into()
-    }
-}
-
-impl language::File for ConflictMetadataFile {
-    fn as_local(&self) -> Option<&dyn language::LocalFile> {
-        None
-    }
-
-    fn disk_state(&self) -> language::DiskState {
-        language::DiskState::New
-    }
-
-    fn path(&self) -> &std::sync::Arc<Path> {
-        &self.path
-    }
-
-    fn full_path(&self, _cx: &App) -> std::path::PathBuf {
-        self.path.as_ref().into()
-    }
-
-    fn file_name<'a>(&'a self, _cx: &'a App) -> &'a std::ffi::OsStr {
-        self.path.file_name().unwrap()
-    }
-
-    fn worktree_id(&self, _cx: &App) -> project::WorktreeId {
-        self.worktree_id
-    }
-
-    fn to_proto(&self, _cx: &App) -> language::proto::File {
-        unimplemented!()
-    }
-
-    fn is_private(&self) -> bool {
-        false
-    }
-}
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -243,7 +182,6 @@ impl ProjectDiff {
             multibuffer,
             pending_scroll: None,
             update_needed: send,
-            current_branch: None,
             _task: worker,
             _subscription: git_store_subscription,
         }
@@ -529,42 +467,6 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
-            if dbg!(false) {
-                this.update(cx, |this, cx| {
-                    let Some(worktree_id) = this
-                        .project
-                        .read(cx)
-                        .worktrees(cx)
-                        .next()
-                        .map(|worktree| worktree.read(cx).id())
-                    else {
-                        return;
-                    };
-                    let file = Arc::new(ConflictMetadataFile::new(worktree_id));
-                    let buffer = cx.new(|cx| {
-                        let buffer = TextBuffer::new_normalized(
-                            0,
-                            cx.entity_id().as_non_zero_u64().into(),
-                            LineEnding::default(),
-                            file.content(),
-                        );
-                        Buffer::build(buffer, Some(file.clone()), Capability::ReadOnly)
-                    });
-                    this.multibuffer.update(cx, |multibuffer, cx| {
-                        let max_point = buffer.read(cx).max_point();
-                        dbg!("excerpts");
-                        multibuffer.set_excerpts_for_path(
-                            file.path_key(),
-                            buffer,
-                            [Point::zero()..max_point],
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                            cx,
-                        );
-                    });
-                })
-                .ok();
-            }
-
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
@@ -575,12 +477,6 @@ impl ProjectDiff {
                 }
             }
             this.update(cx, |this, cx| {
-                dbg!(
-                    this.multibuffer
-                        .read(cx)
-                        .excerpt_paths()
-                        .collect::<Vec<_>>()
-                );
                 this.pending_scroll.take();
                 cx.notify();
             })?;

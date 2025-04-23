@@ -1,4 +1,3 @@
-use git::repository::CommitDetails;
 use gpui::{App, Context, Entity, EventEmitter};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 use text::{Anchor, BufferId, OffsetRangeExt as _};
@@ -18,8 +17,6 @@ pub struct ConflictSetUpdate {
 #[derive(Debug, Clone)]
 pub struct ConflictSetSnapshot {
     pub buffer_id: BufferId,
-    pub ours_info: Option<CommitDetails>,
-    pub theirs_info: Option<CommitDetails>,
     pub conflicts: Arc<[ConflictRegion]>,
 }
 
@@ -134,8 +131,6 @@ impl ConflictSet {
             has_conflict,
             snapshot: ConflictSetSnapshot {
                 buffer_id,
-                ours_info: None,
-                theirs_info: None,
                 conflicts: Default::default(),
             },
         }
@@ -151,8 +146,6 @@ impl ConflictSet {
                     new_range: 0..0,
                 });
                 self.snapshot.conflicts = Default::default();
-                self.snapshot.ours_info = None;
-                self.snapshot.theirs_info = None;
             }
             true
         } else {
@@ -252,8 +245,6 @@ impl ConflictSet {
 
         ConflictSetSnapshot {
             conflicts: conflicts.into(),
-            ours_info: None,
-            theirs_info: None,
             buffer_id: buffer.remote_id(),
         }
     }
