@@ -17,7 +17,6 @@ assistant_tool.workspace = true
 chrono.workspace = true
 collections.workspace = true
 component.workspace = true
-feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true

@@ -705,7 +705,6 @@ dependencies = [
  "chrono",
  "collections",
  "component",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "html_to_markdown",
@@ -16626,7 +16625,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
