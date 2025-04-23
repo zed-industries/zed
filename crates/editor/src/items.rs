@@ -99,25 +99,40 @@ impl FollowableItem for Editor {
                         multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
                     } else {
                         multibuffer = MultiBuffer::new(project.read(cx).capability());
-                        let mut excerpts = state.excerpts.into_iter().peekable();
-                        while let Some(excerpt) = excerpts.peek() {
+                        let mut sorted_excerpts = state.excerpts.clone();
+                        sorted_excerpts.sort_by_key(|e| e.id);
+                        let mut sorted_excerpts = sorted_excerpts.into_iter().peekable();
+
+                        while let Some(excerpt) = sorted_excerpts.next() {
                             let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
                                 continue;
                             };
-                            let buffer_excerpts = iter::from_fn(|| {
-                                let excerpt = excerpts.peek()?;
-                                (excerpt.buffer_id == u64::from(buffer_id))
-                                    .then(|| excerpts.next().unwrap())
-                            });
+
+                            let mut insert_position = ExcerptId::min();
+                            for e in &state.excerpts {
+                                if e.id == excerpt.id {
+                                    break;
+                                }
+                                if e.id < excerpt.id {
+                                    insert_position = ExcerptId::from_proto(e.id);
+                                }
+                            }
+
                             let buffer =
                                 buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id);
-                            if let Some(buffer) = buffer {
-                                multibuffer.push_excerpts(
-                                    buffer.clone(),
-                                    buffer_excerpts.filter_map(deserialize_excerpt_range),
-                                    cx,
-                                );
-                            }
+
+                            let Some(excerpt) = deserialize_excerpt_range(excerpt) else {
+                                continue;
+                            };
+
+                            let Some(buffer) = buffer else { continue };
+
+                            multibuffer.insert_excerpts_with_ids_after(
+                                insert_position,
+                                buffer.clone(),
+                                [excerpt],
+                                cx,
+                            );
                         }
                     };
 
@@ -202,25 +217,26 @@ impl FollowableItem for Editor {
                 primary_end: Some(serialize_text_anchor(&range.primary.end)),
             })
             .collect();
+        let snapshot = buffer.snapshot(cx);
 
         Some(proto::view::Variant::Editor(proto::view::Editor {
             singleton: buffer.is_singleton(),
             title: (!buffer.is_singleton()).then(|| buffer.title(cx).into()),
             excerpts,
-            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor)),
+            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor, &snapshot)),
             scroll_x: scroll_anchor.offset.x,
             scroll_y: scroll_anchor.offset.y,
             selections: self
                 .selections
                 .disjoint_anchors()
                 .iter()
-                .map(serialize_selection)
+                .map(|s| serialize_selection(s, &snapshot))
                 .collect(),
             pending_selection: self
                 .selections
                 .pending_anchor()
                 .as_ref()
-                .map(serialize_selection),
+                .map(|s| serialize_selection(s, &snapshot)),
         }))
     }
 
@@ -279,24 +295,27 @@ impl FollowableItem for Editor {
                     true
                 }
                 EditorEvent::ScrollPositionChanged { autoscroll, .. } if !autoscroll => {
+                    let snapshot = self.buffer.read(cx).snapshot(cx);
                     let scroll_anchor = self.scroll_manager.anchor();
-                    update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.anchor));
+                    update.scroll_top_anchor =
+                        Some(serialize_anchor(&scroll_anchor.anchor, &snapshot));
                     update.scroll_x = scroll_anchor.offset.x;
                     update.scroll_y = scroll_anchor.offset.y;
                     true
                 }
                 EditorEvent::SelectionsChanged { .. } => {
+                    let snapshot = self.buffer.read(cx).snapshot(cx);
                     update.selections = self
                         .selections
                         .disjoint_anchors()
                         .iter()
-                        .map(serialize_selection)
+                        .map(|s| serialize_selection(s, &snapshot))
                         .collect();
                     update.pending_selection = self
                         .selections
                         .pending_anchor()
                         .as_ref()
-                        .map(serialize_selection);
+                        .map(|s| serialize_selection(s, &snapshot));
                     true
                 }
                 _ => false,
@@ -396,12 +415,7 @@ async fn update_editor_from_message(
                     [excerpt]
                         .into_iter()
                         .chain(adjacent_excerpts)
-                        .filter_map(|excerpt| {
-                            Some((
-                                ExcerptId::from_proto(excerpt.id),
-                                deserialize_excerpt_range(excerpt)?,
-                            ))
-                        }),
+                        .filter_map(deserialize_excerpt_range),
                     cx,
                 );
             }
@@ -478,23 +492,28 @@ fn serialize_excerpt(
     })
 }
 
-fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
+fn serialize_selection(
+    selection: &Selection<Anchor>,
+    buffer: &MultiBufferSnapshot,
+) -> proto::Selection {
     proto::Selection {
         id: selection.id as u64,
-        start: Some(serialize_anchor(&selection.start)),
-        end: Some(serialize_anchor(&selection.end)),
+        start: Some(serialize_anchor(&selection.start, &buffer)),
+        end: Some(serialize_anchor(&selection.end, &buffer)),
         reversed: selection.reversed,
     }
 }
 
-fn serialize_anchor(anchor: &Anchor) -> proto::EditorAnchor {
+fn serialize_anchor(anchor: &Anchor, buffer: &MultiBufferSnapshot) -> proto::EditorAnchor {
     proto::EditorAnchor {
-        excerpt_id: anchor.excerpt_id.to_proto(),
+        excerpt_id: buffer.latest_excerpt_id(anchor.excerpt_id).to_proto(),
         anchor: Some(serialize_text_anchor(&anchor.text_anchor)),
     }
 }
 
-fn deserialize_excerpt_range(excerpt: proto::Excerpt) -> Option<ExcerptRange<language::Anchor>> {
+fn deserialize_excerpt_range(
+    excerpt: proto::Excerpt,
+) -> Option<(ExcerptId, ExcerptRange<language::Anchor>)> {
     let context = {
         let start = language::proto::deserialize_anchor(excerpt.context_start?)?;
         let end = language::proto::deserialize_anchor(excerpt.context_end?)?;
@@ -509,7 +528,10 @@ fn deserialize_excerpt_range(excerpt: proto::Excerpt) -> Option<ExcerptRange<lan
             Some(start..end)
         })
         .unwrap_or_else(|| context.clone());
-    Some(ExcerptRange { context, primary })
+    Some((
+        ExcerptId::from_proto(excerpt.id),
+        ExcerptRange { context, primary },
+    ))
 }
 
 fn deserialize_selection(

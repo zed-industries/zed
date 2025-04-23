@@ -175,7 +175,7 @@ pub async fn file_outline(
     };
 
     action_log.update(cx, |action_log, cx| {
-        action_log.buffer_read(buffer.clone(), cx);
+        action_log.track_buffer(buffer.clone(), cx);
     })?;
 
     // Wait until the buffer has been fully parsed, so that we can read its outline.

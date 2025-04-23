@@ -210,7 +210,7 @@ impl Tool for ContentsTool {
                     })?;
 
                     action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer, cx);
+                        log.track_buffer(buffer, cx);
                     })?;
 
                     Ok(result)
@@ -222,7 +222,7 @@ impl Tool for ContentsTool {
                         let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                         action_log.update(cx, |log, cx| {
-                            log.buffer_read(buffer, cx);
+                            log.track_buffer(buffer, cx);
                         })?;
 
                         Ok(result)
