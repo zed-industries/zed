@@ -2,7 +2,6 @@ use crate::*;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
-use task::DebugScenario;
 
 #[derive(Default)]
 pub(crate) struct PythonDebugAdapter;

@@ -13,9 +13,9 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
-    Source, StartDebuggingRequestArguments,
+    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, EvaluateArguments,
+    EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments, Source,
+    StartDebuggingRequestArguments,
     adapters::{
         DapStatus, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
@@ -50,7 +50,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{DebugScenario, TaskTemplate};
+use task::TaskTemplate;
 use util::ResultExt as _;
 use worktree::Worktree;
 

@@ -40,7 +40,6 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use task::DebugScenario;
 use text::{PointUtf16, ToPointUtf16};
 use util::{ResultExt, merge_json_value_into};
 use worktree::Worktree;

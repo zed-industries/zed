@@ -10,9 +10,7 @@ use gpui::{
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
-use task::{
-    DebugRequest, DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskModal, TaskTemplate,
-};
+use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskModal, TaskTemplate};
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,
     IconButton, IconButtonShape, IconName, IconSize, IntoElement, KeyBinding, Label, LabelSize,

@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Result, anyhow};
 use dap::{DapRegistry, DebugRequest, adapters::DebugTaskDefinition};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
@@ -12,7 +11,7 @@ use gpui::{
     WeakEntity,
 };
 use settings::Settings;
-use task::{DebugScenario, LaunchRequest, TaskTemplate};
+use task::{DebugScenario, LaunchRequest};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,

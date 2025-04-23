@@ -5,9 +5,7 @@ use fs::Fs;
 use futures::{FutureExt, StreamExt, channel::mpsc, future::LocalBoxFuture};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
-use paths::{
-    EDITORCONFIG_NAME, debug_task_file_name, local_settings_file_relative_path, task_file_name,
-};
+use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use smallvec::SmallVec;

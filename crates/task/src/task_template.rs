@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use util::serde::default_true;
 use util::{ResultExt, truncate_and_remove_front};
 
-use crate::debug_format::TcpArgumentsTemplate;
 use crate::{
     AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId,
     VariableName, ZED_VARIABLE_NAME_PREFIX,
