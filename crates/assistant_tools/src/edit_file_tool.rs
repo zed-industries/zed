@@ -6,7 +6,9 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
-use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
+use gpui::{
+    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId, Task, WeakEntity,
+};
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
 };
@@ -20,7 +22,6 @@ use std::{
 };
 use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
-use uuid::Uuid;
 use workspace::Workspace;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -271,7 +272,7 @@ pub struct EditFileToolCard {
     diff_task: Option<Task<Result<()>>>,
     preview_expanded: bool,
     full_height_expanded: bool,
-    unique_id: Uuid,
+    editor_unique_id: EntityId,
 }
 
 impl EditFileToolCard {
@@ -301,6 +302,7 @@ impl EditFileToolCard {
             editor
         });
         Self {
+            editor_unique_id: editor.entity_id(),
             path,
             project,
             editor,
@@ -308,7 +310,6 @@ impl EditFileToolCard {
             diff_task: None,
             preview_expanded: true,
             full_height_expanded: false,
-            unique_id: Uuid::new_v4(),
         }
     }
 
@@ -359,7 +360,7 @@ impl ToolCard for EditFileToolCard {
         let failed = matches!(status, ToolUseStatus::Error(_));
 
         let path_label_button = h_flex()
-            .id(("edit-tool-path-label-button", self.unique_id))
+            .id(("edit-tool-path-label-button", self.editor_unique_id))
             .w_full()
             .max_w_full()
             .px_1()
@@ -455,7 +456,7 @@ impl ToolCard for EditFileToolCard {
                 } else {
                     container.child(
                         Disclosure::new(
-                            ("edit-file-disclosure", self.unique_id),
+                            ("edit-file-disclosure", self.editor_unique_id),
                             self.preview_expanded,
                         )
                         .opened_icon(IconName::ChevronUp)
@@ -526,7 +527,7 @@ impl ToolCard for EditFileToolCard {
             .when(!failed && self.preview_expanded, |card| {
                 card.child(
                     h_flex()
-                        .id(("edit-tool-card-inner-hflex", self.unique_id))
+                        .id(("edit-tool-card-inner-hflex", self.editor_unique_id))
                         .flex_none()
                         .cursor_pointer()
                         .h_5()
