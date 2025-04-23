@@ -1245,17 +1245,14 @@ impl Terminal {
         self.events.push_back(InternalEvent::ToggleViMode);
     }
 
-    pub fn vi_motion(&mut self, keystroke: &Keystroke) {
+    pub fn vi_motion(&mut self, keystroke: &Keystroke, keyboard_mapper: &dyn KeyboardMapper) {
         if !self.vi_mode_enabled {
             return;
         }
 
-        let mut key = keystroke.key.clone();
-        if keystroke.modifiers.shift {
-            key = key.to_uppercase();
-        }
-
-        let motion: Option<ViMotion> = match key.as_str() {
+        let keystroke = keyboard_mapper.to_vim_keystroke(keystroke);
+        let key = keystroke.key.as_str();
+        let motion: Option<ViMotion> = match key {
             "h" | "left" => Some(ViMotion::Left), // shift-left -> "LEFT"
             "j" | "down" => Some(ViMotion::Down),
             "k" | "up" => Some(ViMotion::Up),
@@ -1285,7 +1282,7 @@ impl Terminal {
             return;
         }
 
-        let scroll_motion = match key.as_str() {
+        let scroll_motion = match key {
             "g" => Some(AlacScroll::Top),
             "G" => Some(AlacScroll::Bottom),
             "b" if keystroke.modifiers.control => Some(AlacScroll::PageUp),
@@ -1306,7 +1303,7 @@ impl Terminal {
             return;
         }
 
-        match key.as_str() {
+        match key {
             "v" => {
                 let point = self.last_content.cursor.point;
                 let selection_type = SelectionType::Simple;
@@ -1344,7 +1341,7 @@ impl Terminal {
         mapper: &dyn KeyboardMapper,
     ) -> bool {
         if self.vi_mode_enabled {
-            self.vi_motion(keystroke);
+            self.vi_motion(keystroke, mapper);
             return true;
         }
 

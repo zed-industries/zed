@@ -62,10 +62,8 @@ impl KeyboardMapper for WindowsKeyboardMapper {
 
         if is_letter_key(keystroke.key.as_str()) {
             if keystroke.modifiers.shift {
-                let mut modifiers = keystroke.modifiers.clone();
-                modifiers.shift = false;
                 return Cow::Owned(Keystroke {
-                    modifiers,
+                    modifiers: keystroke.modifiers & !Modifiers::shift(),
                     key: keystroke.key.to_uppercase(),
                     key_char: keystroke.key_char.clone(),
                 });
