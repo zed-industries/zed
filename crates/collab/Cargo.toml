@@ -41,7 +41,6 @@ jsonwebtoken.workspace = true
 livekit_api.workspace = true
 log.workspace = true
 nanoid.workspace = true
-open_ai.workspace = true
 parking_lot.workspace = true
 prometheus = "0.14"
 prost.workspace = true
