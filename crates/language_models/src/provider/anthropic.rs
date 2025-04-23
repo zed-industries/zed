@@ -714,39 +714,32 @@ pub fn map_to_language_model_completion_events(
                                 if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
                                     tool_use.input_json.push_str(&partial_json);
 
-                                    return Some((
-                                        vec![maybe!({
-                                            Ok(LanguageModelCompletionEvent::ToolUse(
+                                    // Try to convert invalid (incomplete) JSON into
+                                    // valid JSON that serde can accept, e.g. by closing
+                                    // unclosed delimiters. This way, we can update the
+                                    // UI with whatever has been streamed back so far.
+                                    if let Ok(input) = serde_json::Value::from_str(
+                                        &partial_json_fixer::fix_json(&tool_use.input_json),
+                                    ) {
+                                        return Some((
+                                            vec![Ok(LanguageModelCompletionEvent::ToolUse(
                                                 LanguageModelToolUse {
                                                     id: tool_use.id.clone().into(),
                                                     name: tool_use.name.clone().into(),
                                                     is_input_complete: false,
-                                                    input: if tool_use.input_json.is_empty() {
-                                                        serde_json::Value::Object(
-                                                            serde_json::Map::default(),
-                                                        )
-                                                    } else {
-                                                        serde_json::Value::from_str(
-                                                            // Convert invalid (incomplete) JSON into
-                                                            // JSON that serde will accept, e.g. by closing
-                                                            // unclosed delimiters. This way, we can update
-                                                            // the UI with whatever has been streamed back so far.
-                                                            &partial_json_fixer::fix_json(
-                                                                &tool_use.input_json,
-                                                            ),
-                                                        )
-                                                        .map_err(|err| anyhow!(err))?
-                                                    },
+                                                    input,
                                                 },
-                                            ))
-                                        })],
-                                        state,
-                                    ));
+                                            ))],
+                                            state,
+                                        ));
+                                    }
                                 }
                             }
                         },
                         Event::ContentBlockStop { index } => {
                             if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
+                                let input_json = tool_use.input_json.trim();
+
                                 return Some((
                                     vec![maybe!({
                                         Ok(LanguageModelCompletionEvent::ToolUse(
@@ -754,15 +747,15 @@ pub fn map_to_language_model_completion_events(
                                                 id: tool_use.id.into(),
                                                 name: tool_use.name.into(),
                                                 is_input_complete: true,
-                                                input: if tool_use.input_json.is_empty() {
+                                                input: if input_json.is_empty() {
                                                     serde_json::Value::Object(
                                                         serde_json::Map::default(),
                                                     )
                                                 } else {
                                                     serde_json::Value::from_str(
-                                                        &tool_use.input_json,
+                                                        input_json
                                                     )
-                                                    .map_err(|err| anyhow!(err))?
+                                                    .map_err(|err| anyhow!("Error parsing tool call input JSON: {err:?} - JSON string was: {input_json:?}"))?
                                                 },
                                             },
                                         ))
