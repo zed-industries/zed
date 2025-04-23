@@ -83,53 +83,56 @@ impl Tool for TerminalTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        let project = project.read(cx);
         let input_path = Path::new(&input.cd);
-        let working_dir = if input.cd == "." {
-            // Accept "." as meaning "the one worktree" if we only have one worktree.
-            let mut worktrees = project.worktrees(cx);
-
-            let only_worktree = match worktrees.next() {
-                Some(worktree) => worktree,
-                None => {
-                    return Task::ready(Err(anyhow!("No worktrees found in the project"))).into();
-                }
-            };
-
-            if worktrees.next().is_some() {
-                return Task::ready(Err(anyhow!(
-                    "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly."
-                ))).into();
-            }
-
-            only_worktree.read(cx).abs_path()
-        } else if input_path.is_absolute() {
-            // Absolute paths are allowed, but only if they're in one of the project's worktrees.
-            if !project
-                .worktrees(cx)
-                .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
-            {
-                return Task::ready(Err(anyhow!(
-                    "The absolute path must be within one of the project's worktrees"
-                )))
-                .into();
-            }
-
-            input_path.into()
-        } else {
-            let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
-                return Task::ready(Err(anyhow!(
-                    "`cd` directory {} not found in the project",
-                    &input.cd
-                )))
-                .into();
-            };
-
-            worktree.read(cx).abs_path()
+        let working_dir = match working_dir(cx, &input, &project, input_path) {
+            Ok(dir) => dir,
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         cx.background_spawn(run_command_limited(working_dir, input.command))
             .into()
+    }
+}
+
+fn working_dir(
+    cx: &mut App,
+    input: &TerminalToolInput,
+    project: &Entity<Project>,
+    input_path: &Path,
+) -> Result<Arc<Path>, &'static str> {
+    let project = project.read(cx);
+    if input.cd == "." {
+        // Accept "." as meaning "the one worktree" if we only have one worktree.
+        let mut worktrees = project.worktrees(cx);
+
+        let only_worktree = match worktrees.next() {
+            Some(worktree) => worktree,
+            None => return Err("No worktrees found in the project"),
+        };
+
+        if worktrees.next().is_some() {
+            return Err(
+                "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
+            );
+        }
+
+        Ok(only_worktree.read(cx).abs_path())
+    } else if input_path.is_absolute() {
+        // Absolute paths are allowed, but only if they're in one of the project's worktrees.
+        if !project
+            .worktrees(cx)
+            .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
+        {
+            return Err("The absolute path must be within one of the project's worktrees");
+        }
+
+        Ok(input_path.into())
+    } else {
+        let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
+            return Err("`cd` directory {} not found in the project");
+        };
+
+        Ok(worktree.read(cx).abs_path())
     }
 }
 
@@ -142,8 +145,8 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
         .arg("-c")
         .arg(&command)
         .current_dir(working_dir)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .context("Failed to execute terminal command")?;
 
