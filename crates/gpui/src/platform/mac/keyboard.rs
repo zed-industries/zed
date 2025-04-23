@@ -82,7 +82,7 @@ impl KeyboardMapper for MacKeyboardMapper {
             return Cow::Owned(Keystroke {
                 modifiers: keystroke.modifiers & !Modifiers::shift(),
                 key: keystroke.key.to_uppercase(),
-                ..*keystroke
+                key_char: keystroke.key_char.clone(),
             });
         }
         if keystroke.modifiers == Modifiers::alt() && keystroke.key.chars().count() == 1 {
@@ -90,7 +90,7 @@ impl KeyboardMapper for MacKeyboardMapper {
                 return Cow::Owned(Keystroke {
                     modifiers: keystroke.modifiers & !Modifiers::alt(),
                     key: key_char.clone(),
-                    ..*keystroke
+                    key_char: keystroke.key_char.clone(),
                 });
             }
         }
@@ -1557,4 +1557,116 @@ fn is_letter_key(key: &str) -> bool {
             | "y"
             | "z"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{KeyboardMapper, Keystroke, MacKeyboardMapper, Modifiers};
+
+    #[test]
+    fn test_to_vim_keystroke() {
+        let mapper = MacKeyboardMapper::new();
+
+        for letter in 'a'..='z' {
+            // "a" -> "a"
+            let keystroke = Keystroke {
+                modifiers: Modifiers::default(),
+                key: letter.to_string(),
+                key_char: Some(letter.to_string()),
+            };
+            let mapped_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(*mapped_keystroke, keystroke);
+
+            // "shift-a" -> "A"
+            let keystroke = Keystroke {
+                modifiers: Modifiers::shift(),
+                key: letter.to_string(),
+                key_char: Some(letter.to_string().to_uppercase()),
+            };
+            let mapped_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(
+                *mapped_keystroke,
+                Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: letter.to_string().to_uppercase(),
+                    key_char: Some(letter.to_string().to_uppercase())
+                }
+            );
+
+            // "cmd-shift-a" -> "cmd-A"
+            let keystroke = Keystroke {
+                modifiers: Modifiers::command_shift(),
+                key: letter.to_string(),
+                key_char: None,
+            };
+            let mapped_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(
+                *mapped_keystroke,
+                Keystroke {
+                    modifiers: Modifiers::command(),
+                    key: letter.to_string().to_uppercase(),
+                    key_char: None
+                }
+            );
+
+            // "ctrl-shift-a" -> "ctrl-A"
+            let keystroke = Keystroke {
+                modifiers: Modifiers::control_shift(),
+                key: letter.to_string(),
+                key_char: None,
+            };
+            let mapped_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(
+                *mapped_keystroke,
+                Keystroke {
+                    modifiers: Modifiers::control(),
+                    key: letter.to_string().to_uppercase(),
+                    key_char: None
+                }
+            );
+        }
+
+        // "alt-1" -> "¡"
+        let keystroke = Keystroke {
+            modifiers: Modifiers::alt(),
+            key: "1".to_string(),
+            key_char: Some("¡".to_string()),
+        };
+        let mapped_keystroke = mapper.to_vim_keystroke(&keystroke);
+        assert_eq!(
+            *mapped_keystroke,
+            Keystroke {
+                modifiers: Modifiers::default(),
+                key: "¡".to_string(),
+                key_char: Some("¡".to_string())
+            }
+        );
+
+        // "ctrl-alt-1" -> "ctrl-alt-1"
+        let keystroke = Keystroke {
+            modifiers: Modifiers::control() | Modifiers::alt(),
+            key: "1".to_string(),
+            key_char: None,
+        };
+        let mapped_keystroke = mapper.to_vim_keystroke(&keystroke);
+        assert_eq!(*mapped_keystroke, keystroke);
+
+        // "ctrl-alt-a" -> "ctrl-alt-a"
+        let keystroke = Keystroke {
+            modifiers: Modifiers::control() | Modifiers::alt(),
+            key: "a".to_string(),
+            key_char: None,
+        };
+        let mapped_keystroke = mapper.to_vim_keystroke(&keystroke);
+        assert_eq!(*mapped_keystroke, keystroke);
+
+        // "shift-space" -> "shift-space"
+        let keystroke = Keystroke {
+            modifiers: Modifiers::shift(),
+            key: "space".to_string(),
+            key_char: Some(" ".to_string()),
+        };
+        let mapped_keystroke = mapper.to_vim_keystroke(&keystroke);
+        assert_eq!(*mapped_keystroke, keystroke);
+    }
 }
