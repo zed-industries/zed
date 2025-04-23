@@ -311,6 +311,7 @@ impl ExampleInstance {
                 let previous_diff = Rc::new(RefCell::new("".to_string()));
                 let example_output_dir = this.run_directory.clone();
                 let last_diff_file_path = last_diff_file_path.clone();
+                let messages_json_file_path = example_output_dir.join("last.messages.json");
                 let this = this.clone();
                 thread.set_request_callback(move |request, response_events| {
                     *last_request.borrow_mut() = Some(request.clone());
@@ -321,10 +322,13 @@ impl ExampleInstance {
                     let last_messages_file_path = example_output_dir.join("last.messages.md");
                     let request_markdown = RequestMarkdown::new(request);
                     let response_events_markdown = response_events_to_markdown(response_events);
+                    let dialog = ThreadDialog::new(request, response_events);
+                    let dialog_json = serde_json::to_string_pretty(&dialog.to_combined_request()).unwrap_or_default();
 
                     let messages = format!("{}\n\n{}", request_markdown.messages, response_events_markdown);
                     fs::write(&messages_file_path, messages.clone()).expect("failed to write messages file");
                     fs::write(&last_messages_file_path, messages).expect("failed to write last messages file");
+                    fs::write(&messages_json_file_path, dialog_json).expect("failed to write last.messages.json");
 
                     let diff_result = smol::block_on(this.repository_diff());
                     match diff_result {
@@ -979,6 +983,91 @@ pub fn response_events_to_markdown(
     flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
 
     response
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ThreadDialog {
+    pub request: LanguageModelRequest,
+    pub response_events: Vec<std::result::Result<LanguageModelCompletionEvent, String>>,
+}
+
+impl ThreadDialog {
+    pub fn new(
+        request: &LanguageModelRequest,
+        response_events: &[std::result::Result<LanguageModelCompletionEvent, String>],
+    ) -> Self {
+        Self {
+            request: request.clone(),
+            response_events: response_events.to_vec(),
+        }
+    }
+
+    /// Represents all request and response messages in a unified format.
+    ///
+    /// Specifically, it appends the assistant's response (derived from response events)
+    /// as a new message to existing messages in the request.
+    pub fn to_combined_request(&self) -> LanguageModelRequest {
+        let mut request = self.request.clone();
+        if let Some(assistant_message) = self.response_events_to_message() {
+            request.messages.push(assistant_message);
+        }
+        request
+    }
+    fn response_events_to_message(&self) -> Option<LanguageModelRequestMessage> {
+        let response_events = &self.response_events;
+        let mut content: Vec<MessageContent> = Vec::new();
+        let mut current_text = String::new();
+
+        let flush_text = |text: &mut String, content: &mut Vec<MessageContent>| {
+            if !text.is_empty() {
+                content.push(MessageContent::Text(std::mem::take(text)));
+            }
+        };
+
+        for event in response_events {
+            match event {
+                Ok(LanguageModelCompletionEvent::Text(text)) => {
+                    current_text.push_str(text);
+                }
+
+                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                    flush_text(&mut current_text, &mut content);
+                    if tool_use.is_input_complete {
+                        content.push(MessageContent::ToolUse(tool_use.clone()));
+                    }
+                }
+                Ok(LanguageModelCompletionEvent::Thinking { text, signature }) => {
+                    flush_text(&mut current_text, &mut content);
+                    content.push(MessageContent::Thinking {
+                        text: text.clone(),
+                        signature: signature.clone(),
+                    });
+                }
+
+                // Skip these
+                Ok(LanguageModelCompletionEvent::UsageUpdate(_))
+                | Ok(LanguageModelCompletionEvent::StartMessage { .. })
+                | Ok(LanguageModelCompletionEvent::Stop(_)) => {}
+
+                Err(error) => {
+                    flush_text(&mut current_text, &mut content);
+                    content.push(MessageContent::Text(format!("ERROR: {}", error)));
+                }
+            }
+        }
+
+        flush_text(&mut current_text, &mut content);
+
+        if !content.is_empty() {
+            Some(LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content,
+                cache: false,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

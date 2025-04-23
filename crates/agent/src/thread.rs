@@ -619,23 +619,11 @@ impl Thread {
                     .await
                     .unwrap_or(false);
 
-                if equal {
-                    git_store
-                        .update(cx, |store, cx| {
-                            store.delete_checkpoint(pending_checkpoint.git_checkpoint, cx)
-                        })?
-                        .detach();
-                } else {
+                if !equal {
                     this.update(cx, |this, cx| {
                         this.insert_checkpoint(pending_checkpoint, cx)
                     })?;
                 }
-
-                git_store
-                    .update(cx, |store, cx| {
-                        store.delete_checkpoint(final_checkpoint, cx)
-                    })?
-                    .detach();
 
                 Ok(())
             }
@@ -770,24 +758,18 @@ impl Thread {
                 for ctx in &new_context {
                     match ctx {
                         AssistantContext::File(file_ctx) => {
-                            log.buffer_added_as_context(file_ctx.context_buffer.buffer.clone(), cx);
+                            log.track_buffer(file_ctx.context_buffer.buffer.clone(), cx);
                         }
                         AssistantContext::Directory(dir_ctx) => {
                             for context_buffer in &dir_ctx.context_buffers {
-                                log.buffer_added_as_context(context_buffer.buffer.clone(), cx);
+                                log.track_buffer(context_buffer.buffer.clone(), cx);
                             }
                         }
                         AssistantContext::Symbol(symbol_ctx) => {
-                            log.buffer_added_as_context(
-                                symbol_ctx.context_symbol.buffer.clone(),
-                                cx,
-                            );
+                            log.track_buffer(symbol_ctx.context_symbol.buffer.clone(), cx);
                         }
                         AssistantContext::Selection(selection_context) => {
-                            log.buffer_added_as_context(
-                                selection_context.context_buffer.buffer.clone(),
-                                cx,
-                            );
+                            log.track_buffer(selection_context.context_buffer.buffer.clone(), cx);
                         }
                         AssistantContext::FetchedUrl(_)
                         | AssistantContext::Thread(_)

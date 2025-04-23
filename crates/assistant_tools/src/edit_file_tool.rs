@@ -182,7 +182,7 @@ impl Tool for EditFileTool {
 
             let snapshot = cx.update(|cx| {
                 action_log.update(cx, |log, cx| {
-                    log.buffer_read(buffer.clone(), cx)
+                    log.track_buffer(buffer.clone(), cx)
                 });
                 let snapshot = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
