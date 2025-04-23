@@ -24,16 +24,6 @@ pub struct AgentMessage {
     pub content: Vec<MessageContent>,
 }
 
-impl AgentMessage {
-    fn to_request_message(&self) -> LanguageModelRequestMessage {
-        LanguageModelRequestMessage {
-            role: self.role,
-            content: self.content.clone(),
-            cache: false, // TODO: Figure out caching
-        }
-    }
-}
-
 pub type AgentResponseEvent = LanguageModelCompletionEvent;
 
 trait Prompt {
@@ -69,7 +59,7 @@ pub struct Agent {
     /// we run tools, report their results.
     running_turn: Option<Task<()>>,
     system_prompts: Vec<Arc<dyn Prompt>>,
-    tools: BTreeMap<Arc<str>, Arc<dyn AnyTool>>,
+    tools: BTreeMap<Arc<str>, Arc<dyn ErasedTool>>,
     templates: Arc<Templates>,
     // project: Entity<Project>,
     // action_log: Entity<ActionLog>,
@@ -86,7 +76,7 @@ impl Agent {
         }
     }
 
-    pub fn add_tool(&mut self, tool: Arc<dyn AnyTool>) {
+    pub fn add_tool(&mut self, tool: Arc<dyn ErasedTool>) {
         let name = Arc::from(tool.name());
         self.tools.insert(name, tool);
     }
@@ -323,7 +313,10 @@ impl Agent {
     }
 }
 
-pub trait Tool {
+pub trait Tool
+where
+    Self: Sized,
+{
     type Input: for<'de> Deserialize<'de> + JsonSchema;
 
     fn name(&self) -> String;
@@ -338,36 +331,36 @@ pub trait Tool {
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>;
 }
 
-pub trait AnyTool {
+pub struct Erased<T>(T);
+
+pub trait ErasedTool {
     fn name(&self) -> String;
     fn description(&self) -> String;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
     fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>>;
 }
 
-impl<T, I> AnyTool for T
+impl<T, I> ErasedTool for Erased<T>
 where
     T: Tool<Input = I>,
     I: for<'de> Deserialize<'de> + JsonSchema,
 {
     fn name(&self) -> String {
-        <Self as Tool>::name(self)
+        self.0.name()
     }
 
     fn description(&self) -> String {
-        <Self as Tool>::description(self)
+        self.0.description()
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        Ok(serde_json::to_value(<Self as Tool>::input_schema(
-            self, format,
-        ))?)
+        Ok(serde_json::to_value(self.0.input_schema(format))?)
     }
 
     fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>> {
         let parsed_input: Result<I> = serde_json::from_value(input).map_err(Into::into);
         match parsed_input {
-            Ok(input) => <Self as Tool>::run(self, input, cx),
+            Ok(input) => self.0.run(input, cx),
             Err(error) => Task::ready(Err(anyhow!(error))),
         }
     }

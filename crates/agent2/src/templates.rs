@@ -15,12 +15,12 @@ pub struct Templates(Handlebars<'static>);
 impl Templates {
     pub fn new() -> Arc<Self> {
         let mut handlebars = Handlebars::new();
-        handlebars.register_embed_templates::<Assets>();
+        handlebars.register_embed_templates::<Assets>().unwrap();
         Arc::new(Self(handlebars))
     }
 }
 
-pub trait Template {
+pub trait Template: Sized {
     const TEMPLATE_NAME: &'static str;
 
     fn render(&self, templates: &Templates) -> Result<String>

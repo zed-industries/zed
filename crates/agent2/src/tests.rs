@@ -14,7 +14,7 @@ use tools::*;
 
 #[gpui::test]
 async fn test_echo(cx: &mut TestAppContext) {
-    let AgentTest { model, agent, .. } = agent_test(cx).await;
+    let AgentTest { model, agent, .. } = setup(cx).await;
 
     let events = agent
         .update(cx, |agent, cx| {
@@ -33,7 +33,7 @@ async fn test_echo(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_tool_calls(cx: &mut TestAppContext) {
-    let AgentTest { model, agent, .. } = agent_test(cx).await;
+    let AgentTest { model, agent, .. } = setup(cx).await;
 
     // Test a tool calls that's likely to complete before streaming stops.
     let events = agent
@@ -88,7 +88,7 @@ async fn test_tool_calls(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
-    let AgentTest { model, agent, .. } = agent_test(cx).await;
+    let AgentTest { model, agent, .. } = setup(cx).await;
 
     // Test concurrent tool calls with different delay times
     let events = agent
@@ -140,7 +140,7 @@ struct AgentTest {
     agent: Entity<Agent>,
 }
 
-async fn agent_test(cx: &mut TestAppContext) -> AgentTest {
+async fn setup(cx: &mut TestAppContext) -> AgentTest {
     cx.executor().allow_parking();
     cx.update(settings::init);
     let fs = FakeFs::new(cx.executor().clone());
