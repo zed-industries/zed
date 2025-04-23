@@ -6,7 +6,7 @@ use std::{
 use collections::HashMap;
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
-use crate::{KeyboardMapper, Keystroke, PlatformKeyboardLayout};
+use crate::{KeyboardMapper, Keystroke, Modifiers, PlatformKeyboardLayout};
 
 use super::{
     TISCopyCurrentKeyboardLayoutInputSource, TISGetInputSourceProperty, kTISPropertyInputSourceID,
@@ -78,6 +78,22 @@ impl KeyboardMapper for MacKeyboardMapper {
     }
 
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
+        if is_letter_key(keystroke.key.as_str()) && keystroke.modifiers.shift {
+            return Cow::Owned(Keystroke {
+                modifiers: keystroke.modifiers & !Modifiers::shift(),
+                key: keystroke.key.to_uppercase(),
+                ..*keystroke
+            });
+        }
+        if keystroke.modifiers == Modifiers::alt() && keystroke.key.chars().count() == 1 {
+            if let Some(ref key_char) = keystroke.key_char {
+                return Cow::Owned(Keystroke {
+                    modifiers: keystroke.modifiers & !Modifiers::alt(),
+                    key: key_char.clone(),
+                    ..*keystroke
+                });
+            }
+        }
         Cow::Borrowed(keystroke)
     }
 
@@ -1510,4 +1526,35 @@ impl MacKeyboardMapper {
             )),
         }
     }
+}
+
+fn is_letter_key(key: &str) -> bool {
+    matches!(
+        key,
+        "a" | "b"
+            | "c"
+            | "d"
+            | "e"
+            | "f"
+            | "g"
+            | "h"
+            | "i"
+            | "j"
+            | "k"
+            | "l"
+            | "m"
+            | "n"
+            | "o"
+            | "p"
+            | "q"
+            | "r"
+            | "s"
+            | "t"
+            | "u"
+            | "v"
+            | "w"
+            | "x"
+            | "y"
+            | "z"
+    )
 }
