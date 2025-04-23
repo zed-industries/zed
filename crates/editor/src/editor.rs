@@ -248,6 +248,22 @@ const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
     function: false,
 };
 
+struct InlineValueCache {
+    enabled: bool,
+    inlays: Vec<InlayId>,
+    refresh_task: Task<Option<()>>,
+}
+
+impl InlineValueCache {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            inlays: Vec::new(),
+            refresh_task: Task::ready(None),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {
     InlineCompletion(usize),
@@ -909,8 +925,7 @@ pub struct Editor {
     mouse_cursor_hidden: bool,
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
-    debug_inlays: Vec<InlayId>,
-    debugger_inlays_refresh: Task<Option<()>>,
+    inline_value_cache: InlineValueCache,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1490,7 +1505,7 @@ impl Editor {
                                 cx.stop_propagation();
                             }
 
-                            editor.refresh_debugger_hints(cx);
+                            editor.refresh_inline_values(cx);
                         }
                         _ => {}
                     },
@@ -1630,6 +1645,7 @@ impl Editor {
                 released_too_fast: false,
             },
             inline_diagnostics_enabled: mode.is_full(),
+            inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -1705,8 +1721,6 @@ impl Editor {
                 .hide_mouse
                 .unwrap_or_default(),
             change_list: ChangeList::new(),
-            debug_inlays: Vec::new(),
-            debugger_inlays_refresh: Task::ready(None),
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -4193,10 +4207,9 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.refresh_inlay_hints(
-            InlayHintRefreshReason::Toggle(!self.inlay_hints_enabled()),
-            cx,
-        );
+        self.inline_value_cache.enabled = !self.inline_value_cache.enabled;
+
+        self.refresh_inline_values(cx);
     }
 
     pub fn toggle_inlay_hints(
@@ -4213,6 +4226,10 @@ impl Editor {
 
     pub fn inlay_hints_enabled(&self) -> bool {
         self.inlay_hint_cache.enabled
+    }
+
+    pub fn inline_values_enabled(&self) -> bool {
+        self.inline_value_cache.enabled
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
@@ -17318,26 +17335,31 @@ impl Editor {
     ) {
         match event {
             SessionEvent::InvalidateInlineValue => {
-                self.refresh_debugger_hints(cx);
+                self.refresh_inline_values(cx);
             }
             _ => {}
         }
     }
 
-    fn refresh_debugger_hints(&mut self, cx: &mut Context<Self>) {
+    fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.project.clone() else {
             return;
         };
         let Some(buffer) = self.buffer.read(cx).as_singleton() else {
             return;
         };
+        if !self.inline_value_cache.enabled {
+            let inlays = std::mem::take(&mut self.inline_value_cache.inlays);
+            self.splice_inlays(&inlays, Vec::new(), cx);
+            return;
+        }
 
         let current_execution_position = self
             .highlighted_rows
             .get(&TypeId::of::<DebugCurrentRowHighlight>())
             .and_then(|lines| lines.last().map(|line| line.range.start));
 
-        self.debugger_inlays_refresh = cx.spawn(async move |editor, cx| {
+        self.inline_value_cache.refresh_task = cx.spawn(async move |editor, cx| {
             let snapshot = editor
                 .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
                 .ok()?;
@@ -17377,7 +17399,7 @@ impl Editor {
                         })
                         .collect::<Vec<_>>();
                     let mut inlay_ids = new_inlays.iter().map(|inlay| inlay.id).collect();
-                    std::mem::swap(&mut editor.debug_inlays, &mut inlay_ids);
+                    std::mem::swap(&mut editor.inline_value_cache.inlays, &mut inlay_ids);
 
                     editor.splice_inlays(&inlay_ids, new_inlays, cx);
                 })

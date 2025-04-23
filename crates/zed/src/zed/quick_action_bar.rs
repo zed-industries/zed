@@ -90,6 +90,7 @@ impl Render for QuickActionBar {
         let editor_value = editor.read(cx);
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
+        let inline_values_enabled = editor_value.inline_values_enabled();
         let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
         let git_blame_inline_enabled = editor_value.git_blame_inline_enabled();
@@ -227,7 +228,7 @@ impl Render for QuickActionBar {
 
                                 menu = menu.toggleable_entry(
                                     "Inline Values",
-                                    inlay_hints_enabled,
+                                    inline_values_enabled,
                                     IconPosition::Start,
                                     Some(editor::actions::ToggleInlineValues.boxed_clone()),
                                     {

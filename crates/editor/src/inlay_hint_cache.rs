@@ -1326,6 +1326,7 @@ pub mod tests {
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -1432,6 +1433,7 @@ pub mod tests {
     async fn test_cache_update_on_lsp_completion_tasks(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -1537,6 +1539,7 @@ pub mod tests {
     async fn test_no_hint_updates_for_unrelated_language_files(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -1762,6 +1765,7 @@ pub mod tests {
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -1921,6 +1925,7 @@ pub mod tests {
         ] {
             update_test_language_settings(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
@@ -1964,6 +1969,7 @@ pub mod tests {
         let another_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Type)]);
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: false,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -2019,6 +2025,7 @@ pub mod tests {
         let final_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Parameter)]);
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -2092,6 +2099,7 @@ pub mod tests {
     async fn test_hint_request_cancellation(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -2224,6 +2232,7 @@ pub mod tests {
     async fn test_large_buffer_inlay_requests_split(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -2523,6 +2532,7 @@ pub mod tests {
     async fn test_multiple_excerpts_large_multibuffer(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -2831,6 +2841,7 @@ pub mod tests {
     async fn test_excerpts_removed(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -3007,6 +3018,7 @@ pub mod tests {
 
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -3039,6 +3051,7 @@ pub mod tests {
     async fn test_inside_char_boundary_range_hints(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -3131,6 +3144,7 @@ pub mod tests {
     async fn test_toggle_inlay_hints(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: false,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -3207,6 +3221,7 @@ pub mod tests {
 
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
@@ -3267,6 +3282,7 @@ pub mod tests {
     async fn test_inlays_at_the_same_place(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
