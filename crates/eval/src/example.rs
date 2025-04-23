@@ -328,7 +328,7 @@ impl ExampleContext {
         self.app
             .read_entity(&self.agent_thread, |thread, cx| {
                 let action_log = thread.action_log().read(cx);
-                let mut path_diff = HashMap::new();
+                let mut path_diff = HashMap::default();
 
                 for (buffer, diff) in action_log.changed_buffers(cx) {
                     let snapshot = buffer.read(cx).snapshot();
