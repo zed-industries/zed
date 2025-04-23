@@ -5028,7 +5028,7 @@ fn subscribe_for_editor_events(
                         .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
                     outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
                 }
-                EditorEvent::ExcerptsRemoved { ids } => {
+                EditorEvent::ExcerptsRemoved { ids, .. } => {
                     let mut ids = ids.iter().collect::<HashSet<_>>();
                     for excerpts in outline_panel.excerpts.values_mut() {
                         excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
