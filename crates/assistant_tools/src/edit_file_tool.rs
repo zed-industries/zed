@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
-use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, Point, Task, WeakEntity};
+use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
 };
@@ -15,7 +15,6 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::RefCell,
     path::{Path, PathBuf},
     sync::Arc,
 };
