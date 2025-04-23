@@ -56,7 +56,10 @@ use crate::symbol_info_tool::SymbolInfoTool;
 use crate::terminal_tool::TerminalTool;
 use crate::thinking_tool::ThinkingTool;
 
+pub use create_file_tool::CreateFileToolInput;
+pub use edit_file_tool::EditFileToolInput;
 pub use path_search_tool::PathSearchToolInput;
+pub use read_file_tool::ReadFileToolInput;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);

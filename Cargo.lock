@@ -4897,6 +4897,7 @@ dependencies = [
  "assistant_tools",
  "async-trait",
  "async-watch",
+ "buffer_diff",
  "chrono",
  "clap",
  "client",

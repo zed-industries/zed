@@ -11,6 +11,7 @@ assistant_tool.workspace = true
 assistant_tools.workspace = true
 async-trait.workspace = true
 async-watch.workspace = true
+buffer_diff.workspace = true
 chrono.workspace = true
 clap.workspace = true
 client.workspace = true
