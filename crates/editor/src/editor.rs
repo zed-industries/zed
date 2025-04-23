@@ -269,6 +269,12 @@ enum DocumentHighlightWrite {}
 enum InputComposition {}
 enum SelectedTextHighlight {}
 
+pub enum ConflictsOuter {}
+pub enum ConflictsOurs {}
+pub enum ConflictsTheirs {}
+pub enum ConflictsOursMarker {}
+pub enum ConflictsTheirsMarker {}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
     Yes,
@@ -694,6 +700,10 @@ pub trait Addon: 'static {
     }
 
     fn to_any(&self) -> &dyn std::any::Any;
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
 }
 
 /// A set of caret positions, registered when the editor was edited.
@@ -1083,11 +1093,27 @@ impl SelectionHistory {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct RowHighlightOptions {
+    pub autoscroll: bool,
+    pub include_gutter: bool,
+}
+
+impl Default for RowHighlightOptions {
+    fn default() -> Self {
+        Self {
+            autoscroll: Default::default(),
+            include_gutter: true,
+        }
+    }
+}
+
 struct RowHighlight {
     index: usize,
     range: Range<Anchor>,
     color: Hsla,
-    should_autoscroll: bool,
+    options: RowHighlightOptions,
+    type_id: TypeId,
 }
 
 #[derive(Clone, Debug)]
@@ -5942,7 +5968,10 @@ impl Editor {
                         self.highlight_rows::<EditPredictionPreview>(
                             target..target,
                             cx.theme().colors().editor_highlighted_line_background,
-                            true,
+                            RowHighlightOptions {
+                                autoscroll: true,
+                                ..Default::default()
+                            },
                             cx,
                         );
                         self.request_autoscroll(Autoscroll::fit(), cx);
@@ -13449,7 +13478,7 @@ impl Editor {
             start..end,
             highlight_color
                 .unwrap_or_else(|| cx.theme().colors().editor_highlighted_line_background),
-            false,
+            Default::default(),
             cx,
         );
         self.request_autoscroll(Autoscroll::center().for_anchor(start), cx);
@@ -16765,7 +16794,7 @@ impl Editor {
         &mut self,
         range: Range<Anchor>,
         color: Hsla,
-        should_autoscroll: bool,
+        options: RowHighlightOptions,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer().read(cx).snapshot(cx);
@@ -16797,7 +16826,7 @@ impl Editor {
                     merged = true;
                     prev_highlight.index = index;
                     prev_highlight.color = color;
-                    prev_highlight.should_autoscroll = should_autoscroll;
+                    prev_highlight.options = options;
                 }
             }
 
@@ -16808,7 +16837,8 @@ impl Editor {
                         range: range.clone(),
                         index,
                         color,
-                        should_autoscroll,
+                        options,
+                        type_id: TypeId::of::<T>(),
                     },
                 );
             }
@@ -16914,7 +16944,15 @@ impl Editor {
                             used_highlight_orders.entry(row).or_insert(highlight.index);
                         if highlight.index >= *used_index {
                             *used_index = highlight.index;
-                            unique_rows.insert(DisplayRow(row), highlight.color.into());
+                            unique_rows.insert(
+                                DisplayRow(row),
+                                LineHighlight {
+                                    include_gutter: highlight.options.include_gutter,
+                                    border: None,
+                                    background: highlight.color.into(),
+                                    type_id: Some(highlight.type_id),
+                                },
+                            );
                         }
                     }
                     unique_rows
@@ -16930,7 +16968,7 @@ impl Editor {
             .values()
             .flat_map(|highlighted_rows| highlighted_rows.iter())
             .filter_map(|highlight| {
-                if highlight.should_autoscroll {
+                if highlight.options.autoscroll {
                     Some(highlight.range.start.to_display_point(snapshot).row())
                 } else {
                     None
@@ -17405,13 +17443,19 @@ impl Editor {
                 });
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             }
-            multi_buffer::Event::ExcerptsRemoved { ids } => {
+            multi_buffer::Event::ExcerptsRemoved {
+                ids,
+                removed_buffer_ids,
+            } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 let buffer = self.buffer.read(cx);
                 self.registered_buffers
                     .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
-                cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
+                cx.emit(EditorEvent::ExcerptsRemoved {
+                    ids: ids.clone(),
+                    removed_buffer_ids: removed_buffer_ids.clone(),
+                })
             }
             multi_buffer::Event::ExcerptsEdited {
                 excerpt_ids,
@@ -18217,6 +18261,13 @@ impl Editor {
         self.addons
             .get(&type_id)
             .and_then(|item| item.to_any().downcast_ref::<T>())
+    }
+
+    pub fn addon_mut<T: Addon>(&mut self) -> Option<&mut T> {
+        let type_id = std::any::TypeId::of::<T>();
+        self.addons
+            .get_mut(&type_id)
+            .and_then(|item| item.to_any_mut()?.downcast_mut::<T>())
     }
 
     fn character_size(&self, window: &mut Window) -> gpui::Size<Pixels> {
@@ -19732,6 +19783,7 @@ pub enum EditorEvent {
     },
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
+        removed_buffer_ids: Vec<BufferId>,
     },
     BufferFoldToggled {
         ids: Vec<ExcerptId>,
@@ -20672,24 +20724,8 @@ impl Render for MissingEditPredictionKeybindingTooltip {
 pub struct LineHighlight {
     pub background: Background,
     pub border: Option<gpui::Hsla>,
-}
-
-impl From<Hsla> for LineHighlight {
-    fn from(hsla: Hsla) -> Self {
-        Self {
-            background: hsla.into(),
-            border: None,
-        }
-    }
-}
-
-impl From<Background> for LineHighlight {
-    fn from(background: Background) -> Self {
-        Self {
-            background,
-            border: None,
-        }
-    }
+    pub include_gutter: bool,
+    pub type_id: Option<TypeId>,
 }
 
 fn render_diff_hunk_controls(
