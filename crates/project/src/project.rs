@@ -3558,25 +3558,16 @@ impl Project {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let Some(stack_frame) = session.update(cx, |session, cx| {
-            session
-                .stack_frames(active_stack_frame.thread_id, cx)
-                .iter()
-                .find(|stack_frame| stack_frame.dap.id == active_stack_frame.stack_frame_id)
-                .cloned()
-        }) else {
-            return Task::ready(Err(anyhow::anyhow!("Stack frame not found")));
-        };
-
-        // todo(debugger): check if file is equal to the stackframe's file
-
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        let inline_value_provider = session
+        let Some(inline_value_provider) = session
             .read(cx)
             .configuration()
             .and_then(|config| self.debug_adapters().adapter(&config.adapter))
-            .and_then(|adapter| adapter.inline_value_provider());
+            .and_then(|adapter| adapter.inline_value_provider())
+        else {
+            return Task::ready(Err(anyhow::anyhow!("Inline value provider not found")));
+        };
 
         let mut text_objects =
             snapshot.text_object_ranges(range.end..range.end, Default::default());
@@ -3585,52 +3576,28 @@ impl Project {
             .map(|(range, _)| snapshot.anchor_before(range.start))
             .unwrap_or(range.start);
 
-        let inline_value_task = if let Some(inline_value_provider) = inline_value_provider {
-            let variable_ranges = snapshot
-                .debug_variable_ranges(
-                    text_object_range.to_offset(&snapshot)..range.end.to_offset(&snapshot),
+        let variable_ranges = snapshot
+            .debug_variable_ranges(
+                text_object_range.to_offset(&snapshot)..range.end.to_offset(&snapshot),
+            )
+            .filter_map(|range| {
+                let lsp_range = language::range_to_lsp(
+                    range.range.start.to_point_utf16(&snapshot)
+                        ..range.range.end.to_point_utf16(&snapshot),
                 )
-                .filter_map(|range| {
-                    let lsp_range = language::range_to_lsp(
-                        range.range.start.to_point_utf16(&snapshot)
-                            ..range.range.end.to_point_utf16(&snapshot),
-                    )
-                    .ok()?;
+                .ok()?;
 
-                    Some((
-                        snapshot.text_for_range(range.range).collect::<String>(),
-                        lsp_range,
-                    ))
-                })
-                .collect::<Vec<_>>();
-
-            Task::ready(Ok(Some(inline_value_provider.provide(variable_ranges))))
-        } else {
-            let stack_frame_start = snapshot.anchor_before(PointUtf16::new(
-                stack_frame.dap.line as u32 - 1,
-                stack_frame.dap.column as u32,
-            ));
-
-            let stack_frame_end = snapshot.anchor_after(PointUtf16::new(
-                stack_frame.dap.end_line.unwrap_or(stack_frame.dap.line) as u32 - 1,
-                stack_frame.dap.end_column.unwrap_or(stack_frame.dap.column) as u32,
-            ));
-
-            self.lsp_store.update(cx, |lsp_store, cx| {
-                lsp_store.inline_values(
-                    buffer_handle.clone(),
-                    range.clone(),
-                    active_stack_frame.stack_frame_id as i32,
-                    stack_frame_start..stack_frame_end,
-                    cx,
-                )
+                Some((
+                    snapshot.text_for_range(range.range).collect::<String>(),
+                    lsp_range,
+                ))
             })
-        };
+            .collect::<Vec<_>>();
+
+        let inline_values = inline_value_provider.provide(variable_ranges);
 
         let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
-            let inline_values = inline_value_task.await?.unwrap_or_default();
-
             this.update(cx, |project, cx| {
                 project.dap_store().update(cx, |dap_store, cx| {
                     dap_store.resolve_inline_values(

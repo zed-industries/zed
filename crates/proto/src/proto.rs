@@ -302,8 +302,6 @@ messages!(
     (GitDiff, Background),
     (GitDiffResponse, Background),
     (GitInit, Background),
-    (InlineValue, Background),
-    (InlineValueResponse, Background),
 );
 
 request_messages!(
@@ -462,7 +460,6 @@ request_messages!(
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
-    (InlineValue, InlineValueResponse),
 );
 
 entity_messages!(
@@ -582,7 +579,6 @@ entity_messages!(
     GitInit,
     BreakpointsForFile,
     ToggleBreakpoint,
-    InlineValue,
 );
 
 entity_messages!(

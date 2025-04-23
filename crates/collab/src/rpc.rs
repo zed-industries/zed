@@ -318,7 +318,6 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtOpenDocs>)
-            .add_request_handler(forward_mutating_project_request::<proto::LspExtRunnables>)
             .add_request_handler(
                 forward_read_only_project_request::<proto::LspExtSwitchSourceHeader>,
             )
@@ -361,7 +360,6 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
-            .add_request_handler(forward_mutating_project_request::<proto::InlineValue>)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateBufferFile>)
