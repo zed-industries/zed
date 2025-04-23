@@ -6,6 +6,7 @@ mod assistant_panel;
 mod buffer_codegen;
 mod context;
 mod context_picker;
+mod context_server_configration;
 mod context_store;
 mod context_strip;
 mod history_store;
@@ -108,6 +109,7 @@ pub fn init(
     AssistantSettings::register(cx);
     thread_store::init(cx);
     assistant_panel::init(cx);
+    context_server_configration::init(cx);
 
     inline_assistant::init(
         fs.clone(),

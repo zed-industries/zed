@@ -431,6 +431,13 @@ impl ExtensionStore {
             .filter_map(|extension| extension.dev.then_some(&extension.manifest))
     }
 
+    pub fn extension_manifest_for_id(&self, extension_id: &str) -> Option<&Arc<ExtensionManifest>> {
+        self.extension_index
+            .extensions
+            .get(extension_id)
+            .map(|extension| &extension.manifest)
+    }
+
     /// Returns the names of themes provided by extensions.
     pub fn extension_themes<'a>(
         &'a self,
@@ -935,6 +942,7 @@ impl ExtensionStore {
                 .await?;
 
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
+            this.update(cx, |_, cx| cx.emit(Event::ExtensionInstalled(extension_id)))?;
             Ok(())
         })
     }
