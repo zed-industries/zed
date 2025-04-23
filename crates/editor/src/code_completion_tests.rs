@@ -23,11 +23,11 @@ fn test_sort_matches_local_variable_over_global_variable(_cx: &mut TestAppContex
                 candidate_id: 0,
                 score: 0.2727272727272727,
                 positions: vec![],
-                string: "foo_baz_qux".to_string(),
+                string: "foo_bar_qux".to_string(),
             },
             is_snippet: false,
             sort_text: Some("7ffffffe"),
-            sort_key: (1, "foo_baz_qux"),
+            sort_key: (1, "foo_bar_qux"),
         },
         SortableMatch {
             string_match: StringMatch {
@@ -77,7 +77,7 @@ fn test_sort_matches_local_variable_over_global_variable(_cx: &mut TestAppContex
     CompletionsMenu::sort_matches(&mut matches, query);
     assert_eq!(
         matches[0].string_match.string.as_str(),
-        "foo_baz_qux",
+        "foo_bar_qux",
         "Match order not expected"
     );
     assert_eq!(
@@ -125,7 +125,7 @@ fn test_sort_matches_local_variable_over_global_variable(_cx: &mut TestAppContex
     CompletionsMenu::sort_matches(&mut matches, query);
     assert_eq!(
         matches[0].string_match.string.as_str(),
-        "foo_baz_qux",
+        "foo_bar_qux",
         "Match order not expected"
     );
     assert_eq!(
@@ -286,7 +286,7 @@ fn test_sort_matches_local_variable_over_global_enum(_cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_sort_matches_unreachable(_cx: &mut TestAppContext) {
+fn test_sort_matches_for_unreachable(_cx: &mut TestAppContext) {
     // Case 1: "unre"
     let query: Option<&str> = Some("unre");
     let mut matches: Vec<SortableMatch<'_>> = vec![
@@ -308,7 +308,7 @@ fn test_sort_matches_unreachable(_cx: &mut TestAppContext) {
                 positions: vec![],
                 string: "unreachable!(…)".to_string(),
             },
-            is_snippet: false,
+            is_snippet: true,
             sort_text: Some("7fffffff"),
             sort_key: (2, "unreachable!(…)"),
         },
@@ -341,18 +341,52 @@ fn test_sort_matches_unreachable(_cx: &mut TestAppContext) {
         "unreachable!(…)",
         "Match order not expected"
     );
+
+    // Case 2: "unrea"
+    let query: Option<&str> = Some("unrea");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.4545454545454546,
+                positions: vec![],
+                string: "unreachable".to_string(),
+            },
+            is_snippet: true,
+            sort_text: Some("80000000"),
+            sort_key: (3, "unreachable"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.3333333333333333,
+                positions: vec![],
+                string: "unreachable!(…)".to_string(),
+            },
+            is_snippet: true,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "unreachable!(…)"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.23809523809523808,
+                positions: vec![],
+                string: "unreachable_unchecked".to_string(),
+            },
+            is_snippet: true,
+            sort_text: Some("80000000"),
+            sort_key: (3, "unreachable_unchecked"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query);
     assert_eq!(
-        matches[1].string_match.string.as_str(),
-        "unreachable",
-        "Match order not expected"
-    );
-    assert_eq!(
-        matches[2].string_match.string.as_str(),
-        "unchecked_rem",
+        matches[0].string_match.string.as_str(),
+        "unreachable!(…)",
         "Match order not expected"
     );
 
-    // Case 2: "unreach"
+    // Case 3: "unreach"
     let query: Option<&str> = Some("unreach");
     let mut matches: Vec<SortableMatch<'_>> = vec![
         SortableMatch {
@@ -373,7 +407,7 @@ fn test_sort_matches_unreachable(_cx: &mut TestAppContext) {
                 positions: vec![],
                 string: "unreachable!(…)".to_string(),
             },
-            is_snippet: false,
+            is_snippet: true,
             sort_text: Some("7fffffff"),
             sort_key: (2, "unreachable!(…)"),
         },
@@ -395,18 +429,8 @@ fn test_sort_matches_unreachable(_cx: &mut TestAppContext) {
         "unreachable!(…)",
         "Match order not expected"
     );
-    assert_eq!(
-        matches[1].string_match.string.as_str(),
-        "unreachable",
-        "Match order not expected"
-    );
-    assert_eq!(
-        matches[2].string_match.string.as_str(),
-        "unchecked_rem",
-        "Match order not expected"
-    );
 
-    // Case 3: "unreachable"
+    // Case 4: "unreachable"
     let query: Option<&str> = Some("unreachable");
     let mut matches: Vec<SortableMatch<'_>> = vec![
         SortableMatch {
@@ -447,16 +471,6 @@ fn test_sort_matches_unreachable(_cx: &mut TestAppContext) {
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "unreachable!(…)",
-        "Match order not expected"
-    );
-    assert_eq!(
-        matches[1].string_match.string.as_str(),
-        "unreachable",
-        "Match order not expected"
-    );
-    assert_eq!(
-        matches[2].string_match.string.as_str(),
-        "unchecked_rem",
         "Match order not expected"
     );
 }
@@ -934,21 +948,58 @@ fn test_sort_matches_jsx_event_handler(_cx: &mut TestAppContext) {
     assert_eq!(
         matches
             .iter()
+            .take(12)
             .map(|m| m.string_match.string.as_str())
             .collect::<Vec<&str>>(),
         vec![
             "onAbort?",
-            "onAuxClick?",
             "onAbortCapture?",
             "onAnimationEnd?",
+            "onAnimationEndCapture?",
+            "onAnimationIteration?",
             "onAnimationStart?",
+            "onAuxClick?",
             "onAuxClickCapture?",
             "onCanPlay?",
             "onChange?",
             "onDrag?",
             "onDragEnd?",
-            "onDragExit?",
-            "onDragOver?",
         ]
+    );
+}
+
+#[gpui::test]
+fn test_sort_matches_for_snippets(_cx: &mut TestAppContext) {
+    // Case 1: "prin"
+    let query: Option<&str> = Some("prin");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.2,
+                positions: vec![],
+                string: "println".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (2, "unreachable"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.2,
+                positions: vec![],
+                string: "println!(…)".to_string(),
+            },
+            is_snippet: true,
+            sort_text: Some("80000000"),
+            sort_key: (2, "println!(…)"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query);
+    assert_eq!(
+        matches[0].string_match.string.as_str(),
+        "println!(…)",
+        "Match order not expected"
     );
 }

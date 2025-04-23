@@ -658,8 +658,6 @@ impl CompletionsMenu {
     }
 
     pub fn sort_matches(matches: &mut Vec<SortableMatch<'_>>, query: Option<&str>) {
-        dbg!(&matches);
-
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
@@ -673,12 +671,31 @@ impl CompletionsMenu {
             },
         }
 
-        // Maximum value for the quantized score.
-        const MAX_INT_SCORE: i32 = 10;
+        // Our goal here is to intelligently sort completion suggestions. We want to
+        // balance the raw fuzzy match score with hints from the language server
+        // (like `sort_text`) and simple heuristics (like preferring matches where
+        // the query starts at the beginning of a word within the suggestion).
+        //
+        // To do this, we first divide matches into two tiers: `WordStartMatch`,
+        // where the query's first character matches the start of any word within the
+        // suggestion string, and `OtherMatch`, where it doesn't. We prioritize
+        // `WordStartMatch` items, sorting them first. `OtherMatch` items come
+        // after, sorted simply by their raw fuzzy score.
+        //
+        // For the prioritized `WordStartMatch` items, we don't sort directly by the
+        // float fuzzy score. Why? Because float scores are often unique, meaning tiny,
+        // almost meaningless differences in score would dominate the sorting, making
+        // LSP hints not important. Instead, we quantize the score: we map the
+        // 0.0-1.0 float score to a small integer range (0 to `NUM_OF_BUCKETS`).
+        // This allows matches with similar fuzzy relevance fall into the same bucket.
+        // And, to break tie between those snippet, LSP, etc matching is used.
 
-        // Converts a float score (0.0 to 1.0) into an integer bucket.
-        let map_score_to_int = |score: f64, max_int_score: i32| -> i32 {
-            ((score * max_int_score as f64).round() as i32).clamp(0, max_int_score)
+        const NUM_OF_BUCKETS: i32 = 3;
+        const CURVE_MULTIPLIER: f64 = 0.1;
+
+        let map_fuzzy_score_to_int = |fuzzy_score: f64| -> i32 {
+            let new_score = fuzzy_score.powf(CURVE_MULTIPLIER);
+            ((new_score * NUM_OF_BUCKETS as f64).round() as i32).clamp(0, NUM_OF_BUCKETS)
         };
 
         let query_start_lower = query
@@ -686,31 +703,6 @@ impl CompletionsMenu {
             .and_then(|c| c.to_lowercase().next());
 
         matches.sort_unstable_by_key(|mat| {
-            // Our goal here is to intelligently sort completion suggestions. We want to
-            // balance the raw fuzzy match score with hints from the language server
-            // (like `sort_text`) and simple heuristics (like preferring matches where
-            // the query starts at the beginning of a word within the suggestion).
-            //
-            // To do this, we first divide matches into two tiers: `WordStartMatch`,
-            // where the query's first character matches the start of any word within the
-            // suggestion string, and `OtherMatch`, where it doesn't. We prioritize
-            // `WordStartMatch` items, sorting them first. `OtherMatch` items come
-            // after, sorted simply by their raw fuzzy score.
-            //
-            // For the prioritized `WordStartMatch` items, we don't sort directly by the
-            // float fuzzy score. Why? Because float scores are often unique, meaning tiny,
-            // almost meaningless differences in score would dominate the sorting, making
-            // LSP hints not important. Instead, we quantize the score: we map the
-            // 0.0-1.0 float score to a small integer range (0 to `MAX_INT_SCORE`).
-            // This creates score "brackets", matches with similar fuzzy relevance fall
-            // into the same bracket.
-            //
-            // This quantization allows other factors to break ties within a bracket.
-            // The `MAX_INT_SCORE` sets the number of brackets. Too few (like 0)
-            // ignores the fuzzy score entirely for primary sorting. Too many (a large number)
-            // makes it behave like sorting by the raw float again. Some what low number offers a balance,
-            // grouping similar scores while still distinguishing clearly better ones.
-
             let sort_score = Reverse(OrderedFloat(mat.string_match.score));
 
             let is_other_match = query_start_lower
@@ -727,8 +719,7 @@ impl CompletionsMenu {
             if is_other_match {
                 MatchTier::OtherMatch { sort_score }
             } else {
-                let sort_score_int =
-                    Reverse(map_score_to_int(mat.string_match.score, MAX_INT_SCORE));
+                let sort_score_int = Reverse(map_fuzzy_score_to_int(mat.string_match.score));
                 let sort_snippet = Reverse(if mat.is_snippet { 1 } else { 0 });
                 MatchTier::WordStartMatch {
                     sort_score_int,
