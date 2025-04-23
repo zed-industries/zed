@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
-use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
 };
@@ -22,6 +22,7 @@ use std::{
 use ui::{Disclosure, IconName, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use uuid::Uuid;
+use workspace::Workspace;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
@@ -365,6 +366,7 @@ impl ToolCard for EditFileToolCard {
         &mut self,
         status: &ToolUseStatus,
         window: &mut Window,
+        _workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let failed = matches!(status, ToolUseStatus::Error(_));

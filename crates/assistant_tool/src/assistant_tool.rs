@@ -14,7 +14,8 @@ use gpui::AnyWindowHandle;
 use gpui::Context;
 use gpui::IntoElement;
 use gpui::Window;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task, WeakEntity};
+use workspace::Workspace;
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -66,6 +67,7 @@ pub trait ToolCard: 'static + Sized {
         &mut self,
         status: &ToolUseStatus,
         window: &mut Window,
+        workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement;
 }
@@ -77,6 +79,7 @@ pub struct AnyToolCard {
         entity: gpui::AnyEntity,
         status: &ToolUseStatus,
         window: &mut Window,
+        workspace: WeakEntity<Workspace>,
         cx: &mut App,
     ) -> AnyElement,
 }
@@ -87,11 +90,12 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
             entity: gpui::AnyEntity,
             status: &ToolUseStatus,
             window: &mut Window,
+            workspace: WeakEntity<Workspace>,
             cx: &mut App,
         ) -> AnyElement {
             let entity = entity.downcast::<T>().unwrap();
             entity.update(cx, |entity, cx| {
-                entity.render(status, window, cx).into_any_element()
+                entity.render(status, window, workspace, cx).into_any_element()
             })
         }
 
@@ -103,8 +107,8 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
 }
 
 impl AnyToolCard {
-    pub fn render(&self, status: &ToolUseStatus, window: &mut Window, cx: &mut App) -> AnyElement {
-        (self.render)(self.entity.clone(), status, window, cx)
+    pub fn render(&self, status: &ToolUseStatus, window: &mut Window, workspace: WeakEntity<Workspace>, cx: &mut App) -> AnyElement {
+        (self.render)(self.entity.clone(), status, window, workspace, cx)
     }
 }
 

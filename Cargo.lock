@@ -693,6 +693,7 @@ dependencies = [
  "settings",
  "text",
  "util",
+ "workspace",
  "workspace-hack",
 ]
 

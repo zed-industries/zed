@@ -1851,11 +1851,9 @@ impl ActiveThread {
                 .gap_2()
                 .children(message_content)
                 .when(has_tool_uses, |parent| {
-                    parent.children(
-                        tool_uses
-                            .into_iter()
-                            .map(|tool_use| self.render_tool_use(tool_use, window, cx)),
-                    )
+                    parent.children(tool_uses.into_iter().map(|tool_use| {
+                        self.render_tool_use(tool_use, window, workspace.clone(), cx)
+                    }))
                 }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
@@ -2448,10 +2446,11 @@ impl ActiveThread {
         &self,
         tool_use: ToolUse,
         window: &mut Window,
+        workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
-            return card.render(&tool_use.status, window, cx);
+            return card.render(&tool_use.status, window, workspace, cx);
         }
 
         let is_open = self

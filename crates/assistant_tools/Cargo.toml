@@ -40,6 +40,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 web_search.workspace = true
+workspace.workspace = true
 workspace-hack.workspace = true
 worktree.workspace = true
 zed_llm_client.workspace = true
