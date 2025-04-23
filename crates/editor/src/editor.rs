@@ -433,7 +433,7 @@ pub enum EditorMode {
         scale_ui_elements_with_buffer_font_size: bool,
         /// When set to `true`, the editor will render a background for the active line.
         show_active_line_background: bool,
-        /// When set to `true`, the editor's height will determined by its content.
+        /// When set to `true`, the editor's height will be determined by its content.
         sized_by_content: bool,
     },
 }
