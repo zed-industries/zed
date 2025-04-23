@@ -7,7 +7,6 @@ mod tool_metrics;
 
 use assertions::display_error_row;
 use instance::{ExampleInstance, JudgeOutput, RunOutput, run_git};
-use parking_lot::Mutex;
 pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
@@ -29,9 +28,11 @@ use prompt_store::PromptBuilder;
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::env;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -259,8 +260,8 @@ fn main() {
                 example_instance.fetch().await?;
             }
 
-            let examples = Arc::new(Mutex::new(VecDeque::from(examples)));
-            let results_by_example_name = Arc::new(Mutex::new(HashMap::default()));
+            let examples = Rc::new(RefCell::new(VecDeque::from(examples)));
+            let results_by_example_name = Rc::new(RefCell::new(HashMap::default()));
 
             future::join_all((0..args.concurrency).map(|_| {
                 let app_state = app_state.clone();
@@ -272,7 +273,7 @@ fn main() {
                 let results = results_by_example_name.clone();
                 cx.spawn(async move |cx| {
                     loop {
-                        let Some(mut example) = examples.lock().pop_front() else {
+                        let Some(mut example) = examples.borrow_mut().pop_front() else {
                             break;
                         };
                         let result = async {
@@ -295,7 +296,7 @@ fn main() {
                         }
                         .await;
                         results
-                            .lock()
+                            .borrow_mut()
                             .entry(example.name.clone())
                             .or_insert(Vec::new())
                             .push((example.clone(), result));
@@ -311,7 +312,7 @@ fn main() {
             let mut programmatic_scores = Vec::new();
             let mut error_count = 0;
 
-            for (example_name, results) in results_by_example_name.lock().iter_mut() {
+            for (example_name, results) in results_by_example_name.borrow_mut().iter_mut() {
                 print_h2(&example_name);
 
                 results.sort_unstable_by_key(|(example, _)| example.repetition);
@@ -417,7 +418,7 @@ fn main() {
                 }
             }
 
-            if results_by_example_name.lock().len() > 1 {
+            if results_by_example_name.borrow().len() > 1 {
                 print_h1("AGGREGATE");
 
                 if error_count > 0 {

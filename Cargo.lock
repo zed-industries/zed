@@ -4913,7 +4913,6 @@ dependencies = [
  "language_models",
  "languages",
  "node_runtime",
- "parking_lot",
  "paths",
  "project",
  "prompt_store",

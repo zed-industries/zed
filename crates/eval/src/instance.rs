@@ -1009,7 +1009,7 @@ mod test {
                 - Error 2
             </analysis>
 
-            <passed>false</passeda>
+            <passed>false</passed>
         "#
         .unindent();
 
