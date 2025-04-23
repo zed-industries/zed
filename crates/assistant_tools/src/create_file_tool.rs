@@ -24,6 +24,9 @@ pub struct CreateFileToolInput {
     ///
     /// You can create a new file by providing a path of "directory1/new_file.txt"
     /// </example>
+    ///
+    /// Make sure to include this field before the `contents` field in the input object
+    /// so that we can display it immediately.
     pub path: String,
 
     /// The text contents of the file to create.
