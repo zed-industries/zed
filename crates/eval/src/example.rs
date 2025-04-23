@@ -40,7 +40,7 @@ pub struct JudgeAssertion {
     pub description: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ExampleMetadata {
     pub name: String,
     pub url: String,
@@ -48,7 +48,7 @@ pub struct ExampleMetadata {
     pub language_server: Option<LanguageServer>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct LanguageServer {
     pub file_extension: String,
     pub allow_preexisting_diagnostics: bool,

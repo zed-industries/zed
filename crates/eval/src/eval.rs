@@ -6,7 +6,9 @@ mod instance;
 mod tool_metrics;
 
 use assertions::display_error_row;
+use example::ExampleMetadata;
 use instance::{ExampleInstance, JudgeOutput, RunOutput, run_git};
+use serde::Serialize;
 pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
@@ -619,7 +621,7 @@ pub fn git_branch_for_path(repo_path: &Path) -> String {
 }
 
 async fn judge_example(
-    example: ExampleInstance,
+    instance: ExampleInstance,
     model: Arc<dyn LanguageModel>,
     zed_commit_sha: &str,
     zed_branch_name: &str,
@@ -628,33 +630,39 @@ async fn judge_example(
     enable_telemetry: bool,
     cx: &AsyncApp,
 ) -> JudgeOutput {
-    let judge_output = example.judge(model.clone(), &run_output, cx).await;
+    let judge_output = instance.judge(model.clone(), &run_output, cx).await;
+
+    let evaluated_example = EvaluatedExample {
+        example: instance.example.meta(),
+        run: RunMetadata {
+            zed_commit_sha: zed_commit_sha.to_string(),
+            zed_branch_name: zed_branch_name.to_string(),
+            run_id: run_id.to_string(),
+        },
+        run_output: run_output.clone(),
+        judge_output: judge_output.clone(),
+    };
 
     if enable_telemetry {
-        telemetry::event!(
-            "Agent Example Evaluated",
-            zed_commit_sha = zed_commit_sha,
-            zed_branch_name = zed_branch_name,
-            run_id = run_id,
-            example_name = example.name.clone(),
-            example_repetition = example.repetition,
-            diff_evaluation = judge_output.diff.clone(),
-            thread_evaluation = judge_output.thread.clone(),
-            tool_metrics = run_output.tool_metrics,
-            response_count = run_output.response_count,
-            token_usage = run_output.token_usage,
-            model = model.telemetry_id(),
-            model_provider = model.provider_id().to_string(),
-            repository_url = example.repo_url(),
-            repository_revision = example.revision(),
-            diagnostic_summary_before = run_output.diagnostic_summary_before,
-            diagnostic_summary_after = run_output.diagnostic_summary_after,
-            diagnostics_before = run_output.diagnostics_before,
-            diagnostics_after = run_output.diagnostics_after,
-        );
+        telemetry::event!("Agent Example Evaluated", evaluated_example);
     }
 
     judge_output
+}
+
+#[derive(Serialize)]
+struct EvaluatedExample {
+    example: ExampleMetadata,
+    run: RunMetadata,
+    run_output: RunOutput,
+    judge_output: JudgeOutput,
+}
+
+#[derive(Serialize)]
+struct RunMetadata {
+    zed_commit_sha: String,
+    zed_branch_name: String,
+    run_id: String,
 }
 
 const HEADER_WIDTH: usize = 65;
