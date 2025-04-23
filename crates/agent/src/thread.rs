@@ -953,7 +953,12 @@ impl Thread {
         self.remaining_turns = remaining_turns;
     }
 
-    pub fn send_to_model(&mut self, model: Arc<dyn LanguageModel>, window: Option<AnyWindowHandle>, cx: &mut Context<Self>) {
+    pub fn send_to_model(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
         if self.remaining_turns == 0 {
             return;
         }

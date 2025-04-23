@@ -15,11 +15,11 @@ use gpui::Context;
 use gpui::IntoElement;
 use gpui::Window;
 use gpui::{App, Entity, SharedString, Task, WeakEntity};
-use workspace::Workspace;
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
+use workspace::Workspace;
 
 pub use crate::action_log::*;
 pub use crate::tool_registry::*;
@@ -95,7 +95,9 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
         ) -> AnyElement {
             let entity = entity.downcast::<T>().unwrap();
             entity.update(cx, |entity, cx| {
-                entity.render(status, window, workspace, cx).into_any_element()
+                entity
+                    .render(status, window, workspace, cx)
+                    .into_any_element()
             })
         }
 
@@ -107,7 +109,13 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
 }
 
 impl AnyToolCard {
-    pub fn render(&self, status: &ToolUseStatus, window: &mut Window, workspace: WeakEntity<Workspace>, cx: &mut App) -> AnyElement {
+    pub fn render(
+        &self,
+        status: &ToolUseStatus,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut App,
+    ) -> AnyElement {
         (self.render)(self.entity.clone(), status, window, workspace, cx)
     }
 }
