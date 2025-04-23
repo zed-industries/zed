@@ -4,18 +4,18 @@ use std::fmt::{self};
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct AssertionsReport {
-    pub assertions: Vec<Assertion>,
+    pub ran: Vec<RanAssertion>,
     pub max: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Assertion {
+pub struct RanAssertion {
     pub id: String,
-    pub result: Result<AssertionResult, String>,
+    pub result: Result<RanAssertionResult, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AssertionResult {
+pub struct RanAssertionResult {
     pub analysis: Option<String>,
     pub passed: bool,
 }
@@ -23,13 +23,13 @@ pub struct AssertionResult {
 impl AssertionsReport {
     pub fn new(max: Option<usize>) -> Self {
         AssertionsReport {
-            assertions: Vec::new(),
+            ran: Vec::new(),
             max,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.assertions.is_empty()
+        self.ran.is_empty()
     }
 
     pub fn total_count(&self) -> usize {
@@ -37,11 +37,11 @@ impl AssertionsReport {
     }
 
     pub fn run_count(&self) -> usize {
-        self.assertions.len()
+        self.ran.len()
     }
 
     pub fn passed_count(&self) -> usize {
-        self.assertions
+        self.ran
             .iter()
             .filter(|a| a.result.as_ref().map_or(false, |result| result.passed))
             .count()
@@ -91,7 +91,7 @@ pub fn display_error_row(f: &mut String, round: usize, error: String) -> fmt::Re
     )
 }
 
-pub fn display_table_row(f: &mut String, round: usize, assertion: &Assertion) -> fmt::Result {
+pub fn display_table_row(f: &mut String, round: usize, assertion: &RanAssertion) -> fmt::Result {
     let result = match &assertion.result {
         Ok(result) if result.passed => "\x1b[32m✔︎ Passed\x1b[0m",
         Ok(_) => "\x1b[31m✗ Failed\x1b[0m",

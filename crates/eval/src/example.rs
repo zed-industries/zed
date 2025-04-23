@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     ToolMetrics,
-    assertions::{Assertion, AssertionResult, AssertionsReport},
+    assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
 use agent::ThreadEvent;
 use anyhow::{Result, anyhow};
@@ -169,9 +169,9 @@ impl ExampleContext {
             }
         }
 
-        self.assertions.assertions.push(Assertion {
+        self.assertions.ran.push(RanAssertion {
             id: message.clone(),
-            result: Ok(AssertionResult {
+            result: Ok(RanAssertionResult {
                 analysis: None,
                 passed: result.is_ok(),
             }),

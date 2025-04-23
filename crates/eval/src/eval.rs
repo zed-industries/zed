@@ -333,8 +333,8 @@ fn main() {
                             cumulative_tool_metrics.merge(&run_output.tool_metrics);
                             example_cumulative_tool_metrics.merge(&run_output.tool_metrics);
 
-                            if !run_output.assertions.total_count() > 0 {
-                                for assertion in &run_output.assertions.assertions {
+                            if !run_output.programmatic_assertions.total_count() > 0 {
+                                for assertion in &run_output.programmatic_assertions.ran {
                                     assertions::display_table_row(
                                         &mut table_rows,
                                         example.repetition,
@@ -342,13 +342,14 @@ fn main() {
                                     )?;
                                 }
 
-                                programmatic_scores.push(run_output.assertions.passed_percentage())
+                                programmatic_scores
+                                    .push(run_output.programmatic_assertions.passed_percentage())
                             }
 
                             if !judge_output.diff.is_empty() {
                                 diff_scores.push(judge_output.diff.passed_percentage());
 
-                                for assertion in &judge_output.diff.assertions {
+                                for assertion in &judge_output.diff.ran {
                                     assertions::display_table_row(
                                         &mut table_rows,
                                         example.repetition,
@@ -360,7 +361,7 @@ fn main() {
                             if !judge_output.thread.is_empty() {
                                 thread_scores.push(judge_output.thread.passed_percentage());
 
-                                for assertion in &judge_output.thread.assertions {
+                                for assertion in &judge_output.thread.ran {
                                     assertions::display_table_row(
                                         &mut table_rows,
                                         example.repetition,
@@ -383,7 +384,7 @@ fn main() {
                             assertions::print_table_round_summary(
                                 &example.repetition.to_string(),
                                 [
-                                    &run_output.assertions,
+                                    &run_output.programmatic_assertions,
                                     &judge_output.diff,
                                     &judge_output.thread,
                                 ]
@@ -399,7 +400,7 @@ fn main() {
                         results.iter().flat_map(|(_, result)| {
                             result.iter().flat_map(|(run_output, judge_output)| {
                                 [
-                                    &run_output.assertions,
+                                    &run_output.programmatic_assertions,
                                     &judge_output.diff,
                                     &judge_output.thread,
                                 ]

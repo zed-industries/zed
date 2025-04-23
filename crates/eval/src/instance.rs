@@ -29,7 +29,7 @@ use util::ResultExt as _;
 use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
-use crate::assertions::{Assertion, AssertionResult, AssertionsReport};
+use crate::assertions::{AssertionsReport, RanAssertion, RanAssertionResult};
 use crate::example::{Example, ExampleContext, FailedAssertion, JudgeAssertion};
 use crate::{AgentAppState, ToolMetrics};
 
@@ -61,7 +61,7 @@ pub struct RunOutput {
     pub token_usage: TokenUsage,
     pub tool_metrics: ToolMetrics,
     pub last_request: LanguageModelRequest,
-    pub assertions: AssertionsReport,
+    pub programmatic_assertions: AssertionsReport,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -414,7 +414,7 @@ impl ExampleInstance {
                     token_usage: thread.cumulative_token_usage(),
                     tool_metrics: example_cx.tool_metrics.lock().unwrap().clone(),
                     last_request,
-                    assertions: example_cx.assertions,
+                    programmatic_assertions: example_cx.assertions,
                 }
             })
         })
@@ -594,7 +594,7 @@ impl ExampleInstance {
 
                 (
                     response,
-                    Assertion {
+                    RanAssertion {
                         id: assertion.id,
                         result,
                     },
@@ -608,7 +608,7 @@ impl ExampleInstance {
         for (response, assertion) in future::join_all(assertions).await {
             writeln!(&mut responses, "# {}", assertion.id).unwrap();
             writeln!(&mut responses, "{}\n\n", response).unwrap();
-            report.assertions.push(assertion);
+            report.ran.push(assertion);
         }
 
         (responses, report)
@@ -746,14 +746,14 @@ pub async fn query_lsp_diagnostics(
     anyhow::Ok(Some(output))
 }
 
-fn parse_assertion_result(response: &str) -> Result<AssertionResult> {
+fn parse_assertion_result(response: &str) -> Result<RanAssertionResult> {
     let analysis = get_tag("analysis", response)?.to_string();
     let passed = match get_tag("passed", response)?.to_lowercase().as_str() {
         "true" => true,
         "false" => false,
         value @ _ => bail!("invalid judge `passed` tag: {value}"),
     };
-    Ok(AssertionResult {
+    Ok(RanAssertionResult {
         analysis: Some(analysis),
         passed,
     })
