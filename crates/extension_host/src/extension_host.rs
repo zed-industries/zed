@@ -1297,7 +1297,7 @@ impl ExtensionStore {
                         );
                     }
 
-                    for (id, _context_server) in &manifest.context_servers {
+                    for (id, _context_server_entry) in &manifest.context_servers {
                         this.proxy
                             .register_context_server(extension.clone(), id.clone(), cx);
                     }
