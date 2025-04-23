@@ -372,8 +372,7 @@ impl ToolCard for EditFileToolCard {
         let failed = matches!(status, ToolUseStatus::Error(_));
 
         let path_label_button = h_flex()
-            .id(("code-block-header-label", self.index))
-            // .id(Uuid::new_v4()) // just so i can run for now, to uncomment later
+            .id(Uuid::new_v4())
             .w_full()
             .max_w_full()
             .px_1()
@@ -487,7 +486,7 @@ impl ToolCard for EditFileToolCard {
                         .child(div().pl_1().child(editor))
                         .child(
                             h_flex()
-                                .id("full_height_button")
+                                .id(Uuid::new_v4())
                                 .when(!self.full_height_expanded, |button| {
                                     button.absolute().bottom_0()
                                 })

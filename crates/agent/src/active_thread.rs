@@ -433,47 +433,39 @@ fn render_markdown_code_block(
                         workspace
                             .update(cx, {
                                 |workspace, cx| {
-                                    if let Some(project_path) = workspace
+                                    let Some(project_path) = workspace
                                         .project()
                                         .read(cx)
                                         .find_project_path(&path_range.path, cx)
-                                    {
-                                        let target = path_range.range.as_ref().map(|range| {
-                                            Point::new(
-                                                // Line number is 1-based
-                                                range.start.line.saturating_sub(1),
-                                                range.start.col.unwrap_or(0),
-                                            )
-                                        });
-                                        let open_task = workspace.open_path(
-                                            project_path,
-                                            None,
-                                            true,
-                                            window,
-                                            cx,
-                                        );
-                                        window
-                                            .spawn(cx, async move |cx| {
-                                                let item = open_task.await?;
-                                                if let Some(target) = target {
-                                                    if let Some(active_editor) =
-                                                        item.downcast::<Editor>()
-                                                    {
-                                                        active_editor
-                                                            .downgrade()
-                                                            .update_in(cx, |editor, window, cx| {
-                                                                editor
-                                                                    .go_to_singleton_buffer_point(
-                                                                        target, window, cx,
-                                                                    );
-                                                            })
-                                                            .log_err();
-                                                    }
-                                                }
-                                                anyhow::Ok(())
-                                            })
-                                            .detach_and_log_err(cx);
-                                    }
+                                    else {
+                                        return;
+                                    };
+                                    let Some(target) = path_range.range.as_ref().map(|range| {
+                                        Point::new(
+                                            // Line number is 1-based
+                                            range.start.line.saturating_sub(1),
+                                            range.start.col.unwrap_or(0),
+                                        )
+                                    }) else {
+                                        return;
+                                    };
+                                    let open_task =
+                                        workspace.open_path(project_path, None, true, window, cx);
+                                    window
+                                        .spawn(cx, async move |cx| {
+                                            let item = open_task.await?;
+                                            if let Some(active_editor) = item.downcast::<Editor>() {
+                                                active_editor
+                                                    .update_in(cx, |editor, window, cx| {
+                                                        editor.go_to_singleton_buffer_point(
+                                                            target, window, cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                            anyhow::Ok(())
+                                        })
+                                        .detach_and_log_err(cx);
                                 }
                             })
                             .ok();
