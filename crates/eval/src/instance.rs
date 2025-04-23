@@ -1030,14 +1030,11 @@ impl ThreadDialog {
                     current_text.push_str(text);
                 }
 
-                // TODO: Tool use is currently broken, both here and in Markdown output.
-                // Specifically, we get a stream of partial `tool_use` messages,
-                // each of which gets logged individually. A simple fix is to log
-                // just the final message, but we also need to make sure that
-                // this behavior doesn't happen in the actual assistant thread.
                 Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
                     flush_text(&mut current_text, &mut content);
-                    content.push(MessageContent::ToolUse(tool_use.clone()));
+                    if tool_use.is_input_complete {
+                        content.push(MessageContent::ToolUse(tool_use.clone()));
+                    }
                 }
                 Ok(LanguageModelCompletionEvent::Thinking { text, signature }) => {
                     flush_text(&mut current_text, &mut content);
