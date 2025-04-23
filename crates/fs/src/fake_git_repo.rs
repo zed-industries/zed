@@ -150,8 +150,14 @@ impl GitRepository for FakeGitRepository {
             .unwrap()
     }
 
-    fn show(&self, _commit: String) -> BoxFuture<Result<CommitDetails>> {
-        unimplemented!()
+    fn show(&self, commit: String) -> BoxFuture<Result<CommitDetails>> {
+        async {
+            Ok(CommitDetails {
+                sha: commit.into(),
+                ..Default::default()
+            })
+        }
+        .boxed()
     }
 
     fn reset(
