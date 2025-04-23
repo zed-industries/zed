@@ -9,34 +9,34 @@ use std::{
 };
 use util::serde::default_true;
 
-use crate::thread::{EvalThread, EvalThreadMetadata, JudgeAssertion, ThreadContext};
+use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
 
 mod file_search;
 
-pub fn all() -> Vec<Rc<dyn EvalThread>> {
-    let mut threads: Vec<Rc<dyn EvalThread>> = vec![Rc::new(file_search::Thread)];
+pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
+    let mut threads: Vec<Rc<dyn Example>> = vec![Rc::new(file_search::FileSearchExample)];
 
-    for example_path in list_all_examples().unwrap() {
-        threads.push(Rc::new(ExampleThread::load(&example_path).unwrap()));
+    for example_path in list_declarative_examples(examples_dir).unwrap() {
+        threads.push(Rc::new(DeclarativeExample::load(&example_path).unwrap()));
     }
 
     threads
 }
 
-struct ExampleThread {
-    metadata: EvalThreadMetadata,
+struct DeclarativeExample {
+    metadata: ExampleMetadata,
     prompt: String,
     diff_assertions: Vec<JudgeAssertion>,
     thread_assertions: Vec<JudgeAssertion>,
 }
 
-impl ExampleThread {
+impl DeclarativeExample {
     pub fn load(example_path: &Path) -> Result<Self> {
         let name = Self::name_from_path(example_path);
         let base: ExampleToml = toml::from_str(&fs::read_to_string(&example_path)?)?;
 
         let language_server = if base.require_lsp {
-            Some(crate::thread::LanguageServer {
+            Some(crate::example::LanguageServer {
                 file_extension: base
                     .language_extension
                     .expect("Language extension is required when require_lsp = true"),
@@ -46,7 +46,7 @@ impl ExampleThread {
             None
         };
 
-        let metadata = EvalThreadMetadata {
+        let metadata = ExampleMetadata {
             name,
             url: base.url,
             revision: base.revision,
@@ -54,7 +54,7 @@ impl ExampleThread {
             max_assertions: None,
         };
 
-        Ok(ExampleThread {
+        Ok(DeclarativeExample {
             metadata,
             prompt: base.prompt,
             thread_assertions: base
@@ -93,12 +93,12 @@ pub struct ExampleToml {
 }
 
 #[async_trait(?Send)]
-impl EvalThread for ExampleThread {
-    fn meta(&self) -> EvalThreadMetadata {
+impl Example for DeclarativeExample {
+    fn meta(&self) -> ExampleMetadata {
         self.metadata.clone()
     }
 
-    async fn conversation(&self, cx: &mut ThreadContext) -> Result<()> {
+    async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
         cx.push_user_message(&self.prompt);
         let _ = cx.run_to_end().await;
         Ok(())
@@ -113,10 +113,8 @@ impl EvalThread for ExampleThread {
     }
 }
 
-pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
-
-fn list_all_examples() -> Result<Vec<PathBuf>> {
-    let path = std::fs::canonicalize(EXAMPLES_DIR).unwrap();
+fn list_declarative_examples(examples_dir: &Path) -> Result<Vec<PathBuf>> {
+    let path = std::fs::canonicalize(examples_dir).unwrap();
     let entries = std::fs::read_dir(path).unwrap();
     let mut result_paths = Vec::new();
     for entry in entries {

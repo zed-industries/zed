@@ -3,14 +3,14 @@ use assistant_tools::PathSearchToolInput;
 use async_trait::async_trait;
 use regex::Regex;
 
-use crate::thread::{EvalThread, EvalThreadMetadata, ThreadContext};
+use crate::example::{Example, ExampleContext, ExampleMetadata};
 
-pub struct Thread;
+pub struct FileSearchExample;
 
 #[async_trait(?Send)]
-impl EvalThread for Thread {
-    fn meta(&self) -> EvalThreadMetadata {
-        EvalThreadMetadata {
+impl Example for FileSearchExample {
+    fn meta(&self) -> ExampleMetadata {
+        ExampleMetadata {
             name: "file_search".to_string(),
             url: "https://github.com/zed-industries/zed.git".to_string(),
             revision: "03ecb88fe30794873f191ddb728f597935b3101c".to_string(),
@@ -19,7 +19,7 @@ impl EvalThread for Thread {
         }
     }
 
-    async fn conversation(&self, cx: &mut ThreadContext) -> Result<()> {
+    async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
         const FILENAME: &str = "find_replace_file_tool.rs";
         cx.push_user_message(format!(
                 r#"

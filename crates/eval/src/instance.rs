@@ -30,14 +30,14 @@ use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 
 use crate::assertions::{Assertion, AssertionResult, AssertionsReport};
-use crate::thread::{EvalThread, FailedAssertion, JudgeAssertion, ThreadContext};
+use crate::example::{Example, ExampleContext, FailedAssertion, JudgeAssertion};
 use crate::{AgentAppState, ToolMetrics};
 
 pub const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
 
 #[derive(Clone)]
-pub struct ThreadInstance {
-    pub thread: Rc<dyn EvalThread>,
+pub struct ExampleInstance {
+    pub thread: Rc<dyn Example>,
     pub name: String,
     pub run_directory: PathBuf,
     pub log_prefix: String,
@@ -82,9 +82,9 @@ pub struct JudgeOutput {
     pub diff: AssertionsReport,
 }
 
-impl ThreadInstance {
+impl ExampleInstance {
     pub fn new(
-        thread: Rc<dyn EvalThread>,
+        thread: Rc<dyn Example>,
         repos_dir: &Path,
         run_dir: &Path,
         worktrees_dir: &Path,
@@ -349,8 +349,8 @@ impl ThreadInstance {
                 });
             })?;
 
-            let mut thread_cx = ThreadContext::new(meta.clone(), this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
-            let result = this.thread.conversation(&mut thread_cx).await;
+            let mut example_cx = ExampleContext::new(meta.clone(), this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
+            let result = this.thread.conversation(&mut example_cx).await;
 
             if let Err(err) = result {
                 if !err.is::<FailedAssertion>() {
@@ -412,9 +412,9 @@ impl ThreadInstance {
                     diagnostics_after,
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
-                    tool_metrics: thread_cx.tool_metrics.lock().unwrap().clone(),
+                    tool_metrics: example_cx.tool_metrics.lock().unwrap().clone(),
                     last_request,
-                    assertions: thread_cx.assertions,
+                    assertions: example_cx.assertions,
                 }
             })
         })

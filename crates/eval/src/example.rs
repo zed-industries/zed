@@ -19,9 +19,9 @@ use language_model::{LanguageModel, Role, StopReason};
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
 #[async_trait(?Send)]
-pub trait EvalThread {
-    fn meta(&self) -> EvalThreadMetadata;
-    async fn conversation(&self, cx: &mut ThreadContext) -> Result<()>;
+pub trait Example {
+    fn meta(&self) -> ExampleMetadata;
+    async fn conversation(&self, cx: &mut ExampleContext) -> Result<()>;
     fn diff_assertions(&self) -> Vec<JudgeAssertion> {
         Vec::new()
     }
@@ -37,7 +37,7 @@ pub struct JudgeAssertion {
 }
 
 #[derive(Clone, Debug)]
-pub struct EvalThreadMetadata {
+pub struct ExampleMetadata {
     pub name: String,
     pub url: String,
     pub revision: String,
@@ -51,7 +51,7 @@ pub struct LanguageServer {
     pub allow_preexisting_diagnostics: bool,
 }
 
-impl EvalThreadMetadata {
+impl ExampleMetadata {
     pub fn repo_name(&self) -> String {
         self.url
             .split('/')
@@ -78,8 +78,8 @@ impl fmt::Display for FailedAssertion {
 
 impl Error for FailedAssertion {}
 
-pub struct ThreadContext {
-    meta: EvalThreadMetadata,
+pub struct ExampleContext {
+    meta: ExampleMetadata,
     log_prefix: String,
     agent_thread: Entity<agent::Thread>,
     app: AsyncApp,
@@ -88,9 +88,9 @@ pub struct ThreadContext {
     pub tool_metrics: Arc<Mutex<ToolMetrics>>,
 }
 
-impl ThreadContext {
+impl ExampleContext {
     pub fn new(
-        meta: EvalThreadMetadata,
+        meta: ExampleMetadata,
         log_prefix: String,
         agent_thread: Entity<agent::Thread>,
         model: Arc<dyn LanguageModel>,
@@ -332,7 +332,11 @@ impl Response {
         Self { messages }
     }
 
-    pub fn expect_tool(&self, tool_name: &'static str, cx: &mut ThreadContext) -> Result<&ToolUse> {
+    pub fn expect_tool(
+        &self,
+        tool_name: &'static str,
+        cx: &mut ExampleContext,
+    ) -> Result<&ToolUse> {
         let result = self.messages.iter().find_map(|msg| {
             msg.tool_use
                 .iter()
@@ -356,7 +360,7 @@ pub struct ToolUse {
 }
 
 impl ToolUse {
-    pub fn expect_input<Input>(&self, cx: &mut ThreadContext) -> Result<Input>
+    pub fn expect_input<Input>(&self, cx: &mut ExampleContext) -> Result<Input>
     where
         Input: for<'de> serde::Deserialize<'de>,
     {

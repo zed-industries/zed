@@ -1,12 +1,12 @@
 mod assertions;
+mod example;
+mod examples;
 mod ids;
 mod instance;
-mod thread;
-mod threads;
 mod tool_metrics;
 
 use assertions::display_error_row;
-use instance::{JudgeOutput, RunOutput, ThreadInstance, run_git};
+use instance::{ExampleInstance, JudgeOutput, RunOutput, run_git};
 use parking_lot::Mutex;
 pub(crate) use tool_metrics::*;
 
@@ -73,10 +73,10 @@ fn main() {
         .unwrap()
         .canonicalize()
         .unwrap();
-    let eval_crate_dir = root_dir.join("crates/eval");
+    let eval_crate_dir = root_dir.join("crates").join("eval");
     let repos_dir = eval_crate_dir.join("repos");
     let worktrees_dir = eval_crate_dir.join("worktrees");
-    let examples_dir = eval_crate_dir.join("examples");
+    let examples_dir = eval_crate_dir.join("src").join("examples");
     let run_dir = eval_crate_dir
         .join("runs")
         .join(format!("{}", run_timestamp));
@@ -93,7 +93,7 @@ fn main() {
 
     let http_client = Arc::new(ReqwestClient::new());
     let app = Application::headless().with_http_client(http_client.clone());
-    let all_threads = threads::all();
+    let all_threads = examples::all(&examples_dir);
 
     app.run(move |cx| {
         let app_state = init(cx);
@@ -135,7 +135,7 @@ fn main() {
         cx.spawn(async move |cx| {
             authenticate_task.await.unwrap();
 
-            let mut included = Vec::new();
+            let mut examples = Vec::new();
 
             const COLORS: [&str; 12] = [
                 "\x1b[31m", // Red
@@ -173,7 +173,7 @@ fn main() {
                 // either be run sequentially on the same worktree, or reuse worktrees when there
                 // are more examples to run than the concurrency limit.
                 for repetition_number in 0..args.repetitions {
-                    let thread_instance = ThreadInstance::new(
+                    let example_instance = ExampleInstance::new(
                         thread.clone(),
                         &repos_dir,
                         &run_dir,
@@ -181,7 +181,7 @@ fn main() {
                         repetition_number,
                     );
 
-                    included.push(thread_instance);
+                    examples.push(example_instance);
                 }
             }
 
@@ -189,7 +189,7 @@ fn main() {
                 println!("Skipped threads: {}", skipped.join(", "));
             }
 
-            if included.is_empty() {
+            if examples.is_empty() {
                 eprintln!("Filter matched no examples");
                 return cx.update(|cx| cx.quit());
             }
@@ -197,25 +197,25 @@ fn main() {
             let mut repo_urls = HashSet::default();
             let mut clone_tasks = Vec::new();
 
-            let max_name_width = included
+            let max_name_width = examples
                 .iter()
                 .map(|e| e.worktree_name().len())
                 .max()
                 .unwrap_or(0);
 
-            for (i, thread_instance) in included.iter_mut().enumerate() {
+            for (i, example_instance) in examples.iter_mut().enumerate() {
                 let color = COLORS[i % COLORS.len()].to_string();
-                thread_instance.set_log_prefix_style(&color, max_name_width);
+                example_instance.set_log_prefix_style(&color, max_name_width);
 
                 println!(
                     "{}Logging to: {}",
-                    thread_instance.log_prefix,
-                    thread_instance.run_directory.display()
+                    example_instance.log_prefix,
+                    example_instance.run_directory.display()
                 );
 
-                let repo_url = thread_instance.repo_url();
+                let repo_url = example_instance.repo_url();
                 if repo_urls.insert(repo_url.clone()) {
-                    let repo_path = thread_instance.repo_path.clone();
+                    let repo_path = example_instance.repo_path.clone();
 
                     if !repo_path.join(".git").is_dir() {
                         println!(
@@ -255,11 +255,11 @@ fn main() {
 
             future::join_all(clone_tasks).await;
 
-            for thread_instance in included.iter_mut() {
-                thread_instance.fetch().await?;
+            for example_instance in examples.iter_mut() {
+                example_instance.fetch().await?;
             }
 
-            let examples = Arc::new(Mutex::new(VecDeque::from(included)));
+            let examples = Arc::new(Mutex::new(VecDeque::from(examples)));
             let results_by_example_name = Arc::new(Mutex::new(HashMap::default()));
 
             future::join_all((0..args.concurrency).map(|_| {
@@ -617,7 +617,7 @@ pub fn git_branch_for_path(repo_path: &Path) -> String {
 }
 
 async fn judge_example(
-    example: ThreadInstance,
+    example: ExampleInstance,
     model: Arc<dyn LanguageModel>,
     zed_commit_sha: &str,
     zed_branch_name: &str,
