@@ -1409,7 +1409,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
-        if !snapshot.mode.is_full() {
+        if !snapshot.mode.is_full() || !self.editor.read(cx).show_scrollbars {
             return None;
         }
 
@@ -1422,36 +1422,35 @@ impl EditorElement {
         }
 
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-        let show_scrollbars = self.editor.read(cx).show_scrollbars
-            && match scrollbar_settings.show {
-                ShowScrollbar::Auto => {
-                    let editor = self.editor.read(cx);
-                    let is_singleton = editor.is_singleton(cx);
-                    // Git
-                    (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_diff_hunks())
-                    ||
-                    // Buffer Search Results
-                    (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
-                    ||
-                    // Selected Text Occurrences
-                    (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights::<SelectedTextHighlight>())
-                    ||
-                    // Selected Symbol Occurrences
-                    (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
-                    ||
-                    // Diagnostics
-                    (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot.has_diagnostics())
-                    ||
-                    // Cursors out of sight
-                    non_visible_cursors
-                    ||
-                    // Scrollmanager
-                    editor.scroll_manager.scrollbars_visible()
-                }
-                ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
-                ShowScrollbar::Always => true,
-                ShowScrollbar::Never => return None,
-            };
+        let show_scrollbars = match scrollbar_settings.show {
+            ShowScrollbar::Auto => {
+                let editor = self.editor.read(cx);
+                let is_singleton = editor.is_singleton(cx);
+                // Git
+                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_diff_hunks())
+                ||
+                // Buffer Search Results
+                (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
+                ||
+                // Selected Text Occurrences
+                (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights::<SelectedTextHighlight>())
+                ||
+                // Selected Symbol Occurrences
+                (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                ||
+                // Diagnostics
+                (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot.has_diagnostics())
+                ||
+                // Cursors out of sight
+                non_visible_cursors
+                ||
+                // Scrollmanager
+                editor.scroll_manager.scrollbars_visible()
+            }
+            ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => return None,
+        };
 
         Some(EditorScrollbars::from_scrollbar_axes(
             scrollbar_settings.axes,
