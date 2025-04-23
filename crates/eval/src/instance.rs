@@ -113,10 +113,6 @@ impl ExampleInstance {
         self.example.meta().url
     }
 
-    pub fn revision(&self) -> String {
-        self.example.meta().revision
-    }
-
     pub fn worktree_name(&self) -> String {
         format!("{}-{}", self.name, self.repetition)
     }
@@ -353,7 +349,7 @@ impl ExampleInstance {
                 });
             })?;
 
-            let mut example_cx = ExampleContext::new(meta.clone(), this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
+            let mut example_cx = ExampleContext::new(this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
             let result = this.example.conversation(&mut example_cx).await;
 
             if let Err(err) = result {
@@ -599,7 +595,7 @@ impl ExampleInstance {
                 (
                     response,
                     Assertion {
-                        group_id: AssertionGroupId(assertion.group_id.clone().into()),
+                        group_id: AssertionGroupId(assertion.group_id),
                         result,
                     },
                 )
@@ -610,7 +606,7 @@ impl ExampleInstance {
         let mut report = AssertionsReport::default();
 
         for (response, assertion) in future::join_all(assertions).await {
-            writeln!(&mut responses, "# {}", assertion.group_id.to_string()).unwrap();
+            writeln!(&mut responses, "# {}", assertion.group_id).unwrap();
             writeln!(&mut responses, "{}\n\n", response).unwrap();
             report.ran.push(assertion);
         }

@@ -82,7 +82,6 @@ impl fmt::Display for FailedAssertion {
 impl Error for FailedAssertion {}
 
 pub struct ExampleContext {
-    meta: ExampleMetadata,
     log_prefix: String,
     agent_thread: Entity<agent::Thread>,
     app: AsyncApp,
@@ -93,7 +92,6 @@ pub struct ExampleContext {
 
 impl ExampleContext {
     pub fn new(
-        meta: ExampleMetadata,
         log_prefix: String,
         agent_thread: Entity<agent::Thread>,
         model: Arc<dyn LanguageModel>,
@@ -102,7 +100,6 @@ impl ExampleContext {
         let assertions = AssertionsReport::default();
 
         Self {
-            meta,
             log_prefix,
             agent_thread,
             assertions,
@@ -392,7 +389,6 @@ impl Response {
         Self { messages }
     }
 
-    // todo! move this to assertion group id method maybe?
     pub fn expect_tool(
         &self,
         group_id: AssertionGroupId,
