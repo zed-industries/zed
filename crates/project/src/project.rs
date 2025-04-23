@@ -3581,8 +3581,7 @@ impl Project {
         let inline_value_task = if let Some(inline_value_provider) = inline_value_provider {
             let variable_ranges = snapshot
                 .debug_variable_ranges(
-                    range.start.to_offset(&snapshot)
-                        ..active_stack_frame.position.to_offset(&snapshot),
+                    range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot),
                 )
                 .filter_map(|range| {
                     let lsp_range = language::range_to_lsp(

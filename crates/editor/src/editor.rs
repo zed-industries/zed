@@ -252,7 +252,7 @@ const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
 pub enum InlayId {
     InlineCompletion(usize),
     Hint(usize),
-    Value(usize),
+    DebuggerValue(usize),
 }
 
 impl InlayId {
@@ -260,7 +260,7 @@ impl InlayId {
         match self {
             Self::InlineCompletion(id) => *id,
             Self::Hint(id) => *id,
-            Self::Value(id) => *id,
+            Self::DebuggerValue(id) => *id,
         }
     }
 }
@@ -909,6 +909,8 @@ pub struct Editor {
     mouse_cursor_hidden: bool,
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
+    debug_inlays: Vec<InlayId>,
+    debugger_inlays_refresh: Task<Option<()>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1228,7 +1230,6 @@ enum InlayHintRefreshReason {
     NewLinesShown,
     BufferEdited(HashSet<Arc<Language>>),
     RefreshRequested,
-    DebuggerStateChanged,
     ExcerptsRemoved(Vec<ExcerptId>),
 }
 
@@ -1242,7 +1243,6 @@ impl InlayHintRefreshReason {
             Self::BufferEdited(_) => "buffer edited",
             Self::RefreshRequested => "refresh requested",
             Self::ExcerptsRemoved(_) => "excerpts removed",
-            Self::DebuggerStateChanged => "debugger variables were updated",
         }
     }
 }
@@ -1703,6 +1703,8 @@ impl Editor {
                 .hide_mouse
                 .unwrap_or_default(),
             change_list: ChangeList::new(),
+            debug_inlays: Vec::new(),
+            debugger_inlays_refresh: Task::ready(None),
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -1762,6 +1764,7 @@ impl Editor {
             .map(|project| project.read(cx).dap_store())
         {
             let weak_editor = cx.weak_entity();
+
             this._subscriptions
                 .push(
                     cx.observe_new::<project::debugger::session::Session>(move |_, _, cx| {
@@ -1806,6 +1809,11 @@ impl Editor {
                         .insert(buffer.read(cx).remote_id(), handle);
                 }
             }
+        }
+
+        // TODO get the "am I in the debugger context?"
+        if false {
+            this.refresh_debugger_hints(cx);
         }
 
         this.report_editor_event("Editor Opened", None, cx);
@@ -4222,7 +4230,6 @@ impl Editor {
                 | InlayHintRefreshReason::Toggle(_)
                 | InlayHintRefreshReason::ExcerptsRemoved(_)
                 | InlayHintRefreshReason::ModifiersChanged(_)
-                | InlayHintRefreshReason::DebuggerStateChanged
         );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::ModifiersChanged(enabled) => {
@@ -4301,8 +4308,7 @@ impl Editor {
             InlayHintRefreshReason::BufferEdited(buffer_languages) => {
                 (InvalidationStrategy::BufferEdited, Some(buffer_languages))
             }
-            InlayHintRefreshReason::RefreshRequested
-            | InlayHintRefreshReason::DebuggerStateChanged => {
+            InlayHintRefreshReason::RefreshRequested => {
                 (InvalidationStrategy::DebuggerRefresh, None)
             }
         };
@@ -17314,11 +17320,73 @@ impl Editor {
     ) {
         match event {
             SessionEvent::InvalidateInlineValue => {
-                self.inlay_hint_cache.clear();
-                self.refresh_inlay_hints(InlayHintRefreshReason::DebuggerStateChanged, cx);
+                self.refresh_debugger_hints(cx);
             }
             _ => {}
         }
+    }
+
+    fn refresh_debugger_hints(&mut self, cx: &mut Context<Self>) {
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+            return;
+        };
+
+        let Some(current_execution_position) = self
+            .highlighted_rows
+            .get(&TypeId::of::<DebugCurrentRowHighlight>())
+            .and_then(|lines| lines.last().map(|line| line.range.end))
+        else {
+            return;
+        };
+
+        self.debugger_inlays_refresh = cx.spawn(async move |editor, cx| {
+            let snapshot = editor
+                .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                .ok()?;
+
+            let inline_values = editor
+                .update(cx, |_, cx| {
+                    let range = {
+                        let buffer = buffer.read(cx);
+                        // todo(debugger) when introducing multi buffer inline values check execution position's buffer id to make sure the text
+                        // anchor is in the same buffer
+                        buffer.anchor_before(0)..current_execution_position.text_anchor
+                    };
+                    project.inline_values(buffer, range, cx)
+                })
+                .ok()
+                .flatten()?
+                .await
+                .context("refreshing debugger inlays")
+                .log_err()?;
+
+            let (excerpt_id, buffer_id) = snapshot
+                .excerpts()
+                .next()
+                .map(|excerpt| (excerpt.0, excerpt.1.remote_id()))?;
+
+            editor
+                .update(cx, |editor, cx| {
+                    let new_inlays = inline_values
+                        .into_iter()
+                        .map(|debugger_value| {
+                            Inlay::debugger_hint(
+                                post_inc(&mut editor.next_inlay_id),
+                                Anchor::in_buffer(excerpt_id, buffer_id, debugger_value.position),
+                                debugger_value.text(),
+                            )
+                        })
+                        .collect();
+
+                    let old_inlays = std::mem::take(&mut editor.debug_inlays);
+                    editor.splice_inlays(&old_inlays, new_inlays, cx);
+                })
+                .ok()?;
+            Some(())
+        });
     }
 
     fn on_buffer_event(
