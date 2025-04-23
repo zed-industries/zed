@@ -23,7 +23,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
-handlebars.workspace = true
+handlebars = { workspace = true, features = ["rust-embed"] }
 language.workspace = true
 language_extension.workspace = true
 language_model.workspace = true
@@ -36,6 +36,7 @@ prompt_store.workspace = true
 regex.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
+rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -47,6 +48,7 @@ unindent.workspace = true
 util.workspace = true
 uuid = { version = "1.6", features = ["v4"] }
 workspace-hack.workspace = true
+
 [[bin]]
 name = "eval"
 path = "src/eval.rs"

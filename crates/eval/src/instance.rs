@@ -480,8 +480,8 @@ impl ExampleInstance {
 
         println!("{}Running diff judge", self.log_prefix);
 
-        let judge_diff_prompt = include_str!("judge_diff_prompt.hbs");
-        let judge_diff_prompt_name = "judge_diff_prompt";
+        let judge_diff_prompt = include_str!("templates/judge_diff.hbs");
+        let judge_diff_prompt_name = "judge_diff";
         let mut hbs = Handlebars::new();
         hbs.register_template_string(judge_diff_prompt_name, judge_diff_prompt)
             .unwrap();
@@ -525,7 +525,7 @@ impl ExampleInstance {
             );
         }
 
-        let judge_thread_prompt = include_str!("judge_thread_prompt.hbs");
+        let judge_thread_prompt = include_str!("templates/judge_thread.hbs");
         let judge_diff_prompt_name = "judge_thread_prompt";
         let mut hbs = Handlebars::new();
         hbs.register_template_string(judge_diff_prompt_name, judge_thread_prompt)

@@ -1,8 +1,10 @@
 mod assertions;
 mod example;
+mod example2;
 mod examples;
 mod ids;
 mod instance;
+mod templates;
 mod tool_metrics;
 
 use assertions::display_error_row;
