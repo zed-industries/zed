@@ -8,6 +8,7 @@ pub struct ToolCallCardHeader {
     icon: IconName,
     primary_text: SharedString,
     secondary_text: Option<SharedString>,
+    code_path: Option<SharedString>,
     disclosure_slot: Option<AnyElement>,
     is_loading: bool,
     error: Option<String>,
@@ -19,6 +20,7 @@ impl ToolCallCardHeader {
             icon,
             primary_text: primary_text.into(),
             secondary_text: None,
+            code_path: None,
             disclosure_slot: None,
             is_loading: false,
             error: None,
@@ -27,6 +29,11 @@ impl ToolCallCardHeader {
 
     pub fn with_secondary_text(mut self, text: impl Into<SharedString>) -> Self {
         self.secondary_text = Some(text.into());
+        self
+    }
+
+    pub fn with_code_path(mut self, text: impl Into<SharedString>) -> Self {
+        self.code_path = Some(text.into());
         self
     }
 
@@ -49,8 +56,17 @@ impl ToolCallCardHeader {
 impl RenderOnce for ToolCallCardHeader {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let font_size = rems(0.8125);
-        let secondary_text = self.secondary_text;
         let line_height = window.line_height();
+
+        let secondary_text = self.secondary_text;
+        let code_path = self.code_path;
+
+        let bullet_divider = || {
+            div()
+                .size(px(3.))
+                .rounded_full()
+                .bg(cx.theme().colors().text)
+        };
 
         h_flex()
             .id("tool-label-container")
@@ -84,13 +100,15 @@ impl RenderOnce for ToolCallCardHeader {
                         }
                     })
                     .when_some(secondary_text, |this, secondary_text| {
-                        this.child(
-                            div()
-                                .size(px(3.))
-                                .rounded_full()
-                                .bg(cx.theme().colors().text),
+                        this.child(bullet_divider())
+                            .child(div().text_size(font_size).child(secondary_text.clone()))
+                    })
+                    .when_some(code_path, |this, code_path| {
+                        this.child(bullet_divider()).child(
+                            Label::new(code_path.clone())
+                                .size(LabelSize::Small)
+                                .inline_code(cx),
                         )
-                        .child(div().text_size(font_size).child(secondary_text.clone()))
                     })
                     .with_animation(
                         "loading-label",
