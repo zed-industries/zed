@@ -1414,6 +1414,15 @@ impl GitBinary {
             }
         });
 
+        // Copy the default index file so that Git doesn't have to rebuild the
+        // whole index from scratch. This might fail if this is an empty repository.
+        smol::fs::copy(
+            self.working_directory.join(".git").join("index"),
+            &index_file_path,
+        )
+        .await
+        .ok();
+
         self.index_file_path = Some(index_file_path.clone());
         let result = f(self).await;
         self.index_file_path = None;
