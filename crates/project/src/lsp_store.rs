@@ -3786,13 +3786,10 @@ impl LspStore {
         evt: &extension::Event,
         cx: &mut Context<Self>,
     ) {
-        #[expect(
-            irrefutable_let_patterns,
-            reason = "Make sure to handle new event types in extension properly"
-        )]
-        let extension::Event::ExtensionsInstalledChanged = evt else {
-            return;
-        };
+        match evt {
+            extension::Event::ExtensionInstalled(_) => return,
+            extension::Event::ExtensionsInstalledChanged => {}
+        }
         if self.as_local().is_none() {
             return;
         }

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use extension_host::ExtensionStore;
 use gpui::{App, DismissEvent, EventEmitter, FocusHandle, Focusable};
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
 use workspace::{ModalView, Workspace};
@@ -10,12 +9,13 @@ pub(crate) fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        cx.subscribe_in(
-            &ExtensionStore::global(cx),
-            window,
-            |workspace, store, event, window, cx| match event {
-                extension_host::Event::ExtensionInstalled(id) => {
-                    if let Some(manifest) = store.read(cx).extension_manifest_for_id(id) {
+
+        if let Some(extension_events) = extension::ExtensionEvents::try_global(cx).as_ref() {
+            cx.subscribe_in(
+                extension_events,
+                window,
+                |workspace, _, event, window, cx| match event {
+                    extension::Event::ExtensionInstalled(manifest) => {
                         let context_servers_to_setup = manifest
                             .context_servers
                             .iter()
@@ -40,11 +40,15 @@ pub(crate) fn init(cx: &mut App) {
                             });
                         }
                     }
-                }
-                _ => {}
-            },
-        )
-        .detach();
+                    _ => {}
+                },
+            )
+            .detach();
+        } else {
+            log::info!(
+                "No extension events global found. Skipping context server configuration wizard"
+            );
+        }
     })
     .detach();
 }

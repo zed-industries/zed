@@ -69,7 +69,7 @@ dependencies = [
  "convert_case 0.8.0",
  "db",
  "editor",
- "extension_host",
+ "extension",
  "feature_flags",
  "file_icons",
  "fs",

@@ -751,8 +751,18 @@ impl ExtensionStore {
             .await;
 
             if let ExtensionOperation::Install = operation {
-                this.update( cx, |_, cx| {
-                    cx.emit(Event::ExtensionInstalled(extension_id));
+                this.update( cx, |this, cx| {
+                    cx.emit(Event::ExtensionInstalled(extension_id.clone()));
+                    if let Some(events) = ExtensionEvents::try_global(cx) {
+                        if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                        events.update(cx, |this, cx| {
+                            this.emit(
+                                extension::Event::ExtensionInstalled(manifest.clone()),
+                                cx,
+                            )
+                        });
+                        }
+                    }
                 })
                 .ok();
             }
@@ -942,7 +952,17 @@ impl ExtensionStore {
                 .await?;
 
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
-            this.update(cx, |_, cx| cx.emit(Event::ExtensionInstalled(extension_id)))?;
+            this.update(cx, |this, cx| {
+                cx.emit(Event::ExtensionInstalled(extension_id.clone()));
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                        });
+                    }
+                }
+            })?;
+
             Ok(())
         })
     }
