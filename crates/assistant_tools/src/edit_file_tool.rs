@@ -15,6 +15,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
+    cell::RefCell,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -273,7 +274,7 @@ pub struct EditFileToolCard {
 
 impl EditFileToolCard {
     thread_local! {
-        static NEXT_INDEX: std::cell::RefCell<usize> = std::cell::RefCell::new(0);
+        static NEXT_INDEX: RefCell<usize> = const { RefCell::new(0) };
     }
 
     fn next_index() -> usize {
@@ -398,7 +399,7 @@ impl ToolCard for EditFileToolCard {
                             .color(Color::Ignored),
                     ),
             )
-            .on_click({ move |_, window, cx| {} })
+            .on_click(move |_, _window, _cx| {})
             .into_any_element();
 
         let codeblock_header_bg = cx

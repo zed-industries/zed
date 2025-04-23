@@ -260,14 +260,7 @@ impl Tool for BatchTool {
                     let messages = messages.clone();
                     let tool_result = cx
                         .update(|cx| {
-                            tool.run(
-                                invocation.input,
-                                &messages,
-                                project,
-                                action_log,
-                                window.clone(),
-                                cx,
-                            )
+                            tool.run(invocation.input, &messages, project, action_log, window, cx)
                         })
                         .map_err(|err| anyhow!("Failed to start tool '{}': {}", tool_name, err))?;
 
