@@ -7,12 +7,12 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
-use ui::{Disclosure, IconName, prelude::*};
+use ui::{Disclosure, prelude::*};
 use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct PathSearchToolInput {
-    /// The glob to search all project paths for.
+    /// The glob to match against every path in the project.
     ///
     /// <example>
     /// If the project has the following root directories:

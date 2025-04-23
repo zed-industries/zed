@@ -405,6 +405,39 @@ impl StripeBilling {
         let session = stripe::CheckoutSession::create(&self.client, params).await?;
         Ok(session.url.context("no checkout session URL")?)
     }
+
+    pub async fn checkout_with_zed_pro_trial(
+        &self,
+        zed_pro_price_id: PriceId,
+        customer_id: stripe::CustomerId,
+        github_login: &str,
+        success_url: &str,
+    ) -> Result<String> {
+        let mut params = stripe::CreateCheckoutSession::new();
+        params.subscription_data = Some(stripe::CreateCheckoutSessionSubscriptionData {
+            trial_period_days: Some(14),
+            trial_settings: Some(stripe::CreateCheckoutSessionSubscriptionDataTrialSettings {
+                end_behavior: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior {
+                    missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Pause,
+                }
+            }),
+            ..Default::default()
+        });
+        params.mode = Some(stripe::CheckoutSessionMode::Subscription);
+        params.payment_method_collection =
+            Some(stripe::CheckoutSessionPaymentMethodCollection::IfRequired);
+        params.customer = Some(customer_id);
+        params.client_reference_id = Some(github_login);
+        params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
+            price: Some(zed_pro_price_id.to_string()),
+            quantity: Some(1),
+            ..Default::default()
+        }]);
+        params.success_url = Some(success_url);
+
+        let session = stripe::CheckoutSession::create(&self.client, params).await?;
+        Ok(session.url.context("no checkout session URL")?)
+    }
 }
 
 #[derive(Serialize)]

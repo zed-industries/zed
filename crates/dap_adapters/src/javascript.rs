@@ -1,8 +1,8 @@
 use adapters::latest_github_release;
 use dap::StartDebuggingRequestArguments;
 use gpui::AsyncApp;
-use std::path::PathBuf;
-use task::{DebugRequestType, DebugTaskDefinition};
+use std::{collections::HashMap, path::PathBuf};
+use task::{DebugRequest, DebugTaskDefinition};
 
 use crate::*;
 
@@ -18,16 +18,16 @@ impl JsDebugAdapter {
         let mut args = json!({
             "type": "pwa-node",
             "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
             },
         });
         let map = args.as_object_mut().unwrap();
         match &config.request {
-            DebugRequestType::Attach(attach) => {
+            DebugRequest::Attach(attach) => {
                 map.insert("processId".into(), attach.process_id.into());
             }
-            DebugRequestType::Launch(launch) => {
+            DebugRequest::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
 
                 if !launch.args.is_empty() {
@@ -106,20 +106,22 @@ impl DebugAdapter for JsDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: delegate
                 .node_runtime()
                 .binary_path()
                 .await?
                 .to_string_lossy()
                 .into_owned(),
-            arguments: Some(vec![
-                adapter_path.join(Self::ADAPTER_PATH).into(),
-                port.to_string().into(),
-                host.to_string().into(),
-            ]),
+            arguments: vec![
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                port.to_string(),
+                host.to_string(),
+            ],
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
                 port,

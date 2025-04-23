@@ -12,7 +12,7 @@ use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
-    /// The relative path of the directory to list.
+    /// The fully-qualified path of the directory to list in the project.
     ///
     /// This path should never be absolute, and the first component
     /// of the path should always be a root directory in a project.

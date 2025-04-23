@@ -70,6 +70,13 @@ impl CopilotChatLanguageModelProvider {
 
         Self { state }
     }
+
+    fn create_language_model(&self, model: CopilotChatModel) -> Arc<dyn LanguageModel> {
+        Arc::new(CopilotChatLanguageModel {
+            model,
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for CopilotChatLanguageModelProvider {
@@ -94,21 +101,16 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = CopilotChatModel::default();
-        Some(Arc::new(CopilotChatLanguageModel {
-            model,
-            request_limiter: RateLimiter::new(4),
-        }) as Arc<dyn LanguageModel>)
+        Some(self.create_language_model(CopilotChatModel::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(CopilotChatModel::default_fast()))
     }
 
     fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
-            .map(|model| {
-                Arc::new(CopilotChatLanguageModel {
-                    model,
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -219,7 +221,10 @@ impl LanguageModel for CopilotChatLanguageModel {
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
                     CopilotChatModel::Gpt4_1 => open_ai::Model::FourPointOne,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-                    CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
+                    CopilotChatModel::O1 => open_ai::Model::O1,
+                    CopilotChatModel::O3Mini => open_ai::Model::O3Mini,
+                    CopilotChatModel::O3 => open_ai::Model::O3,
+                    CopilotChatModel::O4Mini => open_ai::Model::O4Mini,
                     CopilotChatModel::Claude3_5Sonnet
                     | CopilotChatModel::Claude3_7Sonnet
                     | CopilotChatModel::Claude3_7SonnetThinking
@@ -362,6 +367,7 @@ pub fn map_to_language_model_completion_events(
                                                 LanguageModelToolUse {
                                                     id: tool_call.id.into(),
                                                     name: tool_call.name.as_str().into(),
+                                                    is_input_complete: true,
                                                     input: serde_json::Value::from_str(
                                                         &tool_call.arguments,
                                                     )?,
@@ -421,8 +427,11 @@ impl CopilotChatLanguageModel {
             let text_content = {
                 let mut buffer = String::new();
                 for string in message.content.iter().filter_map(|content| match content {
-                    MessageContent::Text(text) => Some(text.as_str()),
+                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                        Some(text.as_str())
+                    }
                     MessageContent::ToolUse(_)
+                    | MessageContent::RedactedThinking(_)
                     | MessageContent::ToolResult(_)
                     | MessageContent::Image(_) => None,
                 }) {
@@ -527,60 +536,51 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
-            const LABEL: &str = "Authorized.";
             h_flex()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(LABEL)),
+                        .child(Label::new("Authorized")),
                 )
                 .child(
                     Button::new("sign_out", "Sign Out")
-                        .style(ui::ButtonStyle::Filled)
+                        .label_size(LabelSize::Small)
                         .on_click(|_, window, cx| {
                             window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
                         }),
                 )
         } else {
-            let loading_icon = svg()
-                .size_8()
-                .path(IconName::ArrowCircle.path())
-                .text_color(window.text_style().color)
-                .with_animation(
-                    "icon_circle_arrow",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-                );
+            let loading_icon = Icon::new(IconName::ArrowCircle).with_animation(
+                "arrow-circle",
+                Animation::new(Duration::from_secs(4)).repeat(),
+                |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+            );
 
             const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
 
             match &self.copilot_status {
                 Some(status) => match status {
-                    Status::Starting { task: _ } => {
-                        const LABEL: &str = "Starting Copilot...";
-                        v_flex()
-                            .gap_6()
-                            .justify_center()
-                            .items_center()
-                            .child(Label::new(LABEL))
-                            .child(loading_icon)
-                    }
+                    Status::Starting { task: _ } => h_flex()
+                        .gap_2()
+                        .child(loading_icon)
+                        .child(Label::new("Starting Copilot…")),
                     Status::SigningIn { prompt: _ }
                     | Status::SignedOut {
                         awaiting_signing_in: true,
-                    } => {
-                        const LABEL: &str = "Signing in to Copilot...";
-                        v_flex()
-                            .gap_6()
-                            .justify_center()
-                            .items_center()
-                            .child(Label::new(LABEL))
-                            .child(loading_icon)
-                    }
+                    } => h_flex()
+                        .gap_2()
+                        .child(loading_icon)
+                        .child(Label::new("Signing into Copilot…")),
                     Status::Error(_) => {
                         const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
                         v_flex()
@@ -590,28 +590,14 @@ impl Render for ConfigurationView {
                     }
                     _ => {
                         const LABEL: &str = "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
-                        v_flex().gap_6().child(Label::new(LABEL)).child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    Button::new("sign_in", "Sign In")
-                                        .icon_color(Color::Muted)
-                                        .icon(IconName::Github)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Medium)
-                                        .style(ui::ButtonStyle::Filled)
-                                        .full_width()
-                                        .on_click(|_, window, cx| {
-                                            copilot::initiate_sign_in(window, cx)
-                                        }),
-                                )
-                                .child(
-                                    div().flex().w_full().items_center().child(
-                                        Label::new("Sign in to start using Github Copilot Chat.")
-                                            .color(Color::Muted)
-                                            .size(ui::LabelSize::Small),
-                                    ),
-                                ),
+                        v_flex().gap_2().child(Label::new(LABEL)).child(
+                            Button::new("sign_in", "Sign in to use GitHub Copilot")
+                                .icon_color(Color::Muted)
+                                .icon(IconName::Github)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Medium)
+                                .full_width()
+                                .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
                         )
                     }
                 },

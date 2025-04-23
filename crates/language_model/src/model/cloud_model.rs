@@ -90,6 +90,8 @@ impl CloudModel {
                 | open_ai::Model::O1Preview
                 | open_ai::Model::O1
                 | open_ai::Model::O3Mini
+                | open_ai::Model::O3
+                | open_ai::Model::O4Mini
                 | open_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
@@ -103,6 +105,7 @@ impl CloudModel {
                 | google_ai::Model::Gemini20FlashLite
                 | google_ai::Model::Gemini25ProExp0325
                 | google_ai::Model::Gemini25ProPreview0325
+                | google_ai::Model::Gemini25FlashPreview0417
                 | google_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
@@ -153,6 +156,9 @@ impl fmt::Display for ModelRequestLimitReachedError {
             Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
             Plan::ZedPro => {
                 "Model request limit reached. Upgrade to usage-based billing for more requests."
+            }
+            Plan::ZedProTrial => {
+                "Model request limit reached. Upgrade to Zed Pro for more requests."
             }
         };
 

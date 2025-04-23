@@ -321,21 +321,16 @@ pub fn load_login_shell_environment() -> Result<()> {
         .and_then(|home| home.into_string().ok())
         .map(|home| format!("cd '{home}';"));
 
-    // The `exit 0` is the result of hours of debugging, trying to find out
-    // why running this command here, without `exit 0`, would mess
-    // up signal process for our process so that `ctrl-c` doesn't work
-    // anymore.
-    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-    // do that, but it does, and `exit 0` helps.
     let shell_cmd = format!(
-        "{}printf '%s' {marker}; /usr/bin/env; exit 0;",
+        "{}printf '%s' {marker}; /usr/bin/env;",
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
-    let output = std::process::Command::new(&shell)
-        .args(["-l", "-i", "-c", &shell_cmd])
-        .output()
-        .context("failed to spawn login shell to source login environment variables")?;
+    let output = set_pre_exec_to_start_new_session(
+        std::process::Command::new(&shell).args(["-l", "-i", "-c", &shell_cmd]),
+    )
+    .output()
+    .context("failed to spawn login shell to source login environment variables")?;
     if !output.status.success() {
         Err(anyhow!("login shell exited with error"))?;
     }
@@ -355,6 +350,26 @@ pub fn load_login_shell_environment() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Configures the process to start a new session, to prevent interactive shells from taking control
+/// of the terminal.
+///
+/// For more details: https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
+pub fn set_pre_exec_to_start_new_session(
+    command: &mut std::process::Command,
+) -> &mut std::process::Command {
+    // safety: code in pre_exec should be signal safe.
+    // https://man7.org/linux/man-pages/man7/signal-safety.7.html
+    #[cfg(not(target_os = "windows"))]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    };
+    command
 }
 
 /// Parse the result of calling `usr/bin/env` with no arguments

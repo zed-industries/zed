@@ -125,7 +125,7 @@ pub struct GenerateContentRequest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
     pub contents: Vec<Content>,
-    pub system_instructions: Option<SystemInstructions>,
+    pub system_instruction: Option<SystemInstruction>,
     pub generation_config: Option<GenerationConfig>,
     pub safety_settings: Option<Vec<SafetySetting>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -162,7 +162,7 @@ pub struct Content {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SystemInstructions {
+pub struct SystemInstruction {
     pub parts: Vec<Part>,
 }
 
@@ -402,6 +402,8 @@ pub enum Model {
     Gemini25ProExp0325,
     #[serde(rename = "gemini-2.5-pro-preview-03-25")]
     Gemini25ProPreview0325,
+    #[serde(rename = "gemini-2.5-flash-preview-04-17")]
+    Gemini25FlashPreview0417,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -412,6 +414,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Model {
+        Model::Gemini15Flash
+    }
+
     pub fn id(&self) -> &str {
         match self {
             Model::Gemini15Pro => "gemini-1.5-pro",
@@ -422,6 +428,7 @@ impl Model {
             Model::Gemini20FlashLite => "gemini-2.0-flash-lite-preview",
             Model::Gemini25ProExp0325 => "gemini-2.5-pro-exp-03-25",
             Model::Gemini25ProPreview0325 => "gemini-2.5-pro-preview-03-25",
+            Model::Gemini25FlashPreview0417 => "gemini-2.5-flash-preview-04-17",
             Model::Custom { name, .. } => name,
         }
     }
@@ -436,6 +443,7 @@ impl Model {
             Model::Gemini20FlashLite => "Gemini 2.0 Flash Lite",
             Model::Gemini25ProExp0325 => "Gemini 2.5 Pro Exp",
             Model::Gemini25ProPreview0325 => "Gemini 2.5 Pro Preview",
+            Model::Gemini25FlashPreview0417 => "Gemini 2.5 Flash Preview",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -452,6 +460,7 @@ impl Model {
             Model::Gemini20FlashLite => 1_000_000,
             Model::Gemini25ProExp0325 => 1_000_000,
             Model::Gemini25ProPreview0325 => 1_000_000,
+            Model::Gemini25FlashPreview0417 => 1_000_000,
             Model::Custom { max_tokens, .. } => *max_tokens,
         }
     }

@@ -50,9 +50,11 @@ impl State {
     }
 }
 
+pub const ZED_WEB_SEARCH_PROVIDER_ID: &'static str = "zed.dev";
+
 impl WebSearchProvider for CloudWebSearchProvider {
     fn id(&self) -> WebSearchProviderId {
-        WebSearchProviderId("zed.dev".into())
+        WebSearchProviderId(ZED_WEB_SEARCH_PROVIDER_ID.into())
     }
 
     fn search(&self, query: String, cx: &mut App) -> Task<Result<WebSearchResponse>> {

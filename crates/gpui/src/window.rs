@@ -1,5 +1,5 @@
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
+    Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
@@ -617,6 +617,7 @@ pub struct Window {
     pub(crate) element_opacity: Option<f32>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     pub(crate) next_hitbox_id: HitboxId,
@@ -933,6 +934,7 @@ impl Window {
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
+            image_cache_stack: Vec::new(),
         })
     }
 
@@ -1222,7 +1224,7 @@ impl Window {
         Evt: 'static,
     {
         let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
+        let handle = entity.downgrade();
         let window_handle = self.handle;
         cx.new_subscription(
             entity_id,
@@ -1231,9 +1233,9 @@ impl Window {
                 Box::new(move |event, cx| {
                     window_handle
                         .update(cx, |_, window, cx| {
-                            if let Some(handle) = Entity::<Emitter>::upgrade_from(&entity) {
+                            if let Some(entity) = handle.upgrade() {
                                 let event = event.downcast_ref().expect("invalid event type");
-                                on_event(handle, event, window, cx);
+                                on_event(entity, event, window, cx);
                                 true
                             } else {
                                 false
@@ -1463,6 +1465,20 @@ impl Window {
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
         self.rem_size = rem_size.into();
+    }
+
+    /// Acquire a globally unique identifier for the given ElementId.
+    /// Only valid for the duration of the provided closure.
+    pub fn with_global_id<R>(
+        &mut self,
+        element_id: ElementId,
+        f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
+    ) -> R {
+        self.element_id_stack.push(element_id);
+        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let result = f(&global_id, self);
+        self.element_id_stack.pop();
+        result
     }
 
     /// Executes the provided function with the specified rem size.
@@ -2659,7 +2675,9 @@ impl Window {
             order: 0,
             pad: 0,
             grayscale,
-            bounds,
+            bounds: bounds
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil()),
             content_mask,
             corner_radii,
             tile,
@@ -2852,6 +2870,17 @@ impl Window {
         self.rendered_entity_stack.push(id);
         let result = f(self);
         self.rendered_entity_stack.pop();
+        result
+    }
+
+    /// Executes the provided function with the specified image cache.
+    pub(crate) fn with_image_cache<F, R>(&mut self, image_cache: AnyImageCache, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.image_cache_stack.push(image_cache);
+        let result = f(self);
+        self.image_cache_stack.pop();
         result
     }
 

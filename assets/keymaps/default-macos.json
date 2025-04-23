@@ -286,6 +286,7 @@
       "cmd-alt-n": "agent::NewTextThread",
       "cmd-shift-h": "agent::OpenHistory",
       "cmd-alt-c": "agent::OpenConfiguration",
+      "cmd-alt-p": "assistant::OpenPromptLibrary",
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
@@ -541,7 +542,9 @@
       "cmd-\\": "pane::SplitRight",
       "cmd-k v": "markdown::OpenPreviewToTheSide",
       "cmd-shift-v": "markdown::OpenPreview",
-      "ctrl-cmd-c": "editor::DisplayCursorNames"
+      "ctrl-cmd-c": "editor::DisplayCursorNames",
+      "cmd-shift-backspace": "editor::GoToPreviousChange",
+      "cmd-shift-alt-backspace": "editor::GoToNextChange"
     }
   },
   {
@@ -786,7 +789,7 @@
       "cmd-alt-c": "workspace::CopyPath",
       "alt-cmd-shift-c": "workspace::CopyRelativePath",
       "alt-cmd-r": "outline_panel::RevealInFileManager",
-      "space": "outline_panel::Open",
+      "space": "outline_panel::OpenSelectedEntry",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "alt-enter": "editor::OpenExcerpts",
@@ -1002,6 +1005,7 @@
       "alt-right": ["terminal::SendText", "\u001bf"],
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
+      "alt-.": ["terminal::SendText", "\u001b."],
       // There are conflicting bindings for these keys in the global context.
       // these bindings override them, remove at your own risk:
       "up": ["terminal::SendKeystroke", "up"],
@@ -1024,10 +1028,10 @@
       // Using `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
       // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-shift-space": "terminal::ToggleViMode",
-      "ctrl-k up": "pane::SplitUp",
-      "ctrl-k down": "pane::SplitDown",
-      "ctrl-k left": "pane::SplitLeft",
-      "ctrl-k right": "pane::SplitRight"
+      "ctrl-alt-up": "pane::SplitUp",
+      "ctrl-alt-down": "pane::SplitDown",
+      "ctrl-alt-left": "pane::SplitLeft",
+      "ctrl-alt-right": "pane::SplitRight"
     }
   },
   {

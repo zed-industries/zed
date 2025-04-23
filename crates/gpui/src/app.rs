@@ -35,10 +35,10 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
     LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem,
-    Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator, current_platform, hash,
-    init_app_menus,
+    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator, current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -248,7 +248,7 @@ pub struct App {
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
-    pub(crate) keyboard_layout: SharedString,
+    pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -289,7 +289,7 @@ impl App {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
-        let keyboard_layout = SharedString::from(platform.keyboard_layout());
+        let keyboard_layout = platform.keyboard_layout();
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
@@ -345,7 +345,7 @@ impl App {
             move || {
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
-                    cx.keyboard_layout = SharedString::from(cx.platform.keyboard_layout());
+                    cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_layout_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
@@ -387,8 +387,8 @@ impl App {
     }
 
     /// Get the id of the current keyboard layout
-    pub fn keyboard_layout(&self) -> &SharedString {
-        &self.keyboard_layout
+    pub fn keyboard_layout(&self) -> &dyn PlatformKeyboardLayout {
+        self.keyboard_layout.as_ref()
     }
 
     /// Invokes a handler when the current keyboard layout changes
@@ -505,8 +505,8 @@ impl App {
         self.new_observer(
             entity_id,
             Box::new(move |cx| {
-                if let Some(handle) = Entity::<W>::upgrade_from(&handle) {
-                    on_notify(handle, cx)
+                if let Some(entity) = handle.upgrade() {
+                    on_notify(entity, cx)
                 } else {
                     false
                 }
@@ -550,15 +550,15 @@ impl App {
         Evt: 'static,
     {
         let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
+        let handle = entity.downgrade();
         self.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
                     let event: &Evt = event.downcast_ref().expect("invalid event type");
-                    if let Some(handle) = Entity::<T>::upgrade_from(&entity) {
-                        on_event(handle, event, cx)
+                    if let Some(entity) = handle.upgrade() {
+                        on_event(entity, event, cx)
                     } else {
                         false
                     }
@@ -1615,6 +1615,22 @@ impl App {
     /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
     pub fn can_select_mixed_files_and_dirs(&self) -> bool {
         self.platform.can_select_mixed_files_and_dirs()
+    }
+
+    /// Removes an image from the sprite atlas on all windows.
+    ///
+    /// If the current window is being updated, it will be removed from `App.windows``, you can use `current_window` to specify the current window.
+    /// This is a no-op if the image is not in the sprite atlas.
+    pub fn drop_image(&mut self, image: Arc<RenderImage>, current_window: Option<&mut Window>) {
+        // remove the texture from all other windows
+        for window in self.windows.values_mut().flatten() {
+            _ = window.drop_image(image.clone());
+        }
+
+        // remove the texture from the current window
+        if let Some(window) = current_window {
+            _ = window.drop_image(image);
+        }
     }
 }
 

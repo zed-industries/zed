@@ -1,4 +1,5 @@
 use crate::Cents;
+use crate::db::billing_subscription::SubscriptionKind;
 use crate::db::{billing_subscription, user};
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::{Config, db::billing_preference};
@@ -10,6 +11,7 @@ use std::time::Duration;
 use thiserror::Error;
 use util::maybe;
 use uuid::Uuid;
+use zed_llm_client::Plan;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,9 +30,11 @@ pub struct LlmTokenClaims {
     pub has_llm_subscription: bool,
     pub max_monthly_spend_in_cents: u32,
     pub custom_llm_monthly_allowance_in_cents: Option<u32>,
-    pub plan: rpc::proto::Plan,
+    pub plan: Plan,
     #[serde(default)]
     pub subscription_period: Option<(NaiveDateTime, NaiveDateTime)>,
+    #[serde(default)]
+    pub can_use_web_search_tool: bool,
 }
 
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
@@ -42,7 +46,6 @@ impl LlmTokenClaims {
         billing_preferences: Option<billing_preference::Model>,
         feature_flags: &Vec<String>,
         has_legacy_llm_subscription: bool,
-        plan: rpc::proto::Plan,
         subscription: Option<billing_subscription::Model>,
         system_id: Option<String>,
         config: &Config,
@@ -69,6 +72,7 @@ impl LlmTokenClaims {
             bypass_account_age_check: feature_flags
                 .iter()
                 .any(|flag| flag == "bypass-account-age-check"),
+            can_use_web_search_tool: feature_flags.iter().any(|flag| flag == "assistant2"),
             has_llm_subscription: has_legacy_llm_subscription,
             max_monthly_spend_in_cents: billing_preferences
                 .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
@@ -77,7 +81,14 @@ impl LlmTokenClaims {
             custom_llm_monthly_allowance_in_cents: user
                 .custom_llm_monthly_allowance_in_cents
                 .map(|allowance| allowance as u32),
-            plan,
+            plan: subscription
+                .as_ref()
+                .and_then(|subscription| subscription.kind)
+                .map_or(Plan::Free, |kind| match kind {
+                    SubscriptionKind::ZedFree => Plan::Free,
+                    SubscriptionKind::ZedPro => Plan::ZedPro,
+                    SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
+                }),
             subscription_period: maybe!({
                 let subscription = subscription?;
                 let period_start_at = subscription.current_period_start_at()?;

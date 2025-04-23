@@ -8,9 +8,9 @@ mod tests;
 
 use collections::HashMap;
 pub use ids::*;
-use rpc::LanguageModelProvider;
 pub use seed::*;
 pub use tables::*;
+use zed_llm_client::LanguageModelProvider;
 
 #[cfg(test)]
 pub use tests::TestLlmDb;

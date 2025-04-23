@@ -46,7 +46,8 @@ use workspace::{
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
 
-struct IncludeWarnings(bool);
+#[derive(Default)]
+pub(crate) struct IncludeWarnings(bool);
 impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut App) {
@@ -379,7 +380,6 @@ impl ProjectDiagnosticsEditor {
                     Point::zero()..buffer_snapshot.max_point(),
                     false,
                 )
-                .filter(|d| !(d.diagnostic.is_primary && d.diagnostic.is_unnecessary))
                 .collect::<Vec<_>>();
             let unchanged = this.update(cx, |this, _| {
                 if this.diagnostics.get(&buffer_id).is_some_and(|existing| {

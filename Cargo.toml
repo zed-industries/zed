@@ -47,7 +47,6 @@ members = [
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/eval",
-    "crates/evals",
     "crates/extension",
     "crates/extension_api",
     "crates/extension_cli",
@@ -481,6 +480,7 @@ num-format = "0.4.4"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
+partial-json-fixer = "0.5.3"
 pathdiff = "0.2"
 pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
@@ -540,7 +540,7 @@ smol = "2.0"
 sqlformat = "0.2"
 streaming-iterator = "0.1"
 strsim = "0.11"
-strum = { version = "0.26.0", features = ["derive"] }
+strum = { version = "0.27.0", features = ["derive"] }
 subtle = "2.5.0"
 syn = { version = "1.0.72", features = ["full", "extra-traits"] }
 sys-locale = "0.3.1"
@@ -605,7 +605,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.5.0"
+zed_llm_client = "0.6.1"
 zstd = "0.11"
 metal = "0.29"
 
@@ -696,7 +696,6 @@ breadcrumbs = { codegen-units = 1 }
 collections = { codegen-units = 1 }
 command_palette = { codegen-units = 1 }
 command_palette_hooks = { codegen-units = 1 }
-evals = { codegen-units = 1 }
 extension_cli = { codegen-units = 1 }
 feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }

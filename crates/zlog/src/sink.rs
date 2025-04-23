@@ -152,7 +152,18 @@ pub fn submit(record: Record) {
 }
 
 pub fn flush() {
-    _ = std::io::stdout().lock().flush();
+    if unsafe { ENABLED_SINKS_STDOUT } {
+        _ = std::io::stdout().lock().flush();
+    }
+    let mut file = ENABLED_SINKS_FILE.lock().unwrap_or_else(|handle| {
+        ENABLED_SINKS_FILE.clear_poison();
+        handle.into_inner()
+    });
+    if let Some(file) = file.as_mut() {
+        if let Err(err) = file.flush() {
+            eprintln!("Failed to flush log file: {}", err);
+        }
+    }
 }
 
 struct ScopeFmt(Scope);
@@ -246,6 +257,7 @@ mod tests {
         assert_eq!(size.load(Ordering::Relaxed), 0);
     }
 
+    /// Regression test, ensuring that if log level values change we are made aware
     #[test]
     fn test_log_level_names() {
         assert_eq!(LEVEL_OUTPUT_STRINGS[log::Level::Error as usize], "ERROR");

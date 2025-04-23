@@ -85,6 +85,10 @@ pub enum Model {
     O1Mini,
     #[serde(rename = "o3-mini", alias = "o3-mini")]
     O3Mini,
+    #[serde(rename = "o3", alias = "o3")]
+    O3,
+    #[serde(rename = "o4-mini", alias = "o4-mini")]
+    O4Mini,
 
     #[serde(rename = "custom")]
     Custom {
@@ -98,6 +102,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::FourPointOneMini
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
@@ -112,6 +120,8 @@ impl Model {
             "o1-preview" => Ok(Self::O1Preview),
             "o1-mini" => Ok(Self::O1Mini),
             "o3-mini" => Ok(Self::O3Mini),
+            "o3" => Ok(Self::O3),
+            "o4-mini" => Ok(Self::O4Mini),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -130,6 +140,8 @@ impl Model {
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
+            Self::O3 => "o3",
+            Self::O4Mini => "o4-mini",
             Self::Custom { name, .. } => name,
         }
     }
@@ -148,6 +160,8 @@ impl Model {
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
+            Self::O3 => "o3",
+            Self::O4Mini => "o4-mini",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -168,6 +182,8 @@ impl Model {
             Self::O1Preview => 128_000,
             Self::O1Mini => 128_000,
             Self::O3Mini => 200_000,
+            Self::O3 => 200_000,
+            Self::O4Mini => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }

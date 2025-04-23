@@ -1,9 +1,10 @@
 use ::fs::Fs;
-use anyhow::{Context as _, Ok, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use dap_types::StartDebuggingRequestArguments;
+use collections::HashMap;
+use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
 use futures::io::BufReader;
 use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
@@ -13,16 +14,10 @@ use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use smol::{self, fs::File, lock::Mutex};
 use std::{
-    borrow::Borrow,
-    collections::{HashMap, HashSet},
-    ffi::{OsStr, OsString},
-    fmt::Debug,
-    net::Ipv4Addr,
-    ops::Deref,
-    path::PathBuf,
-    sync::Arc,
+    borrow::Borrow, collections::HashSet, ffi::OsStr, fmt::Debug, net::Ipv4Addr, ops::Deref,
+    path::PathBuf, sync::Arc,
 };
-use task::DebugTaskDefinition;
+use task::{DebugTaskDefinition, TcpArgumentsTemplate};
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,15 +88,89 @@ pub struct TcpArguments {
     pub port: u16,
     pub timeout: Option<u64>,
 }
+
+impl TcpArguments {
+    pub fn from_proto(proto: proto::TcpHost) -> anyhow::Result<Self> {
+        let host = TcpArgumentsTemplate::from_proto(proto)?;
+        Ok(TcpArguments {
+            host: host.host.ok_or_else(|| anyhow!("missing host"))?,
+            port: host.port.ok_or_else(|| anyhow!("missing port"))?,
+            timeout: host.timeout,
+        })
+    }
+
+    pub fn to_proto(&self) -> proto::TcpHost {
+        TcpArgumentsTemplate {
+            host: Some(self.host),
+            port: Some(self.port),
+            timeout: self.timeout,
+        }
+        .to_proto()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
-    pub adapter_name: DebugAdapterName,
     pub command: String,
-    pub arguments: Option<Vec<OsString>>,
-    pub envs: Option<HashMap<String, String>>,
+    pub arguments: Vec<String>,
+    pub envs: HashMap<String, String>,
     pub cwd: Option<PathBuf>,
     pub connection: Option<TcpArguments>,
     pub request_args: StartDebuggingRequestArguments,
+}
+
+impl DebugAdapterBinary {
+    pub fn from_proto(binary: proto::DebugAdapterBinary) -> anyhow::Result<Self> {
+        let request = match binary.launch_type() {
+            proto::debug_adapter_binary::LaunchType::Launch => {
+                StartDebuggingRequestArgumentsRequest::Launch
+            }
+            proto::debug_adapter_binary::LaunchType::Attach => {
+                StartDebuggingRequestArgumentsRequest::Attach
+            }
+        };
+
+        Ok(DebugAdapterBinary {
+            command: binary.command,
+            arguments: binary.arguments,
+            envs: binary.envs.into_iter().collect(),
+            connection: binary
+                .connection
+                .map(TcpArguments::from_proto)
+                .transpose()?,
+            request_args: StartDebuggingRequestArguments {
+                configuration: serde_json::from_str(&binary.configuration)?,
+                request,
+            },
+            cwd: binary.cwd.map(|cwd| cwd.into()),
+        })
+    }
+
+    pub fn to_proto(&self) -> proto::DebugAdapterBinary {
+        proto::DebugAdapterBinary {
+            command: self.command.clone(),
+            arguments: self.arguments.clone(),
+            envs: self
+                .envs
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            cwd: self
+                .cwd
+                .as_ref()
+                .map(|cwd| cwd.to_string_lossy().to_string()),
+            connection: self.connection.as_ref().map(|c| c.to_proto()),
+            launch_type: match self.request_args.request {
+                StartDebuggingRequestArgumentsRequest::Launch => {
+                    proto::debug_adapter_binary::LaunchType::Launch.into()
+                }
+                StartDebuggingRequestArgumentsRequest::Attach => {
+                    proto::debug_adapter_binary::LaunchType::Attach.into()
+                }
+            },
+            configuration: self.request_args.configuration.to_string(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -256,7 +325,21 @@ pub trait DebugAdapter: 'static + Send + Sync {
                 self.name()
             );
             delegate.update_status(self.name(), DapStatus::Downloading);
-            self.install_binary(version, delegate).await?;
+            match self.install_binary(version, delegate).await {
+                Ok(_) => {
+                    delegate.update_status(self.name(), DapStatus::None);
+                }
+                Err(error) => {
+                    delegate.update_status(
+                        self.name(),
+                        DapStatus::Failed {
+                            error: error.to_string(),
+                        },
+                    );
+
+                    return Err(error);
+                }
+            }
 
             delegate
                 .updated_adapters()
@@ -304,22 +387,22 @@ impl FakeAdapter {
 
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         use serde_json::json;
-        use task::DebugRequestType;
+        use task::DebugRequest;
 
         let value = json!({
             "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
             },
-            "process_id": if let DebugRequestType::Attach(attach_config) = &config.request {
+            "process_id": if let DebugRequest::Attach(attach_config) = &config.request {
                 attach_config.process_id
             } else {
                 None
             },
         });
         let request = match config.request {
-            DebugRequestType::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
-            DebugRequestType::Attach(_) => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
+            DebugRequest::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
+            DebugRequest::Attach(_) => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
         };
         StartDebuggingRequestArguments {
             configuration: value,
@@ -343,11 +426,10 @@ impl DebugAdapter for FakeAdapter {
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         Ok(DebugAdapterBinary {
-            adapter_name: Self::ADAPTER_NAME.into(),
             command: "command".into(),
-            arguments: None,
+            arguments: vec![],
             connection: None,
-            envs: None,
+            envs: HashMap::default(),
             cwd: None,
             request_args: self.request_args(config),
         })

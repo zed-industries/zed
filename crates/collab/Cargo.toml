@@ -75,6 +75,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "re
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 assistant = { workspace = true, features = ["test-support"] }
@@ -127,6 +128,7 @@ serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 sqlx = { version = "0.8", features = ["sqlite"] }
+task.workspace = true
 theme.workspace = true
 unindent.workspace = true
 util.workspace = true

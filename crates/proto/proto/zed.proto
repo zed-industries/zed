@@ -380,7 +380,12 @@ message Envelope {
         StopLanguageServers stop_language_servers = 336;
 
         LspExtRunnables lsp_ext_runnables = 337;
-        LspExtRunnablesResponse lsp_ext_runnables_response = 338; // current max
+        LspExtRunnablesResponse lsp_ext_runnables_response = 338;
+
+        GetDebugAdapterBinary get_debug_adapter_binary = 339;
+        DebugAdapterBinary debug_adapter_binary = 340;
+        RunDebugLocator run_debug_locator = 341;
+        DebugTaskDefinition debug_task_definition = 342; // current max
     }
 
     reserved 87 to 88;

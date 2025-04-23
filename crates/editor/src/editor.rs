@@ -40,6 +40,8 @@ mod selections_collection;
 pub mod tasks;
 
 #[cfg(test)]
+mod code_completion_tests;
+#[cfg(test)]
 mod editor_tests;
 #[cfg(test)]
 mod inline_completion_tests;
@@ -215,6 +217,7 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -693,6 +696,52 @@ pub trait Addon: 'static {
     fn to_any(&self) -> &dyn std::any::Any;
 }
 
+/// A set of caret positions, registered when the editor was edited.
+pub struct ChangeList {
+    changes: Vec<Vec<Anchor>>,
+    /// Currently "selected" change.
+    position: Option<usize>,
+}
+
+impl ChangeList {
+    pub fn new() -> Self {
+        Self {
+            changes: Vec::new(),
+            position: None,
+        }
+    }
+
+    /// Moves to the next change in the list (based on the direction given) and returns the caret positions for the next change.
+    /// If reaches the end of the list in the direction, returns the corresponding change until called for a different direction.
+    pub fn next_change(&mut self, count: usize, direction: Direction) -> Option<&[Anchor]> {
+        if self.changes.is_empty() {
+            return None;
+        }
+
+        let prev = self.position.unwrap_or(self.changes.len());
+        let next = if direction == Direction::Prev {
+            prev.saturating_sub(count)
+        } else {
+            (prev + count).min(self.changes.len() - 1)
+        };
+        self.position = Some(next);
+        self.changes.get(next).map(|anchors| anchors.as_slice())
+    }
+
+    /// Adds a new change to the list, resetting the change list position.
+    pub fn push_to_change_list(&mut self, pop_state: bool, new_positions: Vec<Anchor>) {
+        self.position.take();
+        if pop_state {
+            self.changes.pop();
+        }
+        self.changes.push(new_positions.clone());
+    }
+
+    pub fn last(&self) -> Option<&[Anchor]> {
+        self.changes.last().map(|anchors| anchors.as_slice())
+    }
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -765,7 +814,8 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
-    selection_highlight_task: Option<Task<()>>,
+    quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
+    debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -857,6 +907,7 @@ pub struct Editor {
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
     hide_mouse_mode: HideMouseMode,
+    pub change_list: ChangeList,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1543,7 +1594,8 @@ impl Editor {
             code_action_providers,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
-            selection_highlight_task: Default::default(),
+            quick_selection_highlight_task: Default::default(),
+            debounced_selection_highlight_task: Default::default(),
             document_highlights_task: Default::default(),
             linked_editing_range_task: Default::default(),
             pending_rename: Default::default(),
@@ -1648,6 +1700,7 @@ impl Editor {
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
                 .unwrap_or_default(),
+            change_list: ChangeList::new(),
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -1661,8 +1714,8 @@ impl Editor {
         this._subscriptions.push(cx.subscribe_in(
             &cx.entity(),
             window,
-            |editor, _, e: &EditorEvent, window, cx| {
-                if let EditorEvent::SelectionsChanged { local } = e {
+            |editor, _, e: &EditorEvent, window, cx| match e {
+                EditorEvent::ScrollPositionChanged { local, .. } => {
                     if *local {
                         let new_anchor = editor.scroll_manager.anchor();
                         let snapshot = editor.snapshot(window, cx);
@@ -1672,8 +1725,33 @@ impl Editor {
                                 new_anchor.offset,
                             );
                         });
+                        editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
                     }
                 }
+                EditorEvent::Edited { .. } => {
+                    if !vim_enabled(cx) {
+                        let (map, selections) = editor.selections.all_adjusted_display(cx);
+                        let pop_state = editor
+                            .change_list
+                            .last()
+                            .map(|previous| {
+                                previous.len() == selections.len()
+                                    && previous.iter().enumerate().all(|(ix, p)| {
+                                        p.to_display_point(&map).row()
+                                            == selections[ix].head().row()
+                                    })
+                            })
+                            .unwrap_or(false);
+                        let new_positions = selections
+                            .into_iter()
+                            .map(|s| map.display_point_to_anchor(s.head(), Bias::Left))
+                            .collect();
+                        editor
+                            .change_list
+                            .push_to_change_list(pop_state, new_positions);
+                    }
+                }
+                _ => (),
             },
         ));
 
@@ -1715,9 +1793,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.mouse_context_menu = Some(MouseContextMenu::new(
+            self,
             crate::mouse_context_menu::MenuPosition::PinnedToScreen(position),
             context_menu,
-            None,
             window,
             cx,
         ));
@@ -3030,6 +3108,13 @@ impl Editor {
             s.select_ranges(selection_ranges);
         });
         cx.notify();
+    }
+
+    pub fn has_non_empty_selection(&self, cx: &mut App) -> bool {
+        self.selections
+            .all_adjusted(cx)
+            .iter()
+            .any(|selection| !selection.is_empty())
     }
 
     pub fn has_pending_nonempty_selection(&self) -> bool {
@@ -4744,19 +4829,18 @@ impl Editor {
         let suffix = &old_text[lookbehind.min(old_text.len())..];
 
         let selections = self.selections.all::<usize>(cx);
-        let mut edits = Vec::new();
+        let mut ranges = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
 
         for selection in &selections {
-            let edit = if selection.id == newest_anchor.id {
-                (replace_range_multibuffer.clone(), new_text.as_str())
+            let range = if selection.id == newest_anchor.id {
+                replace_range_multibuffer.clone()
             } else {
                 let mut range = selection.range();
-                let mut text = new_text.as_str();
 
                 // if prefix is present, don't duplicate it
                 if snapshot.contains_str_at(range.start.saturating_sub(lookbehind), prefix) {
-                    text = &new_text[lookbehind.min(new_text.len())..];
+                    range.start = range.start.saturating_sub(lookbehind);
 
                     // if suffix is also present, mimic the newest cursor and replace it
                     if selection.id != newest_anchor.id
@@ -4765,10 +4849,10 @@ impl Editor {
                         range.end += lookahead;
                     }
                 }
-                (range, text)
+                range
             };
 
-            edits.push(edit);
+            ranges.push(range);
 
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(selection.head());
@@ -4794,19 +4878,14 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             if let Some(mut snippet) = snippet {
                 snippet.text = new_text.to_string();
-                let ranges = edits
-                    .iter()
-                    .map(|(range, _)| range.clone())
-                    .collect::<Vec<_>>();
                 this.insert_snippet(&ranges, snippet, window, cx).log_err();
             } else {
                 this.buffer.update(cx, |buffer, cx| {
-                    let auto_indent = if completion.insert_text_mode == Some(InsertTextMode::AS_IS)
-                    {
-                        None
-                    } else {
-                        this.autoindent_mode.clone()
+                    let auto_indent = match completion.insert_text_mode {
+                        Some(InsertTextMode::AS_IS) => None,
+                        _ => this.autoindent_mode.clone(),
                     };
+                    let edits = ranges.into_iter().map(|range| (range, new_text.as_str()));
                     buffer.edit(edits, auto_indent, cx);
                 });
             }
@@ -4860,89 +4939,6 @@ impl Editor {
         }))
     }
 
-    fn prepare_code_actions_task(
-        &mut self,
-        action: &ToggleCodeActions,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Option<(Entity<Buffer>, CodeActionContents)>> {
-        let snapshot = self.snapshot(window, cx);
-        let multibuffer_point = action
-            .deployed_from_indicator
-            .map(|row| DisplayPoint::new(row, 0).to_point(&snapshot))
-            .unwrap_or_else(|| self.selections.newest::<Point>(cx).head());
-
-        let Some((buffer, buffer_row)) = snapshot
-            .buffer_snapshot
-            .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
-            .and_then(|(buffer_snapshot, range)| {
-                self.buffer
-                    .read(cx)
-                    .buffer(buffer_snapshot.remote_id())
-                    .map(|buffer| (buffer, range.start.row))
-            })
-        else {
-            return Task::ready(None);
-        };
-
-        let (_, code_actions) = self
-            .available_code_actions
-            .clone()
-            .and_then(|(location, code_actions)| {
-                let snapshot = location.buffer.read(cx).snapshot();
-                let point_range = location.range.to_point(&snapshot);
-                let point_range = point_range.start.row..=point_range.end.row;
-                if point_range.contains(&buffer_row) {
-                    Some((location, code_actions))
-                } else {
-                    None
-                }
-            })
-            .unzip();
-
-        let buffer_id = buffer.read(cx).remote_id();
-        let tasks = self
-            .tasks
-            .get(&(buffer_id, buffer_row))
-            .map(|t| Arc::new(t.to_owned()));
-
-        if tasks.is_none() && code_actions.is_none() {
-            return Task::ready(None);
-        }
-
-        self.completion_tasks.clear();
-        self.discard_inline_completion(false, cx);
-
-        let task_context = tasks
-            .as_ref()
-            .zip(self.project.clone())
-            .map(|(tasks, project)| {
-                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
-            });
-
-        cx.spawn_in(window, async move |_, _| {
-            let task_context = match task_context {
-                Some(task_context) => task_context.await,
-                None => None,
-            };
-            let resolved_tasks = tasks.zip(task_context).map(|(tasks, task_context)| {
-                Rc::new(ResolvedTasks {
-                    templates: tasks.resolve(&task_context).collect(),
-                    position: snapshot
-                        .buffer_snapshot
-                        .anchor_before(Point::new(multibuffer_point.row, tasks.column)),
-                })
-            });
-            Some((
-                buffer,
-                CodeActionContents {
-                    actions: code_actions,
-                    tasks: resolved_tasks,
-                },
-            ))
-        })
-    }
-
     pub fn toggle_code_actions(
         &mut self,
         action: &ToggleCodeActions,
@@ -4963,58 +4959,114 @@ impl Editor {
             }
         }
         drop(context_menu);
-
+        let snapshot = self.snapshot(window, cx);
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         let action = action.clone();
-
         cx.spawn_in(window, async move |editor, cx| {
             while let Some(prev_task) = task {
                 prev_task.await.log_err();
                 task = editor.update(cx, |this, _| this.code_actions_task.take())?;
             }
 
-            let context_menu_task = editor.update_in(cx, |editor, window, cx| {
-                if !editor.focus_handle.is_focused(window) {
-                    return Some(Task::ready(Ok(())));
-                }
-                let debugger_flag = cx.has_flag::<Debugger>();
-                let code_actions_task = editor.prepare_code_actions_task(&action, window, cx);
-                Some(cx.spawn_in(window, async move |editor, cx| {
-                    if let Some((buffer, code_action_contents)) = code_actions_task.await {
-                        let spawn_straight_away =
-                            code_action_contents.tasks.as_ref().map_or(false, |tasks| {
-                                tasks
-                                    .templates
-                                    .iter()
-                                    .filter(|task| {
-                                        if matches!(task.1.task_type(), task::TaskType::Debug(_)) {
-                                            debugger_flag
-                                        } else {
-                                            true
-                                        }
-                                    })
-                                    .count()
-                                    == 1
-                            }) && code_action_contents
-                                .actions
-                                .as_ref()
-                                .map_or(true, |actions| actions.is_empty());
+            let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
+                if editor.focus_handle.is_focused(window) {
+                    let multibuffer_point = action
+                        .deployed_from_indicator
+                        .map(|row| DisplayPoint::new(row, 0).to_point(&snapshot))
+                        .unwrap_or_else(|| editor.selections.newest::<Point>(cx).head());
+                    let (buffer, buffer_row) = snapshot
+                        .buffer_snapshot
+                        .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
+                        .and_then(|(buffer_snapshot, range)| {
+                            editor
+                                .buffer
+                                .read(cx)
+                                .buffer(buffer_snapshot.remote_id())
+                                .map(|buffer| (buffer, range.start.row))
+                        })?;
+                    let (_, code_actions) = editor
+                        .available_code_actions
+                        .clone()
+                        .and_then(|(location, code_actions)| {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let point_range = location.range.to_point(&snapshot);
+                            let point_range = point_range.start.row..=point_range.end.row;
+                            if point_range.contains(&buffer_row) {
+                                Some((location, code_actions))
+                            } else {
+                                None
+                            }
+                        })
+                        .unzip();
+                    let buffer_id = buffer.read(cx).remote_id();
+                    let tasks = editor
+                        .tasks
+                        .get(&(buffer_id, buffer_row))
+                        .map(|t| Arc::new(t.to_owned()));
+                    if tasks.is_none() && code_actions.is_none() {
+                        return None;
+                    }
+
+                    editor.completion_tasks.clear();
+                    editor.discard_inline_completion(false, cx);
+                    let task_context =
+                        tasks
+                            .as_ref()
+                            .zip(editor.project.clone())
+                            .map(|(tasks, project)| {
+                                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
+                            });
+
+                    let debugger_flag = cx.has_flag::<Debugger>();
+
+                    Some(cx.spawn_in(window, async move |editor, cx| {
+                        let task_context = match task_context {
+                            Some(task_context) => task_context.await,
+                            None => None,
+                        };
+                        let resolved_tasks =
+                            tasks
+                                .zip(task_context)
+                                .map(|(tasks, task_context)| ResolvedTasks {
+                                    templates: tasks.resolve(&task_context).collect(),
+                                    position: snapshot.buffer_snapshot.anchor_before(Point::new(
+                                        multibuffer_point.row,
+                                        tasks.column,
+                                    )),
+                                });
+                        let spawn_straight_away = resolved_tasks.as_ref().map_or(false, |tasks| {
+                            tasks
+                                .templates
+                                .iter()
+                                .filter(|task| {
+                                    if matches!(task.1.task_type(), task::TaskType::Debug(_)) {
+                                        debugger_flag
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .count()
+                                == 1
+                        }) && code_actions
+                            .as_ref()
+                            .map_or(true, |actions| actions.is_empty());
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
-                                    actions: code_action_contents,
+                                    actions: CodeActionContents::new(
+                                        resolved_tasks,
+                                        code_actions,
+                                        cx,
+                                    ),
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
                                     deployed_from_indicator,
                                 }));
                             if spawn_straight_away {
                                 if let Some(task) = editor.confirm_code_action(
-                                    &ConfirmCodeAction {
-                                        item_ix: Some(0),
-                                        from_mouse_context_menu: false,
-                                    },
+                                    &ConfirmCodeAction { item_ix: Some(0) },
                                     window,
                                     cx,
                                 ) {
@@ -5029,12 +5081,12 @@ impl Editor {
                         } else {
                             Ok(())
                         }
-                    } else {
-                        Ok(())
-                    }
-                }))
+                    }))
+                } else {
+                    Some(Task::ready(Ok(())))
+                }
             })?;
-            if let Some(task) = context_menu_task {
+            if let Some(task) = spawned_test_task {
                 task.await?;
             }
 
@@ -5051,71 +5103,38 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
-        let (action, buffer) = if action.from_mouse_context_menu {
-            if let Some(menu) = self.mouse_context_menu.take() {
-                let code_action = menu.code_action?;
-                let index = action.item_ix?;
-                let action = code_action.actions.get(index)?;
-                (action, code_action.buffer)
-            } else {
-                return None;
-            }
-        } else {
+        let actions_menu =
             if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
-                let action_ix = action.item_ix.unwrap_or(menu.selected_item);
-                let action = menu.actions.get(action_ix)?;
-                let buffer = menu.buffer;
-                (action, buffer)
+                menu
             } else {
                 return None;
-            }
-        };
+            };
 
+        let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
+        let action = actions_menu.actions.get(action_ix)?;
         let title = action.label();
+        let buffer = actions_menu.buffer;
         let workspace = self.workspace()?;
 
         match action {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
                 match resolved_task.task_type() {
                     task::TaskType::Script => workspace.update(cx, |workspace, cx| {
-                        workspace::tasks::schedule_resolved_task(
-                            workspace,
+                        workspace.schedule_resolved_task(
                             task_source_kind,
                             resolved_task,
                             false,
+                            window,
                             cx,
                         );
 
                         Some(Task::ready(Ok(())))
                     }),
-                    task::TaskType::Debug(debug_args) => {
-                        if debug_args.locator.is_some() {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace::tasks::schedule_resolved_task(
-                                    workspace,
-                                    task_source_kind,
-                                    resolved_task,
-                                    false,
-                                    cx,
-                                );
-                            });
-
-                            return Some(Task::ready(Ok(())));
-                        }
-
-                        if let Some(project) = self.project.as_ref() {
-                            project
-                                .update(cx, |project, cx| {
-                                    project.start_debug_session(
-                                        resolved_task.resolved_debug_adapter_config().unwrap(),
-                                        cx,
-                                    )
-                                })
-                                .detach_and_log_err(cx);
-                            Some(Task::ready(Ok(())))
-                        } else {
-                            Some(Task::ready(Ok(())))
-                        }
+                    task::TaskType::Debug(_) => {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.schedule_debug_task(resolved_task, window, cx);
+                        });
+                        Some(Task::ready(Ok(())))
                     }
                 }
             }
@@ -5446,111 +5465,169 @@ impl Editor {
         None
     }
 
-    pub fn refresh_selected_text_highlights(
+    fn prepare_highlight_query_from_selection(
         &mut self,
-        window: &mut Window,
         cx: &mut Context<Editor>,
-    ) {
+    ) -> Option<(String, Range<Anchor>)> {
         if matches!(self.mode, EditorMode::SingleLine { .. }) {
-            return;
+            return None;
         }
-        self.selection_highlight_task.take();
         if !EditorSettings::get_global(cx).selection_highlight {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
+            return None;
         }
         if self.selections.count() != 1 || self.selections.line_mode {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
+            return None;
         }
         let selection = self.selections.newest::<Point>(cx);
         if selection.is_empty() || selection.start.row != selection.end.row {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
+            return None;
         }
-        let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
-        self.selection_highlight_task = Some(cx.spawn_in(window, async move |editor, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(debounce))
-                .await;
-            let Some(Some(matches_task)) = editor
-                .update_in(cx, |editor, _, cx| {
-                    if editor.selections.count() != 1 || editor.selections.line_mode {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                        return None;
-                    }
-                    let selection = editor.selections.newest::<Point>(cx);
-                    if selection.is_empty() || selection.start.row != selection.end.row {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                        return None;
-                    }
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let query = buffer.text_for_range(selection.range()).collect::<String>();
-                    if query.trim().is_empty() {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                        return None;
-                    }
-                    Some(cx.background_spawn(async move {
-                        let mut ranges = Vec::new();
-                        let selection_anchors = selection.range().to_anchors(&buffer);
-                        for range in [buffer.anchor_before(0)..buffer.anchor_after(buffer.len())] {
-                            for (search_buffer, search_range, excerpt_id) in
-                                buffer.range_to_buffer_ranges(range)
-                            {
-                                ranges.extend(
-                                    project::search::SearchQuery::text(
-                                        query.clone(),
-                                        false,
-                                        false,
-                                        false,
-                                        Default::default(),
-                                        Default::default(),
-                                        None,
-                                    )
-                                    .unwrap()
-                                    .search(search_buffer, Some(search_range.clone()))
-                                    .await
-                                    .into_iter()
-                                    .filter_map(
-                                        |match_range| {
-                                            let start = search_buffer.anchor_after(
-                                                search_range.start + match_range.start,
-                                            );
-                                            let end = search_buffer.anchor_before(
-                                                search_range.start + match_range.end,
-                                            );
-                                            let range = Anchor::range_in_buffer(
-                                                excerpt_id,
-                                                search_buffer.remote_id(),
-                                                start..end,
-                                            );
-                                            (range != selection_anchors).then_some(range)
-                                        },
-                                    ),
-                                );
-                            }
-                        }
-                        ranges
-                    }))
-                })
-                .log_err()
-            else {
-                return;
-            };
-            let matches = matches_task.await;
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let selection_anchor_range = selection.range().to_anchors(&multi_buffer_snapshot);
+        let query = multi_buffer_snapshot
+            .text_for_range(selection_anchor_range.clone())
+            .collect::<String>();
+        if query.trim().is_empty() {
+            return None;
+        }
+        Some((query, selection_anchor_range))
+    }
+
+    fn update_selection_occurrence_highlights(
+        &mut self,
+        query_text: String,
+        query_range: Range<Anchor>,
+        multi_buffer_range_to_query: Range<Point>,
+        use_debounce: bool,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<()> {
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        cx.spawn_in(window, async move |editor, cx| {
+            if use_debounce {
+                cx.background_executor()
+                    .timer(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT)
+                    .await;
+            }
+            let match_task = cx.background_spawn(async move {
+                let buffer_ranges = multi_buffer_snapshot
+                    .range_to_buffer_ranges(multi_buffer_range_to_query)
+                    .into_iter()
+                    .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty());
+                let mut match_ranges = Vec::new();
+                for (buffer_snapshot, search_range, excerpt_id) in buffer_ranges {
+                    match_ranges.extend(
+                        project::search::SearchQuery::text(
+                            query_text.clone(),
+                            false,
+                            false,
+                            false,
+                            Default::default(),
+                            Default::default(),
+                            false,
+                            None,
+                        )
+                        .unwrap()
+                        .search(&buffer_snapshot, Some(search_range.clone()))
+                        .await
+                        .into_iter()
+                        .filter_map(|match_range| {
+                            let match_start = buffer_snapshot
+                                .anchor_after(search_range.start + match_range.start);
+                            let match_end =
+                                buffer_snapshot.anchor_before(search_range.start + match_range.end);
+                            let match_anchor_range = Anchor::range_in_buffer(
+                                excerpt_id,
+                                buffer_snapshot.remote_id(),
+                                match_start..match_end,
+                            );
+                            (match_anchor_range != query_range).then_some(match_anchor_range)
+                        }),
+                    );
+                }
+                match_ranges
+            });
+            let match_ranges = match_task.await;
             editor
                 .update_in(cx, |editor, _, cx| {
                     editor.clear_background_highlights::<SelectedTextHighlight>(cx);
-                    if !matches.is_empty() {
+                    if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
-                            &matches,
+                            &match_ranges,
                             |theme| theme.editor_document_highlight_bracket_background,
                             cx,
                         )
                     }
                 })
                 .log_err();
-        }));
+        })
+    }
+
+    fn refresh_selected_text_highlights(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        let Some((query_text, query_range)) = self.prepare_highlight_query_from_selection(cx)
+        else {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            self.quick_selection_highlight_task.take();
+            self.debounced_selection_highlight_task.take();
+            return;
+        };
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        if self
+            .quick_selection_highlight_task
+            .as_ref()
+            .map_or(true, |(prev_anchor_range, _)| {
+                prev_anchor_range != &query_range
+            })
+        {
+            let multi_buffer_visible_start = self
+                .scroll_manager
+                .anchor()
+                .anchor
+                .to_point(&multi_buffer_snapshot);
+            let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
+                multi_buffer_visible_start
+                    + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
+                Bias::Left,
+            );
+            let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
+            self.quick_selection_highlight_task = Some((
+                query_range.clone(),
+                self.update_selection_occurrence_highlights(
+                    query_text.clone(),
+                    query_range.clone(),
+                    multi_buffer_visible_range,
+                    false,
+                    window,
+                    cx,
+                ),
+            ));
+        }
+        if self
+            .debounced_selection_highlight_task
+            .as_ref()
+            .map_or(true, |(prev_anchor_range, _)| {
+                prev_anchor_range != &query_range
+            })
+        {
+            let multi_buffer_start = multi_buffer_snapshot
+                .anchor_before(0)
+                .to_point(&multi_buffer_snapshot);
+            let multi_buffer_end = multi_buffer_snapshot
+                .anchor_after(multi_buffer_snapshot.len())
+                .to_point(&multi_buffer_snapshot);
+            let multi_buffer_full_range = multi_buffer_start..multi_buffer_end;
+            self.debounced_selection_highlight_task = Some((
+                query_range.clone(),
+                self.update_selection_occurrence_highlights(
+                    query_text,
+                    query_range,
+                    multi_buffer_full_range,
+                    true,
+                    window,
+                    cx,
+                ),
+            ));
+        }
     }
 
     pub fn refresh_inline_completion(
@@ -6754,12 +6831,12 @@ impl Editor {
             resolved.reveal = reveal_strategy;
 
             workspace
-                .update(cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
-                        workspace,
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.schedule_resolved_task(
                         task_source_kind,
                         resolved_task,
                         false,
+                        window,
                         cx,
                     );
                 })
@@ -8868,7 +8945,6 @@ impl Editor {
             self,
             source,
             clicked_point,
-            None,
             context_menu,
             window,
             cx,
@@ -10128,11 +10204,19 @@ impl Editor {
                                 ..Point::new(row.0, buffer.line_len(row)),
                         );
                         for row in start.row + 1..=end.row {
+                            let mut line_len = buffer.line_len(MultiBufferRow(row));
+                            if row == end.row {
+                                line_len = end.column;
+                            }
+                            if line_len == 0 {
+                                trimmed_selections
+                                    .push(Point::new(row, 0)..Point::new(row, line_len));
+                                continue;
+                            }
                             let row_indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
                             if row_indent_size.len >= first_indent.len {
                                 trimmed_selections.push(
-                                    Point::new(row, first_indent.len)
-                                        ..Point::new(row, buffer.line_len(MultiBufferRow(row))),
+                                    Point::new(row, first_indent.len)..Point::new(row, line_len),
                                 );
                             } else {
                                 trimmed_selections.clear();
@@ -13301,6 +13385,48 @@ impl Editor {
             .buffer_snapshot
             .diff_hunk_before(position)
             .or_else(|| snapshot.buffer_snapshot.diff_hunk_before(Point::MAX))
+    }
+
+    fn go_to_next_change(
+        &mut self,
+        _: &GoToNextChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selections) = self
+            .change_list
+            .next_change(1, Direction::Next)
+            .map(|s| s.to_vec())
+        {
+            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                let map = s.display_map();
+                s.select_display_ranges(selections.iter().map(|a| {
+                    let point = a.to_display_point(&map);
+                    point..point
+                }))
+            })
+        }
+    }
+
+    fn go_to_previous_change(
+        &mut self,
+        _: &GoToPreviousChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selections) = self
+            .change_list
+            .next_change(1, Direction::Prev)
+            .map(|s| s.to_vec())
+        {
+            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                let map = s.display_map();
+                s.select_display_ranges(selections.iter().map(|a| {
+                    let point = a.to_display_point(&map);
+                    point..point
+                }))
+            })
+        }
     }
 
     fn go_to_line<T: 'static>(
@@ -17711,11 +17837,7 @@ impl Editor {
             .and_then(|e| e.to_str())
             .map(|a| a.to_string()));
 
-        let vim_mode = cx
-            .global::<SettingsStore>()
-            .raw_user_settings()
-            .get("vim_mode")
-            == Some(&serde_json::Value::Bool(true));
+        let vim_mode = vim_enabled(cx);
 
         let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
         let copilot_enabled = edit_predictions_provider
@@ -18159,6 +18281,13 @@ impl Editor {
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
+}
+
+fn vim_enabled(cx: &App) -> bool {
+    cx.global::<SettingsStore>()
+        .raw_user_settings()
+        .get("vim_mode")
+        == Some(&serde_json::Value::Bool(true))
 }
 
 // Consider user intent and default settings
