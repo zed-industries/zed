@@ -1,14 +1,19 @@
-use crate::schema::json_schema_for;
+use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
-use gpui::{App, AppContext, Context, Entity, IntoElement, Task, Window};
+use editor::Editor;
+use gpui::{
+    AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
+};
+use language;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
-use ui::{Disclosure, prelude::*};
-use util::paths::PathMatcher;
+use ui::{Disclosure, Tooltip, prelude::*};
+use util::{ResultExt, paths::PathMatcher};
+use workspace::Workspace;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct PathSearchToolInput {
@@ -109,7 +114,6 @@ impl Tool for PathSearchTool {
         matches.sort();
         let total_matches = matches.len();
 
-        let glob_for_card = glob.clone();
         let card = if !matches.is_empty() {
             let matches_for_card: Vec<_> = matches
                 .iter()
@@ -119,14 +123,12 @@ impl Tool for PathSearchTool {
                 .collect();
 
             Some(
-                cx.new(|cx| {
-                    PathSearchToolCard::new(glob_for_card, total_matches, matches_for_card, cx)
-                })
-                .into(),
+                cx.new(|cx| PathSearchToolCard::new(total_matches, matches_for_card, cx))
+                    .into(),
             )
         } else {
             Some(
-                cx.new(|cx| PathSearchToolCard::new(glob_for_card, 0, Vec::new(), cx))
+                cx.new(|cx| PathSearchToolCard::new(0, Vec::new(), cx))
                     .into(),
             )
         };
@@ -161,21 +163,14 @@ impl Tool for PathSearchTool {
 }
 
 struct PathSearchToolCard {
-    glob: String,
     total_matches: usize,
     paths: Vec<String>,
     expanded: bool,
 }
 
 impl PathSearchToolCard {
-    fn new(
-        glob: String,
-        total_matches: usize,
-        paths: Vec<String>,
-        _cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(total_matches: usize, paths: Vec<String>, _cx: &mut Context<Self>) -> Self {
         Self {
-            glob,
             total_matches,
             paths,
             expanded: false,
@@ -188,50 +183,16 @@ impl ToolCard for PathSearchToolCard {
         &mut self,
         _status: &ToolUseStatus,
         _window: &mut Window,
+        workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let matches_label: SharedString = if self.total_matches == 0 {
-            "No matches for".into()
+            "No matches".into()
         } else if self.total_matches == 1 {
             "1 match for".into()
         } else {
             format!("{} matches for", self.total_matches).into()
         };
-
-        let header = h_flex()
-            .id("tool-label-container")
-            .group("tool-label-container")
-            .gap_1p5()
-            .max_w_full()
-            .justify_between()
-            .child({
-                h_flex()
-                    .gap_1p5()
-                    .child(
-                        Icon::new(IconName::SearchCode)
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(Label::new(matches_label).size(LabelSize::Small))
-                    .child(
-                        Label::new(&self.glob)
-                            .size(LabelSize::Small)
-                            .buffer_font(cx),
-                    )
-                    .into_any_element()
-            })
-            .child(
-                div().visible_on_hover("tool-label-container").child(
-                    Disclosure::new("path-search-disclosure", self.expanded)
-                        .opened_icon(IconName::ChevronUp)
-                        .closed_icon(IconName::ChevronDown)
-                        .disabled(self.paths.is_empty())
-                        .on_click(cx.listener(move |this, _event, _window, _cx| {
-                            this.expanded = !this.expanded;
-                        })),
-                ),
-            )
-            .into_any();
 
         let content = if !self.paths.is_empty() && self.expanded {
             Some(
@@ -243,12 +204,56 @@ impl ToolCard for PathSearchToolCard {
                     .border_l_1()
                     .border_color(cx.theme().colors().border_variant)
                     .children(self.paths.iter().enumerate().map(|(index, path)| {
+                        let path_clone = path.clone();
+                        let workspace_clone = workspace.clone();
+
                         Button::new(("path", index), path.clone())
                             .icon(IconName::ArrowUpRight)
                             .icon_size(IconSize::XSmall)
                             .icon_position(IconPosition::End)
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
+                            .tooltip(Tooltip::text("Jump to File"))
+                            .on_click(move |_, window, cx| {
+                                workspace_clone
+                                    .update(cx, |workspace, cx| {
+                                        let path = PathBuf::from(&path_clone);
+                                        let Some(project_path) = workspace
+                                            .project()
+                                            .read(cx)
+                                            .find_project_path(&path, cx)
+                                        else {
+                                            return;
+                                        };
+                                        let open_task = workspace.open_path(
+                                            project_path,
+                                            None,
+                                            true,
+                                            window,
+                                            cx,
+                                        );
+                                        window
+                                            .spawn(cx, async move |cx| {
+                                                let item = open_task.await?;
+                                                if let Some(active_editor) =
+                                                    item.downcast::<Editor>()
+                                                {
+                                                    active_editor
+                                                        .update_in(cx, |editor, window, cx| {
+                                                            editor.go_to_singleton_buffer_point(
+                                                                language::Point::new(0, 0),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .log_err();
+                                                }
+                                                anyhow::Ok(())
+                                            })
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+                            })
                     }))
                     .into_any(),
             )
@@ -256,6 +261,20 @@ impl ToolCard for PathSearchToolCard {
             None
         };
 
-        v_flex().my_2().gap_1().child(header).children(content)
+        v_flex()
+            .mb_2()
+            .gap_1()
+            .child(
+                ToolCallCardHeader::new(IconName::SearchCode, matches_label).disclosure_slot(
+                    Disclosure::new("path-search-disclosure", self.expanded)
+                        .opened_icon(IconName::ChevronUp)
+                        .closed_icon(IconName::ChevronDown)
+                        .disabled(self.paths.is_empty())
+                        .on_click(cx.listener(move |this, _event, _window, _cx| {
+                            this.expanded = !this.expanded;
+                        })),
+                ),
+            )
+            .children(content)
     }
 }
