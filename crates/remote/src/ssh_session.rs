@@ -1793,18 +1793,26 @@ impl SshRemoteConnection {
         let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
         if let Some(build_remote_server) = build_remote_server {
-            let src_path = self
+            let ret = self
                 .build_local(build_remote_server, self.platform().await?, delegate, cx)
-                .await?;
+                .await;
+            println!("==> build_local: {:?}", ret);
+            let src_path = ret?;
             let tmp_path = paths::remote_server_dir_relative().join(format!(
                 "download-{}-{}",
                 std::process::id(),
                 src_path.file_name().unwrap().to_string_lossy()
             ));
-            self.upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
-                .await?;
-            self.extract_server_binary(&dst_path, &tmp_path, delegate, cx)
-                .await?;
+            let ret = self
+                .upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
+                .await;
+            println!("==> upload_local_server_binary: {:?}", ret);
+            ret?;
+            let ret = self
+                .extract_server_binary(&dst_path, &tmp_path, delegate, cx)
+                .await;
+            println!("==> extract_server_binary: {:?}", ret);
+            ret?;
             return Ok(dst_path);
         }
 
@@ -2150,12 +2158,25 @@ impl SshRemoteConnection {
 
         let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
         if !build_remote_server.contains("nocompress") {
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                &format!("target/remote_server/{}/debug/remote_server", triple),
-            ]))
-            .await?;
+            #[cfg(not(target_os = "windows"))]
+            {
+                run_cmd(Command::new("gzip").args([
+                    "-9",
+                    "-f",
+                    &format!("target/remote_server/{}/debug/remote_server", triple),
+                ]))
+                .await?;
+            }
+            #[cfg(target_os = "windows")]
+            {
+                run_cmd(Command::new("7z.exe").args([
+                    "a",
+                    "-tgzip",
+                    &format!("target/remote_server/{}/debug/remote_server.gz", triple),
+                    &format!("target/remote_server/{}/debug/remote_server", triple),
+                ]))
+                .await?;
+            }
 
             path = std::env::current_dir()?.join(format!(
                 "target/remote_server/{triple}/debug/remote_server.gz"
