@@ -1,16 +1,17 @@
-use dap::DebugRequestType;
+use dap::DebugRequest;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
+use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
 
-use std::cell::LazyCell;
 use std::sync::Arc;
 use sysinfo::System;
 use ui::{Context, Tooltip, prelude::*};
 use ui::{ListItem, ListItemSpacing};
 use util::debug_panic;
-use workspace::ModalView;
+use workspace::{ModalView, Workspace};
+
+use crate::debugger_panel::DebugPanel;
 
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
@@ -23,19 +24,19 @@ pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
-    project: Entity<project::Project>,
-    debug_config: task::DebugTaskDefinition,
+    workspace: WeakEntity<Workspace>,
+    pub(crate) debug_config: task::DebugTaskDefinition,
     candidates: Arc<[Candidate]>,
 }
 
 impl AttachModalDelegate {
     fn new(
-        project: Entity<project::Project>,
+        workspace: Entity<Workspace>,
         debug_config: task::DebugTaskDefinition,
         candidates: Arc<[Candidate]>,
     ) -> Self {
         Self {
-            project,
+            workspace: workspace.downgrade(),
             debug_config,
             candidates,
             selected_index: 0,
@@ -52,13 +53,13 @@ pub struct AttachModal {
 
 impl AttachModal {
     pub fn new(
-        project: Entity<project::Project>,
+        workspace: Entity<Workspace>,
         debug_config: task::DebugTaskDefinition,
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut processes: Vec<_> = System::new_all()
+        let mut processes: Box<[_]> = System::new_all()
             .processes()
             .values()
             .map(|process| {
@@ -75,33 +76,21 @@ impl AttachModal {
             })
             .collect();
         processes.sort_by_key(|k| k.name.clone());
-        Self::with_processes(project, debug_config, processes, modal, window, cx)
+        let processes = processes.into_iter().collect();
+        Self::with_processes(workspace, debug_config, processes, modal, window, cx)
     }
 
     pub(super) fn with_processes(
-        project: Entity<project::Project>,
+        workspace: Entity<Workspace>,
         debug_config: task::DebugTaskDefinition,
-        processes: Vec<Candidate>,
+        processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let adapter = project
-            .read(cx)
-            .debug_adapters()
-            .adapter(&debug_config.adapter);
-        let filter = LazyCell::new(|| adapter.map(|adapter| adapter.attach_processes_filter()));
-        let processes = processes
-            .into_iter()
-            .filter(|process| {
-                filter
-                    .as_ref()
-                    .map_or(false, |filter| filter.is_match(&process.name))
-            })
-            .collect();
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                AttachModalDelegate::new(project, debug_config, processes),
+                AttachModalDelegate::new(workspace, debug_config, processes),
                 window,
                 cx,
             )
@@ -117,9 +106,10 @@ impl AttachModal {
 }
 
 impl Render for AttachModal {
-    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         v_flex()
             .key_context("AttachModal")
+            .track_focus(&self.focus_handle(cx))
             .w(rems(34.))
             .child(self.picker.clone())
     }
@@ -214,7 +204,7 @@ impl PickerDelegate for AttachModalDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let candidate = self
             .matches
             .get(self.selected_index())
@@ -228,26 +218,26 @@ impl PickerDelegate for AttachModalDelegate {
         };
 
         match &mut self.debug_config.request {
-            DebugRequestType::Attach(config) => {
+            DebugRequest::Attach(config) => {
                 config.process_id = Some(candidate.pid);
             }
-            DebugRequestType::Launch(_) => {
+            DebugRequest::Launch(_) => {
                 debug_panic!("Debugger attach modal used on launch debug config");
                 return;
             }
         }
 
-        let config = self.debug_config.clone();
-        self.project
-            .update(cx, |project, cx| {
-                #[cfg(any(test, feature = "test-support"))]
-                let ret = project.fake_debug_session(config.request, None, false, cx);
-                #[cfg(not(any(test, feature = "test-support")))]
-                let ret = project.start_debug_session(config.into(), cx);
-                ret
-            })
-            .detach_and_log_err(cx);
-
+        let definition = self.debug_config.clone();
+        let panel = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
+            .ok()
+            .flatten();
+        if let Some(panel) = panel {
+            panel.update(cx, |panel, cx| {
+                panel.start_session(definition, window, cx);
+            });
+        }
         cx.emit(DismissEvent);
     }
 

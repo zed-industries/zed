@@ -1005,8 +1005,7 @@ impl Render for ProjectDiffToolbar {
     }
 }
 
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Version Control")]
+#[derive(IntoElement, RegisterComponent)]
 pub struct ProjectDiffEmptyState {
     pub no_repo: bool,
     pub can_push_and_pull: bool,
@@ -1178,8 +1177,12 @@ mod preview {
     use super::ProjectDiffEmptyState;
 
     // View this component preview using `workspace: open component-preview`
-    impl ComponentPreview for ProjectDiffEmptyState {
-        fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+    impl Component for ProjectDiffEmptyState {
+        fn scope() -> ComponentScope {
+            ComponentScope::VersionControl
+        }
+
+        fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
             let unknown_upstream: Option<UpstreamTracking> = None;
             let ahead_of_upstream: Option<UpstreamTracking> = Some(
                 UpstreamTrackingStatus {
@@ -1244,46 +1247,48 @@ mod preview {
 
             let (width, height) = (px(480.), px(320.));
 
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group(vec![
-                        single_example(
-                            "No Repo",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_repo_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "No Changes",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_changes_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Unknown Upstream",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(unknown_upstream_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Ahead of Remote",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(ahead_of_upstream_state)
-                                .into_any_element(),
-                        ),
+            Some(
+                v_flex()
+                    .gap_6()
+                    .children(vec![
+                        example_group(vec![
+                            single_example(
+                                "No Repo",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_repo_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "No Changes",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_changes_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Unknown Upstream",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(unknown_upstream_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Ahead of Remote",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(ahead_of_upstream_state)
+                                    .into_any_element(),
+                            ),
+                        ])
+                        .vertical(),
                     ])
-                    .vertical(),
-                ])
-                .into_any_element()
+                    .into_any_element(),
+            )
         }
     }
 }
@@ -1496,7 +1501,6 @@ mod tests {
             .unindent(),
         );
 
-        eprintln!(">>>>>>>> git restore");
         let prev_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
@@ -1520,7 +1524,6 @@ mod tests {
             });
         assert_eq!(new_buffer_hunks.as_slice(), &[]);
 
-        eprintln!(">>>>>>>> modify");
         cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
             buffer_editor.set_text("different\n", window, cx);
             buffer_editor.save(false, project.clone(), window, cx)
@@ -1549,8 +1552,8 @@ mod tests {
             cx,
             &"
                 - original
-                + ˇdifferent
-            "
+                + different
+                  ˇ"
             .unindent(),
         );
     }
@@ -1565,7 +1568,7 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
-                ".git":{},
+                ".git": {},
                 "a.txt": "created\n",
                 "b.txt": "really changed\n",
                 "c.txt": "unchanged\n"
@@ -1642,5 +1645,88 @@ mod tests {
             created
         "
         ));
+    }
+
+    #[gpui::test]
+    async fn test_excerpts_splitting_after_restoring_the_middle_excerpt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let git_contents = indoc! {r#"
+            #[rustfmt::skip]
+            fn main() {
+                let x = 0.0; // this line will be removed
+                // 1
+                // 2
+                // 3
+                let y = 0.0; // this line will be removed
+                // 1
+                // 2
+                // 3
+                let arr = [
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                ];
+            }
+        "#};
+        let buffer_contents = indoc! {"
+            #[rustfmt::skip]
+            fn main() {
+                // 1
+                // 2
+                // 3
+                // 1
+                // 2
+                // 3
+                let arr = [
+                ];
+            }
+        "};
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".git": {},
+                "main.rs": buffer_contents,
+            }),
+        )
+        .await;
+
+        fs.set_git_content_for_repo(
+            Path::new("/a/.git"),
+            &[("main.rs".into(), git_contents.to_owned(), None)],
+        );
+
+        let project = Project::test(fs, [Path::new("/a")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        cx.focus(&item);
+        let editor = item.update(cx, |item, _| item.editor.clone());
+
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
+
+        cx.dispatch_action(editor::actions::GoToHunk);
+        cx.dispatch_action(editor::actions::GoToHunk);
+        cx.dispatch_action(git::Restore);
+        cx.dispatch_action(editor::actions::MoveToBeginning);
+
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
     }
 }

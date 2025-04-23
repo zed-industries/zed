@@ -4,7 +4,7 @@ use crate::TelemetrySettings;
 use anyhow::Result;
 use clock::SystemClock;
 use futures::channel::mpsc;
-use futures::{Future, StreamExt};
+use futures::{Future, FutureExt, StreamExt};
 use gpui::{App, AppContext as _, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use parking_lot::Mutex;
@@ -17,7 +17,7 @@ use std::io::Write;
 use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use telemetry_events::{AssistantEvent, AssistantPhase, Event, EventRequestBody, EventWrapper};
+use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
@@ -290,6 +290,10 @@ impl Telemetry {
         paths::logs_dir().join("telemetry.log")
     }
 
+    pub fn has_checksum_seed(&self) -> bool {
+        ZED_CLIENT_CHECKSUM_SEED.is_some()
+    }
+
     pub fn start(
         self: &Arc<Self>,
         system_id: Option<String>,
@@ -329,7 +333,7 @@ impl Telemetry {
         drop(state);
     }
 
-    pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
+    pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEventData) {
         let event_type = match event.phase {
             AssistantPhase::Response => "Assistant Responded",
             AssistantPhase::Invoked => "Assistant Invoked",
@@ -430,7 +434,7 @@ impl Telemetry {
             let executor = self.executor.clone();
             state.flush_events_task = Some(self.executor.spawn(async move {
                 executor.timer(FLUSH_INTERVAL).await;
-                this.flush_events();
+                this.flush_events().detach();
             }));
         }
 
@@ -456,7 +460,7 @@ impl Telemetry {
 
         if state.installation_id.is_some() && state.events_queue.len() >= state.max_queue_size {
             drop(state);
-            self.flush_events();
+            self.flush_events().detach();
         }
     }
 
@@ -499,60 +503,59 @@ impl Telemetry {
             .body(json_bytes.into())?)
     }
 
-    pub fn flush_events(self: &Arc<Self>) {
+    pub fn flush_events(self: &Arc<Self>) -> Task<()> {
         let mut state = self.state.lock();
         state.first_event_date_time = None;
         let mut events = mem::take(&mut state.events_queue);
         state.flush_events_task.take();
         drop(state);
         if events.is_empty() {
-            return;
+            return Task::ready(());
         }
 
         let this = self.clone();
-        self.executor
-            .spawn(
-                async move {
-                    let mut json_bytes = Vec::new();
+        self.executor.spawn(
+            async move {
+                let mut json_bytes = Vec::new();
 
-                    if let Some(file) = &mut this.state.lock().log_file {
-                        for event in &mut events {
-                            json_bytes.clear();
-                            serde_json::to_writer(&mut json_bytes, event)?;
-                            file.write_all(&json_bytes)?;
-                            file.write_all(b"\n")?;
-                        }
+                if let Some(file) = &mut this.state.lock().log_file {
+                    for event in &mut events {
+                        json_bytes.clear();
+                        serde_json::to_writer(&mut json_bytes, event)?;
+                        file.write_all(&json_bytes)?;
+                        file.write_all(b"\n")?;
                     }
-
-                    let request_body = {
-                        let state = this.state.lock();
-
-                        EventRequestBody {
-                            system_id: state.system_id.as_deref().map(Into::into),
-                            installation_id: state.installation_id.as_deref().map(Into::into),
-                            session_id: state.session_id.clone(),
-                            metrics_id: state.metrics_id.as_deref().map(Into::into),
-                            is_staff: state.is_staff,
-                            app_version: state.app_version.clone(),
-                            os_name: state.os_name.clone(),
-                            os_version: state.os_version.clone(),
-                            architecture: state.architecture.to_string(),
-
-                            release_channel: state.release_channel.map(Into::into),
-                            events,
-                        }
-                    };
-
-                    let request = this.build_request(json_bytes, request_body)?;
-                    let response = this.http_client.send(request).await?;
-                    if response.status() != 200 {
-                        log::error!("Failed to send events: HTTP {:?}", response.status());
-                    }
-                    anyhow::Ok(())
                 }
-                .log_err(),
-            )
-            .detach();
+
+                let request_body = {
+                    let state = this.state.lock();
+
+                    EventRequestBody {
+                        system_id: state.system_id.as_deref().map(Into::into),
+                        installation_id: state.installation_id.as_deref().map(Into::into),
+                        session_id: state.session_id.clone(),
+                        metrics_id: state.metrics_id.as_deref().map(Into::into),
+                        is_staff: state.is_staff,
+                        app_version: state.app_version.clone(),
+                        os_name: state.os_name.clone(),
+                        os_version: state.os_version.clone(),
+                        architecture: state.architecture.to_string(),
+
+                        release_channel: state.release_channel.map(Into::into),
+                        events,
+                    }
+                };
+
+                let request = this.build_request(json_bytes, request_body)?;
+                let response = this.http_client.send(request).await?;
+                if response.status() != 200 {
+                    log::error!("Failed to send events: HTTP {:?}", response.status());
+                }
+                anyhow::Ok(())
+            }
+            .log_err()
+            .map(|_| ()),
+        )
     }
 }
 

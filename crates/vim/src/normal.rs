@@ -86,12 +86,14 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(cx);
         let times = Vim::take_count(cx);
-        vim.delete_motion(Motion::Left, times, window, cx);
+        let forced_motion = Vim::take_forced_motion(cx);
+        vim.delete_motion(Motion::Left, times, forced_motion, window, cx);
     });
     Vim::action(editor, cx, |vim, _: &DeleteRight, window, cx| {
         vim.record_current_action(cx);
         let times = Vim::take_count(cx);
-        vim.delete_motion(Motion::Right, times, window, cx);
+        let forced_motion = Vim::take_forced_motion(cx);
+        vim.delete_motion(Motion::Right, times, forced_motion, window, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
@@ -111,11 +113,13 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, window, cx| {
         vim.start_recording(cx);
         let times = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
         vim.change_motion(
             Motion::EndOfLine {
                 display_lines: false,
             },
             times,
+            forced_motion,
             window,
             cx,
         );
@@ -123,11 +127,13 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &DeleteToEndOfLine, window, cx| {
         vim.record_current_action(cx);
         let times = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
         vim.delete_motion(
             Motion::EndOfLine {
                 display_lines: false,
             },
             times,
+            forced_motion,
             window,
             cx,
         );
@@ -142,6 +148,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
         let times = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         vim.update_editor(window, cx, |_, editor, window, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.undo(&editor::actions::Undo, window, cx);
@@ -150,6 +157,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &Redo, window, cx| {
         let times = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         vim.update_editor(window, cx, |_, editor, window, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.redo(&editor::actions::Redo, window, cx);
@@ -170,48 +178,93 @@ impl Vim {
         motion: Motion,
         operator: Option<Operator>,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match operator {
             None => self.move_cursor(motion, times, window, cx),
-            Some(Operator::Change) => self.change_motion(motion, times, window, cx),
-            Some(Operator::Delete) => self.delete_motion(motion, times, window, cx),
-            Some(Operator::Yank) => self.yank_motion(motion, times, window, cx),
+            Some(Operator::Change) => self.change_motion(motion, times, forced_motion, window, cx),
+            Some(Operator::Delete) => self.delete_motion(motion, times, forced_motion, window, cx),
+            Some(Operator::Yank) => self.yank_motion(motion, times, forced_motion, window, cx),
             Some(Operator::AddSurrounds { target: None }) => {}
-            Some(Operator::Indent) => {
-                self.indent_motion(motion, times, IndentDirection::In, window, cx)
+            Some(Operator::Indent) => self.indent_motion(
+                motion,
+                times,
+                forced_motion,
+                IndentDirection::In,
+                window,
+                cx,
+            ),
+            Some(Operator::Rewrap) => self.rewrap_motion(motion, times, forced_motion, window, cx),
+            Some(Operator::Outdent) => self.indent_motion(
+                motion,
+                times,
+                forced_motion,
+                IndentDirection::Out,
+                window,
+                cx,
+            ),
+            Some(Operator::AutoIndent) => self.indent_motion(
+                motion,
+                times,
+                forced_motion,
+                IndentDirection::Auto,
+                window,
+                cx,
+            ),
+            Some(Operator::ShellCommand) => {
+                self.shell_command_motion(motion, times, forced_motion, window, cx)
             }
-            Some(Operator::Rewrap) => self.rewrap_motion(motion, times, window, cx),
-            Some(Operator::Outdent) => {
-                self.indent_motion(motion, times, IndentDirection::Out, window, cx)
-            }
-            Some(Operator::AutoIndent) => {
-                self.indent_motion(motion, times, IndentDirection::Auto, window, cx)
-            }
-            Some(Operator::ShellCommand) => self.shell_command_motion(motion, times, window, cx),
-            Some(Operator::Lowercase) => {
-                self.convert_motion(motion, times, ConvertTarget::LowerCase, window, cx)
-            }
-            Some(Operator::Uppercase) => {
-                self.convert_motion(motion, times, ConvertTarget::UpperCase, window, cx)
-            }
-            Some(Operator::OppositeCase) => {
-                self.convert_motion(motion, times, ConvertTarget::OppositeCase, window, cx)
-            }
-            Some(Operator::Rot13) => {
-                self.convert_motion(motion, times, ConvertTarget::Rot13, window, cx)
-            }
-            Some(Operator::Rot47) => {
-                self.convert_motion(motion, times, ConvertTarget::Rot47, window, cx)
-            }
+            Some(Operator::Lowercase) => self.convert_motion(
+                motion,
+                times,
+                forced_motion,
+                ConvertTarget::LowerCase,
+                window,
+                cx,
+            ),
+            Some(Operator::Uppercase) => self.convert_motion(
+                motion,
+                times,
+                forced_motion,
+                ConvertTarget::UpperCase,
+                window,
+                cx,
+            ),
+            Some(Operator::OppositeCase) => self.convert_motion(
+                motion,
+                times,
+                forced_motion,
+                ConvertTarget::OppositeCase,
+                window,
+                cx,
+            ),
+            Some(Operator::Rot13) => self.convert_motion(
+                motion,
+                times,
+                forced_motion,
+                ConvertTarget::Rot13,
+                window,
+                cx,
+            ),
+            Some(Operator::Rot47) => self.convert_motion(
+                motion,
+                times,
+                forced_motion,
+                ConvertTarget::Rot47,
+                window,
+                cx,
+            ),
             Some(Operator::ToggleComments) => {
-                self.toggle_comments_motion(motion, times, window, cx)
+                self.toggle_comments_motion(motion, times, forced_motion, window, cx)
             }
             Some(Operator::ReplaceWithRegister) => {
-                self.replace_with_register_motion(motion, times, window, cx)
+                self.replace_with_register_motion(motion, times, forced_motion, window, cx)
             }
-            Some(Operator::Exchange) => self.exchange_motion(motion, times, window, cx),
+            Some(Operator::Exchange) => {
+                self.exchange_motion(motion, times, forced_motion, window, cx)
+            }
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -492,6 +545,7 @@ impl Vim {
     ) {
         self.record_current_action(cx);
         let mut times = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         if self.mode.is_visual() {
             times = 1;
         } else if times > 1 {
@@ -513,11 +567,19 @@ impl Vim {
 
     fn yank_line(&mut self, _: &YankLine, window: &mut Window, cx: &mut Context<Self>) {
         let count = Vim::take_count(cx);
-        self.yank_motion(motion::Motion::CurrentLine, count, window, cx)
+        let forced_motion = Vim::take_forced_motion(cx);
+        self.yank_motion(
+            motion::Motion::CurrentLine,
+            count,
+            forced_motion,
+            window,
+            cx,
+        )
     }
 
     fn show_location(&mut self, _: &ShowLocation, window: &mut Window, cx: &mut Context<Self>) {
         let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |vim, editor, _window, cx| {
             let selection = editor.selections.newest_anchor();
             if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
@@ -577,6 +639,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {

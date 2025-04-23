@@ -7,7 +7,8 @@ use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Task}
 use lsp::LanguageServerName;
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
-    local_tasks_file_relative_path, local_vscode_tasks_file_relative_path,
+    local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
+    local_vscode_tasks_file_relative_path,
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -24,8 +25,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::{TaskTemplates, VsCodeTaskFile};
-use util::ResultExt;
+use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
+use util::{ResultExt, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
@@ -278,12 +279,28 @@ pub struct BinarySettings {
     pub ignore_system_version: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
     pub initialization_options: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
+    /// If the server supports sending tasks over LSP extensions,
+    /// this setting can be used to enable or disable them in Zed.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enable_lsp_tasks: bool,
+}
+
+impl Default for LspSettings {
+    fn default() -> Self {
+        Self {
+            binary: None,
+            initialization_options: None,
+            settings: None,
+            enable_lsp_tasks: true,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -557,6 +574,18 @@ impl SettingsObserver {
                         .unwrap(),
                 );
                 (settings_dir, LocalSettingsKind::Tasks(TaskKind::Debug))
+            } else if path.ends_with(local_vscode_launch_file_relative_path()) {
+                let settings_dir = Arc::<Path>::from(
+                    path.ancestors()
+                        .nth(
+                            local_vscode_tasks_file_relative_path()
+                                .components()
+                                .count()
+                                .saturating_sub(1),
+                        )
+                        .unwrap(),
+                );
+                (settings_dir, LocalSettingsKind::Tasks(TaskKind::Debug))
             } else if path.ends_with(EDITORCONFIG_NAME) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
@@ -595,6 +624,23 @@ impl SettingsObserver {
                                         .with_context(|| {
                                             format!(
                                         "converting VSCode tasks into Zed ones, file {abs_path:?}"
+                                    )
+                                        })?;
+                                    serde_json::to_string(&zed_tasks).with_context(|| {
+                                        format!(
+                                            "serializing Zed tasks into JSON, file {abs_path:?}"
+                                        )
+                                    })
+                                } else if abs_path.ends_with(local_vscode_launch_file_relative_path()) {
+                                    let vscode_tasks =
+                                        parse_json_with_comments::<VsCodeDebugTaskFile>(&content)
+                                            .with_context(|| {
+                                                format!("parsing VSCode debug tasks, file {abs_path:?}")
+                                            })?;
+                                    let zed_tasks = DebugTaskFile::try_from(vscode_tasks)
+                                        .with_context(|| {
+                                            format!(
+                                        "converting VSCode debug tasks into Zed ones, file {abs_path:?}"
                                     )
                                         })?;
                                     serde_json::to_string(&zed_tasks).with_context(|| {

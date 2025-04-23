@@ -13,7 +13,7 @@ use gpui::{
 };
 
 use language::CursorShape;
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::ssh_session::{ConnectionIdentifier, SshPortForwardOption};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
@@ -182,7 +182,6 @@ impl SshPrompt {
     ) {
         let theme = ThemeSettings::get_global(cx);
 
-        let mut text_style = window.text_style();
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
             font_features: Some(FontFeatures::disable_ligatures()),
@@ -192,7 +191,6 @@ impl SshPrompt {
             ..Default::default()
         };
 
-        text_style.refine(&refinement);
         self.editor.update(cx, |editor, cx| {
             if prompt.contains("yes/no") {
                 editor.set_masked(false, cx);
@@ -202,12 +200,8 @@ impl SshPrompt {
             editor.set_text_style_refinement(refinement);
             editor.set_cursor_shape(CursorShape::Block, cx);
         });
-        let markdown_style = MarkdownStyle {
-            base_text_style: text_style,
-            selection_background_color: cx.theme().players().local().selection,
-            ..Default::default()
-        };
-        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, cx));
+
+        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx));
@@ -231,7 +225,26 @@ impl SshPrompt {
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = ThemeSettings::get_global(cx);
+
+        let mut text_style = window.text_style();
+        let refinement = TextStyleRefinement {
+            font_family: Some(theme.buffer_font.family.clone()),
+            font_features: Some(FontFeatures::disable_ligatures()),
+            font_size: Some(theme.buffer_font_size(cx).into()),
+            color: Some(cx.theme().colors().editor_foreground),
+            background_color: Some(gpui::transparent_black()),
+            ..Default::default()
+        };
+
+        text_style.refine(&refinement);
+        let markdown_style = MarkdownStyle {
+            base_text_style: text_style,
+            selection_background_color: cx.theme().players().local().selection,
+            ..Default::default()
+        };
+
         v_flex()
             .key_context("PasswordPrompt")
             .py_2()
@@ -266,7 +279,7 @@ impl Render for SshPrompt {
                     div()
                         .size_full()
                         .overflow_hidden()
-                        .child(prompt.0.clone())
+                        .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
                         .child(self.editor.clone()),
                 )
             })
@@ -557,7 +570,6 @@ pub async fn open_ssh_project(
                 app_state.node_runtime.clone(),
                 app_state.user_store.clone(),
                 app_state.languages.clone(),
-                app_state.debug_adapters.clone(),
                 app_state.fs.clone(),
                 None,
                 cx,

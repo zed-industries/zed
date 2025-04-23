@@ -17,9 +17,7 @@ use gpui::{App, AsyncApp, Entity};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
     ToOffset, ToPointUtf16, Transaction, Unclipped,
-    language_settings::{
-        AllLanguageSettings, InlayHintKind, LanguageSettings, LspInsertMode, language_settings,
-    },
+    language_settings::{InlayHintKind, LanguageSettings, language_settings},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp,
@@ -30,7 +28,6 @@ use lsp::{
     LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
     ServerCapabilities,
 };
-use settings::Settings as _;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, mem, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
@@ -977,60 +974,67 @@ async fn location_links_from_proto(
     let mut links = Vec::new();
 
     for link in proto_links {
-        let origin = match link.origin {
-            Some(origin) => {
-                let buffer_id = BufferId::new(origin.buffer_id)?;
-                let buffer = lsp_store
-                    .update(&mut cx, |lsp_store, cx| {
-                        lsp_store.wait_for_remote_buffer(buffer_id, cx)
-                    })?
-                    .await?;
-                let start = origin
-                    .start
-                    .and_then(deserialize_anchor)
-                    .ok_or_else(|| anyhow!("missing origin start"))?;
-                let end = origin
-                    .end
-                    .and_then(deserialize_anchor)
-                    .ok_or_else(|| anyhow!("missing origin end"))?;
-                buffer
-                    .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
-                    .await?;
-                Some(Location {
-                    buffer,
-                    range: start..end,
-                })
-            }
-            None => None,
-        };
-
-        let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
-        let buffer_id = BufferId::new(target.buffer_id)?;
-        let buffer = lsp_store
-            .update(&mut cx, |lsp_store, cx| {
-                lsp_store.wait_for_remote_buffer(buffer_id, cx)
-            })?
-            .await?;
-        let start = target
-            .start
-            .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("missing target start"))?;
-        let end = target
-            .end
-            .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("missing target end"))?;
-        buffer
-            .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
-            .await?;
-        let target = Location {
-            buffer,
-            range: start..end,
-        };
-
-        links.push(LocationLink { origin, target })
+        links.push(location_link_from_proto(link, &lsp_store, &mut cx).await?)
     }
 
     Ok(links)
+}
+
+pub async fn location_link_from_proto(
+    link: proto::LocationLink,
+    lsp_store: &Entity<LspStore>,
+    cx: &mut AsyncApp,
+) -> Result<LocationLink> {
+    let origin = match link.origin {
+        Some(origin) => {
+            let buffer_id = BufferId::new(origin.buffer_id)?;
+            let buffer = lsp_store
+                .update(cx, |lsp_store, cx| {
+                    lsp_store.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await?;
+            let start = origin
+                .start
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("missing origin start"))?;
+            let end = origin
+                .end
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("missing origin end"))?;
+            buffer
+                .update(cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
+                .await?;
+            Some(Location {
+                buffer,
+                range: start..end,
+            })
+        }
+        None => None,
+    };
+
+    let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
+    let buffer_id = BufferId::new(target.buffer_id)?;
+    let buffer = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.wait_for_remote_buffer(buffer_id, cx)
+        })?
+        .await?;
+    let start = target
+        .start
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("missing target start"))?;
+    let end = target
+        .end
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("missing target end"))?;
+    buffer
+        .update(cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
+        .await?;
+    let target = Location {
+        buffer,
+        range: start..end,
+    };
+    Ok(LocationLink { origin, target })
 }
 
 async fn location_links_from_lsp(
@@ -1115,6 +1119,65 @@ async fn location_links_from_lsp(
     Ok(definitions)
 }
 
+pub async fn location_link_from_lsp(
+    link: lsp::LocationLink,
+    lsp_store: &Entity<LspStore>,
+    buffer: &Entity<Buffer>,
+    server_id: LanguageServerId,
+    cx: &mut AsyncApp,
+) -> Result<LocationLink> {
+    let (lsp_adapter, language_server) =
+        language_server_for_buffer(&lsp_store, &buffer, server_id, cx)?;
+
+    let (origin_range, target_uri, target_range) = (
+        link.origin_selection_range,
+        link.target_uri,
+        link.target_selection_range,
+    );
+
+    let target_buffer_handle = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.open_local_buffer_via_lsp(
+                target_uri,
+                language_server.server_id(),
+                lsp_adapter.name.clone(),
+                cx,
+            )
+        })?
+        .await?;
+
+    cx.update(|cx| {
+        let origin_location = origin_range.map(|origin_range| {
+            let origin_buffer = buffer.read(cx);
+            let origin_start =
+                origin_buffer.clip_point_utf16(point_from_lsp(origin_range.start), Bias::Left);
+            let origin_end =
+                origin_buffer.clip_point_utf16(point_from_lsp(origin_range.end), Bias::Left);
+            Location {
+                buffer: buffer.clone(),
+                range: origin_buffer.anchor_after(origin_start)
+                    ..origin_buffer.anchor_before(origin_end),
+            }
+        });
+
+        let target_buffer = target_buffer_handle.read(cx);
+        let target_start =
+            target_buffer.clip_point_utf16(point_from_lsp(target_range.start), Bias::Left);
+        let target_end =
+            target_buffer.clip_point_utf16(point_from_lsp(target_range.end), Bias::Left);
+        let target_location = Location {
+            buffer: target_buffer_handle,
+            range: target_buffer.anchor_after(target_start)
+                ..target_buffer.anchor_before(target_end),
+        };
+
+        LocationLink {
+            origin: origin_location,
+            target: target_location,
+        }
+    })
+}
+
 fn location_links_to_proto(
     links: Vec<LocationLink>,
     lsp_store: &mut LspStore,
@@ -1123,43 +1186,50 @@ fn location_links_to_proto(
 ) -> Vec<proto::LocationLink> {
     links
         .into_iter()
-        .map(|definition| {
-            let origin = definition.origin.map(|origin| {
-                lsp_store
-                    .buffer_store()
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.create_buffer_for_peer(&origin.buffer, peer_id, cx)
-                    })
-                    .detach_and_log_err(cx);
-
-                let buffer_id = origin.buffer.read(cx).remote_id().into();
-                proto::Location {
-                    start: Some(serialize_anchor(&origin.range.start)),
-                    end: Some(serialize_anchor(&origin.range.end)),
-                    buffer_id,
-                }
-            });
-
-            lsp_store
-                .buffer_store()
-                .update(cx, |buffer_store, cx| {
-                    buffer_store.create_buffer_for_peer(&definition.target.buffer, peer_id, cx)
-                })
-                .detach_and_log_err(cx);
-
-            let buffer_id = definition.target.buffer.read(cx).remote_id().into();
-            let target = proto::Location {
-                start: Some(serialize_anchor(&definition.target.range.start)),
-                end: Some(serialize_anchor(&definition.target.range.end)),
-                buffer_id,
-            };
-
-            proto::LocationLink {
-                origin,
-                target: Some(target),
-            }
-        })
+        .map(|definition| location_link_to_proto(definition, lsp_store, peer_id, cx))
         .collect()
+}
+
+pub fn location_link_to_proto(
+    location: LocationLink,
+    lsp_store: &mut LspStore,
+    peer_id: PeerId,
+    cx: &mut App,
+) -> proto::LocationLink {
+    let origin = location.origin.map(|origin| {
+        lsp_store
+            .buffer_store()
+            .update(cx, |buffer_store, cx| {
+                buffer_store.create_buffer_for_peer(&origin.buffer, peer_id, cx)
+            })
+            .detach_and_log_err(cx);
+
+        let buffer_id = origin.buffer.read(cx).remote_id().into();
+        proto::Location {
+            start: Some(serialize_anchor(&origin.range.start)),
+            end: Some(serialize_anchor(&origin.range.end)),
+            buffer_id,
+        }
+    });
+
+    lsp_store
+        .buffer_store()
+        .update(cx, |buffer_store, cx| {
+            buffer_store.create_buffer_for_peer(&location.target.buffer, peer_id, cx)
+        })
+        .detach_and_log_err(cx);
+
+    let buffer_id = location.target.buffer.read(cx).remote_id().into();
+    let target = proto::Location {
+        start: Some(serialize_anchor(&location.target.range.start)),
+        end: Some(serialize_anchor(&location.target.range.end)),
+        buffer_id,
+    };
+
+    proto::LocationLink {
+        origin,
+        target: Some(target),
+    }
 }
 
 #[async_trait(?Send)]
@@ -2088,7 +2158,7 @@ impl LspCommand for GetCompletions {
             .map(Arc::new);
 
         let mut completion_edits = Vec::new();
-        buffer.update(&mut cx, |buffer, cx| {
+        buffer.update(&mut cx, |buffer, _cx| {
             let snapshot = buffer.snapshot();
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 
@@ -2125,21 +2195,11 @@ impl LspCommand for GetCompletions {
                     // If the language server provides a range to overwrite, then
                     // check that the range is valid.
                     Some(completion_text_edit) => {
-                        let completion_mode = AllLanguageSettings::get_global(cx)
-                            .defaults
-                            .completions
-                            .lsp_insert_mode;
-
-                        match parse_completion_text_edit(
-                            &completion_text_edit,
-                            &snapshot,
-                            completion_mode,
-                        ) {
+                        match parse_completion_text_edit(&completion_text_edit, &snapshot) {
                             Some(edit) => edit,
                             None => return false,
                         }
                     }
-
                     // If the language server does not provide a range, then infer
                     // the range based on the syntax tree.
                     None => {
@@ -2191,7 +2251,12 @@ impl LspCommand for GetCompletions {
                             .as_ref()
                             .unwrap_or(&lsp_completion.label)
                             .clone();
-                        (range, text)
+
+                        ParsedCompletionEdit {
+                            replace_range: range,
+                            insert_range: None,
+                            new_text: text,
+                        }
                     }
                 };
 
@@ -2207,8 +2272,8 @@ impl LspCommand for GetCompletions {
         Ok(completions
             .into_iter()
             .zip(completion_edits)
-            .map(|(mut lsp_completion, (old_range, mut new_text))| {
-                LineEnding::normalize(&mut new_text);
+            .map(|(mut lsp_completion, mut edit)| {
+                LineEnding::normalize(&mut edit.new_text);
                 if lsp_completion.data.is_none() {
                     if let Some(default_data) = lsp_defaults
                         .as_ref()
@@ -2220,9 +2285,10 @@ impl LspCommand for GetCompletions {
                     }
                 }
                 CoreCompletion {
-                    old_range,
-                    new_text,
+                    replace_range: edit.replace_range,
+                    new_text: edit.new_text,
                     source: CompletionSource::Lsp {
+                        insert_range: edit.insert_range,
                         server_id,
                         lsp_completion: Box::new(lsp_completion),
                         lsp_defaults: lsp_defaults.clone(),
@@ -2312,91 +2378,53 @@ impl LspCommand for GetCompletions {
     }
 }
 
+pub struct ParsedCompletionEdit {
+    pub replace_range: Range<Anchor>,
+    pub insert_range: Option<Range<Anchor>>,
+    pub new_text: String,
+}
+
 pub(crate) fn parse_completion_text_edit(
     edit: &lsp::CompletionTextEdit,
     snapshot: &BufferSnapshot,
-    completion_mode: LspInsertMode,
-) -> Option<(Range<Anchor>, String)> {
-    match edit {
-        lsp::CompletionTextEdit::Edit(edit) => {
-            let range = range_from_lsp(edit.range);
-            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-            if start != range.start.0 || end != range.end.0 {
-                log::info!("completion out of expected range");
-                None
-            } else {
-                Some((
-                    snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                    edit.new_text.clone(),
-                ))
-            }
-        }
-
+) -> Option<ParsedCompletionEdit> {
+    let (replace_range, insert_range, new_text) = match edit {
+        lsp::CompletionTextEdit::Edit(edit) => (edit.range, None, &edit.new_text),
         lsp::CompletionTextEdit::InsertAndReplace(edit) => {
-            let replace = match completion_mode {
-                LspInsertMode::Insert => false,
-                LspInsertMode::Replace => true,
-                LspInsertMode::ReplaceSubsequence => {
-                    let range_to_replace = range_from_lsp(edit.replace);
+            (edit.replace, Some(edit.insert), &edit.new_text)
+        }
+    };
 
-                    let start = snapshot.clip_point_utf16(range_to_replace.start, Bias::Left);
-                    let end = snapshot.clip_point_utf16(range_to_replace.end, Bias::Left);
-                    if start != range_to_replace.start.0 || end != range_to_replace.end.0 {
-                        false
-                    } else {
-                        let mut completion_text = edit.new_text.chars();
+    let replace_range = {
+        let range = range_from_lsp(replace_range);
+        let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+        let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+        if start != range.start.0 || end != range.end.0 {
+            log::info!("completion out of expected range");
+            return None;
+        }
+        snapshot.anchor_before(start)..snapshot.anchor_after(end)
+    };
 
-                        let mut text_to_replace = snapshot.chars_for_range(
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                        );
-
-                        // is `text_to_replace` a subsequence of `completion_text`
-                        text_to_replace.all(|needle_ch| {
-                            completion_text.any(|haystack_ch| haystack_ch == needle_ch)
-                        })
-                    }
-                }
-                LspInsertMode::ReplaceSuffix => {
-                    let range_after_cursor = lsp::Range {
-                        start: edit.insert.end,
-                        end: edit.replace.end,
-                    };
-                    let range_after_cursor = range_from_lsp(range_after_cursor);
-
-                    let start = snapshot.clip_point_utf16(range_after_cursor.start, Bias::Left);
-                    let end = snapshot.clip_point_utf16(range_after_cursor.end, Bias::Left);
-                    if start != range_after_cursor.start.0 || end != range_after_cursor.end.0 {
-                        false
-                    } else {
-                        let text_after_cursor = snapshot
-                            .text_for_range(
-                                snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                            )
-                            .collect::<String>();
-                        edit.new_text.ends_with(&text_after_cursor)
-                    }
-                }
-            };
-
-            let range = range_from_lsp(match replace {
-                true => edit.replace,
-                false => edit.insert,
-            });
-
+    let insert_range = match insert_range {
+        None => None,
+        Some(insert_range) => {
+            let range = range_from_lsp(insert_range);
             let start = snapshot.clip_point_utf16(range.start, Bias::Left);
             let end = snapshot.clip_point_utf16(range.end, Bias::Left);
             if start != range.start.0 || end != range.end.0 {
-                log::info!("completion out of expected range");
-                None
-            } else {
-                Some((
-                    snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                    edit.new_text.clone(),
-                ))
+                log::info!("completion (insert) out of expected range");
+                return None;
             }
+            Some(snapshot.anchor_before(start)..snapshot.anchor_after(end))
         }
-    }
+    };
+
+    Some(ParsedCompletionEdit {
+        insert_range: insert_range,
+        replace_range: replace_range,
+        new_text: new_text.clone(),
+    })
 }
 
 #[async_trait(?Send)]

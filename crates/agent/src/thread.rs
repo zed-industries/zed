@@ -2,47 +2,43 @@ use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Instant;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use assistant_settings::AssistantSettings;
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap};
-use fs::Fs;
+use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    PaymentRequiredError, Role, StopReason, TokenUsage,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelImage, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
+    TokenUsage,
 };
+use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
-use project::{Project, Worktree};
-use prompt_store::{
-    AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
-};
+use prompt_store::PromptBuilder;
+use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use util::{ResultExt as _, TryFutureExt as _, maybe, post_inc};
+use thiserror::Error;
+use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 
 use crate::context::{AssistantContext, ContextId, format_context_as_string};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
-    SerializedToolUse,
+    SerializedToolUse, SharedProjectContext,
 };
-use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState, USING_TOOL_MARKER};
-
-#[derive(Debug, Clone, Copy)]
-pub enum RequestKind {
-    Chat,
-    /// Used when summarizing a thread.
-    Summarize,
-}
+use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -67,6 +63,24 @@ impl From<&str> for ThreadId {
     }
 }
 
+/// The ID of the user prompt that initiated a request.
+///
+/// This equates to the user physically submitting a message to the model (e.g., by pressing the Enter key).
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct PromptId(Arc<str>);
+
+impl PromptId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+impl std::fmt::Display for PromptId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct MessageId(pub(crate) usize);
 
@@ -83,6 +97,7 @@ pub struct Message {
     pub role: Role,
     pub segments: Vec<MessageSegment>,
     pub context: String,
+    pub images: Vec<LanguageModelImage>,
 }
 
 impl Message {
@@ -92,12 +107,21 @@ impl Message {
         self.segments.iter().all(|segment| segment.should_display())
     }
 
-    pub fn push_thinking(&mut self, text: &str) {
-        if let Some(MessageSegment::Thinking(segment)) = self.segments.last_mut() {
+    pub fn push_thinking(&mut self, text: &str, signature: Option<String>) {
+        if let Some(MessageSegment::Thinking {
+            text: segment,
+            signature: current_signature,
+        }) = self.segments.last_mut()
+        {
+            if let Some(signature) = signature {
+                *current_signature = Some(signature);
+            }
             segment.push_str(text);
         } else {
-            self.segments
-                .push(MessageSegment::Thinking(text.to_string()));
+            self.segments.push(MessageSegment::Thinking {
+                text: text.to_string(),
+                signature,
+            });
         }
     }
 
@@ -119,11 +143,12 @@ impl Message {
         for segment in &self.segments {
             match segment {
                 MessageSegment::Text(text) => result.push_str(text),
-                MessageSegment::Thinking(text) => {
-                    result.push_str("<think>");
+                MessageSegment::Thinking { text, .. } => {
+                    result.push_str("<think>\n");
                     result.push_str(text);
-                    result.push_str("</think>");
+                    result.push_str("\n</think>");
                 }
+                MessageSegment::RedactedThinking(_) => {}
             }
         }
 
@@ -134,24 +159,19 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageSegment {
     Text(String),
-    Thinking(String),
+    Thinking {
+        text: String,
+        signature: Option<String>,
+    },
+    RedactedThinking(Vec<u8>),
 }
 
 impl MessageSegment {
-    pub fn text_mut(&mut self) -> &mut String {
-        match self {
-            Self::Text(text) => text,
-            Self::Thinking(text) => text,
-        }
-    }
-
     pub fn should_display(&self) -> bool {
-        // We add USING_TOOL_MARKER when making a request that includes tool uses
-        // without non-whitespace text around them, and this can cause the model
-        // to mimic the pattern, so we consider those segments not displayable.
         match self {
-            Self::Text(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
-            Self::Thinking(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
+            Self::Text(text) => text.is_empty(),
+            Self::Thinking { text, .. } => text.is_empty(),
+            Self::RedactedThinking(_) => false,
         }
     }
 }
@@ -183,7 +203,7 @@ pub struct ThreadCheckpoint {
     git_checkpoint: GitStoreCheckpoint,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ThreadFeedback {
     Positive,
     Negative,
@@ -225,10 +245,36 @@ pub enum DetailedSummaryState {
 pub struct TotalTokenUsage {
     pub total: usize,
     pub max: usize,
-    pub ratio: TokenUsageRatio,
 }
 
-#[derive(Default, PartialEq, Eq)]
+impl TotalTokenUsage {
+    pub fn ratio(&self) -> TokenUsageRatio {
+        #[cfg(debug_assertions)]
+        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
+            .unwrap_or("0.8".to_string())
+            .parse()
+            .unwrap();
+        #[cfg(not(debug_assertions))]
+        let warning_threshold: f32 = 0.8;
+
+        if self.total >= self.max {
+            TokenUsageRatio::Exceeded
+        } else if self.total as f32 / self.max as f32 >= warning_threshold {
+            TokenUsageRatio::Warning
+        } else {
+            TokenUsageRatio::Normal
+        }
+    }
+
+    pub fn add(&self, tokens: usize) -> TotalTokenUsage {
+        TotalTokenUsage {
+            total: self.total + tokens,
+            max: self.max,
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum TokenUsageRatio {
     #[default]
     Normal,
@@ -245,29 +291,47 @@ pub struct Thread {
     detailed_summary_state: DetailedSummaryState,
     messages: Vec<Message>,
     next_message_id: MessageId,
+    last_prompt_id: PromptId,
     context: BTreeMap<ContextId, AssistantContext>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
-    system_prompt_context: Option<AssistantSystemPromptContext>,
+    project_context: SharedProjectContext,
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
     prompt_builder: Arc<PromptBuilder>,
-    tools: Arc<ToolWorkingSet>,
+    tools: Entity<ToolWorkingSet>,
     tool_use: ToolUseState,
     action_log: Entity<ActionLog>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
+    request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
+    exceeded_window_error: Option<ExceededWindowError>,
     feedback: Option<ThreadFeedback>,
+    message_feedback: HashMap<MessageId, ThreadFeedback>,
+    last_auto_capture_at: Option<Instant>,
+    request_callback: Option<
+        Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
+    >,
+    remaining_turns: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExceededWindowError {
+    /// Model used when last message exceeded context window
+    model_id: LanguageModelId,
+    /// Token count including last message
+    token_count: usize,
 }
 
 impl Thread {
     pub fn new(
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
+        system_prompt: SharedProjectContext,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -278,9 +342,10 @@ impl Thread {
             detailed_summary_state: DetailedSummaryState::NotGenerated,
             messages: Vec::new(),
             next_message_id: MessageId(0),
+            last_prompt_id: PromptId::new(),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
-            system_prompt_context: None,
+            project_context: system_prompt,
             checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
@@ -297,8 +362,14 @@ impl Thread {
                     .spawn(async move { Some(project_snapshot.await) })
                     .shared()
             },
+            request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
+            exceeded_window_error: None,
             feedback: None,
+            message_feedback: HashMap::default(),
+            last_auto_capture_at: None,
+            request_callback: None,
+            remaining_turns: u32::MAX,
         }
     }
 
@@ -306,8 +377,9 @@ impl Thread {
         id: ThreadId,
         serialized: SerializedThread,
         project: Entity<Project>,
-        tools: Arc<ToolWorkingSet>,
+        tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
+        project_context: SharedProjectContext,
         cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
@@ -337,18 +409,23 @@ impl Thread {
                         .into_iter()
                         .map(|segment| match segment {
                             SerializedMessageSegment::Text { text } => MessageSegment::Text(text),
-                            SerializedMessageSegment::Thinking { text } => {
-                                MessageSegment::Thinking(text)
+                            SerializedMessageSegment::Thinking { text, signature } => {
+                                MessageSegment::Thinking { text, signature }
+                            }
+                            SerializedMessageSegment::RedactedThinking { data } => {
+                                MessageSegment::RedactedThinking(data)
                             }
                         })
                         .collect(),
                     context: message.context,
+                    images: Vec::new(),
                 })
                 .collect(),
             next_message_id,
+            last_prompt_id: PromptId::new(),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
-            system_prompt_context: None,
+            project_context,
             checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
@@ -360,9 +437,23 @@ impl Thread {
             tool_use,
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
+            request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
+            exceeded_window_error: None,
             feedback: None,
+            message_feedback: HashMap::default(),
+            last_auto_capture_at: None,
+            request_callback: None,
+            remaining_turns: u32::MAX,
         }
+    }
+
+    pub fn set_request_callback(
+        &mut self,
+        callback: impl 'static
+        + FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>]),
+    ) {
+        self.request_callback = Some(Box::new(callback));
     }
 
     pub fn id(&self) -> &ThreadId {
@@ -381,8 +472,16 @@ impl Thread {
         self.updated_at = Utc::now();
     }
 
+    pub fn advance_prompt_id(&mut self) {
+        self.last_prompt_id = PromptId::new();
+    }
+
     pub fn summary(&self) -> Option<SharedString> {
         self.summary.clone()
+    }
+
+    pub fn project_context(&self) -> SharedProjectContext {
+        self.project_context.clone()
     }
 
     pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
@@ -391,17 +490,20 @@ impl Thread {
         self.summary.clone().unwrap_or(Self::DEFAULT_SUMMARY)
     }
 
-    pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut Context<Self>) {
-        let summary = summary.into();
-        let old_summary = self.summary_or_default();
-
-        self.summary = if summary.is_empty() {
-            Some(Self::DEFAULT_SUMMARY)
-        } else {
-            Some(summary)
+    pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let Some(current_summary) = &self.summary else {
+            // Don't allow setting summary until generated
+            return;
         };
 
-        if Some(old_summary) != self.summary {
+        let mut new_summary = new_summary.into();
+
+        if new_summary.is_empty() {
+            new_summary = Self::DEFAULT_SUMMARY;
+        }
+
+        if current_summary != &new_summary {
+            self.summary = Some(new_summary);
             cx.emit(ThreadEvent::SummaryChanged);
         }
     }
@@ -423,7 +525,7 @@ impl Thread {
         self.messages.iter().find(|message| message.id == id)
     }
 
-    pub fn messages(&self) -> impl Iterator<Item = &Message> {
+    pub fn messages(&self) -> impl ExactSizeIterator<Item = &Message> {
         self.messages.iter()
     }
 
@@ -431,7 +533,7 @@ impl Thread {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
     }
 
-    pub fn tools(&self) -> &Arc<ToolWorkingSet> {
+    pub fn tools(&self) -> &Entity<ToolWorkingSet> {
         &self.tools
     }
 
@@ -468,11 +570,11 @@ impl Thread {
         cx.emit(ThreadEvent::CheckpointChanged);
         cx.notify();
 
-        let project = self.project.read(cx);
-        let restore = project
-            .git_store()
-            .read(cx)
-            .restore_checkpoint(checkpoint.git_checkpoint.clone(), cx);
+        let git_store = self.project().read(cx).git_store().clone();
+        let restore = git_store.update(cx, |git_store, cx| {
+            git_store.restore_checkpoint(checkpoint.git_checkpoint.clone(), cx)
+        });
+
         cx.spawn(async move |this, cx| {
             let result = restore.await;
             this.update(cx, |this, cx| {
@@ -503,11 +605,11 @@ impl Thread {
         };
 
         let git_store = self.project.read(cx).git_store().clone();
-        let final_checkpoint = git_store.read(cx).checkpoint(cx);
+        let final_checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
         cx.spawn(async move |this, cx| match final_checkpoint.await {
             Ok(final_checkpoint) => {
                 let equal = git_store
-                    .read_with(cx, |store, cx| {
+                    .update(cx, |store, cx| {
                         store.compare_checkpoints(
                             pending_checkpoint.git_checkpoint.clone(),
                             final_checkpoint.clone(),
@@ -519,7 +621,7 @@ impl Thread {
 
                 if equal {
                     git_store
-                        .read_with(cx, |store, cx| {
+                        .update(cx, |store, cx| {
                             store.delete_checkpoint(pending_checkpoint.git_checkpoint, cx)
                         })?
                         .detach();
@@ -530,7 +632,7 @@ impl Thread {
                 }
 
                 git_store
-                    .read_with(cx, |store, cx| {
+                    .update(cx, |store, cx| {
                         store.delete_checkpoint(final_checkpoint, cx)
                     })?
                     .detach();
@@ -603,8 +705,28 @@ impl Thread {
         self.tool_use.tool_result(id)
     }
 
+    pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
+        Some(&self.tool_use.tool_result(id)?.content)
+    }
+
+    pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<AnyToolCard> {
+        self.tool_use.tool_result_card(id).cloned()
+    }
+
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
         self.tool_use.message_has_tool_results(message_id)
+    }
+
+    /// Filter out contexts that have already been included in previous messages
+    pub fn filter_new_context<'a>(
+        &self,
+        context: impl Iterator<Item = &'a AssistantContext>,
+    ) -> impl Iterator<Item = &'a AssistantContext> {
+        context.filter(|ctx| self.is_context_new(ctx))
+    }
+
+    fn is_context_new(&self, context: &AssistantContext) -> bool {
+        !self.context.contains_key(&context.id())
     }
 
     pub fn insert_user_message(
@@ -618,10 +740,9 @@ impl Thread {
 
         let message_id = self.insert_message(Role::User, vec![MessageSegment::Text(text)], cx);
 
-        // Filter out contexts that have already been included in previous messages
         let new_context: Vec<_> = context
             .into_iter()
-            .filter(|ctx| !self.context.contains_key(&ctx.id()))
+            .filter(|ctx| self.is_context_new(ctx))
             .collect();
 
         if !new_context.is_empty() {
@@ -631,25 +752,41 @@ impl Thread {
                 }
             }
 
+            if let Some(message) = self.messages.iter_mut().find(|m| m.id == message_id) {
+                message.images = new_context
+                    .iter()
+                    .filter_map(|context| {
+                        if let AssistantContext::Image(image_context) = context {
+                            image_context.image_task.clone().now_or_never().flatten()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+            }
+
             self.action_log.update(cx, |log, cx| {
                 // Track all buffers added as context
                 for ctx in &new_context {
                     match ctx {
                         AssistantContext::File(file_ctx) => {
-                            log.buffer_added_as_context(file_ctx.context_buffer.buffer.clone(), cx);
+                            log.track_buffer(file_ctx.context_buffer.buffer.clone(), cx);
                         }
                         AssistantContext::Directory(dir_ctx) => {
                             for context_buffer in &dir_ctx.context_buffers {
-                                log.buffer_added_as_context(context_buffer.buffer.clone(), cx);
+                                log.track_buffer(context_buffer.buffer.clone(), cx);
                             }
                         }
                         AssistantContext::Symbol(symbol_ctx) => {
-                            log.buffer_added_as_context(
-                                symbol_ctx.context_symbol.buffer.clone(),
-                                cx,
-                            );
+                            log.track_buffer(symbol_ctx.context_symbol.buffer.clone(), cx);
                         }
-                        AssistantContext::FetchedUrl(_) | AssistantContext::Thread(_) => {}
+                        AssistantContext::Selection(selection_context) => {
+                            log.track_buffer(selection_context.context_buffer.buffer.clone(), cx);
+                        }
+                        AssistantContext::FetchedUrl(_)
+                        | AssistantContext::Thread(_)
+                        | AssistantContext::Rules(_)
+                        | AssistantContext::Image(_) => {}
                     }
                 }
             });
@@ -672,6 +809,9 @@ impl Thread {
                 git_checkpoint,
             });
         }
+
+        self.auto_capture_telemetry(cx);
+
         message_id
     }
 
@@ -687,6 +827,7 @@ impl Thread {
             role,
             segments,
             context: String::new(),
+            images: Vec::new(),
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -738,9 +879,10 @@ impl Thread {
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(content) => text.push_str(content),
-                    MessageSegment::Thinking(content) => {
+                    MessageSegment::Thinking { text: content, .. } => {
                         text.push_str(&format!("<think>{}</think>", content))
                     }
+                    MessageSegment::RedactedThinking(_) => {}
                 }
             }
             text.push('\n');
@@ -770,8 +912,16 @@ impl Thread {
                                 MessageSegment::Text(text) => {
                                     SerializedMessageSegment::Text { text: text.clone() }
                                 }
-                                MessageSegment::Thinking(text) => {
-                                    SerializedMessageSegment::Thinking { text: text.clone() }
+                                MessageSegment::Thinking { text, signature } => {
+                                    SerializedMessageSegment::Thinking {
+                                        text: text.clone(),
+                                        signature: signature.clone(),
+                                    }
+                                }
+                                MessageSegment::RedactedThinking(data) => {
+                                    SerializedMessageSegment::RedactedThinking {
+                                        data: data.clone(),
+                                    }
                                 }
                             })
                             .collect(),
@@ -797,140 +947,48 @@ impl Thread {
                     })
                     .collect(),
                 initial_project_snapshot,
-                cumulative_token_usage: this.cumulative_token_usage.clone(),
+                cumulative_token_usage: this.cumulative_token_usage,
+                request_token_usage: this.request_token_usage.clone(),
                 detailed_summary_state: this.detailed_summary_state.clone(),
+                exceeded_window_error: this.exceeded_window_error.clone(),
             })
         })
     }
 
-    pub fn set_system_prompt_context(&mut self, context: AssistantSystemPromptContext) {
-        self.system_prompt_context = Some(context);
+    pub fn remaining_turns(&self) -> u32 {
+        self.remaining_turns
     }
 
-    pub fn system_prompt_context(&self) -> &Option<AssistantSystemPromptContext> {
-        &self.system_prompt_context
+    pub fn set_remaining_turns(&mut self, remaining_turns: u32) {
+        self.remaining_turns = remaining_turns;
     }
 
-    pub fn load_system_prompt_context(
-        &self,
-        cx: &App,
-    ) -> Task<(AssistantSystemPromptContext, Option<ThreadError>)> {
-        let project = self.project.read(cx);
-        let tasks = project
-            .visible_worktrees(cx)
-            .map(|worktree| {
-                Self::load_worktree_info_for_system_prompt(
-                    project.fs().clone(),
-                    worktree.read(cx),
-                    cx,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        cx.spawn(async |_cx| {
-            let results = futures::future::join_all(tasks).await;
-            let mut first_err = None;
-            let worktrees = results
-                .into_iter()
-                .map(|(worktree, err)| {
-                    if first_err.is_none() && err.is_some() {
-                        first_err = err;
-                    }
-                    worktree
-                })
-                .collect::<Vec<_>>();
-            (AssistantSystemPromptContext::new(worktrees), first_err)
-        })
-    }
-
-    fn load_worktree_info_for_system_prompt(
-        fs: Arc<dyn Fs>,
-        worktree: &Worktree,
-        cx: &App,
-    ) -> Task<(WorktreeInfoForSystemPrompt, Option<ThreadError>)> {
-        let root_name = worktree.root_name().into();
-        let abs_path = worktree.abs_path();
-
-        // Note that Cline supports `.clinerules` being a directory, but that is not currently
-        // supported. This doesn't seem to occur often in GitHub repositories.
-        const RULES_FILE_NAMES: [&'static str; 6] = [
-            ".rules",
-            ".cursorrules",
-            ".windsurfrules",
-            ".clinerules",
-            ".github/copilot-instructions.md",
-            "CLAUDE.md",
-        ];
-        let selected_rules_file = RULES_FILE_NAMES
-            .into_iter()
-            .filter_map(|name| {
-                worktree
-                    .entry_for_path(name)
-                    .filter(|entry| entry.is_file())
-                    .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
-            })
-            .next();
-
-        if let Some((rel_rules_path, abs_rules_path)) = selected_rules_file {
-            cx.spawn(async move |_| {
-                let rules_file_result = maybe!(async move {
-                    let abs_rules_path = abs_rules_path?;
-                    let text = fs.load(&abs_rules_path).await.with_context(|| {
-                        format!("Failed to load assistant rules file {:?}", abs_rules_path)
-                    })?;
-                    anyhow::Ok(RulesFile {
-                        rel_path: rel_rules_path,
-                        abs_path: abs_rules_path.into(),
-                        text: text.trim().to_string(),
-                    })
-                })
-                .await;
-                let (rules_file, rules_file_error) = match rules_file_result {
-                    Ok(rules_file) => (Some(rules_file), None),
-                    Err(err) => (
-                        None,
-                        Some(ThreadError::Message {
-                            header: "Error loading rules file".into(),
-                            message: format!("{err}").into(),
-                        }),
-                    ),
-                };
-                let worktree_info = WorktreeInfoForSystemPrompt {
-                    root_name,
-                    abs_path,
-                    rules_file,
-                };
-                (worktree_info, rules_file_error)
-            })
-        } else {
-            Task::ready((
-                WorktreeInfoForSystemPrompt {
-                    root_name,
-                    abs_path,
-                    rules_file: None,
-                },
-                None,
-            ))
+    pub fn send_to_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+        if self.remaining_turns == 0 {
+            return;
         }
-    }
 
-    pub fn send_to_model(
-        &mut self,
-        model: Arc<dyn LanguageModel>,
-        request_kind: RequestKind,
-        cx: &mut Context<Self>,
-    ) {
-        let mut request = self.to_completion_request(request_kind, cx);
+        self.remaining_turns -= 1;
+
+        let mut request = self.to_completion_request(cx);
         if model.supports_tools() {
             request.tools = {
                 let mut tools = Vec::new();
-                tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
-                    LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema: tool.input_schema(model.tool_input_format()),
-                    }
-                }));
+                tools.extend(
+                    self.tools()
+                        .read(cx)
+                        .enabled_tools(cx)
+                        .into_iter()
+                        .filter_map(|tool| {
+                            // Skip tools that cannot be supported
+                            let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
+                            Some(LanguageModelRequestTool {
+                                name: tool.name(),
+                                description: tool.description(),
+                                input_schema,
+                            })
+                        }),
+                );
 
                 tools
             };
@@ -951,33 +1009,44 @@ impl Thread {
         false
     }
 
-    pub fn to_completion_request(
-        &self,
-        request_kind: RequestKind,
-        cx: &App,
-    ) -> LanguageModelRequest {
+    pub fn to_completion_request(&self, cx: &mut Context<Self>) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(self.last_prompt_id.to_string()),
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: None,
         };
 
-        if let Some(system_prompt_context) = self.system_prompt_context.as_ref() {
-            if let Some(system_prompt) = self
+        if let Some(project_context) = self.project_context.borrow().as_ref() {
+            match self
                 .prompt_builder
-                .generate_assistant_system_prompt(system_prompt_context)
-                .context("failed to generate assistant system prompt")
-                .log_err()
+                .generate_assistant_system_prompt(project_context)
             {
-                request.messages.push(LanguageModelRequestMessage {
-                    role: Role::System,
-                    content: vec![MessageContent::Text(system_prompt)],
-                    cache: true,
-                });
+                Err(err) => {
+                    let message = format!("{err:?}").into();
+                    log::error!("{message}");
+                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                        header: "Error generating system prompt".into(),
+                        message,
+                    }));
+                }
+                Ok(system_prompt) => {
+                    request.messages.push(LanguageModelRequestMessage {
+                        role: Role::System,
+                        content: vec![MessageContent::Text(system_prompt)],
+                        cache: true,
+                    });
+                }
             }
         } else {
-            log::error!("system_prompt_context not set.")
+            let message = "Context for system prompt unexpectedly not ready.".into();
+            log::error!("{message}");
+            cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                header: "Error generating system prompt".into(),
+                message,
+            }));
         }
 
         for message in &self.messages {
@@ -987,34 +1056,57 @@ impl Thread {
                 cache: false,
             };
 
-            match request_kind {
-                RequestKind::Chat => {
-                    self.tool_use
-                        .attach_tool_results(message.id, &mut request_message);
-                }
-                RequestKind::Summarize => {
-                    // We don't care about tool use during summarization.
-                    if self.tool_use.message_has_tool_results(message.id) {
-                        continue;
-                    }
-                }
-            }
+            self.tool_use
+                .attach_tool_results(message.id, &mut request_message);
 
-            if !message.segments.is_empty() {
+            if !message.context.is_empty() {
                 request_message
                     .content
-                    .push(MessageContent::Text(message.to_string()));
+                    .push(MessageContent::Text(message.context.to_string()));
             }
 
-            match request_kind {
-                RequestKind::Chat => {
-                    self.tool_use
-                        .attach_tool_uses(message.id, &mut request_message);
+            if !message.images.is_empty() {
+                // Some providers only support image parts after an initial text part
+                if request_message.content.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text("Images attached by user:".to_string()));
                 }
-                RequestKind::Summarize => {
-                    // We don't care about tool use during summarization.
+
+                for image in &message.images {
+                    request_message
+                        .content
+                        .push(MessageContent::Image(image.clone()))
                 }
-            };
+            }
+
+            for segment in &message.segments {
+                match segment {
+                    MessageSegment::Text(text) => {
+                        if !text.is_empty() {
+                            request_message
+                                .content
+                                .push(MessageContent::Text(text.into()));
+                        }
+                    }
+                    MessageSegment::Thinking { text, signature } => {
+                        if !text.is_empty() {
+                            request_message.content.push(MessageContent::Thinking {
+                                text: text.into(),
+                                signature: signature.clone(),
+                            });
+                        }
+                    }
+                    MessageSegment::RedactedThinking(data) => {
+                        request_message
+                            .content
+                            .push(MessageContent::RedactedThinking(data.clone()));
+                    }
+                };
+            }
+
+            self.tool_use
+                .attach_tool_uses(message.id, &mut request_message);
 
             request.messages.push(request_message);
         }
@@ -1025,6 +1117,54 @@ impl Thread {
         }
 
         self.attached_tracked_files_state(&mut request.messages, cx);
+
+        request
+    }
+
+    fn to_summarize_request(&self, added_user_message: String) -> LanguageModelRequest {
+        let mut request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            messages: vec![],
+            tools: Vec::new(),
+            stop: Vec::new(),
+            temperature: None,
+        };
+
+        for message in &self.messages {
+            let mut request_message = LanguageModelRequestMessage {
+                role: message.role,
+                content: Vec::new(),
+                cache: false,
+            };
+
+            // Skip tool results during summarization.
+            if self.tool_use.message_has_tool_results(message.id) {
+                continue;
+            }
+
+            for segment in &message.segments {
+                match segment {
+                    MessageSegment::Text(text) => request_message
+                        .content
+                        .push(MessageContent::Text(text.clone())),
+                    MessageSegment::Thinking { .. } => {}
+                    MessageSegment::RedactedThinking(_) => {}
+                }
+            }
+
+            if request_message.content.is_empty() {
+                continue;
+            }
+
+            request.messages.push(request_message);
+        }
+
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text(added_user_message)],
+            cache: false,
+        });
 
         request
     }
@@ -1058,15 +1198,6 @@ impl Thread {
             content.push(stale_message.into());
         }
 
-        if action_log.has_edited_files_since_project_diagnostics_check() {
-            content.push(
-                "\n\nWhen you're done making changes, make sure to check project diagnostics \
-                and fix all errors AND warnings you introduced! \
-                DO NOT mention you're going to do this until you're done."
-                    .into(),
-            );
-        }
-
         if !content.is_empty() {
             let context_message = LanguageModelRequestMessage {
                 role: Role::User,
@@ -1085,17 +1216,42 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
+        let mut request_callback_parameters = if self.request_callback.is_some() {
+            Some((request.clone(), Vec::new()))
+        } else {
+            None
+        };
+        let prompt_id = self.last_prompt_id.clone();
+        let tool_use_metadata = ToolUseMetadata {
+            model: model.clone(),
+            thread_id: self.id.clone(),
+            prompt_id: prompt_id.clone(),
+        };
 
         let task = cx.spawn(async move |thread, cx| {
-            let stream = model.stream_completion(request, &cx);
+            let stream_completion_future = model.stream_completion_with_usage(request, &cx);
             let initial_token_usage =
-                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage.clone());
+                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
-                let mut events = stream.await?;
+                let (mut events, usage) = stream_completion_future.await?;
+
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
 
+                if let Some(usage) = usage {
+                    thread
+                        .update(cx, |_thread, cx| {
+                            cx.emit(ThreadEvent::UsageUpdated(usage));
+                        })
+                        .ok();
+                }
+
                 while let Some(event) = events.next().await {
+                    if let Some((_, response_events)) = request_callback_parameters.as_mut() {
+                        response_events
+                            .push(event.as_ref().map_err(|error| error.to_string()).cloned());
+                    }
+
                     let event = event?;
 
                     thread.update(cx, |thread, cx| {
@@ -1111,12 +1267,14 @@ impl Thread {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
-                                thread.cumulative_token_usage =
-                                    thread.cumulative_token_usage.clone() + token_usage.clone()
-                                        - current_token_usage.clone();
+                                thread.update_token_usage_at_last_message(token_usage);
+                                thread.cumulative_token_usage = thread.cumulative_token_usage
+                                    + token_usage
+                                    - current_token_usage;
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
+                                cx.emit(ThreadEvent::ReceivedTextChunk);
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
                                         last_message.push_text(&chunk);
@@ -1138,10 +1296,13 @@ impl Thread {
                                     };
                                 }
                             }
-                            LanguageModelCompletionEvent::Thinking(chunk) => {
+                            LanguageModelCompletionEvent::Thinking {
+                                text: chunk,
+                                signature,
+                            } => {
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
-                                        last_message.push_thinking(&chunk);
+                                        last_message.push_thinking(&chunk, signature);
                                         cx.emit(ThreadEvent::StreamedAssistantThinking(
                                             last_message.id,
                                             chunk,
@@ -1154,7 +1315,10 @@ impl Thread {
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
                                         thread.insert_message(
                                             Role::Assistant,
-                                            vec![MessageSegment::Thinking(chunk.to_string())],
+                                            vec![MessageSegment::Thinking {
+                                                text: chunk.to_string(),
+                                                signature,
+                                            }],
                                             cx,
                                         );
                                     };
@@ -1170,17 +1334,35 @@ impl Thread {
                                         thread.insert_message(Role::Assistant, vec![], cx)
                                     });
 
-                                thread.tool_use.request_tool_use(
+                                let tool_use_id = tool_use.id.clone();
+                                let streamed_input = if tool_use.is_input_complete {
+                                    None
+                                } else {
+                                    Some((&tool_use.input).clone())
+                                };
+
+                                let ui_text = thread.tool_use.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
+                                    tool_use_metadata.clone(),
                                     cx,
                                 );
+
+                                if let Some(input) = streamed_input {
+                                    cx.emit(ThreadEvent::StreamedToolUse {
+                                        tool_use_id,
+                                        ui_text,
+                                        input,
+                                    });
+                                }
                             }
                         }
 
                         thread.touch_updated_at();
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
+
+                        thread.auto_capture_telemetry(cx);
                     })?;
 
                     smol::future::yield_now().await;
@@ -1191,7 +1373,12 @@ impl Thread {
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
 
-                    if thread.summary.is_none() && thread.messages.len() >= 2 {
+                    // If there is a response without tool use, summarize the message. Otherwise,
+                    // allow two tool uses before summarizing.
+                    if thread.summary.is_none()
+                        && thread.messages.len() >= 2
+                        && (!thread.has_pending_tool_uses() || thread.messages.len() >= 6)
+                    {
                         thread.summarize(cx);
                     }
                 })?;
@@ -1207,7 +1394,8 @@ impl Thread {
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
-                                cx.emit(ThreadEvent::UsePendingTools);
+                                let tool_uses = thread.use_pending_tools(cx);
+                                cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
@@ -1219,6 +1407,26 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::MaxMonthlySpendReached,
                                 ));
+                            } else if let Some(error) =
+                                error.downcast_ref::<ModelRequestLimitReachedError>()
+                            {
+                                cx.emit(ThreadEvent::ShowError(
+                                    ThreadError::ModelRequestLimitReached { plan: error.plan },
+                                ));
+                            } else if let Some(known_error) =
+                                error.downcast_ref::<LanguageModelKnownError>()
+                            {
+                                match known_error {
+                                    LanguageModelKnownError::ContextWindowLimitExceeded {
+                                        tokens,
+                                    } => {
+                                        thread.exceeded_window_error = Some(ExceededWindowError {
+                                            model_id: model.id(),
+                                            token_count: *tokens,
+                                        });
+                                        cx.notify();
+                                    }
+                                }
                             } else {
                                 let error_message = error
                                     .chain()
@@ -1234,14 +1442,25 @@ impl Thread {
                             thread.cancel_last_completion(cx);
                         }
                     }
-                    cx.emit(ThreadEvent::DoneStreaming);
+                    cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
+
+                    if let Some((request_callback, (request, response_events))) = thread
+                        .request_callback
+                        .as_mut()
+                        .zip(request_callback_parameters.as_ref())
+                    {
+                        request_callback(request, response_events);
+                    }
+
+                    thread.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
-                        let usage = thread.cumulative_token_usage.clone() - initial_usage;
+                        let usage = thread.cumulative_token_usage - initial_usage;
 
                         telemetry::event!(
                             "Assistant Thread Completion",
                             thread_id = thread.id().to_string(),
+                            prompt_id = prompt_id,
                             model = model.telemetry_id(),
                             model_provider = model.provider_id().to_string(),
                             input_tokens = usage.input_tokens,
@@ -1269,23 +1488,24 @@ impl Thread {
             return;
         }
 
-        let mut request = self.to_completion_request(RequestKind::Summarize, cx);
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![
-                "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
-                 Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
-                 If the conversation is about a specific subject, include it in the title. \
-                 Be descriptive. DO NOT speak in the first person."
-                    .into(),
-            ],
-            cache: false,
-        });
+        let added_user_message = "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
+            Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
+            If the conversation is about a specific subject, include it in the title. \
+            Be descriptive. DO NOT speak in the first person.";
+
+        let request = self.to_summarize_request(added_user_message.into());
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
-                let stream = model.model.stream_completion_text(request, &cx);
-                let mut messages = stream.await?;
+                let stream = model.model.stream_completion_text_with_usage(request, &cx);
+                let (mut messages, usage) = stream.await?;
+
+                if let Some(usage) = usage {
+                    this.update(cx, |_thread, cx| {
+                        cx.emit(ThreadEvent::UsageUpdated(usage));
+                    })
+                    .ok();
+                }
 
                 let mut new_summary = String::new();
                 while let Some(message) = messages.stream.next().await {
@@ -1335,21 +1555,14 @@ impl Thread {
             return None;
         }
 
-        let mut request = self.to_completion_request(RequestKind::Summarize, cx);
+        let added_user_message = "Generate a detailed summary of this conversation. Include:\n\
+             1. A brief overview of what was discussed\n\
+             2. Key facts or information discovered\n\
+             3. Outcomes or conclusions reached\n\
+             4. Any action items or next steps if any\n\
+             Format it in Markdown with headings and bullet points.";
 
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![
-                "Generate a detailed summary of this conversation. Include:\n\
-                1. A brief overview of what was discussed\n\
-                2. Key facts or information discovered\n\
-                3. Outcomes or conclusions reached\n\
-                4. Any action items or next steps if any\n\
-                Format it in Markdown with headings and bullet points."
-                    .into(),
-            ],
-            cache: false,
-        });
+        let request = self.to_summarize_request(added_user_message.into());
 
         let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion_text(request, &cx);
@@ -1395,11 +1608,9 @@ impl Thread {
         )
     }
 
-    pub fn use_pending_tools(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> impl IntoIterator<Item = PendingToolUse> + use<> {
-        let request = self.to_completion_request(RequestKind::Chat, cx);
+    pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) -> Vec<PendingToolUse> {
+        self.auto_capture_telemetry(cx);
+        let request = self.to_completion_request(cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self
             .tool_use
@@ -1410,8 +1621,8 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for tool_use in pending_tool_uses.iter() {
-            if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                if tool.needs_confirmation()
+            if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
+                if tool.needs_confirmation(&tool_use.input, cx)
                     && !AssistantSettings::get_global(cx).always_allow_tool_actions
                 {
                     self.tool_use.confirm_tool_use(
@@ -1462,8 +1673,8 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let run_tool = if self.tools.is_disabled(&tool.source(), &tool_name) {
-            Task::ready(Err(anyhow!("tool is disabled: {tool_name}")))
+        let tool_result = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
+            Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))).into()
         } else {
             tool.run(
                 input,
@@ -1474,9 +1685,15 @@ impl Thread {
             )
         };
 
+        // Store the card separately if it exists
+        if let Some(card) = tool_result.card.clone() {
+            self.tool_use
+                .insert_tool_result_card(tool_use_id.clone(), card);
+        }
+
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
-                let output = run_tool.await;
+                let output = tool_result.output.await;
 
                 thread
                     .update(cx, |thread, cx| {
@@ -1484,30 +1701,44 @@ impl Thread {
                             tool_use_id.clone(),
                             tool_name,
                             output,
+                            cx,
                         );
-
-                        cx.emit(ThreadEvent::ToolFinished {
-                            tool_use_id,
-                            pending_tool_use,
-                            canceled: false,
-                        });
+                        thread.tool_finished(tool_use_id, pending_tool_use, false, cx);
                     })
                     .ok();
             }
         })
     }
 
+    fn tool_finished(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        pending_tool_use: Option<PendingToolUse>,
+        canceled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.all_tools_finished() {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
+                self.attach_tool_results(cx);
+                if !canceled {
+                    self.send_to_model(model, cx);
+                }
+            }
+        }
+
+        cx.emit(ThreadEvent::ToolFinished {
+            tool_use_id,
+            pending_tool_use,
+        });
+    }
+
+    /// Insert an empty message to be populated with tool results upon send.
     pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
-        // Insert a user message to contain the tool results.
-        self.insert_user_message(
-            // TODO: Sending up a user message without any content results in the model sending back
-            // responses that also don't have any content. We currently don't handle this case well,
-            // so for now we provide some text to keep the model on track.
-            "Here are the tool results.",
-            Vec::new(),
-            None,
-            cx,
-        );
+        // Tool results are assumed to be waiting on the next message id, so they will populate
+        // this empty message before sending to model. Would prefer this to be more straightforward.
+        self.insert_message(Role::User, vec![], cx);
+        self.auto_capture_telemetry(cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.
@@ -1520,11 +1751,12 @@ impl Thread {
             let mut canceled = false;
             for pending_tool_use in self.tool_use.cancel_pending() {
                 canceled = true;
-                cx.emit(ThreadEvent::ToolFinished {
-                    tool_use_id: pending_tool_use.id.clone(),
-                    pending_tool_use: Some(pending_tool_use),
-                    canceled: true,
-                });
+                self.tool_finished(
+                    pending_tool_use.id.clone(),
+                    Some(pending_tool_use),
+                    true,
+                    cx,
+                );
             }
             canceled
         };
@@ -1532,23 +1764,45 @@ impl Thread {
         canceled
     }
 
-    /// Returns the feedback given to the thread, if any.
     pub fn feedback(&self) -> Option<ThreadFeedback> {
         self.feedback
     }
 
-    /// Reports feedback about the thread and stores it in our telemetry backend.
-    pub fn report_feedback(
+    pub fn message_feedback(&self, message_id: MessageId) -> Option<ThreadFeedback> {
+        self.message_feedback.get(&message_id).copied()
+    }
+
+    pub fn report_message_feedback(
         &mut self,
+        message_id: MessageId,
         feedback: ThreadFeedback,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.message_feedback.get(&message_id) == Some(&feedback) {
+            return Task::ready(Ok(()));
+        }
+
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
-        self.feedback = Some(feedback);
+
+        let enabled_tool_names: Vec<String> = self
+            .tools()
+            .read(cx)
+            .enabled_tools(cx)
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+
+        self.message_feedback.insert(message_id, feedback);
+
         cx.notify();
+
+        let message_content = self
+            .message(message_id)
+            .map(|msg| msg.to_string())
+            .unwrap_or_default();
 
         cx.background_spawn(async move {
             let final_project_snapshot = final_project_snapshot.await;
@@ -1564,13 +1818,62 @@ impl Thread {
                 "Assistant Thread Rated",
                 rating,
                 thread_id,
+                enabled_tool_names,
+                message_id = message_id.0,
+                message_content,
                 thread_data,
                 final_project_snapshot
             );
-            client.telemetry().flush_events();
+            client.telemetry().flush_events().await;
 
             Ok(())
         })
+    }
+
+    pub fn report_feedback(
+        &mut self,
+        feedback: ThreadFeedback,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let last_assistant_message_id = self
+            .messages
+            .iter()
+            .rev()
+            .find(|msg| msg.role == Role::Assistant)
+            .map(|msg| msg.id);
+
+        if let Some(message_id) = last_assistant_message_id {
+            self.report_message_feedback(message_id, feedback, cx)
+        } else {
+            let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
+            let serialized_thread = self.serialize(cx);
+            let thread_id = self.id().clone();
+            let client = self.project.read(cx).client();
+            self.feedback = Some(feedback);
+            cx.notify();
+
+            cx.background_spawn(async move {
+                let final_project_snapshot = final_project_snapshot.await;
+                let serialized_thread = serialized_thread.await?;
+                let thread_data = serde_json::to_value(serialized_thread)
+                    .unwrap_or_else(|_| serde_json::Value::Null);
+
+                let rating = match feedback {
+                    ThreadFeedback::Positive => "positive",
+                    ThreadFeedback::Negative => "negative",
+                };
+                telemetry::event!(
+                    "Assistant Thread Rated",
+                    rating,
+                    thread_id,
+                    thread_data,
+                    final_project_snapshot
+                );
+                client.telemetry().flush_events().await;
+
+                Ok(())
+            })
+        }
     }
 
     /// Create a snapshot of the current project state including git information and unsaved buffers.
@@ -1647,10 +1950,10 @@ impl Thread {
                 .ok()
                 .flatten()
                 .map(|repo| {
-                    repo.read_with(cx, |repo, _| {
+                    repo.update(cx, |repo, _| {
                         let current_branch =
                             repo.branch.as_ref().map(|branch| branch.name.to_string());
-                        repo.send_job(|state, _| async move {
+                        repo.send_job(None, |state, _| async move {
                             let RepositoryState::Local { backend, .. } = state else {
                                 return GitState {
                                     remote_url: None,
@@ -1714,9 +2017,10 @@ impl Thread {
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(text) => writeln!(markdown, "{}\n", text)?,
-                    MessageSegment::Thinking(text) => {
-                        writeln!(markdown, "<think>{}</think>\n", text)?
+                    MessageSegment::Thinking { text, .. } => {
+                        writeln!(markdown, "<think>\n{}\n</think>\n", text)?
                     }
+                    MessageSegment::RedactedThinking(_) => {}
                 }
             }
 
@@ -1765,14 +2069,14 @@ impl Thread {
             .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
     }
 
-    pub fn reject_edits_in_range(
+    pub fn reject_edits_in_ranges(
         &mut self,
         buffer: Entity<language::Buffer>,
-        buffer_range: Range<language::Anchor>,
+        buffer_ranges: Vec<Range<language::Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.action_log.update(cx, |action_log, cx| {
-            action_log.reject_edits_in_range(buffer, buffer_range, cx)
+            action_log.reject_edits_in_ranges(buffer, buffer_ranges, cx)
         })
     }
 
@@ -1784,8 +2088,81 @@ impl Thread {
         &self.project
     }
 
+    pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
+        if !cx.has_flag::<feature_flags::ThreadAutoCapture>() {
+            return;
+        }
+
+        let now = Instant::now();
+        if let Some(last) = self.last_auto_capture_at {
+            if now.duration_since(last).as_secs() < 10 {
+                return;
+            }
+        }
+
+        self.last_auto_capture_at = Some(now);
+
+        let thread_id = self.id().clone();
+        let github_login = self
+            .project
+            .read(cx)
+            .user_store()
+            .read(cx)
+            .current_user()
+            .map(|user| user.github_login.clone());
+        let client = self.project.read(cx).client().clone();
+        let serialize_task = self.serialize(cx);
+
+        cx.background_executor()
+            .spawn(async move {
+                if let Ok(serialized_thread) = serialize_task.await {
+                    if let Ok(thread_data) = serde_json::to_value(serialized_thread) {
+                        telemetry::event!(
+                            "Agent Thread Auto-Captured",
+                            thread_id = thread_id.to_string(),
+                            thread_data = thread_data,
+                            auto_capture_reason = "tracked_user",
+                            github_login = github_login
+                        );
+
+                        client.telemetry().flush_events().await;
+                    }
+                }
+            })
+            .detach();
+    }
+
     pub fn cumulative_token_usage(&self) -> TokenUsage {
-        self.cumulative_token_usage.clone()
+        self.cumulative_token_usage
+    }
+
+    pub fn token_usage_up_to_message(&self, message_id: MessageId, cx: &App) -> TotalTokenUsage {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
+            return TotalTokenUsage::default();
+        };
+
+        let max = model.model.max_token_count();
+
+        let index = self
+            .messages
+            .iter()
+            .position(|msg| msg.id == message_id)
+            .unwrap_or(0);
+
+        if index == 0 {
+            return TotalTokenUsage { total: 0, max };
+        }
+
+        let token_usage = &self
+            .request_token_usage
+            .get(index - 1)
+            .cloned()
+            .unwrap_or_default();
+
+        TotalTokenUsage {
+            total: token_usage.total_tokens() as usize,
+            max,
+        }
     }
 
     pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
@@ -1796,25 +2173,38 @@ impl Thread {
 
         let max = model.model.max_token_count();
 
-        #[cfg(debug_assertions)]
-        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
-            .unwrap_or("0.8".to_string())
-            .parse()
-            .unwrap();
-        #[cfg(not(debug_assertions))]
-        let warning_threshold: f32 = 0.8;
+        if let Some(exceeded_error) = &self.exceeded_window_error {
+            if model.model.id() == exceeded_error.model_id {
+                return TotalTokenUsage {
+                    total: exceeded_error.token_count,
+                    max,
+                };
+            }
+        }
 
-        let total = self.cumulative_token_usage.total_tokens() as usize;
+        let total = self
+            .token_usage_at_last_message()
+            .unwrap_or_default()
+            .total_tokens() as usize;
 
-        let ratio = if total >= max {
-            TokenUsageRatio::Exceeded
-        } else if total as f32 / max as f32 >= warning_threshold {
-            TokenUsageRatio::Warning
-        } else {
-            TokenUsageRatio::Normal
-        };
+        TotalTokenUsage { total, max }
+    }
 
-        TotalTokenUsage { total, max, ratio }
+    fn token_usage_at_last_message(&self) -> Option<TokenUsage> {
+        self.request_token_usage
+            .get(self.messages.len().saturating_sub(1))
+            .or_else(|| self.request_token_usage.last())
+            .cloned()
+    }
+
+    fn update_token_usage_at_last_message(&mut self, token_usage: TokenUsage) {
+        let placeholder = self.token_usage_at_last_message().unwrap_or_default();
+        self.request_token_usage
+            .resize(self.messages.len(), placeholder);
+
+        if let Some(last) = self.request_token_usage.last_mut() {
+            *last = token_usage;
+        }
     }
 
     pub fn deny_tool_use(
@@ -1828,20 +2218,20 @@ impl Thread {
         ));
 
         self.tool_use
-            .insert_tool_output(tool_use_id.clone(), tool_name, err);
-
-        cx.emit(ThreadEvent::ToolFinished {
-            tool_use_id,
-            pending_tool_use: None,
-            canceled: true,
-        });
+            .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
+        self.tool_finished(tool_use_id.clone(), None, true, cx);
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum ThreadError {
+    #[error("Payment required")]
     PaymentRequired,
+    #[error("Max monthly spend reached")]
     MaxMonthlySpendReached,
+    #[error("Model request limit reached")]
+    ModelRequestLimitReached { plan: Plan },
+    #[error("Message {header}: {message}")]
     Message {
         header: SharedString,
         message: SharedString,
@@ -1851,23 +2241,30 @@ pub enum ThreadError {
 #[derive(Debug, Clone)]
 pub enum ThreadEvent {
     ShowError(ThreadError),
+    UsageUpdated(RequestUsage),
     StreamedCompletion,
+    ReceivedTextChunk,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
-    DoneStreaming,
+    StreamedToolUse {
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: Arc<str>,
+        input: serde_json::Value,
+    },
+    Stopped(Result<StopReason, Arc<anyhow::Error>>),
     MessageAdded(MessageId),
     MessageEdited(MessageId),
     MessageDeleted(MessageId),
     SummaryGenerated,
     SummaryChanged,
-    UsePendingTools,
+    UsePendingTools {
+        tool_uses: Vec<PendingToolUse>,
+    },
     ToolFinished {
         #[allow(unused)]
         tool_use_id: LanguageModelToolUseId,
         /// The pending tool use that corresponds to this tool.
         pending_tool_use: Option<PendingToolUse>,
-        /// Whether the tool was canceled by the user.
-        canceled: bool,
     },
     CheckpointChanged,
     ToolConfirmationNeeded,
@@ -1956,13 +2353,11 @@ fn main() {{
         assert_eq!(message.context, expected_context);
 
         // Check message in request
-        let request = thread.read_with(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
-        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages.len(), 2);
         let expected_full_message = format!("{}Please explain this code", expected_context);
-        assert_eq!(request.messages[0].string_contents(), expected_full_message);
+        assert_eq!(request.messages[1].string_contents(), expected_full_message);
     }
 
     #[gpui::test]
@@ -2048,25 +2443,23 @@ fn main() {{
         assert!(message3.context.contains("file3.rs"));
 
         // Check entire request to make sure all contexts are properly included
-        let request = thread.read_with(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
         // The request should contain all 3 messages
-        assert_eq!(request.messages.len(), 3);
+        assert_eq!(request.messages.len(), 4);
 
         // Check that the contexts are properly formatted in each message
-        assert!(request.messages[0].string_contents().contains("file1.rs"));
-        assert!(!request.messages[0].string_contents().contains("file2.rs"));
-        assert!(!request.messages[0].string_contents().contains("file3.rs"));
-
-        assert!(!request.messages[1].string_contents().contains("file1.rs"));
-        assert!(request.messages[1].string_contents().contains("file2.rs"));
+        assert!(request.messages[1].string_contents().contains("file1.rs"));
+        assert!(!request.messages[1].string_contents().contains("file2.rs"));
         assert!(!request.messages[1].string_contents().contains("file3.rs"));
 
         assert!(!request.messages[2].string_contents().contains("file1.rs"));
-        assert!(!request.messages[2].string_contents().contains("file2.rs"));
-        assert!(request.messages[2].string_contents().contains("file3.rs"));
+        assert!(request.messages[2].string_contents().contains("file2.rs"));
+        assert!(!request.messages[2].string_contents().contains("file3.rs"));
+
+        assert!(!request.messages[3].string_contents().contains("file1.rs"));
+        assert!(!request.messages[3].string_contents().contains("file2.rs"));
+        assert!(request.messages[3].string_contents().contains("file3.rs"));
     }
 
     #[gpui::test]
@@ -2100,13 +2493,11 @@ fn main() {{
         assert_eq!(message.context, "");
 
         // Check message in request
-        let request = thread.read_with(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
-        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages.len(), 2);
         assert_eq!(
-            request.messages[0].string_contents(),
+            request.messages[1].string_contents(),
             "What is the best way to learn Rust?"
         );
 
@@ -2120,17 +2511,15 @@ fn main() {{
         assert_eq!(message2.context, "");
 
         // Check that both messages appear in the request
-        let request = thread.read_with(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
-        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages.len(), 3);
         assert_eq!(
-            request.messages[0].string_contents(),
+            request.messages[1].string_contents(),
             "What is the best way to learn Rust?"
         );
         assert_eq!(
-            request.messages[1].string_contents(),
+            request.messages[2].string_contents(),
             "Are there any good books?"
         );
     }
@@ -2162,9 +2551,7 @@ fn main() {{
         });
 
         // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.read_with(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let initial_request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
         // Make sure we don't have a stale file warning yet
         let has_stale_warning = initial_request.messages.iter().any(|msg| {
@@ -2192,9 +2579,7 @@ fn main() {{
         });
 
         // Create a new request and check for the stale buffer warning
-        let new_request = thread.read_with(cx, |thread, cx| {
-            thread.to_completion_request(RequestKind::Chat, cx)
-        });
+        let new_request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
 
         // We should have a stale file warning as the last message
         let last_message = new_request
@@ -2221,6 +2606,7 @@ fn main() {{
             language::init(cx);
             Project::init_settings(cx);
             AssistantSettings::register(cx);
+            prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
@@ -2251,18 +2637,20 @@ fn main() {{
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let thread_store = cx.update(|_, cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
-        });
+        let thread_store = cx
+            .update(|_, cx| {
+                ThreadStore::load(
+                    project.clone(),
+                    cx.new(|_| ToolWorkingSet::default()),
+                    Arc::new(PromptBuilder::new(None).unwrap()),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
 
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.downgrade(), None));
+        let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
 
         (workspace, thread_store, thread, context_store)
     }

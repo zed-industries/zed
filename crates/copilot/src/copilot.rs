@@ -57,11 +57,11 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    copilot_chat::init(fs, http.clone(), cx);
+    copilot_chat::init(fs.clone(), http.clone(), cx);
 
     let copilot = cx.new({
         let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(new_server_id, node_runtime, cx)
+        move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
     });
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |handle, cx| {
@@ -301,6 +301,7 @@ pub struct Completion {
 }
 
 pub struct Copilot {
+    fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
     server: CopilotServer,
     buffers: HashSet<WeakEntity<Buffer>>,
@@ -332,11 +333,13 @@ impl Copilot {
 
     fn start(
         new_server_id: LanguageServerId,
+        fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
             server_id: new_server_id,
+            fs,
             node_runtime,
             server: CopilotServer::Disabled,
             buffers: Default::default(),
@@ -380,12 +383,14 @@ impl Copilot {
             return;
         }
         let server_id = self.server_id;
+        let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn(async move |this, cx| {
                 Self::start_language_server(
                     server_id,
+                    fs,
                     node_runtime,
                     env,
                     this,
@@ -425,6 +430,7 @@ impl Copilot {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(cx: &mut gpui::TestAppContext) -> (Entity<Self>, lsp::FakeLanguageServer) {
+        use fs::FakeFs;
         use lsp::FakeLanguageServer;
         use node_runtime::NodeRuntime;
 
@@ -442,6 +448,7 @@ impl Copilot {
         let node_runtime = NodeRuntime::unavailable();
         let this = cx.new(|cx| Self {
             server_id: LanguageServerId(0),
+            fs: FakeFs::new(cx.background_executor().clone()),
             node_runtime,
             server: CopilotServer::Running(RunningCopilotServer {
                 lsp: Arc::new(server),
@@ -456,6 +463,7 @@ impl Copilot {
 
     async fn start_language_server(
         new_server_id: LanguageServerId,
+        fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
         env: Option<HashMap<String, String>>,
         this: WeakEntity<Self>,
@@ -463,7 +471,7 @@ impl Copilot {
         cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
-            let server_path = get_copilot_lsp(node_runtime.clone()).await?;
+            let server_path = get_copilot_lsp(fs, node_runtime.clone()).await?;
             let node_path = node_runtime.binary_path().await?;
             let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
             let binary = LanguageServerBinary {
@@ -664,11 +672,13 @@ impl Copilot {
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn({
+                let fs = self.fs.clone();
                 let node_runtime = self.node_runtime.clone();
                 let server_id = self.server_id;
                 async move |this, cx| {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, node_runtime, env, this, false, cx).await
+                    Self::start_language_server(server_id, fs, node_runtime, env, this, false, cx)
+                        .await
                 }
             })
             .shared();
@@ -1050,7 +1060,7 @@ async fn clear_copilot_config_dir() {
     remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
-async fn get_copilot_lsp(node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
+async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
     const PACKAGE_NAME: &str = "@github/copilot-language-server";
     const SERVER_PATH: &str =
         "node_modules/@github/copilot-language-server/dist/language-server.js";
@@ -1059,6 +1069,8 @@ async fn get_copilot_lsp(node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
         .npm_package_latest_version(PACKAGE_NAME)
         .await?;
     let server_path = paths::copilot_dir().join(SERVER_PATH);
+
+    fs.create_dir(paths::copilot_dir()).await?;
 
     let should_install = node_runtime
         .should_install_npm_package(
@@ -1265,10 +1277,6 @@ mod tests {
         }
 
         fn file_name<'a>(&'a self, _: &'a App) -> &'a std::ffi::OsStr {
-            unimplemented!()
-        }
-
-        fn as_any(&self) -> &dyn std::any::Any {
             unimplemented!()
         }
 

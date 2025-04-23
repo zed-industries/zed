@@ -40,7 +40,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
@@ -2373,7 +2373,7 @@ impl AssistantContext {
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
-                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                    LanguageModelCompletionEvent::Thinking { text: chunk, .. } => {
                                         if thought_process_stack.is_empty() {
                                             let start =
                                                 buffer.anchor_before(message_old_end_offset);
@@ -2498,7 +2498,7 @@ impl AssistantContext {
                         .language()
                         .map(|language| language.name());
                     report_assistant_event(
-                        AssistantEvent {
+                        AssistantEventData {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
@@ -2555,6 +2555,8 @@ impl AssistantContext {
         }
 
         let mut completion_request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages: Vec::new(),
             tools: Vec::new(),
             stop: Vec::new(),

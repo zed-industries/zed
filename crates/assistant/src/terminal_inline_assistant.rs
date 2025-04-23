@@ -19,7 +19,7 @@ use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     Role, report_assistant_event,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu, ModelType};
 use prompt_store::PromptBuilder;
 use settings::{Settings, update_settings_file};
 use std::{
@@ -27,7 +27,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
@@ -292,6 +292,8 @@ impl TerminalInlineAssistant {
         });
 
         Ok(LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
@@ -324,7 +326,7 @@ impl TerminalInlineAssistant {
                 let codegen = assist.codegen.read(cx);
                 let executor = cx.background_executor().clone();
                 report_assistant_event(
-                    AssistantEvent {
+                    AssistantEventData {
                         conversation_id: None,
                         kind: AssistantKind::InlineTerminal,
                         message_id: codegen.message_id.clone(),
@@ -753,6 +755,7 @@ impl PromptEditor {
                             move |settings, _| settings.set_model(model.clone()),
                         );
                     },
+                    ModelType::Default,
                     window,
                     cx,
                 )
@@ -1183,7 +1186,7 @@ impl Codegen {
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
                         report_assistant_event(
-                            AssistantEvent {
+                            AssistantEventData {
                                 conversation_id: None,
                                 kind: AssistantKind::InlineTerminal,
                                 message_id,

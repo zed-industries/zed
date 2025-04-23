@@ -436,7 +436,9 @@ impl GitBlame {
         }
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
-        let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
+        let blame = self.project.update(cx, |project, cx| {
+            project.blame_buffer(&self.buffer, None, cx)
+        });
         let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(async move |this, cx| {

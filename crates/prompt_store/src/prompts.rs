@@ -14,36 +14,56 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::ResultExt;
+use util::{ResultExt, get_system_shell};
 
-#[derive(Serialize)]
-pub struct AssistantSystemPromptContext {
-    pub worktrees: Vec<WorktreeInfoForSystemPrompt>,
+use crate::UserPromptId;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectContext {
+    pub worktrees: Vec<WorktreeContext>,
+    /// Whether any worktree has a rules_file. Provided as a field because handlebars can't do this.
     pub has_rules: bool,
+    pub user_rules: Vec<UserRulesContext>,
+    /// `!user_rules.is_empty()` - provided as a field because handlebars can't do this.
+    pub has_user_rules: bool,
+    pub os: String,
+    pub arch: String,
+    pub shell: String,
 }
 
-impl AssistantSystemPromptContext {
-    pub fn new(worktrees: Vec<WorktreeInfoForSystemPrompt>) -> Self {
+impl ProjectContext {
+    pub fn new(worktrees: Vec<WorktreeContext>, default_user_rules: Vec<UserRulesContext>) -> Self {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
         Self {
             worktrees,
             has_rules,
+            has_user_rules: !default_user_rules.is_empty(),
+            user_rules: default_user_rules,
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            shell: get_system_shell(),
         }
     }
 }
 
-#[derive(Serialize)]
-pub struct WorktreeInfoForSystemPrompt {
-    pub root_name: String,
-    pub abs_path: Arc<Path>,
-    pub rules_file: Option<RulesFile>,
+#[derive(Debug, Clone, Serialize)]
+pub struct UserRulesContext {
+    pub uuid: UserPromptId,
+    pub title: Option<String>,
+    pub contents: String,
 }
 
-#[derive(Serialize)]
-pub struct RulesFile {
-    pub rel_path: Arc<Path>,
+#[derive(Debug, Clone, Serialize)]
+pub struct WorktreeContext {
+    pub root_name: String,
+    pub rules_file: Option<RulesFileContext>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RulesFileContext {
+    pub path_in_worktree: Arc<Path>,
     pub abs_path: Arc<Path>,
     pub text: String,
 }
@@ -75,11 +95,6 @@ pub struct TerminalAssistantPromptContext {
     pub working_directory: Option<String>,
     pub latest_output: Vec<String>,
     pub user_prompt: String,
-}
-
-#[derive(Serialize)]
-pub struct ProjectSlashCommandPromptContext {
-    pub context_buffer: String,
 }
 
 pub struct PromptLoadingParams<'a> {
@@ -259,7 +274,7 @@ impl PromptBuilder {
 
     pub fn generate_assistant_system_prompt(
         &self,
-        context: &AssistantSystemPromptContext,
+        context: &ProjectContext,
     ) -> Result<String, RenderError> {
         self.handlebars
             .lock()
@@ -375,14 +390,32 @@ impl PromptBuilder {
     pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
         self.handlebars.lock().render("suggest_edits", &())
     }
+}
 
-    pub fn generate_project_slash_command_prompt(
-        &self,
-        context_buffer: String,
-    ) -> Result<String, RenderError> {
-        self.handlebars.lock().render(
-            "project_slash_command",
-            &ProjectSlashCommandPromptContext { context_buffer },
-        )
+#[cfg(test)]
+mod test {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_assistant_system_prompt_renders() {
+        let worktrees = vec![WorktreeContext {
+            root_name: "path".into(),
+            rules_file: Some(RulesFileContext {
+                path_in_worktree: Path::new(".rules").into(),
+                abs_path: Path::new("/some/path/.rules").into(),
+                text: "".into(),
+            }),
+        }];
+        let default_user_rules = vec![UserRulesContext {
+            uuid: UserPromptId(Uuid::nil()),
+            title: Some("Rules title".into()),
+            contents: "Rules contents".into(),
+        }];
+        let project_context = ProjectContext::new(worktrees, default_user_rules);
+        PromptBuilder::new(None)
+            .unwrap()
+            .generate_assistant_system_prompt(&project_context)
+            .unwrap();
     }
 }

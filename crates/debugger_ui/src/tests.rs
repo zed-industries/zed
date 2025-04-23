@@ -1,16 +1,29 @@
+use std::sync::Arc;
+
+use anyhow::{Result, anyhow};
+use dap::{DebugRequest, client::DebugAdapterClient};
 use gpui::{Entity, TestAppContext, WindowHandle};
-use project::Project;
+use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
+use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
 use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
+#[cfg(test)]
 mod attach_modal;
+#[cfg(test)]
 mod console;
+#[cfg(test)]
+mod dap_logger;
+#[cfg(test)]
 mod debugger_panel;
+#[cfg(test)]
 mod module_list;
+#[cfg(test)]
 mod stack_frame_list;
+#[cfg(test)]
 mod variable_list;
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {
@@ -42,7 +55,7 @@ pub async fn init_test_workspace(
     let debugger_panel = workspace_handle
         .update(cx, |_, window, cx| {
             cx.spawn_in(window, async move |this, cx| {
-                DebugPanel::load(this, cx.clone()).await
+                DebugPanel::load(this, cx).await
             })
         })
         .unwrap()
@@ -68,6 +81,7 @@ pub async fn init_test_workspace(
     workspace_handle
 }
 
+#[track_caller]
 pub fn active_debug_session_panel(
     workspace: WindowHandle<Workspace>,
     cx: &mut TestAppContext,
@@ -76,8 +90,51 @@ pub fn active_debug_session_panel(
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, _| this.active_session())
                 .unwrap()
         })
         .unwrap()
+}
+
+pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
+    workspace: &WindowHandle<Workspace>,
+    cx: &mut gpui::TestAppContext,
+    config: DebugTaskDefinition,
+    configure: T,
+) -> Result<Entity<Session>> {
+    let _subscription = project::debugger::test::intercept_debug_sessions(cx, configure);
+    workspace.update(cx, |workspace, window, cx| {
+        workspace.start_debug_session(config, window, cx)
+    })?;
+    cx.run_until_parked();
+    let session = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .panel::<DebugPanel>(cx)
+            .and_then(|panel| panel.read(cx).active_session())
+            .and_then(|session| session.read(cx).mode().as_running().cloned())
+            .map(|running| running.read(cx).session().clone())
+            .ok_or_else(|| anyhow!("Failed to get active session"))
+    })??;
+
+    Ok(session)
+}
+
+pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
+    workspace: &WindowHandle<Workspace>,
+    cx: &mut gpui::TestAppContext,
+    configure: T,
+) -> Result<Entity<Session>> {
+    start_debug_session_with(
+        workspace,
+        cx,
+        DebugTaskDefinition {
+            adapter: "fake-adapter".to_string(),
+            request: DebugRequest::Launch(Default::default()),
+            label: "test".to_string(),
+            initialize_args: None,
+            tcp_connection: None,
+            stop_on_entry: None,
+        },
+        configure,
+    )
 }

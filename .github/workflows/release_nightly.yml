@@ -71,7 +71,7 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "18"
 
@@ -206,7 +206,7 @@ jobs:
           echo "/nix/var/nix/profiles/default/bin" >> $GITHUB_PATH
           echo "/Users/administrator/.nix-profile/bin" >> $GITHUB_PATH
 
-      - uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f # v31
+      - uses: cachix/install-nix-action@d1ca217b388ee87b2507a9a93bf01368bde7cec2 # v31
         if: ${{ matrix.system.install_nix }}
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}

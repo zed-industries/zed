@@ -95,14 +95,13 @@ impl BlameRenderer for GitBlameRenderer {
                         )
                     }
                 })
-                .hoverable_tooltip(move |window, cx| {
+                .hoverable_tooltip(move |_window, cx| {
                     cx.new(|cx| {
                         CommitTooltip::blame_entry(
                             &blame_entry,
                             details.clone(),
                             repository.clone(),
                             workspace.clone(),
-                            window,
                             cx,
                         )
                     })
@@ -145,14 +144,13 @@ impl BlameRenderer for GitBlameRenderer {
                 .child(Icon::new(IconName::FileGit).color(Color::Hint))
                 .child(text)
                 .gap_2()
-                .hoverable_tooltip(move |window, cx| {
+                .hoverable_tooltip(move |_window, cx| {
                     let tooltip = cx.new(|cx| {
                         CommitTooltip::blame_entry(
                             &blame_entry,
                             details.clone(),
                             repository.clone(),
                             workspace.clone(),
-                            window,
                             cx,
                         )
                     });

@@ -71,6 +71,12 @@ pub enum Model {
     FourOmni,
     #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini")]
     FourOmniMini,
+    #[serde(rename = "gpt-4.1", alias = "gpt-4.1")]
+    FourPointOne,
+    #[serde(rename = "gpt-4.1-mini", alias = "gpt-4.1-mini")]
+    FourPointOneMini,
+    #[serde(rename = "gpt-4.1-nano", alias = "gpt-4.1-nano")]
+    FourPointOneNano,
     #[serde(rename = "o1", alias = "o1")]
     O1,
     #[serde(rename = "o1-preview", alias = "o1-preview")]
@@ -79,6 +85,10 @@ pub enum Model {
     O1Mini,
     #[serde(rename = "o3-mini", alias = "o3-mini")]
     O3Mini,
+    #[serde(rename = "o3", alias = "o3")]
+    O3,
+    #[serde(rename = "o4-mini", alias = "o4-mini")]
+    O4Mini,
 
     #[serde(rename = "custom")]
     Custom {
@@ -92,6 +102,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::FourPointOneMini
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
@@ -99,10 +113,15 @@ impl Model {
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
+            "gpt-4.1" => Ok(Self::FourPointOne),
+            "gpt-4.1-mini" => Ok(Self::FourPointOneMini),
+            "gpt-4.1-nano" => Ok(Self::FourPointOneNano),
             "o1" => Ok(Self::O1),
             "o1-preview" => Ok(Self::O1Preview),
             "o1-mini" => Ok(Self::O1Mini),
             "o3-mini" => Ok(Self::O3Mini),
+            "o3" => Ok(Self::O3),
+            "o4-mini" => Ok(Self::O4Mini),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -114,10 +133,15 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::FourPointOne => "gpt-4.1",
+            Self::FourPointOneMini => "gpt-4.1-mini",
+            Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
+            Self::O3 => "o3",
+            Self::O4Mini => "o4-mini",
             Self::Custom { name, .. } => name,
         }
     }
@@ -129,10 +153,15 @@ impl Model {
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
+            Self::FourPointOne => "gpt-4.1",
+            Self::FourPointOneMini => "gpt-4.1-mini",
+            Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
+            Self::O3 => "o3",
+            Self::O4Mini => "o4-mini",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -146,10 +175,15 @@ impl Model {
             Self::FourTurbo => 128_000,
             Self::FourOmni => 128_000,
             Self::FourOmniMini => 128_000,
+            Self::FourPointOne => 1_047_576,
+            Self::FourPointOneMini => 1_047_576,
+            Self::FourPointOneNano => 1_047_576,
             Self::O1 => 200_000,
             Self::O1Preview => 128_000,
             Self::O1Mini => 128_000,
             Self::O3Mini => 200_000,
+            Self::O3 => 200_000,
+            Self::O4Mini => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -173,6 +207,9 @@ impl Model {
             | Self::FourTurbo
             | Self::FourOmni
             | Self::FourOmniMini
+            | Self::FourPointOne
+            | Self::FourPointOneMini
+            | Self::FourPointOneNano
             | Self::O1
             | Self::O1Preview
             | Self::O1Mini => true,

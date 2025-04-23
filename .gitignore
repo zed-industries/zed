@@ -18,7 +18,6 @@
 .venv
 .vscode
 .wrangler
-/.direnv
 /assets/*licenses.*
 /crates/collab/seed.json
 /crates/theme/schemas/theme.json

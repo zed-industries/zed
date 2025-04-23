@@ -15,6 +15,7 @@ pub struct EventRequestBody {
     pub session_id: Option<String>,
     pub metrics_id: Option<String>,
     /// True for Zed staff, otherwise false
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_staff: Option<bool>,
     /// Zed version number
     pub app_version: String,
@@ -96,7 +97,7 @@ pub enum Event {
     InlineCompletion(InlineCompletionEvent),
     InlineCompletionRating(InlineCompletionRatingEvent),
     Call(CallEvent),
-    Assistant(AssistantEvent),
+    Assistant(AssistantEventData),
     Cpu(CpuEvent),
     Memory(MemoryEvent),
     App(AppEvent),
@@ -162,7 +163,7 @@ pub struct CallEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AssistantEvent {
+pub struct AssistantEventData {
     /// Unique random identifier for each assistant tab (None for inline assist)
     pub conversation_id: Option<String>,
     /// Server-generated message ID (only supported for some providers)
