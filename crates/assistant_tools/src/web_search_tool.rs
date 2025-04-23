@@ -5,13 +5,16 @@ use crate::ui::ToolCallCardHeader;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{Future, FutureExt, TryFutureExt};
-use gpui::{App, AppContext, Context, Entity, IntoElement, Task, Window};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
+};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::{IconName, Tooltip, prelude::*};
 use web_search::WebSearchRegistry;
+use workspace::Workspace;
 use zed_llm_client::{WebSearchCitation, WebSearchResponse};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -54,6 +57,7 @@ impl Tool for WebSearchTool {
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<WebSearchToolInput>(input) {
@@ -111,6 +115,7 @@ impl ToolCard for WebSearchToolCard {
         &mut self,
         _status: &ToolUseStatus,
         _window: &mut Window,
+        _workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let header = match self.response.as_ref() {
@@ -220,8 +225,13 @@ impl Component for WebSearchTool {
                         div()
                             .size_full()
                             .child(in_progress_search.update(cx, |tool, cx| {
-                                tool.render(&ToolUseStatus::Pending, window, cx)
-                                    .into_any_element()
+                                tool.render(
+                                    &ToolUseStatus::Pending,
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
                             }))
                             .into_any_element(),
                     ),
@@ -230,8 +240,13 @@ impl Component for WebSearchTool {
                         div()
                             .size_full()
                             .child(successful_search.update(cx, |tool, cx| {
-                                tool.render(&ToolUseStatus::Finished("".into()), window, cx)
-                                    .into_any_element()
+                                tool.render(
+                                    &ToolUseStatus::Finished("".into()),
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
                             }))
                             .into_any_element(),
                     ),
@@ -240,8 +255,13 @@ impl Component for WebSearchTool {
                         div()
                             .size_full()
                             .child(error_search.update(cx, |tool, cx| {
-                                tool.render(&ToolUseStatus::Error("".into()), window, cx)
-                                    .into_any_element()
+                                tool.render(
+                                    &ToolUseStatus::Error("".into()),
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
                             }))
                             .into_any_element(),
                     ),

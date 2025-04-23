@@ -433,47 +433,39 @@ fn render_markdown_code_block(
                         workspace
                             .update(cx, {
                                 |workspace, cx| {
-                                    if let Some(project_path) = workspace
+                                    let Some(project_path) = workspace
                                         .project()
                                         .read(cx)
                                         .find_project_path(&path_range.path, cx)
-                                    {
-                                        let target = path_range.range.as_ref().map(|range| {
-                                            Point::new(
-                                                // Line number is 1-based
-                                                range.start.line.saturating_sub(1),
-                                                range.start.col.unwrap_or(0),
-                                            )
-                                        });
-                                        let open_task = workspace.open_path(
-                                            project_path,
-                                            None,
-                                            true,
-                                            window,
-                                            cx,
-                                        );
-                                        window
-                                            .spawn(cx, async move |cx| {
-                                                let item = open_task.await?;
-                                                if let Some(target) = target {
-                                                    if let Some(active_editor) =
-                                                        item.downcast::<Editor>()
-                                                    {
-                                                        active_editor
-                                                            .downgrade()
-                                                            .update_in(cx, |editor, window, cx| {
-                                                                editor
-                                                                    .go_to_singleton_buffer_point(
-                                                                        target, window, cx,
-                                                                    );
-                                                            })
-                                                            .log_err();
-                                                    }
-                                                }
-                                                anyhow::Ok(())
-                                            })
-                                            .detach_and_log_err(cx);
-                                    }
+                                    else {
+                                        return;
+                                    };
+                                    let Some(target) = path_range.range.as_ref().map(|range| {
+                                        Point::new(
+                                            // Line number is 1-based
+                                            range.start.line.saturating_sub(1),
+                                            range.start.col.unwrap_or(0),
+                                        )
+                                    }) else {
+                                        return;
+                                    };
+                                    let open_task =
+                                        workspace.open_path(project_path, None, true, window, cx);
+                                    window
+                                        .spawn(cx, async move |cx| {
+                                            let item = open_task.await?;
+                                            if let Some(active_editor) = item.downcast::<Editor>() {
+                                                active_editor
+                                                    .update_in(cx, |editor, window, cx| {
+                                                        editor.go_to_singleton_buffer_point(
+                                                            target, window, cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                            anyhow::Ok(())
+                                        })
+                                        .detach_and_log_err(cx);
                                 }
                             })
                             .ok();
@@ -807,10 +799,11 @@ impl ActiveThread {
         self.thread.read(cx).summary_or_default()
     }
 
-    pub fn cancel_last_completion(&mut self, cx: &mut App) -> bool {
+    pub fn cancel_last_completion(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.last_error.take();
-        self.thread
-            .update(cx, |thread, cx| thread.cancel_last_completion(cx))
+        self.thread.update(cx, |thread, cx| {
+            thread.cancel_last_completion(Some(window.window_handle()), cx)
+        })
     }
 
     pub fn last_error(&self) -> Option<ThreadError> {
@@ -1314,7 +1307,7 @@ impl ActiveThread {
     fn confirm_editing_message(
         &mut self,
         _: &menu::Confirm,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some((message_id, state)) = self.editing_message.take() else {
@@ -1344,7 +1337,7 @@ impl ActiveThread {
 
         self.thread.update(cx, |thread, cx| {
             thread.advance_prompt_id();
-            thread.send_to_model(model.model, cx)
+            thread.send_to_model(model.model, Some(window.window_handle()), cx);
         });
         cx.notify();
     }
@@ -1850,11 +1843,9 @@ impl ActiveThread {
                 .gap_2()
                 .children(message_content)
                 .when(has_tool_uses, |parent| {
-                    parent.children(
-                        tool_uses
-                            .into_iter()
-                            .map(|tool_use| self.render_tool_use(tool_use, window, cx)),
-                    )
+                    parent.children(tool_uses.into_iter().map(|tool_use| {
+                        self.render_tool_use(tool_use, window, workspace.clone(), cx)
+                    }))
                 }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
@@ -2447,10 +2438,11 @@ impl ActiveThread {
         &self,
         tool_use: ToolUse,
         window: &mut Window,
+        workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         if let Some(card) = self.thread.read(cx).card_for_tool(&tool_use.id) {
-            return card.render(&tool_use.status, window, cx);
+            return card.render(&tool_use.status, window, workspace, cx);
         }
 
         let is_open = self
@@ -3047,7 +3039,7 @@ impl ActiveThread {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         _: &ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(PendingToolUseStatus::NeedsConfirmation(c)) = self
@@ -3063,6 +3055,7 @@ impl ActiveThread {
                     c.input.clone(),
                     &c.messages,
                     c.tool.clone(),
+                    Some(window.window_handle()),
                     cx,
                 );
             });
@@ -3074,11 +3067,12 @@ impl ActiveThread {
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
         _: &ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let window_handle = window.window_handle();
         self.thread.update(cx, |thread, cx| {
-            thread.deny_tool_use(tool_use_id, tool_name, cx);
+            thread.deny_tool_use(tool_use_id, tool_name, Some(window_handle), cx);
         });
     }
 
