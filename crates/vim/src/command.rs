@@ -11,6 +11,7 @@ use gpui::{Action, App, AppContext as _, Context, Global, Window, actions, impl_
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
+use project::ProjectPath;
 use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
@@ -19,15 +20,17 @@ use std::{
     io::Write,
     iter::Peekable,
     ops::{Deref, Range},
+    path::Path,
     process::Stdio,
     str::Chars,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
     time::Instant,
 };
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::ResultExt;
-use workspace::{SaveIntent, notifications::NotifyResultExt};
+use workspace::notifications::DetachAndPromptErr;
+use workspace::{Item, SaveIntent, notifications::NotifyResultExt};
 use zed_actions::RevealTarget;
 
 use crate::{
@@ -157,6 +160,12 @@ pub struct VimSet {
 #[derive(Debug)]
 struct WrappedAction(Box<dyn Action>);
 
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct VimSave {
+    pub save_intent: Option<SaveIntent>,
+    pub filename: String,
+}
+
 actions!(vim, [VisualCommand, CountCommand, ShellCommand]);
 impl_internal_actions!(
     vim,
@@ -168,6 +177,7 @@ impl_internal_actions!(
         OnMatchingLines,
         ShellExec,
         VimSet,
+        VimSave,
     ]
 );
 
@@ -227,6 +237,25 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         workspace.update(cx, |workspace, cx| {
             command_palette::CommandPalette::toggle(workspace, "'<,'>!", window, cx);
         })
+    });
+
+    Vim::action(editor, cx, |vim, action: &VimSave, window, cx| {
+        vim.update_editor(window, cx, |_, editor, window, cx| {
+            let Some(project) = editor.project.clone() else {
+                return;
+            };
+            let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
+                return;
+            };
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: Arc::from(Path::new(&action.filename)),
+            };
+
+            editor
+                .save_as(project, project_path, window, cx)
+                .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
+        });
     });
 
     Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
@@ -364,6 +393,9 @@ struct VimCommand {
     action: Option<Box<dyn Action>>,
     action_name: Option<&'static str>,
     bang_action: Option<Box<dyn Action>>,
+    args: Option<
+        Box<dyn Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static>,
+    >,
     range: Option<
         Box<
             dyn Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>>
@@ -400,6 +432,14 @@ impl VimCommand {
         self
     }
 
+    fn args(
+        mut self,
+        f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
+    ) -> Self {
+        self.args = Some(Box::new(f));
+        self
+    }
+
     fn range(
         mut self,
         f: impl Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -415,19 +455,27 @@ impl VimCommand {
 
     fn parse(
         &self,
-        mut query: &str,
+        query: &str,
         range: &Option<CommandRange>,
         cx: &App,
     ) -> Option<Box<dyn Action>> {
-        let has_bang = query.ends_with('!');
-        if has_bang {
-            query = &query[..query.len() - 1];
-        }
-
-        let suffix = query.strip_prefix(self.prefix)?;
-        if !self.suffix.starts_with(suffix) {
-            return None;
-        }
+        let rest = query
+            .to_string()
+            .strip_prefix(self.prefix)?
+            .to_string()
+            .chars()
+            .zip_longest(self.suffix.to_string().chars())
+            .skip_while(|e| e.clone().both().map(|(s, q)| s == q).unwrap_or(false))
+            .filter_map(|e| e.left())
+            .collect::<String>();
+        let has_bang = rest.starts_with('!');
+        let args = if has_bang {
+            rest.strip_prefix('!')?.trim().to_string()
+        } else if rest.is_empty() {
+            "".into()
+        } else {
+            rest.strip_prefix(' ')?.trim().to_string()
+        };
 
         let action = if has_bang && self.bang_action.is_some() {
             self.bang_action.as_ref().unwrap().boxed_clone()
@@ -438,8 +486,14 @@ impl VimCommand {
         } else {
             return None;
         };
-
-        if let Some(range) = range {
+        if !args.is_empty() {
+            // if command does not accept args and we have args then we should do no action
+            if let Some(args_fn) = &self.args {
+                args_fn.deref()(action, args)
+            } else {
+                None
+            }
+        } else if let Some(range) = range {
             self.range.as_ref().and_then(|f| f(action, range))
         } else {
             Some(action)
@@ -680,6 +734,18 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         )
         .bang(workspace::Save {
             save_intent: Some(SaveIntent::Overwrite),
+        })
+        .args(|action, args| {
+            Some(
+                VimSave {
+                    save_intent: action
+                        .as_any()
+                        .downcast_ref::<workspace::Save>()
+                        .and_then(|action| action.save_intent),
+                    filename: args,
+                }
+                .boxed_clone(),
+            )
         }),
         VimCommand::new(
             ("q", "uit"),
@@ -1034,7 +1100,7 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
     for command in commands(cx).iter() {
         if let Some(action) = command.parse(query, &range, cx) {
             let mut string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
-            if query.ends_with('!') {
+            if query.contains('!') {
                 string.push('!');
             }
             let positions = generate_positions(&string, &(range_prefix + query));
