@@ -23,7 +23,6 @@ use gpui::{
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry,
-    ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
@@ -489,8 +488,8 @@ impl AssistantPanel {
 
         // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
         // the provider, we want to show a nudge to sign in.
-        let show_zed_ai_notice = client_status.is_signed_out()
-            && model.map_or(true, |model| model.provider.id().0 == ZED_CLOUD_PROVIDER_ID);
+        let show_zed_ai_notice =
+            client_status.is_signed_out() && model.map_or(true, |model| model.is_provided_by_zed());
 
         self.show_zed_ai_notice = show_zed_ai_notice;
         cx.notify();

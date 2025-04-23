@@ -46,6 +46,8 @@ worktree.workspace = true
 zed_llm_client.workspace = true
 
 [dev-dependencies]
+client = { workspace = true, features = ["test-support"] }
+clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

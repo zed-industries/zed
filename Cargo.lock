@@ -705,6 +705,8 @@ dependencies = [
  "assistant_tool",
  "buffer_diff",
  "chrono",
+ "client",
+ "clock",
  "collections",
  "component",
  "editor",
@@ -16761,7 +16763,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
