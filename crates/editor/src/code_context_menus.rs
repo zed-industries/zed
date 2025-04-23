@@ -693,7 +693,7 @@ impl CompletionsMenu {
         // like snippet, LSP, etc matching is used.
 
         const NUM_OF_BUCKETS: i32 = 3;
-        const CURVE_MULTIPLIER: f64 = 0.1;
+        const CURVE_MULTIPLIER: f64 = 0.2;
 
         let map_fuzzy_score_to_int = |fuzzy_score: f64| -> i32 {
             let new_score = fuzzy_score.powf(CURVE_MULTIPLIER);
