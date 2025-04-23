@@ -33,7 +33,7 @@ use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
 use task::{DebugTaskDefinition, DebugTaskTemplate};
-use terminal_view::terminal_panel::TerminalPanel;
+use terminal_view::TerminalView;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
     Workspace,
@@ -467,6 +467,7 @@ impl DebugPanel {
     ) {
         match event {
             dap_store::DapStoreEvent::RunInTerminal {
+                session_id,
                 title,
                 cwd,
                 command,
@@ -476,6 +477,7 @@ impl DebugPanel {
                 ..
             } => {
                 self.handle_run_in_terminal_request(
+                    *session_id,
                     title.clone(),
                     cwd.clone(),
                     command.clone(),
@@ -499,6 +501,7 @@ impl DebugPanel {
 
     fn handle_run_in_terminal_request(
         &self,
+        session_id: SessionId,
         title: Option<String>,
         cwd: Option<Arc<Path>>,
         command: Option<String>,
@@ -506,56 +509,66 @@ impl DebugPanel {
         envs: HashMap<String, String>,
         mut sender: mpsc::Sender<Result<u32>>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let terminal_task = self.workspace.update(cx, |workspace, cx| {
-            let terminal_panel = workspace.panel::<TerminalPanel>(cx).ok_or_else(|| {
-                anyhow!("RunInTerminal DAP request failed because TerminalPanel wasn't found")
-            });
+        let Some(session) = self
+            .sessions
+            .iter()
+            .find(|s| s.read(cx).session_id(cx) == session_id)
+        else {
+            return Task::ready(Err(anyhow!("no session {:?} found", session_id)));
+        };
+        let running = session.read(cx).running_state();
+        let terminal = running.read(cx).debug_terminal.clone();
+        let kind = TerminalKind::Debug {
+            command,
+            args,
+            envs,
+            cwd,
+            title,
+        };
 
-            let terminal_panel = match terminal_panel {
-                Ok(panel) => panel,
-                Err(err) => return Task::ready(Err(err)),
-            };
+        let workspace = self.workspace.clone();
+        let project = self.project.downgrade();
 
-            terminal_panel.update(cx, |terminal_panel, cx| {
-                let terminal_task = terminal_panel.add_terminal(
-                    TerminalKind::Debug {
-                        command,
-                        args,
-                        envs,
-                        cwd,
-                        title,
-                    },
-                    task::RevealStrategy::Never,
+        let terminal_task = self.project.update(cx, |project, cx| {
+            project.create_terminal(kind, window.window_handle(), cx)
+        });
+        let terminal_task = cx.spawn_in(window, async move |this, cx| {
+            let terminal = terminal_task.await?;
+
+            let terminal_view = cx.new_window_entity(|window, cx| {
+                TerminalView::new(
+                    terminal.clone(),
+                    workspace,
+                    None, // todo!()
+                    project,
                     window,
                     cx,
-                );
+                )
+            })?;
 
-                cx.spawn(async move |_, cx| {
-                    let pid_task = async move {
-                        let terminal = terminal_task.await?;
-
-                        terminal.read_with(cx, |terminal, _| terminal.pty_info.pid())
-                    };
-
-                    pid_task.await
+            running.update_in(cx, |running, _window, cx| {
+                running.debug_terminal.update(cx, |debug_terminal, cx| {
+                    debug_terminal.terminal = Some(terminal_view);
+                    cx.notify();
                 })
-            })
+            })?;
+
+            anyhow::Ok(terminal.read_with(cx, |terminal, _| terminal.pty_info.pid())?)
         });
 
         cx.background_spawn(async move {
-            match terminal_task {
-                Ok(pid_task) => match pid_task.await {
-                    Ok(Some(pid)) => sender.send(Ok(pid.as_u32())).await?,
-                    Ok(None) => {
+            match terminal_task.await {
+                Ok(pid_task) => match pid_task {
+                    Some(pid) => sender.send(Ok(pid.as_u32())).await?,
+                    None => {
                         sender
                             .send(Err(anyhow!(
                                 "Terminal was spawned but PID was not available"
                             )))
                             .await?
                     }
-                    Err(error) => sender.send(Err(anyhow!(error))).await?,
                 },
                 Err(error) => sender.send(Err(anyhow!(error))).await?,
             };

@@ -27,6 +27,7 @@ use project::{
 use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
+use terminal_view::TerminalView;
 use ui::{
     ActiveTheme, AnyElement, App, Context, ContextMenu, DropdownMenu, FluentBuilder,
     InteractiveElement, IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
@@ -50,6 +51,7 @@ pub struct RunningState {
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
     loaded_sources_list: Entity<LoadedSourceList>,
+    pub debug_terminal: Entity<DebugTerminal>,
     module_list: Entity<module_list::ModuleList>,
     _console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
@@ -364,6 +366,40 @@ pub(crate) fn new_debugger_pane(
 
     ret
 }
+
+pub struct DebugTerminal {
+    pub terminal: Option<Entity<TerminalView>>,
+    focus_handle: FocusHandle,
+}
+
+impl DebugTerminal {
+    fn empty(cx: &mut Context<Self>) -> Self {
+        Self {
+            terminal: None,
+            focus_handle: cx.focus_handle(),
+        }
+    }
+}
+
+impl gpui::Render for DebugTerminal {
+    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        if let Some(terminal) = self.terminal.clone() {
+            terminal.into_any_element()
+        } else {
+            div().track_focus(&self.focus_handle).into_any_element()
+        }
+    }
+}
+impl Focusable for DebugTerminal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some(terminal) = self.terminal.as_ref() {
+            return terminal.focus_handle(cx);
+        } else {
+            self.focus_handle.clone()
+        }
+    }
+}
+
 impl RunningState {
     pub fn new(
         session: Entity<Session>,
@@ -379,6 +415,8 @@ impl RunningState {
         let stack_frame_list = cx.new(|cx| {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
+
+        let terminal = cx.new(|cx| DebugTerminal::empty(cx));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -452,6 +490,7 @@ impl RunningState {
                 &console,
                 &breakpoint_list,
                 &loaded_source_list,
+                &terminal,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -494,6 +533,7 @@ impl RunningState {
             breakpoint_list,
             loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
+            debug_terminal: cx.new(DebugTerminal::empty),
             _schedule_serialize: None,
         }
     }
@@ -585,6 +625,13 @@ impl RunningState {
                 DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
                     self.loaded_sources_list.focus_handle(cx),
                     self.loaded_sources_list.clone().into(),
+                    item_kind,
+                    None,
+                    cx,
+                )),
+                DebuggerPaneItem::Terminal => Box::new(SubView::new(
+                    self.debug_terminal.focus_handle(cx),
+                    self.debug_terminal.clone().into(),
                     item_kind,
                     None,
                     cx,
