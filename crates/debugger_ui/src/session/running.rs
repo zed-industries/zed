@@ -765,7 +765,7 @@ impl RunningState {
         self.thread_id = Some(thread_id);
 
         self.stack_frame_list
-            .update(cx, |list, cx| list.schedule_refresh(window, cx));
+            .update(cx, |list, cx| list.schedule_refresh(true, window, cx));
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {

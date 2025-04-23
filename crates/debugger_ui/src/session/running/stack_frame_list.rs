@@ -70,8 +70,11 @@ impl StackFrameList {
 
         let _subscription =
             cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
-                SessionEvent::StackTrace => {
-                    this.schedule_refresh(window, cx);
+                SessionEvent::Threads => {
+                    this.schedule_refresh(false, window, cx);
+                }
+                SessionEvent::Stopped(..) | SessionEvent::StackTrace => {
+                    this.schedule_refresh(true, window, cx);
                 }
                 _ => {}
             });
@@ -88,7 +91,7 @@ impl StackFrameList {
             selected_stack_frame_id: None,
             _refresh_task: Task::ready(()),
         };
-        this.schedule_refresh(window, cx);
+        this.schedule_refresh(true, window, cx);
         this
     }
 
@@ -139,13 +142,27 @@ impl StackFrameList {
         self.selected_stack_frame_id
     }
 
-    pub(super) fn schedule_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const REFRESH_DEBOUNCE: Duration = Duration::from_millis(50);
+    pub(super) fn schedule_refresh(
+        &mut self,
+        select_first: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        const REFRESH_DEBOUNCE: Duration = Duration::from_millis(20);
 
         self._refresh_task = cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor().timer(REFRESH_DEBOUNCE).await;
+            let debounce = this
+                .update(cx, |this, cx| {
+                    let new_stack_frames = this.stack_frames(cx);
+                    new_stack_frames.is_empty() && !this.entries.is_empty()
+                })
+                .ok()
+                .unwrap_or_default();
+
+            if debounce {
+                cx.background_executor().timer(REFRESH_DEBOUNCE).await;
+            }
             this.update_in(cx, |this, window, cx| {
-                let select_first = this.entries.is_empty();
                 this.build_entries(select_first, window, cx);
                 cx.notify();
             })
