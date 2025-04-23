@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{Disclosure, IconName, Tooltip, Window, prelude::*};
+use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use uuid::Uuid;
 use workspace::Workspace;
@@ -365,7 +365,12 @@ impl ToolCard for EditFileToolCard {
             .gap_0p5()
             .cursor_pointer()
             .rounded_sm()
-            .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
+            .opacity(0.8)
+            .hover(|label| {
+                label
+                    .opacity(1.)
+                    .bg(cx.theme().colors().element_hover.opacity(0.5))
+            })
             .tooltip(Tooltip::text("Jump to File"))
             .child(
                 h_flex()
@@ -497,11 +502,11 @@ impl ToolCard for EditFileToolCard {
                         .border_t_1()
                         .border_color(cx.theme().colors().border.opacity(0.6))
                         .bg(cx.theme().colors().editor_background)
-                        .map(|buffer_container| {
+                        .map(|editor_container| {
                             if self.full_height_expanded {
-                                buffer_container.h_full()
+                                editor_container.h_full()
                             } else {
-                                buffer_container.max_h_64()
+                                editor_container.max_h_64()
                             }
                         })
                         .child(div().pl_1().child(editor))
@@ -516,6 +521,8 @@ impl ToolCard for EditFileToolCard {
                                 .justify_center()
                                 .rounded_b_md()
                                 .bg(cx.theme().colors().editor_background.opacity(0.95))
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
                                 .hover(|style| style.bg(full_height_hover_color))
                                 .cursor_pointer()
                                 .child(
