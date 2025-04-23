@@ -686,24 +686,7 @@ impl LanguageModel for CloudLanguageModel {
         match self.model.clone() {
             CloudModel::Anthropic(_) => count_anthropic_tokens(request, cx),
             CloudModel::OpenAi(model) => count_open_ai_tokens(request, model, cx),
-            CloudModel::Google(model) => {
-                let client = self.client.clone();
-                let request = into_google(request, model.id().into());
-                let request = google_ai::CountTokensRequest {
-                    contents: request.contents,
-                };
-                async move {
-                    let request = serde_json::to_string(&request)?;
-                    let response = client
-                        .request(proto::CountLanguageModelTokens {
-                            provider: proto::LanguageModelProvider::Google as i32,
-                            request,
-                        })
-                        .await?;
-                    Ok(response.token_count as usize)
-                }
-                .boxed()
-            }
+            CloudModel::Google(_model) => async move { Ok(0) }.boxed(),
         }
     }
 

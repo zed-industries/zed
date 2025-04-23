@@ -34,7 +34,6 @@ dashmap.workspace = true
 derive_more.workspace = true
 envy = "0.4.2"
 futures.workspace = true
-google_ai.workspace = true
 hex.workspace = true
 http_client.workspace = true
 jsonwebtoken.workspace = true
