@@ -8,7 +8,7 @@ You can access billing settings at /account. Clicking [button] will navigate you
 
 ## Billing Cycles {#billing-cycles}
 
-Zed is billed on a monthly basis based on the date you initially subscribe. We’ll also bill for additional prompts used beyond your plan’s prompt limit, if usage exceeds $20 before month end. See [usage-based pricing](./agent/plans-and-usage.md#ubp) for more.
+Zed is billed on a monthly basis based on the date you initially subscribe. We’ll also bill for additional prompts used beyond your plan’s prompt limit, if usage exceeds $20 before month end. See [usage-based pricing](./plans-and-usage.md#ubp) for more.
 
 ## Invoice History {#invoice-history}
 

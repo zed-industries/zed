@@ -14,7 +14,7 @@ For costs and more information on pricing, visit Zed’s pricing page. Please no
 A `prompt` in Zed is an input from the user, initiated on pressing enter, composed of one or many `requests`. A `prompt` can be initiated from the Agent panel, or via Inline Assist.
 A `request` in Zed is a response to a `prompt`, plus any tool calls that are initiated as part of that response. There may be one `request` per `prompt`, or many.
 
-Most models offered by Zed are metered per-prompt. Some models that use large context windows and unlimited tool calls ([“Max Mode”](./agent/models.md#max-mode)) count each individual request within a prompt against your prompt limit, since the agentic work spawned by the prompt is expensive to support. See [Models](./agent/models.md) for a list of which subset of models are metered by request.
+Most models offered by Zed are metered per-prompt. Some models that use large context windows and unlimited tool calls ([“Max Mode”](./models.md#max-mode)) count each individual request within a prompt against your prompt limit, since the agentic work spawned by the prompt is expensive to support. See [Models](./models.md) for a list of which subset of models are metered by request.
 
 Plans come with a set amount of prompts included, with the number varying depending on the plan you’ve selected.
 
@@ -25,7 +25,7 @@ Usage-based pricing is only available with a paid plan, and is exclusively opt-i
 
 We will bill for additional prompts when you’ve made prompts totaling $20, or when your billing date occurs, whichever comes first.
 
-Cost per request for each model can be found on the [models](./agent/models.md) page.
+Cost per request for each model can be found on the [models](./models.md) page.
 
 ## Business Usage {#business-usage}
 

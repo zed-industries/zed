@@ -37,18 +37,26 @@
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
-# Assistant
+# Agent
 
-- [Overview](./assistant/assistant.md)
-- [Configuration](./assistant/configuration.md)
-- [Assistant Panel](./assistant/assistant-panel.md)
-- [Contexts](./assistant/contexts.md)
-- [Inline Assistant](./assistant/inline-assistant.md)
-- [Commands](./assistant/commands.md)
-- [Prompts](./assistant/prompting.md)
-- [Context Servers](./assistant/context-servers.md)
-  - [Model Context Protocol](./assistant/model-context-protocol.md)
-- [Model Improvement](./model-improvement.md)
+- [Overview](./agent/assistant.md)
+- [Subscription](./agent/subscription.md)
+  - [Plans and Usage](./agent/plans-and-usage.md)
+  - [Billing](./agent/billing.md)
+  - [Models](./agent/models.md)
+- [Configuration](./agent/configuration.md)
+  - [Custom API Keys](./agent/custom-api-keys.md)
+- [Product](./agent/product.md)
+  - [Assistant Panel](./agent/assistant-panel.md)
+  - [Inline Assistant](./agent/inline-assistant.md)
+  - [Contexts](./agent/contexts.md)
+  - [Commands](./agent/commands.md)
+  - [Prompts](./agent/prompting.md)
+- [Enhancing the Agent](./agent/enhancing.md)
+  - [Context Servers](./agent/context-servers.md)
+  - [Model Context Protocol](./agent/model-context-protocol.md)
+- [Privacy and Security](./agent/privacy-and-security.md)
+  - [Model Improvement](./agent/model-improvement.md)
 
 # Extensions
 

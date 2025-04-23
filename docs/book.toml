@@ -21,8 +21,8 @@ enable = false
 "/ruby.html" = "/docs/languages/ruby.html"
 "/python.html" = "/docs/languages/python.html"
 "/adding-new-languages.html" = "/docs/extensions/languages.html"
-"/language-model-integration.html" = "/docs/assistant/assistant.html"
-"/assistant.html" = "/docs/assistant/assistant.html"
+# "/language-model-integration.html" = "/docs/agent/assistant.html"
+# "/assistant.html" = "/docs/agent/assistant.html"
 "/developing-zed.html" = "/docs/development.html"
 "/conversations.html" = "/community-links"
 
