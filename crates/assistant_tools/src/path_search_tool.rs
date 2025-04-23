@@ -38,6 +38,7 @@ pub struct PathSearchToolInput {
 
 const RESULTS_PER_PAGE: usize = 50;
 
+#[derive(RegisterComponent)]
 pub struct PathSearchTool;
 
 impl Tool for PathSearchTool {
@@ -276,5 +277,71 @@ impl ToolCard for PathSearchToolCard {
                 ),
             )
             .children(content)
+    }
+}
+
+impl Component for PathSearchTool {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+
+    fn sort_name() -> &'static str {
+        "ToolPathSearch"
+    }
+
+    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let successful_card = cx.new(|_| PathSearchToolCard {
+            total_matches: 3,
+            paths: vec![
+                "src/main.rs".to_string(),
+                "src/lib.rs".to_string(),
+                "tests/test.rs".to_string(),
+            ],
+            expanded: true,
+        });
+
+        let empty_card = cx.new(|_| PathSearchToolCard {
+            total_matches: 0,
+            paths: Vec::new(),
+            expanded: false,
+        });
+
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group(vec![
+                    single_example(
+                        "With Results",
+                        div()
+                            .size_full()
+                            .child(successful_card.update(cx, |tool, cx| {
+                                tool.render(
+                                    &ToolUseStatus::Finished("".into()),
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
+                            }))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "No Results",
+                        div()
+                            .size_full()
+                            .child(empty_card.update(cx, |tool, cx| {
+                                tool.render(
+                                    &ToolUseStatus::Finished("".into()),
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
+                            }))
+                            .into_any_element(),
+                    ),
+                ])])
+                .into_any_element(),
+        )
     }
 }
