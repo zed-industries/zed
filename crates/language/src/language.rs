@@ -1913,12 +1913,13 @@ impl CodeLabel {
         let runs = highlight_id
             .map(|highlight_id| vec![(0..label_length, highlight_id)])
             .unwrap_or_default();
-        let text = if let Some(detail) = &item.detail {
+        let text = if let Some(detail) = item.detail.as_deref().filter(|detail| detail != label) {
             format!("{label} {detail}")
         } else if let Some(description) = item
             .label_details
             .as_ref()
-            .and_then(|label_details| label_details.description.as_ref())
+            .and_then(|label_details| label_details.description.as_deref())
+            .filter(|description| description != label)
         {
             format!("{label} {description}")
         } else {
@@ -2212,5 +2213,101 @@ mod tests {
 
         // Loading an unknown language returns an error.
         assert!(languages.language_for_name("Unknown").await.is_err());
+    }
+
+    #[gpui::test]
+    async fn test_completion_label_omits_duplicate_data() {
+        let regular_completion_item_1 = lsp::CompletionItem {
+            label: "regular1".to_string(),
+            detail: Some("detail1".to_string()),
+            label_details: Some(lsp::CompletionItemLabelDetails {
+                detail: None,
+                description: Some("description 1".to_string()),
+            }),
+            ..lsp::CompletionItem::default()
+        };
+
+        let regular_completion_item_2 = lsp::CompletionItem {
+            label: "regular2".to_string(),
+            label_details: Some(lsp::CompletionItemLabelDetails {
+                detail: None,
+                description: Some("description 2".to_string()),
+            }),
+            ..lsp::CompletionItem::default()
+        };
+
+        let completion_item_with_duplicate_detail_and_proper_description = lsp::CompletionItem {
+            detail: Some(regular_completion_item_1.label.clone()),
+            ..regular_completion_item_1.clone()
+        };
+
+        let completion_item_with_duplicate_detail = lsp::CompletionItem {
+            detail: Some(regular_completion_item_1.label.clone()),
+            label_details: None,
+            ..regular_completion_item_1.clone()
+        };
+
+        let completion_item_with_duplicate_description = lsp::CompletionItem {
+            label_details: Some(lsp::CompletionItemLabelDetails {
+                detail: None,
+                description: Some(regular_completion_item_2.label.clone()),
+            }),
+            ..regular_completion_item_2.clone()
+        };
+
+        assert_eq!(
+            CodeLabel::fallback_for_completion(&regular_completion_item_1, None).text,
+            format!(
+                "{} {}",
+                regular_completion_item_1.label,
+                regular_completion_item_1.detail.unwrap()
+            ),
+            "LSP completion items with both detail and label_details.description should prefer detail"
+        );
+        assert_eq!(
+            CodeLabel::fallback_for_completion(&regular_completion_item_2, None).text,
+            format!(
+                "{} {}",
+                regular_completion_item_2.label,
+                regular_completion_item_2
+                    .label_details
+                    .as_ref()
+                    .unwrap()
+                    .description
+                    .as_ref()
+                    .unwrap()
+            ),
+            "LSP completion items without detail but with label_details.description should use that"
+        );
+        assert_eq!(
+            CodeLabel::fallback_for_completion(
+                &completion_item_with_duplicate_detail_and_proper_description,
+                None
+            )
+            .text,
+            format!(
+                "{} {}",
+                regular_completion_item_1.label,
+                regular_completion_item_1
+                    .label_details
+                    .as_ref()
+                    .unwrap()
+                    .description
+                    .as_ref()
+                    .unwrap()
+            ),
+            "LSP completion items with both detail and label_details.description should prefer description only if the detail duplicates the completion label"
+        );
+        assert_eq!(
+            CodeLabel::fallback_for_completion(&completion_item_with_duplicate_detail, None).text,
+            regular_completion_item_1.label,
+            "LSP completion items with duplicate label and detail, should omit the detail"
+        );
+        assert_eq!(
+            CodeLabel::fallback_for_completion(&completion_item_with_duplicate_description, None)
+                .text,
+            regular_completion_item_2.label,
+            "LSP completion items with duplicate label and detail, should omit the detail"
+        );
     }
 }

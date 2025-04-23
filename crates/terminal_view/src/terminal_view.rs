@@ -982,15 +982,6 @@ fn subscribe_for_terminal_events(
                 window.invalidate_character_coordinates();
                 cx.emit(SearchEvent::ActiveMatchChanged)
             }
-            Event::TaskLocatorReady { task_id, success } => {
-                if *success {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.debug_task_ready(task_id, cx);
-                        })
-                        .log_err();
-                }
-            }
         },
     );
     vec![terminal_subscription, terminal_events_subscription]
@@ -1029,7 +1020,7 @@ fn possible_open_target(
     workspace: &WeakEntity<Workspace>,
     cwd: &Option<PathBuf>,
     maybe_path: &str,
-    cx: &mut Context<TerminalView>,
+    cx: &App,
 ) -> Task<Option<OpenTarget>> {
     let Some(workspace) = workspace.upgrade() else {
         return Task::ready(None);
@@ -1070,15 +1061,22 @@ fn possible_open_target(
             });
         }
     }
-    potential_paths.insert(0, original_path);
-    potential_paths.insert(1, path_with_position);
 
+    let insert_both_paths = original_path != path_with_position;
+    potential_paths.insert(0, original_path);
+    if insert_both_paths {
+        potential_paths.insert(1, path_with_position);
+    }
+
+    // If we won't find paths "easily", we can traverse the entire worktree to look what ends with the potential path suffix.
+    // That will be slow, though, so do the fast checks first.
+    let mut worktree_paths_to_check = Vec::new();
     for worktree in &worktree_candidates {
         let worktree_root = worktree.read(cx).abs_path();
         let mut paths_to_check = Vec::with_capacity(potential_paths.len());
 
         for path_with_position in &potential_paths {
-            if worktree_root.ends_with(&path_with_position.path) {
+            let path_to_check = if worktree_root.ends_with(&path_with_position.path) {
                 let root_path_with_posiition = PathWithPosition {
                     path: worktree_root.to_path_buf(),
                     row: path_with_position.row,
@@ -1091,10 +1089,10 @@ fn possible_open_target(
                             root_entry.clone(),
                         )));
                     }
-                    None => paths_to_check.push(root_path_with_posiition),
+                    None => root_path_with_posiition,
                 }
             } else {
-                paths_to_check.push(PathWithPosition {
+                PathWithPosition {
                     path: path_with_position
                         .path
                         .strip_prefix(&worktree_root)
@@ -1102,89 +1100,120 @@ fn possible_open_target(
                         .to_owned(),
                     row: path_with_position.row,
                     column: path_with_position.column,
-                });
+                }
             };
-        }
 
-        let mut traversal = worktree
-            .read(cx)
-            .traverse_from_path(true, true, false, "".as_ref());
-        while let Some(entry) = traversal.next() {
-            if let Some(path_in_worktree) = paths_to_check
-                .iter()
-                .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
-            {
+            if let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path) {
                 return Task::ready(Some(OpenTarget::Worktree(
                     PathWithPosition {
                         path: worktree_root.join(&entry.path),
-                        row: path_in_worktree.row,
-                        column: path_in_worktree.column,
+                        row: path_to_check.row,
+                        column: path_to_check.column,
                     },
                     entry.clone(),
                 )));
+            } else {
+                paths_to_check.push(path_to_check);
             }
+        }
+
+        if !paths_to_check.is_empty() {
+            worktree_paths_to_check.push((worktree.clone(), paths_to_check));
         }
     }
 
-    if !workspace.read(cx).project().read(cx).is_local() {
-        return Task::ready(None);
-    }
-    let fs = workspace.read(cx).project().read(cx).fs().clone();
-
-    let paths_to_check = potential_paths
-        .into_iter()
-        .flat_map(|path_to_check| {
-            let mut paths_to_check = Vec::new();
-            let maybe_path = &path_to_check.path;
-            if maybe_path.starts_with("~") {
-                if let Some(home_path) =
-                    maybe_path
-                        .strip_prefix("~")
-                        .ok()
-                        .and_then(|stripped_maybe_path| {
-                            Some(dirs::home_dir()?.join(stripped_maybe_path))
-                        })
-                {
+    // Before entire worktree traversal(s), make an attempt to do FS checks if available.
+    let fs_paths_to_check = if workspace.read(cx).project().read(cx).is_local() {
+        potential_paths
+            .into_iter()
+            .flat_map(|path_to_check| {
+                let mut paths_to_check = Vec::new();
+                let maybe_path = &path_to_check.path;
+                if maybe_path.starts_with("~") {
+                    if let Some(home_path) =
+                        maybe_path
+                            .strip_prefix("~")
+                            .ok()
+                            .and_then(|stripped_maybe_path| {
+                                Some(dirs::home_dir()?.join(stripped_maybe_path))
+                            })
+                    {
+                        paths_to_check.push(PathWithPosition {
+                            path: home_path,
+                            row: path_to_check.row,
+                            column: path_to_check.column,
+                        });
+                    }
+                } else {
                     paths_to_check.push(PathWithPosition {
-                        path: home_path,
+                        path: maybe_path.clone(),
                         row: path_to_check.row,
                         column: path_to_check.column,
                     });
-                }
-            } else {
-                paths_to_check.push(PathWithPosition {
-                    path: maybe_path.clone(),
-                    row: path_to_check.row,
-                    column: path_to_check.column,
-                });
-                if maybe_path.is_relative() {
-                    if let Some(cwd) = &cwd {
-                        paths_to_check.push(PathWithPosition {
-                            path: cwd.join(maybe_path),
-                            row: path_to_check.row,
-                            column: path_to_check.column,
-                        });
-                    }
-                    for worktree in &worktree_candidates {
-                        paths_to_check.push(PathWithPosition {
-                            path: worktree.read(cx).abs_path().join(maybe_path),
-                            row: path_to_check.row,
-                            column: path_to_check.column,
-                        });
+                    if maybe_path.is_relative() {
+                        if let Some(cwd) = &cwd {
+                            paths_to_check.push(PathWithPosition {
+                                path: cwd.join(maybe_path),
+                                row: path_to_check.row,
+                                column: path_to_check.column,
+                            });
+                        }
+                        for worktree in &worktree_candidates {
+                            paths_to_check.push(PathWithPosition {
+                                path: worktree.read(cx).abs_path().join(maybe_path),
+                                row: path_to_check.row,
+                                column: path_to_check.column,
+                            });
+                        }
                     }
                 }
-            }
-            paths_to_check
-        })
-        .collect::<Vec<_>>();
+                paths_to_check
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
+    let worktree_check_task = cx.spawn(async move |cx| {
+        for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
+            let found_entry = worktree
+                .update(cx, |worktree, _| {
+                    let worktree_root = worktree.abs_path();
+                    let mut traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
+                    while let Some(entry) = traversal.next() {
+                        if let Some(path_in_worktree) = worktree_paths_to_check
+                            .iter()
+                            .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
+                        {
+                            return Some(OpenTarget::Worktree(
+                                PathWithPosition {
+                                    path: worktree_root.join(&entry.path),
+                                    row: path_in_worktree.row,
+                                    column: path_in_worktree.column,
+                                },
+                                entry.clone(),
+                            ));
+                        }
+                    }
+                    None
+                })
+                .ok()?;
+            if let Some(found_entry) = found_entry {
+                return Some(found_entry);
+            }
+        }
+        None
+    });
+
+    let fs = workspace.read(cx).project().read(cx).fs().clone();
     cx.background_spawn(async move {
-        for path_to_check in paths_to_check {
+        for path_to_check in fs_paths_to_check {
             if let Some(metadata) = fs.metadata(&path_to_check.path).await.ok().flatten() {
                 return Some(OpenTarget::File(path_to_check, metadata));
             }
         }
-        None
+
+        worktree_check_task.await
     })
 }
 
@@ -1278,6 +1307,11 @@ impl Render for TerminalView {
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
+                        if this.terminal.read(cx).last_content.selection.is_none() {
+                            this.terminal.update(cx, |terminal, _| {
+                                terminal.select_word_at_event_position(event);
+                            });
+                        };
                         this.deploy_context_menu(event.position, window, cx);
                         cx.notify();
                     }
@@ -1669,6 +1703,7 @@ impl SearchableItem for TerminalView {
                     query.include_ignored(),
                     query.files_to_include().clone(),
                     query.files_to_exclude().clone(),
+                    false,
                     None,
                 )
                 .unwrap()),

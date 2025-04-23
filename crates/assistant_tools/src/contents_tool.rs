@@ -209,7 +209,7 @@ impl Tool for ContentsTool {
                     })?;
 
                     action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer, cx);
+                        log.track_buffer(buffer, cx);
                     })?;
 
                     Ok(result)
@@ -221,14 +221,14 @@ impl Tool for ContentsTool {
                         let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                         action_log.update(cx, |log, cx| {
-                            log.buffer_read(buffer, cx);
+                            log.track_buffer(buffer, cx);
                         })?;
 
                         Ok(result)
                     } else {
                         // File is too big, so return its outline and a suggestion to
                         // read again with a line number range specified.
-                        let outline = file_outline(project, file_path, action_log, None, 0, cx).await?;
+                        let outline = file_outline(project, file_path, action_log, None, cx).await?;
 
                         Ok(format!("This file was too big to read all at once. Here is an outline of its symbols:\n\n{outline}\n\nUsing the line numbers in this outline, you can call this tool again while specifying the start and end fields to see the implementations of symbols in the outline."))
                     }

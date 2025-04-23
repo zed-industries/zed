@@ -148,6 +148,16 @@ impl OpenAiLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: open_ai::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(OpenAiLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for OpenAiLanguageModelProvider {
@@ -172,14 +182,11 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = open_ai::Model::default();
-        Some(Arc::new(OpenAiLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(open_ai::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(open_ai::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -211,15 +218,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(OpenAiLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    state: self.state.clone(),
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -342,14 +341,16 @@ pub fn into_open_ai(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) => messages.push(match message.role {
-                    Role::User => open_ai::RequestMessage::User { content: text },
-                    Role::Assistant => open_ai::RequestMessage::Assistant {
-                        content: Some(text),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => open_ai::RequestMessage::System { content: text },
-                }),
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
+                    .push(match message.role {
+                        Role::User => open_ai::RequestMessage::User { content: text },
+                        Role::Assistant => open_ai::RequestMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => open_ai::RequestMessage::System { content: text },
+                    }),
+                MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_ai::ToolCall {
@@ -489,6 +490,7 @@ pub fn map_to_language_model_completion_events(
                                                 LanguageModelToolUse {
                                                     id: tool_call.id.into(),
                                                     name: tool_call.name.as_str().into(),
+                                                    is_input_complete: true,
                                                     input: serde_json::Value::from_str(
                                                         &tool_call.arguments,
                                                     )?,

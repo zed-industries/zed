@@ -157,6 +157,10 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.provided_models(cx).into_iter().next()
     }
 
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.default_model(cx)
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models: BTreeMap<String, lmstudio::Model> = BTreeMap::default();
 

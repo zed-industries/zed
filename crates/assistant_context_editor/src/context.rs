@@ -2373,7 +2373,7 @@ impl AssistantContext {
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
-                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                    LanguageModelCompletionEvent::Thinking { text: chunk, .. } => {
                                         if thought_process_stack.is_empty() {
                                             let start =
                                                 buffer.anchor_before(message_old_end_offset);

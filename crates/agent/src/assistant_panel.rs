@@ -25,7 +25,7 @@ use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::{PromptBuilder, PromptId};
+use prompt_store::{PromptBuilder, PromptId, UserPromptId};
 use proto::Plan;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
@@ -47,7 +47,7 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::UsageBanner;
 use crate::{
-    AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
+    AddContextServer, AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
@@ -79,11 +79,11 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                .register_action(|workspace, action: &OpenPromptLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(&OpenPromptLibrary::default(), window, cx)
+                            panel.deploy_prompt_library(action, window, cx)
                         });
                     }
                 })
@@ -502,7 +502,9 @@ impl AssistantPanel {
                     None,
                 ))
             }),
-            action.prompt_to_focus.map(|uuid| PromptId::User { uuid }),
+            action.prompt_to_select.map(|uuid| PromptId::User {
+                uuid: UserPromptId(uuid),
+            }),
             cx,
         )
         .detach_and_log_err(cx);
@@ -1123,14 +1125,16 @@ impl AssistantPanel {
                                                 .action("Prompt Library", Box::new(OpenPromptLibrary::default()))
                                                 .action("Settings", Box::new(OpenConfiguration))
                                                 .separator()
+                                                .header("MCPs")
                                                 .action(
-                                                    "Install MCPs",
+                                                    "View Server Extensions",
                                                     Box::new(zed_actions::Extensions {
                                                         category_filter: Some(
                                                             zed_actions::ExtensionCategoryFilter::ContextServers,
                                                         ),
                                                         }),
                                                 )
+                                                .action("Add Custom Server", Box::new(AddContextServer))
                                             },
                                         ))
                                     }),
@@ -1546,7 +1550,7 @@ impl AssistantPanel {
     fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let usage = self.thread.read(cx).last_usage()?;
 
-        Some(UsageBanner::new(zed_llm_client::Plan::ZedProTrial, usage.amount).into_any_element())
+        Some(UsageBanner::new(zed_llm_client::Plan::ZedProTrial, usage).into_any_element())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1947,7 +1951,9 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
                                 .collect::<Vec<_>>();
 
                             for (buffer, range) in selection_ranges {
-                                store.add_excerpt(range, buffer, cx).detach_and_log_err(cx);
+                                store
+                                    .add_selection(buffer, range, cx)
+                                    .detach_and_log_err(cx);
                             }
                         })
                     })

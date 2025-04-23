@@ -24,8 +24,8 @@ use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
 use prompt_store::{
-    DefaultUserRulesContext, ProjectContext, PromptBuilder, PromptId, PromptStore,
-    PromptsUpdatedEvent, RulesFileContext, WorktreeContext,
+    ProjectContext, PromptBuilder, PromptId, PromptMetadata, PromptStore, PromptsUpdatedEvent,
+    RulesFileContext, UserPromptId, UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
@@ -62,6 +62,7 @@ pub struct ThreadStore {
     project: Entity<Project>,
     tools: Entity<ToolWorkingSet>,
     prompt_builder: Arc<PromptBuilder>,
+    prompt_store: Option<Entity<PromptStore>>,
     context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
@@ -135,6 +136,7 @@ impl ThreadStore {
         let (ready_tx, ready_rx) = oneshot::channel();
         let mut ready_tx = Some(ready_tx);
         let reload_system_prompt_task = cx.spawn({
+            let prompt_store = prompt_store.clone();
             async move |thread_store, cx| {
                 loop {
                     let Some(reload_task) = thread_store
@@ -158,6 +160,7 @@ impl ThreadStore {
             project,
             tools,
             prompt_builder,
+            prompt_store,
             context_server_manager,
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
@@ -245,7 +248,7 @@ impl ThreadStore {
             let default_user_rules = default_user_rules
                 .into_iter()
                 .flat_map(|(contents, prompt_metadata)| match contents {
-                    Ok(contents) => Some(DefaultUserRulesContext {
+                    Ok(contents) => Some(UserRulesContext {
                         uuid: match prompt_metadata.id {
                             PromptId::User { uuid } => uuid,
                             PromptId::EditWorkflow => return None,
@@ -279,14 +282,12 @@ impl ThreadStore {
         cx: &App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let root_name = worktree.root_name().into();
-        let abs_path = worktree.abs_path();
 
         let rules_task = Self::load_worktree_rules_file(fs, worktree, cx);
         let Some(rules_task) = rules_task else {
             return Task::ready((
                 WorktreeContext {
                     root_name,
-                    abs_path,
                     rules_file: None,
                 },
                 None,
@@ -305,7 +306,6 @@ impl ThreadStore {
             };
             let worktree_info = WorktreeContext {
                 root_name,
-                abs_path,
                 rules_file,
             };
             (worktree_info, rules_file_error)
@@ -347,6 +347,27 @@ impl ThreadStore {
 
     pub fn context_server_manager(&self) -> Entity<ContextServerManager> {
         self.context_server_manager.clone()
+    }
+
+    pub fn prompt_store(&self) -> Option<Entity<PromptStore>> {
+        self.prompt_store.clone()
+    }
+
+    pub fn load_rules(
+        &self,
+        prompt_id: UserPromptId,
+        cx: &App,
+    ) -> Task<Result<(PromptMetadata, String)>> {
+        let prompt_id = PromptId::User { uuid: prompt_id };
+        let Some(prompt_store) = self.prompt_store.as_ref() else {
+            return Task::ready(Err(anyhow!("Prompt store unexpectedly missing.")));
+        };
+        let prompt_store = prompt_store.read(cx);
+        let Some(metadata) = prompt_store.metadata(prompt_id) else {
+            return Task::ready(Err(anyhow!("User rules not found in library.")));
+        };
+        let text_task = prompt_store.load(prompt_id, cx);
+        cx.background_spawn(async move { Ok((metadata, text_task.await?)) })
     }
 
     pub fn tools(&self) -> Entity<ToolWorkingSet> {
@@ -663,9 +684,18 @@ pub struct SerializedMessage {
 #[serde(tag = "type")]
 pub enum SerializedMessageSegment {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+    },
     #[serde(rename = "thinking")]
-    Thinking { text: String },
+    Thinking {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    RedactedThinking {
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

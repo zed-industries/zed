@@ -66,8 +66,10 @@ use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blu
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
-use super::display::WaylandDisplay;
-use super::window::{ImeInput, WaylandWindowStatePtr};
+use super::{
+    display::WaylandDisplay,
+    window::{ImeInput, WaylandWindowStatePtr},
+};
 
 use crate::platform::linux::{
     LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
@@ -83,11 +85,11 @@ use crate::platform::linux::{
 use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, SCROLL_LINES,
-    ScaledPixels, ScreenCaptureSource, ScrollDelta, ScrollWheelEvent, Size, TouchPhase,
-    WindowParams, point, px, size,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
+    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScreenCaptureSource,
+    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -587,9 +589,9 @@ impl WaylandClient {
 }
 
 impl LinuxClient for WaylandClient {
-    fn keyboard_layout(&self) -> String {
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
-        if let Some(keymap_state) = &state.keymap_state {
+        let id = if let Some(keymap_state) = &state.keymap_state {
             let layout_idx = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
             keymap_state
                 .get_keymap()
@@ -597,7 +599,8 @@ impl LinuxClient for WaylandClient {
                 .to_string()
         } else {
             "unknown".to_string()
-        }
+        };
+        Box::new(LinuxKeyboardLayout::new(id))
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

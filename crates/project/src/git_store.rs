@@ -832,32 +832,6 @@ impl GitStore {
         })
     }
 
-    pub fn delete_checkpoint(
-        &self,
-        checkpoint: GitStoreCheckpoint,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let repositories_by_work_directory_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-        for (work_dir_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
-            if let Some(repository) =
-                repositories_by_work_directory_abs_path.get(&work_dir_abs_path)
-            {
-                let delete = repository.update(cx, |this, _| this.delete_checkpoint(checkpoint));
-                tasks.push(async move { delete.await? });
-            }
-        }
-        cx.background_spawn(async move {
-            future::try_join_all(tasks).await?;
-            Ok(())
-        })
-    }
-
     /// Blames a buffer.
     pub fn blame_buffer(
         &self,
@@ -3789,20 +3763,6 @@ impl Repository {
             match repo {
                 RepositoryState::Local { backend, .. } => {
                     backend.compare_checkpoints(left, right).await
-                }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
-            }
-        })
-    }
-
-    pub fn delete_checkpoint(
-        &mut self,
-        checkpoint: GitRepositoryCheckpoint,
-    ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local { backend, .. } => {
-                    backend.delete_checkpoint(checkpoint).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }

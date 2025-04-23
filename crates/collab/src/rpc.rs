@@ -4147,7 +4147,6 @@ async fn get_llm_api_token(
         billing_preferences,
         &flags,
         has_legacy_llm_subscription,
-        session.current_plan(&db).await?,
         billing_subscription,
         session.system_id.clone(),
         &session.app_state.config,
