@@ -641,6 +641,7 @@ impl CompletionsQuery {
     }
 }
 
+#[derive(Debug)]
 pub enum SessionEvent {
     Modules,
     LoadedSources,

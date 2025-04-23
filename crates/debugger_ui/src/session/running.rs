@@ -411,12 +411,12 @@ impl RunningState {
                             .log_err();
 
                         if let Some(thread_id) = thread_id {
-                            this.select_thread(*thread_id, cx);
+                            this.select_thread(*thread_id, window, cx);
                         }
                     }
                     SessionEvent::Threads => {
                         let threads = this.session.update(cx, |this, cx| this.threads(cx));
-                        this.select_current_thread(&threads, cx);
+                        this.select_current_thread(&threads, window, cx);
                     }
                     SessionEvent::CapabilitiesLoaded => {
                         let capabilities = this.capabilities(cx);
@@ -731,6 +731,7 @@ impl RunningState {
     pub fn select_current_thread(
         &mut self,
         threads: &Vec<(Thread, ThreadStatus)>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let selected_thread = self
@@ -743,7 +744,7 @@ impl RunningState {
         };
 
         if Some(ThreadId(selected_thread.id)) != self.thread_id {
-            self.select_thread(ThreadId(selected_thread.id), cx);
+            self.select_thread(ThreadId(selected_thread.id), window, cx);
         }
     }
 
@@ -756,7 +757,7 @@ impl RunningState {
             .map(|id| self.session().read(cx).thread_status(id))
     }
 
-    fn select_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+    fn select_thread(&mut self, thread_id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some_and(|id| id == thread_id) {
             return;
         }
@@ -764,8 +765,7 @@ impl RunningState {
         self.thread_id = Some(thread_id);
 
         self.stack_frame_list
-            .update(cx, |list, cx| list.refresh(cx));
-        cx.notify();
+            .update(cx, |list, cx| list.schedule_refresh(true, window, cx));
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {
@@ -917,9 +917,9 @@ impl RunningState {
                 for (thread, _) in threads {
                     let state = state.clone();
                     let thread_id = thread.id;
-                    this = this.entry(thread.name, None, move |_, cx| {
+                    this = this.entry(thread.name, None, move |window, cx| {
                         state.update(cx, |state, cx| {
-                            state.select_thread(ThreadId(thread_id), cx);
+                            state.select_thread(ThreadId(thread_id), window, cx);
                         });
                     });
                 }
