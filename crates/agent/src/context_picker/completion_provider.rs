@@ -33,8 +33,8 @@ use super::file_context_picker::FileMatch;
 // use super::symbol_context_picker::SymbolMatch;
 // use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
-    ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
-    available_context_picker_entries, recent_context_picker_entries, selection_ranges,
+    ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
+    available_context_picker_entries, recent_context_picker_entries,
 };
 
 pub(crate) enum Match {
@@ -269,6 +269,7 @@ impl ContextPickerCompletionProvider {
                 // inserted
                 confirm: Some(Arc::new(|_, _, _| true)),
             }),
+            /*
             ContextPickerEntry::Action(action) => {
                 let (new_text, on_action) = match action {
                     ContextPickerAction::AddSelections => {
@@ -377,6 +378,7 @@ impl ContextPickerCompletionProvider {
                     confirm: Some(on_action),
                 })
             }
+            */
         }
     }
 
@@ -774,7 +776,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 cx,
                             ))
                         }
-                        Match::Symbol(SymbolMatch { symbol, .. }) => Self::completion_for_symbol(
+                        /* Match::Symbol(SymbolMatch { symbol, .. }) => Self::completion_for_symbol(
                             symbol,
                             excerpt_id,
                             source_range.clone(),
@@ -783,6 +785,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             workspace.clone(),
                             cx,
                         ),
+
                         Match::Thread(ThreadMatch {
                             thread, is_recent, ..
                         }) => {
@@ -797,6 +800,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 thread_store,
                             ))
                         }
+
                         Match::Rules(user_rules) => {
                             let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
                             Some(Self::completion_for_rules(
@@ -808,6 +812,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 thread_store,
                             ))
                         }
+
                         Match::Fetch(url) => Some(Self::completion_for_fetch(
                             source_range.clone(),
                             url,
@@ -815,7 +820,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             editor.clone(),
                             context_store.clone(),
                             http_client.clone(),
-                        )),
+                        )), */
                         Match::Entry(EntryMatch { entry, .. }) => Self::completion_for_entry(
                             entry,
                             excerpt_id,

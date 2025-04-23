@@ -275,17 +275,17 @@ impl MessageEditor {
             .read(cx)
             .remove_already_added_context(&mut new_context);
         let context_text_task = load_context(new_context.iter(), self.project.clone(), cx);
-        let wait_for_images = self.context_store.read(cx).wait_for_images(cx);
+        // todo! let wait_for_images = self.context_store.read(cx).wait_for_images(cx);
 
         let thread = self.thread.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
 
         cx.spawn(async move |_this, cx| {
+            // todo! wait in parallel
             let checkpoint = checkpoint.await.ok();
             let (context_text, context_buffers) = context_text_task.await;
-            refresh_task.await;
-            wait_for_images.await;
+            // todo! wait_for_images.await;
 
             thread
                 .update(cx, |thread, cx| {
@@ -390,6 +390,7 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        /* todo!
         let images = cx
             .read_from_clipboard()
             .map(|item| {
@@ -415,6 +416,7 @@ impl MessageEditor {
                 store.add_image(Arc::new(image), cx);
             }
         });
+        */
     }
 
     fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -44,28 +44,28 @@ use crate::thread_store::ThreadStore;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPickerEntry {
     Mode(ContextPickerMode),
-    Action(ContextPickerAction),
+    // Action(ContextPickerAction),
 }
 
 impl ContextPickerEntry {
     pub fn keyword(&self) -> &'static str {
         match self {
             Self::Mode(mode) => mode.keyword(),
-            Self::Action(action) => action.keyword(),
+            // Self::Action(action) => action.keyword(),
         }
     }
 
     pub fn label(&self) -> &'static str {
         match self {
             Self::Mode(mode) => mode.label(),
-            Self::Action(action) => action.label(),
+            // Self::Action(action) => action.label(),
         }
     }
 
     pub fn icon(&self) -> IconName {
         match self {
             Self::Mode(mode) => mode.icon(),
-            Self::Action(action) => action.icon(),
+            // Self::Action(action) => action.icon(),
         }
     }
 }
@@ -291,66 +291,68 @@ impl ContextPicker {
                             cx,
                         )
                     }));
-                }
-                ContextPickerMode::Symbol => {
-                    self.mode = ContextPickerState::Symbol(cx.new(|cx| {
-                        SymbolContextPicker::new(
-                            context_picker.clone(),
-                            self.workspace.clone(),
-                            self.context_store.clone(),
-                            window,
-                            cx,
-                        )
-                    }));
-                }
-                ContextPickerMode::Rules => {
-                    if let Some(thread_store) = self.thread_store.as_ref() {
-                        self.mode = ContextPickerState::Rules(cx.new(|cx| {
-                            RulesContextPicker::new(
-                                thread_store.clone(),
-                                context_picker.clone(),
-                                self.context_store.clone(),
-                                window,
-                                cx,
-                            )
-                        }));
-                    }
-                }
-                ContextPickerMode::Fetch => {
-                    self.mode = ContextPickerState::Fetch(cx.new(|cx| {
-                        FetchContextPicker::new(
-                            context_picker.clone(),
-                            self.workspace.clone(),
-                            self.context_store.clone(),
-                            window,
-                            cx,
-                        )
-                    }));
-                }
-                ContextPickerMode::Thread => {
-                    if let Some(thread_store) = self.thread_store.as_ref() {
-                        self.mode = ContextPickerState::Thread(cx.new(|cx| {
-                            ThreadContextPicker::new(
-                                thread_store.clone(),
-                                context_picker.clone(),
-                                self.context_store.clone(),
-                                window,
-                                cx,
-                            )
-                        }));
-                    }
-                }
-            },
-            ContextPickerEntry::Action(action) => match action {
-                ContextPickerAction::AddSelections => {
-                    if let Some((context_store, workspace)) =
-                        self.context_store.upgrade().zip(self.workspace.upgrade())
-                    {
-                        add_selections_as_context(&context_store, &workspace, cx);
-                    }
+                } /*
+                      ContextPickerMode::Symbol => {
+                          self.mode = ContextPickerState::Symbol(cx.new(|cx| {
+                              SymbolContextPicker::new(
+                                  context_picker.clone(),
+                                  self.workspace.clone(),
+                                  self.context_store.clone(),
+                                  window,
+                                  cx,
+                              )
+                          }));
+                      }
+                      ContextPickerMode::Rules => {
+                          if let Some(thread_store) = self.thread_store.as_ref() {
+                              self.mode = ContextPickerState::Rules(cx.new(|cx| {
+                                  RulesContextPicker::new(
+                                      thread_store.clone(),
+                                      context_picker.clone(),
+                                      self.context_store.clone(),
+                                      window,
+                                      cx,
+                                  )
+                              }));
+                          }
+                      }
+                      ContextPickerMode::Fetch => {
+                          self.mode = ContextPickerState::Fetch(cx.new(|cx| {
+                              FetchContextPicker::new(
+                                  context_picker.clone(),
+                                  self.workspace.clone(),
+                                  self.context_store.clone(),
+                                  window,
+                                  cx,
+                              )
+                          }));
+                      }
+                      ContextPickerMode::Thread => {
+                          if let Some(thread_store) = self.thread_store.as_ref() {
+                              self.mode = ContextPickerState::Thread(cx.new(|cx| {
+                                  ThreadContextPicker::new(
+                                      thread_store.clone(),
+                                      context_picker.clone(),
+                                      self.context_store.clone(),
+                                      window,
+                                      cx,
+                                  )
+                              }));
+                          }
+                      }
+                  },
+                  ContextPickerEntry::Action(action) => match action {
+                      ContextPickerAction::AddSelections => {
+                          if let Some((context_store, workspace)) =
+                              self.context_store.upgrade().zip(self.workspace.upgrade())
+                          {
+                              add_selections_as_context(&context_store, &workspace, cx);
+                          }
 
-                    cx.emit(DismissEvent);
-                }
+                          cx.emit(DismissEvent);
+                      }
+                  },
+                  */
             },
         }
 
@@ -534,9 +536,10 @@ fn available_context_picker_entries(
 ) -> Vec<ContextPickerEntry> {
     let mut entries = vec![
         ContextPickerEntry::Mode(ContextPickerMode::File),
-        ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+        // todo! ContextPickerEntry::Mode(ContextPickerMode::Symbol),
     ];
 
+    /* todo!
     let has_selection = workspace
         .read(cx)
         .active_item(cx)
@@ -549,13 +552,16 @@ fn available_context_picker_entries(
             ContextPickerAction::AddSelections,
         ));
     }
+    */
 
+    /* todo!
     if thread_store.is_some() {
         entries.push(ContextPickerEntry::Mode(ContextPickerMode::Thread));
         entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
     }
 
     entries.push(ContextPickerEntry::Mode(ContextPickerMode::Fetch));
+    */
 
     entries
 }
@@ -618,6 +624,7 @@ fn recent_context_picker_entries(
     recent
 }
 
+/*
 fn add_selections_as_context(
     context_store: &Entity<ContextStore>,
     workspace: &Entity<Workspace>,
@@ -665,6 +672,7 @@ fn selection_ranges(
             .collect::<Vec<_>>()
     })
 }
+*/
 
 pub(crate) fn insert_fold_for_mention(
     excerpt_id: ExcerptId,
