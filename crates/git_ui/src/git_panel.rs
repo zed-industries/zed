@@ -1650,7 +1650,7 @@ impl GitPanel {
         if let Some(merge_message) = self
             .active_repository
             .as_ref()
-            .and_then(|repo| repo.read(cx).merge_message.as_ref())
+            .and_then(|repo| repo.read(cx).merge.message.as_ref())
         {
             return Some(merge_message.to_string());
         }

@@ -16,7 +16,7 @@ use fs::Fs;
 use futures::{
     FutureExt, StreamExt as _,
     channel::{mpsc, oneshot},
-    future::{self, OptionFuture, Shared},
+    future::{self, Shared, try_join_all},
 };
 use git::{
     BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
@@ -230,17 +230,26 @@ impl sum_tree::KeyedItem for StatusEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RepositoryId(pub u64);
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MergeDetails {
+    pub conflicted_paths: TreeSet<RepoPath>,
+    pub message: Option<SharedString>,
+    pub apply_head: Option<CommitDetails>,
+    pub cherry_pick_head: Option<CommitDetails>,
+    pub merge_heads: Vec<CommitDetails>,
+    pub rebase_head: Option<CommitDetails>,
+    pub revert_head: Option<CommitDetails>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
-    pub merge_message: Option<SharedString>,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
     pub branch: Option<Branch>,
     pub head_commit: Option<CommitDetails>,
-    pub merge_conflicts: TreeSet<RepoPath>,
-    pub merge_head_shas: Vec<SharedString>,
     pub scan_id: u64,
+    pub merge: MergeDetails,
 }
 
 type JobId = u64;
@@ -775,7 +784,11 @@ impl GitStore {
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
             .map_or(false, |(repo, path)| {
-                repo.read(cx).snapshot.merge_conflicts.contains(&path)
+                repo.read(cx)
+                    .snapshot
+                    .merge
+                    .conflicted_paths
+                    .contains(&path)
             });
         let git_store = cx.weak_entity();
         let buffer_git_state = self
@@ -1140,7 +1153,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let id = repo.read(cx).id;
-        let merge_conflicts = repo.read(cx).snapshot.merge_conflicts.clone();
+        let merge_conflicts = repo.read(cx).snapshot.merge.conflicted_paths.clone();
         for (buffer_id, diff) in self.diffs.iter() {
             if let Some((buffer_repo, repo_path)) =
                 self.repository_and_path_for_buffer_id(*buffer_id, cx)
@@ -2548,14 +2561,12 @@ impl RepositorySnapshot {
     fn empty(id: RepositoryId, work_directory_abs_path: Arc<Path>) -> Self {
         Self {
             id,
-            merge_message: None,
             statuses_by_path: Default::default(),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
-            merge_conflicts: Default::default(),
-            merge_head_shas: Default::default(),
             scan_id: 0,
+            merge: Default::default(),
         }
     }
 
@@ -2570,7 +2581,8 @@ impl RepositorySnapshot {
                 .collect(),
             removed_statuses: Default::default(),
             current_merge_conflicts: self
-                .merge_conflicts
+                .merge
+                .conflicted_paths
                 .iter()
                 .map(|repo_path| repo_path.to_proto())
                 .collect(),
@@ -2631,7 +2643,8 @@ impl RepositorySnapshot {
             updated_statuses,
             removed_statuses,
             current_merge_conflicts: self
-                .merge_conflicts
+                .merge
+                .conflicted_paths
                 .iter()
                 .map(|path| path.as_ref().to_proto())
                 .collect(),
@@ -2666,7 +2679,7 @@ impl RepositorySnapshot {
     }
 
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
-        self.merge_conflicts.contains(repo_path)
+        self.merge.conflicted_paths.contains(repo_path)
     }
 
     /// This is the name that will be displayed in the repository selector for this repository.
@@ -2677,6 +2690,72 @@ impl RepositorySnapshot {
             .to_string_lossy()
             .to_string()
             .into()
+    }
+}
+
+impl MergeDetails {
+    async fn load(
+        backend: &Arc<dyn GitRepository>,
+        status: &SumTree<StatusEntry>,
+        prev_snapshot: &RepositorySnapshot,
+    ) -> Result<(MergeDetails, bool)> {
+        fn sha_eq<'a>(
+            l: impl IntoIterator<Item = &'a CommitDetails>,
+            r: impl IntoIterator<Item = &'a CommitDetails>,
+        ) -> bool {
+            l.into_iter()
+                .map(|commit| &commit.sha)
+                .eq(r.into_iter().map(|commit| &commit.sha))
+        }
+
+        let merge_heads = try_join_all(
+            backend
+                .merge_head_shas()
+                .into_iter()
+                .map(|sha| backend.show(sha)),
+        )
+        .await?;
+        let cherry_pick_head = backend.show("CHERRY_PICK_HEAD".into()).await.ok();
+        let rebase_head = backend.show("REBASE_HEAD".into()).await.ok();
+        let revert_head = backend.show("REVERT_HEAD".into()).await.ok();
+        let apply_head = backend.show("APPLY_HEAD".into()).await.ok();
+        let message = backend.merge_message().await.map(SharedString::from);
+        let merge_heads_changed = !sha_eq(
+            merge_heads.as_slice(),
+            prev_snapshot.merge.merge_heads.as_slice(),
+        ) || !sha_eq(
+            cherry_pick_head.as_ref(),
+            prev_snapshot.merge.cherry_pick_head.as_ref(),
+        ) || !sha_eq(
+            apply_head.as_ref(),
+            prev_snapshot.merge.apply_head.as_ref(),
+        ) || !sha_eq(
+            rebase_head.as_ref(),
+            prev_snapshot.merge.rebase_head.as_ref(),
+        ) || !sha_eq(
+            revert_head.as_ref(),
+            prev_snapshot.merge.revert_head.as_ref(),
+        );
+        let conflicted_paths = if merge_heads_changed {
+            TreeSet::from_ordered_entries(
+                status
+                    .iter()
+                    .filter(|entry| entry.status.is_conflicted())
+                    .map(|entry| entry.repo_path.clone()),
+            )
+        } else {
+            prev_snapshot.merge.conflicted_paths.clone()
+        };
+        let details = MergeDetails {
+            conflicted_paths,
+            message,
+            apply_head,
+            cherry_pick_head,
+            merge_heads,
+            rebase_head,
+            revert_head,
+        };
+        Ok((details, merge_heads_changed))
     }
 }
 
@@ -3882,7 +3961,8 @@ impl Repository {
             .as_ref()
             .map(proto_to_commit_details);
 
-        self.snapshot.merge_conflicts = conflicted_paths;
+        self.snapshot.merge.conflicted_paths = conflicted_paths;
+        // FIXME others
 
         let edits = update
             .removed_statuses
@@ -4472,16 +4552,6 @@ async fn compute_snapshot(
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
     let statuses = backend.status(&[WORK_DIRECTORY_REPO_PATH.clone()]).await?;
-    let merge_message = backend
-        .merge_message()
-        .await
-        .and_then(|msg| Some(msg.lines().nth(0)?.to_owned().into()));
-    let merge_head_shas = backend
-        .merge_head_shas()
-        .into_iter()
-        .map(SharedString::from)
-        .collect();
-
     let statuses_by_path = SumTree::from_iter(
         statuses
             .entries
@@ -4492,47 +4562,36 @@ async fn compute_snapshot(
             }),
         &(),
     );
+    let (merge_details, merge_heads_changed) =
+        MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
 
-    let merge_head_shas_changed = merge_head_shas != prev_snapshot.merge_head_shas;
-
-    if merge_head_shas_changed
+    if merge_heads_changed
         || branch != prev_snapshot.branch
         || statuses_by_path != prev_snapshot.statuses_by_path
     {
         events.push(RepositoryEvent::Updated { full_scan: true });
     }
 
-    let mut current_merge_conflicts = TreeSet::default();
-    for (repo_path, status) in statuses.entries.iter() {
-        if status.is_conflicted() {
-            current_merge_conflicts.insert(repo_path.clone());
-        }
-    }
-
     // Cache merge conflict paths so they don't change from staging/unstaging,
     // until the merge heads change (at commit time, etc.).
-    let mut merge_conflicts = prev_snapshot.merge_conflicts.clone();
-    if merge_head_shas_changed {
-        merge_conflicts = current_merge_conflicts;
+    if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
 
     // Useful when branch is None in detached head state
     let head_commit = match backend.head_sha() {
-        Some(head_sha) => backend.show(head_sha).await.ok(),
+        Some(head_sha) => backend.show(head_sha).await.log_err(),
         None => None,
     };
 
     let snapshot = RepositorySnapshot {
         id,
-        merge_message,
         statuses_by_path,
         work_directory_abs_path,
         scan_id: prev_snapshot.scan_id + 1,
         branch,
         head_commit,
-        merge_conflicts,
-        merge_head_shas,
+        merge: merge_details,
     };
 
     Ok((snapshot, events))
