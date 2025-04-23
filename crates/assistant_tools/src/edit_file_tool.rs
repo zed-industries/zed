@@ -26,6 +26,15 @@ use workspace::Workspace;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
+    /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
+    ///
+    /// <example>Fix API endpoint URLs</example>
+    /// <example>Update copyright year in `page_footer`</example>
+    ///
+    /// Make sure to include this field before all the others in the input object
+    /// so that we can display it immediately.
+    pub display_description: String,
+
     /// The full path of the file to modify in the project.
     ///
     /// WARNING: When specifying which file path need changing, you MUST
@@ -46,12 +55,6 @@ pub struct EditFileToolInput {
     /// `frontend/db.js`
     /// </example>
     pub path: PathBuf,
-
-    /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
-    ///
-    /// <example>Fix API endpoint URLs</example>
-    /// <example>Update copyright year in `page_footer`</example>
-    pub display_description: String,
 
     /// The text to replace.
     pub old_string: String,
