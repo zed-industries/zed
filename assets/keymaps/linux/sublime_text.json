@@ -37,6 +37,8 @@
       "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-d": "editor::DuplicateSelection",
       "alt-f3": "editor::SelectAllMatches", // find_all_under
+      // "ctrl-f3": "", // find_under (cancels any selections)
+      // "cmd-alt-shift-g": "" // find_under_prev (cancels any selections)
       "f9": "editor::SortLinesCaseSensitive",
       "ctrl-f9": "editor::SortLinesCaseInsensitive",
       "f12": "editor::GoToDefinition",

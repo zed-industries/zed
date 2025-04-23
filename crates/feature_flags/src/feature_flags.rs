@@ -84,6 +84,11 @@ impl FeatureFlag for ZedPro {
     const NAME: &'static str = "zed-pro";
 }
 
+pub struct ZedProWebSearchTool {}
+impl FeatureFlag for ZedProWebSearchTool {
+    const NAME: &'static str = "zed-pro-web-search-tool";
+}
+
 pub struct NotebookFeatureFlag;
 
 impl FeatureFlag for NotebookFeatureFlag {

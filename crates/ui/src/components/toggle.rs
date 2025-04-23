@@ -339,6 +339,68 @@ impl RenderOnce for CheckboxWithLabel {
     }
 }
 
+/// Defines the color for a switch component.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub enum SwitchColor {
+    #[default]
+    Default,
+    Accent,
+    Error,
+    Warning,
+    Success,
+    Custom(Hsla),
+}
+
+impl SwitchColor {
+    fn get_colors(&self, is_on: bool, cx: &App) -> (Hsla, Hsla) {
+        if !is_on {
+            return (
+                cx.theme().colors().element_disabled,
+                cx.theme().colors().border,
+            );
+        }
+
+        match self {
+            SwitchColor::Default => {
+                let colors = cx.theme().colors();
+                let base_color = colors.text;
+                let bg_color = colors.element_background.blend(base_color.opacity(0.08));
+                (bg_color, colors.border_variant)
+            }
+            SwitchColor::Accent => {
+                let status = cx.theme().status();
+                (status.info.opacity(0.4), status.info.opacity(0.2))
+            }
+            SwitchColor::Error => {
+                let status = cx.theme().status();
+                (status.error.opacity(0.4), status.error.opacity(0.2))
+            }
+            SwitchColor::Warning => {
+                let status = cx.theme().status();
+                (status.warning.opacity(0.4), status.warning.opacity(0.2))
+            }
+            SwitchColor::Success => {
+                let status = cx.theme().status();
+                (status.success.opacity(0.4), status.success.opacity(0.2))
+            }
+            SwitchColor::Custom(color) => (*color, color.opacity(0.6)),
+        }
+    }
+}
+
+impl From<SwitchColor> for Color {
+    fn from(color: SwitchColor) -> Self {
+        match color {
+            SwitchColor::Default => Color::Default,
+            SwitchColor::Accent => Color::Accent,
+            SwitchColor::Error => Color::Error,
+            SwitchColor::Warning => Color::Warning,
+            SwitchColor::Success => Color::Success,
+            SwitchColor::Custom(_) => Color::Default,
+        }
+    }
+}
+
 /// # Switch
 ///
 /// Switches are used to represent opposite states, such as enabled or disabled.
@@ -350,6 +412,7 @@ pub struct Switch {
     on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>>,
     label: Option<SharedString>,
     key_binding: Option<KeyBinding>,
+    color: SwitchColor,
 }
 
 impl Switch {
@@ -362,7 +425,14 @@ impl Switch {
             on_click: None,
             label: None,
             key_binding: None,
+            color: SwitchColor::default(),
         }
+    }
+
+    /// Sets the color of the switch using the specified [`SwitchColor`].
+    pub fn color(mut self, color: SwitchColor) -> Self {
+        self.color = color;
+        self
     }
 
     /// Sets the disabled state of the [`Switch`].
@@ -397,25 +467,17 @@ impl RenderOnce for Switch {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_on = self.toggle_state == ToggleState::Selected;
         let adjust_ratio = if is_light(cx) { 1.5 } else { 1.0 };
-        let base_color = cx.theme().colors().text;
 
-        let bg_color = if is_on {
-            cx.theme()
-                .colors()
-                .element_background
-                .blend(base_color.opacity(0.08))
+        let base_color = cx.theme().colors().text;
+        let thumb_color = base_color;
+        let (bg_color, border_color) = self.color.get_colors(is_on, cx);
+
+        let bg_hover_color = if is_on {
+            bg_color.blend(base_color.opacity(0.16 * adjust_ratio))
         } else {
-            cx.theme().colors().element_background
+            bg_color.blend(base_color.opacity(0.05 * adjust_ratio))
         };
-        let thumb_color = base_color.opacity(0.8);
-        let thumb_hover_color = base_color;
-        let border_color = cx.theme().colors().border_variant;
-        // Lighter themes need higher contrast borders
-        let border_hover_color = if is_on {
-            border_color.blend(base_color.opacity(0.16 * adjust_ratio))
-        } else {
-            border_color.blend(base_color.opacity(0.05 * adjust_ratio))
-        };
+
         let thumb_opacity = match (is_on, self.disabled) {
             (_, true) => 0.2,
             (true, false) => 1.0,
@@ -432,24 +494,20 @@ impl RenderOnce for Switch {
                 h_flex()
                     .when(is_on, |on| on.justify_end())
                     .when(!is_on, |off| off.justify_start())
-                    .items_center()
                     .size_full()
                     .rounded_full()
                     .px(DynamicSpacing::Base02.px(cx))
                     .bg(bg_color)
+                    .when(!self.disabled, |this| {
+                        this.group_hover(group_id.clone(), |el| el.bg(bg_hover_color))
+                    })
                     .border_1()
                     .border_color(border_color)
-                    .when(!self.disabled, |this| {
-                        this.group_hover(group_id.clone(), |el| el.border_color(border_hover_color))
-                    })
                     .child(
                         div()
                             .size(DynamicSpacing::Base12.rems(cx))
                             .rounded_full()
                             .bg(thumb_color)
-                            .when(!self.disabled, |this| {
-                                this.group_hover(group_id.clone(), |el| el.bg(thumb_hover_color))
-                            })
                             .opacity(thumb_opacity),
                     ),
             );
@@ -482,6 +540,7 @@ pub struct SwitchWithLabel {
     toggle_state: ToggleState,
     on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
     disabled: bool,
+    color: SwitchColor,
 }
 
 impl SwitchWithLabel {
@@ -498,12 +557,19 @@ impl SwitchWithLabel {
             toggle_state: toggle_state.into(),
             on_click: Arc::new(on_click),
             disabled: false,
+            color: SwitchColor::default(),
         }
     }
 
     /// Sets the disabled state of the [`SwitchWithLabel`].
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Sets the color of the switch using the specified [`SwitchColor`].
+    pub fn color(mut self, color: SwitchColor) -> Self {
+        self.color = color;
         self
     }
 }
@@ -516,6 +582,7 @@ impl RenderOnce for SwitchWithLabel {
             .child(
                 Switch::new(self.id.clone(), self.toggle_state)
                     .disabled(self.disabled)
+                    .color(self.color)
                     .on_click({
                         let on_click = self.on_click.clone();
                         move |checked, window, cx| {
@@ -662,6 +729,53 @@ impl Component for Switch {
                             single_example(
                                 "On",
                                 Switch::new("switch_on", ToggleState::Selected)
+                                    .on_click(|_, _, _cx| {})
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Colors",
+                        vec![
+                            single_example(
+                                "Default",
+                                Switch::new("switch_default_style", ToggleState::Selected)
+                                    .color(SwitchColor::Default)
+                                    .on_click(|_, _, _cx| {})
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Accent",
+                                Switch::new("switch_accent_style", ToggleState::Selected)
+                                    .color(SwitchColor::Accent)
+                                    .on_click(|_, _, _cx| {})
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Error",
+                                Switch::new("switch_error_style", ToggleState::Selected)
+                                    .color(SwitchColor::Error)
+                                    .on_click(|_, _, _cx| {})
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Warning",
+                                Switch::new("switch_warning_style", ToggleState::Selected)
+                                    .color(SwitchColor::Warning)
+                                    .on_click(|_, _, _cx| {})
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Success",
+                                Switch::new("switch_success_style", ToggleState::Selected)
+                                    .color(SwitchColor::Success)
+                                    .on_click(|_, _, _cx| {})
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Custom",
+                                Switch::new("switch_custom_style", ToggleState::Selected)
+                                    .color(SwitchColor::Custom(hsla(300.0 / 360.0, 0.6, 0.6, 1.0)))
                                     .on_click(|_, _, _cx| {})
                                     .into_any_element(),
                             ),

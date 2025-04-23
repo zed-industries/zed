@@ -41,16 +41,17 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{DapRegistry, DebugAdapterConfig, client::DebugAdapterClient};
+use dap::client::DebugAdapterClient;
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
 use debugger::{
     breakpoint_store::BreakpointStore,
     dap_store::{DapStore, DapStoreEvent},
-    session::Session,
 };
 pub use environment::ProjectEnvironment;
+#[cfg(test)]
+use futures::future::join_all;
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
@@ -107,7 +108,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    ResultExt as _, maybe,
+    ResultExt as _,
     paths::{SanitizedPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -165,7 +166,6 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
-    debug_adapters: Arc<DapRegistry>,
     dap_store: Entity<DapStore>,
 
     breakpoint_store: Entity<BreakpointStore>,
@@ -834,7 +834,6 @@ impl Project {
         node: NodeRuntime,
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
-        debug_adapters: Arc<DapRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
         cx: &mut App,
@@ -871,11 +870,10 @@ impl Project {
                     node.clone(),
                     fs.clone(),
                     languages.clone(),
-                    debug_adapters.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
-                    breakpoint_store.clone(),
                     worktree_store.clone(),
+                    breakpoint_store.clone(),
                     cx,
                 )
             });
@@ -957,7 +955,6 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
-                debug_adapters,
                 client,
                 task_store,
                 user_store,
@@ -1067,13 +1064,15 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into()));
+                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, ssh_proto.clone()));
 
-            let dap_store = cx.new(|_| {
-                DapStore::new_remote(
+            let dap_store = cx.new(|cx| {
+                DapStore::new_ssh(
                     SSH_PROJECT_ID,
-                    client.clone().into(),
+                    ssh.clone(),
                     breakpoint_store.clone(),
+                    worktree_store.clone(),
+                    cx,
                 )
             });
 
@@ -1115,7 +1114,6 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
-                debug_adapters: Arc::new(DapRegistry::default()),
                 client,
                 task_store,
                 user_store,
@@ -1253,8 +1251,14 @@ impl Project {
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
-        let dap_store = cx.new(|_cx| {
-            DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())
+        let dap_store = cx.new(|cx| {
+            DapStore::new_collab(
+                remote_id,
+                client.clone().into(),
+                breakpoint_store.clone(),
+                worktree_store.clone(),
+                cx,
+            )
         })?;
 
         let lsp_store = cx.new(|cx| {
@@ -1339,7 +1343,6 @@ impl Project {
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
                 languages,
-                debug_adapters: Arc::new(DapRegistry::default()),
                 user_store: user_store.clone(),
                 task_store,
                 snippets,
@@ -1459,66 +1462,6 @@ impl Project {
         }
     }
 
-    pub fn queue_debug_session(&mut self, config: DebugAdapterConfig, cx: &mut Context<Self>) {
-        if config.locator.is_none() {
-            self.start_debug_session(config, cx).detach_and_log_err(cx);
-        }
-    }
-
-    pub fn start_debug_session(
-        &mut self,
-        config: DebugAdapterConfig,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Session>>> {
-        let worktree = maybe!({ self.worktrees(cx).next() });
-
-        let Some(worktree) = &worktree else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
-        };
-
-        self.dap_store
-            .update(cx, |dap_store, cx| {
-                dap_store.new_session(config, worktree, None, cx)
-            })
-            .1
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn fake_debug_session(
-        &mut self,
-        request: task::DebugRequestType,
-        caps: Option<dap::Capabilities>,
-        fails: bool,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Session>>> {
-        use dap::{Capabilities, FakeAdapter};
-        use task::DebugRequestDisposition;
-
-        let worktree = maybe!({ self.worktrees(cx).next() });
-
-        let Some(worktree) = &worktree else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
-        };
-        let config = DebugAdapterConfig {
-            label: "test config".into(),
-            adapter: FakeAdapter::ADAPTER_NAME.into(),
-            request: DebugRequestDisposition::UserConfigured(request),
-            initialize_args: None,
-            tcp_connection: None,
-            locator: None,
-            stop_on_entry: None,
-        };
-        let caps = caps.unwrap_or(Capabilities {
-            supports_step_back: Some(false),
-            ..Default::default()
-        });
-        self.dap_store
-            .update(cx, |dap_store, cx| {
-                dap_store.new_fake_session(config, worktree, None, caps, fails, cx)
-            })
-            .1
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1528,7 +1471,6 @@ impl Project {
 
         let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
         let languages = LanguageRegistry::test(cx.background_executor().clone());
-        let debug_adapters = DapRegistry::default().into();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx
@@ -1542,7 +1484,6 @@ impl Project {
                     node_runtime::NodeRuntime::unavailable(),
                     user_store,
                     Arc::new(languages),
-                    debug_adapters,
                     fs,
                     None,
                     cx,
@@ -1573,7 +1514,6 @@ impl Project {
         use clock::FakeSystemClock;
 
         let languages = LanguageRegistry::test(cx.executor());
-        let debug_adapters = DapRegistry::fake();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
@@ -1584,7 +1524,6 @@ impl Project {
                 node_runtime::NodeRuntime::unavailable(),
                 user_store,
                 Arc::new(languages),
-                Arc::new(debug_adapters),
                 fs,
                 None,
                 cx,
@@ -1626,10 +1565,6 @@ impl Project {
 
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
-    }
-
-    pub fn debug_adapters(&self) -> &Arc<DapRegistry> {
-        &self.debug_adapters
     }
 
     pub fn client(&self) -> Arc<Client> {
@@ -1890,7 +1825,7 @@ impl Project {
             ))));
         };
         worktree.update(cx, |worktree, cx| {
-            worktree.create_entry(project_path.path, is_directory, cx)
+            worktree.create_entry(project_path.path, is_directory, None, cx)
         })
     }
 
@@ -3102,6 +3037,9 @@ impl Project {
             .map(|lister| lister.term())
     }
 
+    pub fn toolchain_store(&self) -> Option<Entity<ToolchainStore>> {
+        self.toolchain_store.clone()
+    }
     pub fn activate_toolchain(
         &self,
         path: ProjectPath,
@@ -3670,7 +3608,7 @@ impl Project {
             .filter(|buffer| {
                 let b = buffer.read(cx);
                 if let Some(file) = b.file() {
-                    if !search_query.file_matches(file.path()) {
+                    if !search_query.match_path(file.path()) {
                         return false;
                     }
                     if let Some(entry) = b
@@ -4811,6 +4749,30 @@ impl Project {
         &self.git_store
     }
 
+    #[cfg(test)]
+    fn git_scans_complete(&self, cx: &Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            let scans_complete = this
+                .read_with(cx, |this, cx| {
+                    this.worktrees(cx)
+                        .filter_map(|worktree| Some(worktree.read(cx).as_local()?.scan_complete()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap();
+            join_all(scans_complete).await;
+            let barriers = this
+                .update(cx, |this, cx| {
+                    let repos = this.repositories(cx).values().cloned().collect::<Vec<_>>();
+                    repos
+                        .into_iter()
+                        .map(|repo| repo.update(cx, |repo, _| repo.barrier()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap();
+            join_all(barriers).await;
+        })
+    }
+
     pub fn active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
         self.git_store.read(cx).active_repository()
     }
@@ -5047,7 +5009,7 @@ impl Completion {
     /// A key that can be used to sort completions when displaying
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
-        const DEFAULT_KIND_KEY: usize = 2;
+        const DEFAULT_KIND_KEY: usize = 3;
         let kind_key = self
             .source
             // `lsp::CompletionListItemDefaults` has no `kind` field
@@ -5056,6 +5018,7 @@ impl Completion {
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
                 lsp::CompletionItemKind::VARIABLE => Some(1),
+                lsp::CompletionItemKind::CONSTANT => Some(2),
                 _ => None,
             })
             .unwrap_or(DEFAULT_KIND_KEY);

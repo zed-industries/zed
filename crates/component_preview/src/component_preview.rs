@@ -166,6 +166,9 @@ impl ComponentPreview {
 
         component_preview.update_component_list(cx);
 
+        let focus_handle = component_preview.filter_editor.read(cx).focus_handle(cx);
+        window.focus(&focus_handle);
+
         component_preview
     }
 
@@ -779,10 +782,13 @@ impl Item for ComponentPreview {
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         self.workspace_id = workspace.database_id();
+
+        let focus_handle = self.filter_editor.read(cx).focus_handle(cx);
+        window.focus(&focus_handle);
     }
 }
 

@@ -375,6 +375,7 @@ mod remote_button {
             })
             .anchor(Corner::TopRight)
     }
+
     #[allow(clippy::too_many_arguments)]
     fn split_button(
         id: SharedString,

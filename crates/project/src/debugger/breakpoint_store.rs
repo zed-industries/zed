@@ -12,13 +12,13 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
+use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
 use text::{Point, PointUtf16};
 
 use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
 
 mod breakpoints_in_file {
-    use language::BufferEvent;
+    use language::{BufferEvent, DiskState};
 
     use super::*;
 
@@ -32,8 +32,9 @@ mod breakpoints_in_file {
 
     impl BreakpointsInFile {
         pub(super) fn new(buffer: Entity<Buffer>, cx: &mut Context<BreakpointStore>) -> Self {
-            let subscription =
-                Arc::from(cx.subscribe(&buffer, |_, buffer, event, cx| match event {
+            let subscription = Arc::from(cx.subscribe(
+                &buffer,
+                |breakpoint_store, buffer, event, cx| match event {
                     BufferEvent::Saved => {
                         if let Some(abs_path) = BreakpointStore::abs_path_from_buffer(&buffer, cx) {
                             cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
@@ -42,8 +43,44 @@ mod breakpoints_in_file {
                             ));
                         }
                     }
+                    BufferEvent::FileHandleChanged => {
+                        let entity_id = buffer.entity_id();
+
+                        if buffer.read(cx).file().is_none_or(|f| f.disk_state() == DiskState::Deleted) {
+                            breakpoint_store.breakpoints.retain(|_, breakpoints_in_file| {
+                                breakpoints_in_file.buffer.entity_id() != entity_id
+                            });
+
+                            cx.notify();
+                            return;
+                        }
+
+                        if let Some(abs_path) = BreakpointStore::abs_path_from_buffer(&buffer, cx) {
+                            if breakpoint_store.breakpoints.contains_key(&abs_path) {
+                                return;
+                            }
+
+                            if let Some(old_path) = breakpoint_store
+                                .breakpoints
+                                .iter()
+                                .find(|(_, in_file)| in_file.buffer.entity_id() == entity_id)
+                                .map(|values| values.0)
+                                .cloned()
+                            {
+                                let Some(breakpoints_in_file) =
+                                    breakpoint_store.breakpoints.remove(&old_path) else {
+                                        log::error!("Couldn't get breakpoints in file from old path during buffer rename handling");
+                                        return;
+                                    };
+
+                                breakpoint_store.breakpoints.insert(abs_path, breakpoints_in_file);
+                                cx.notify();
+                            }
+                        }
+                    }
                     _ => {}
-                }));
+                },
+            ));
 
             BreakpointsInFile {
                 buffer,
@@ -591,7 +628,13 @@ impl BreakpointStore {
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
 
                     for bp in bps {
-                        let position = snapshot.anchor_after(PointUtf16::new(bp.row, 0));
+                        let max_point = snapshot.max_point_utf16();
+                        let point = PointUtf16::new(bp.row, 0);
+                        if point > max_point {
+                            log::error!("skipping a deserialized breakpoint that's out of range");
+                            continue;
+                        }
+                        let position = snapshot.anchor_after(point);
                         breakpoints_for_file.breakpoints.push((
                             position,
                             Breakpoint {

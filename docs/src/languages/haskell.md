@@ -33,4 +33,19 @@ If you need to configure haskell-language-server (hls) you can add configuration
 }
 ```
 
-See: official [configuring haskell-language-server](https://haskell-language-server.readthedocs.io/en/latest/configuration.html) docs for more.
+See the official [configuring haskell-language-server](https://haskell-language-server.readthedocs.io/en/latest/configuration.html) docs for more options.
+
+If you would like to use a specific hls binary, or perhaps use [static-ls](https://github.com/josephsumabat/static-ls) as a drop-in replacement instead, you can specify the binary path and arguments:
+
+```json
+{
+  "lsp": {
+    "hls": {
+      "binary": {
+        "path": "static-ls",
+        "arguments": ["--experimentalFeatures"]
+      }
+    }
+  }
+}
+```

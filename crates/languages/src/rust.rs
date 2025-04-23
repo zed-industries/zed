@@ -129,7 +129,7 @@ impl LspAdapter for RustLspAdapter {
             })
             .await;
         if let Err(err) = result {
-            log::error!(
+            log::debug!(
                 "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
                 path,
                 err
@@ -682,7 +682,7 @@ impl ContextProvider for RustContextProvider {
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 task_type: TaskType::Debug(task::DebugArgs {
-                    adapter: "LLDB".to_owned(),
+                    adapter: "CodeLLDB".to_owned(),
                     request: task::DebugArgsRequest::Launch,
                     locator: Some("cargo".into()),
                     tcp_connection: None,
@@ -791,7 +791,7 @@ impl ContextProvider for RustContextProvider {
                 command: "cargo".into(),
                 task_type: TaskType::Debug(task::DebugArgs {
                     request: task::DebugArgsRequest::Launch,
-                    adapter: "LLDB".to_owned(),
+                    adapter: "CodeLLDB".to_owned(),
                     initialize_args: None,
                     locator: Some("cargo".into()),
                     tcp_connection: None,

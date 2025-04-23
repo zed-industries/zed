@@ -329,14 +329,7 @@ mod tests {
 
     fn build_wrapper() -> LineWrapper {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let cx = TestAppContext::new(dispatcher, None);
-        cx.text_system()
-            .add_fonts(vec![
-                std::fs::read("../../assets/fonts/plex-mono/ZedPlexMono-Regular.ttf")
-                    .unwrap()
-                    .into(),
-            ])
-            .unwrap();
+        let cx = TestAppContext::build(dispatcher, None);
         let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
     }
@@ -734,16 +727,16 @@ mod tests {
                 lines[0].layout.wrap_boundaries(),
                 &[
                     WrapBoundary {
-                        run_ix: 1,
-                        glyph_ix: 3
+                        run_ix: 0,
+                        glyph_ix: 7
                     },
                     WrapBoundary {
-                        run_ix: 2,
-                        glyph_ix: 3
+                        run_ix: 0,
+                        glyph_ix: 12
                     },
                     WrapBoundary {
-                        run_ix: 4,
-                        glyph_ix: 2
+                        run_ix: 0,
+                        glyph_ix: 18
                     }
                 ],
             );

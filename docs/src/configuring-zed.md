@@ -75,6 +75,46 @@ Non-negative `float` values
 
 `float` values
 
+## Bottom Dock Layout
+
+- Description: Control the layout of the bottom dock, relative to the left and right docks
+- Setting: `bottom_dock_layout`
+- Default: `"contained"`
+
+**Options**
+
+1. Contain the bottom dock, giving the full height of the window to the left and right docks
+
+```json
+{
+  "bottom_dock_layout": "contained"
+}
+```
+
+2. Give the bottom dock the full width of the window, truncating the left and right docks
+
+```json
+{
+  "bottom_dock_layout": "full"
+}
+```
+
+3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window
+
+```json
+{
+  "bottom_dock_layout": "left_aligned"
+}
+```
+
+3. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
+
+```json
+{
+  "bottom_dock_layout": "right_aligned"
+}
+```
+
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
@@ -495,13 +535,6 @@ List of `string` values
 - Description: Whether to highlight all occurrences of the selected text in an editor.
 - Setting: `selection_highlight`
 - Default: `true`
-
-## Selection Highlight Debounce
-
-- Description: The debounce delay before querying highlights based on the selected text.
-
-- Setting: `selection_highlight_debounce`
-- Default: `50`
 
 ## LSP Highlight Debounce
 
@@ -1311,10 +1344,10 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "include_warnings": true,
     "inline": {
       "enabled": false
-    }
+    },
     "update_with_cursor": false,
     "primary_only": false,
-    "use_rendered": false,
+    "use_rendered": false
   }
 }
 ```

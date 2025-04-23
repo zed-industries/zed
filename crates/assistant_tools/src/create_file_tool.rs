@@ -1,6 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -33,7 +33,17 @@ pub struct CreateFileToolInput {
     pub contents: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct PartialInput {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    contents: String,
+}
+
 pub struct CreateFileTool;
+
+const DEFAULT_UI_TEXT: &str = "Create file";
 
 impl Tool for CreateFileTool {
     fn name(&self) -> String {
@@ -52,7 +62,7 @@ impl Tool for CreateFileTool {
         IconName::FileCreate
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<CreateFileToolInput>(format)
     }
 
@@ -62,7 +72,14 @@ impl Tool for CreateFileTool {
                 let path = MarkdownString::inline_code(&input.path);
                 format!("Create file {path}")
             }
-            Err(_) => "Create file".to_string(),
+            Err(_) => DEFAULT_UI_TEXT.to_string(),
+        }
+    }
+
+    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<PartialInput>(input.clone()).ok() {
+            Some(input) if !input.path.is_empty() => input.path,
+            _ => DEFAULT_UI_TEXT.to_string(),
         }
     }
 
@@ -73,14 +90,16 @@ impl Tool for CreateFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<CreateFileToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
         let project_path = match project.read(cx).find_project_path(&input.path, cx) {
             Some(project_path) => project_path,
-            None => return Task::ready(Err(anyhow!("Path to create was outside the project"))),
+            None => {
+                return Task::ready(Err(anyhow!("Path to create was outside the project"))).into();
+            }
         };
         let contents: Arc<str> = input.contents.as_str().into();
         let destination_path: Arc<str> = input.path.as_str().into();
@@ -93,9 +112,12 @@ impl Tool for CreateFileTool {
                 .await
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
             cx.update(|cx| {
+                action_log.update(cx, |action_log, cx| {
+                    action_log.track_buffer(buffer.clone(), cx)
+                });
                 buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
                 action_log.update(cx, |action_log, cx| {
-                    action_log.will_create_buffer(buffer.clone(), cx)
+                    action_log.buffer_edited(buffer.clone(), cx)
                 });
             })?;
 
@@ -106,5 +128,63 @@ impl Tool for CreateFileTool {
 
             Ok(format!("Created file {destination_path}"))
         })
+        .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn still_streaming_ui_text_with_path() {
+        let tool = CreateFileTool;
+        let input = json!({
+            "path": "src/main.rs",
+            "contents": "fn main() {\n    println!(\"Hello, world!\");\n}"
+        });
+
+        assert_eq!(tool.still_streaming_ui_text(&input), "src/main.rs");
+    }
+
+    #[test]
+    fn still_streaming_ui_text_without_path() {
+        let tool = CreateFileTool;
+        let input = json!({
+            "path": "",
+            "contents": "fn main() {\n    println!(\"Hello, world!\");\n}"
+        });
+
+        assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
+    }
+
+    #[test]
+    fn still_streaming_ui_text_with_null() {
+        let tool = CreateFileTool;
+        let input = serde_json::Value::Null;
+
+        assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
+    }
+
+    #[test]
+    fn ui_text_with_valid_input() {
+        let tool = CreateFileTool;
+        let input = json!({
+            "path": "src/main.rs",
+            "contents": "fn main() {\n    println!(\"Hello, world!\");\n}"
+        });
+
+        assert_eq!(tool.ui_text(&input), "Create file `src/main.rs`");
+    }
+
+    #[test]
+    fn ui_text_with_invalid_input() {
+        let tool = CreateFileTool;
+        let input = json!({
+            "invalid": "field"
+        });
+
+        assert_eq!(tool.ui_text(&input), DEFAULT_UI_TEXT);
     }
 }

@@ -74,10 +74,9 @@ pub fn config_dir() -> &'static PathBuf {
             if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
             } else {
-                dirs::config_dir()
-                    .expect("failed to determine XDG_CONFIG_HOME directory")
-                    .join("zed")
+                dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
             }
+            .join("zed")
         } else {
             home_dir().join(".config").join("zed")
         }
@@ -95,10 +94,9 @@ pub fn data_dir() -> &'static PathBuf {
             if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
                 flatpak_xdg_data.into()
             } else {
-                dirs::data_local_dir()
-                    .expect("failed to determine XDG_DATA_HOME directory")
-                    .join("zed")
+                dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
             }
+            .join("zed")
         } else if cfg!(target_os = "windows") {
             dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
@@ -375,6 +373,11 @@ pub fn local_settings_folder_relative_path() -> &'static Path {
     Path::new(".zed")
 }
 
+/// Returns the relative path to a `.vscode` folder within a project.
+pub fn local_vscode_folder_relative_path() -> &'static Path {
+    Path::new(".vscode")
+}
+
 /// Returns the relative path to a `settings.json` file within a project.
 pub fn local_settings_file_relative_path() -> &'static Path {
     Path::new(".zed/settings.json")
@@ -398,7 +401,7 @@ pub fn task_file_name() -> &'static str {
     "tasks.json"
 }
 
-/// Returns the relative path to a `launch.json` file within a project.
+/// Returns the relative path to a `debug.json` file within a project.
 pub fn local_debug_file_relative_path() -> &'static Path {
     Path::new(".zed/debug.json")
 }

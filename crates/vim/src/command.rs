@@ -963,7 +963,15 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             .boxed_clone(),
         )
     } else if query.starts_with("se ") || query.starts_with("set ") {
-        return VimOption::possible_commands(query.split_once(" ").unwrap().1);
+        let (prefix, option) = query.split_once(' ').unwrap();
+        let mut commands = VimOption::possible_commands(option);
+        if !commands.is_empty() {
+            let query = prefix.to_string() + " " + option;
+            for command in &mut commands {
+                command.positions = generate_positions(&command.string, &query);
+            }
+        }
+        return commands;
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
@@ -1438,27 +1446,29 @@ impl ShellExec {
                 let project = workspace.project().read(cx);
                 let cwd = project.first_project_directory(cx);
                 let shell = project.terminal_settings(&cwd, cx).shell.clone();
-                cx.emit(workspace::Event::SpawnTask {
-                    action: Box::new(SpawnInTerminal {
-                        id: TaskId("vim".to_string()),
-                        full_label: command.clone(),
-                        label: command.clone(),
-                        command: command.clone(),
-                        args: Vec::new(),
-                        command_label: command.clone(),
-                        cwd,
-                        env: HashMap::default(),
-                        use_new_terminal: true,
-                        allow_concurrent_runs: true,
-                        reveal: RevealStrategy::NoFocus,
-                        reveal_target: RevealTarget::Dock,
-                        hide: HideStrategy::Never,
-                        shell,
-                        show_summary: false,
-                        show_command: false,
-                        show_rerun: false,
-                    }),
-                });
+
+                let spawn_in_terminal = SpawnInTerminal {
+                    id: TaskId("vim".to_string()),
+                    full_label: command.clone(),
+                    label: command.clone(),
+                    command: command.clone(),
+                    args: Vec::new(),
+                    command_label: command.clone(),
+                    cwd,
+                    env: HashMap::default(),
+                    use_new_terminal: true,
+                    allow_concurrent_runs: true,
+                    reveal: RevealStrategy::NoFocus,
+                    reveal_target: RevealTarget::Dock,
+                    hide: HideStrategy::Never,
+                    shell,
+                    show_summary: false,
+                    show_command: false,
+                    show_rerun: false,
+                };
+                workspace
+                    .spawn_in_terminal(spawn_in_terminal, window, cx)
+                    .detach_and_log_err(cx);
             });
             return;
         };
@@ -1511,18 +1521,7 @@ impl ShellExec {
             process.stdin(Stdio::null());
         };
 
-        // https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
-        //
-        // safety: code in pre_exec should be signal safe.
-        // https://man7.org/linux/man-pages/man7/signal-safety.7.html
-        #[cfg(not(target_os = "windows"))]
-        unsafe {
-            use std::os::unix::process::CommandExt;
-            process.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        };
+        util::set_pre_exec_to_start_new_session(&mut process);
         let is_read = self.is_read;
 
         let task = cx.spawn_in(window, async move |vim, cx| {

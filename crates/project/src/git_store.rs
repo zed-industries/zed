@@ -23,7 +23,7 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, DiffType, GitRepository,
+        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, GitRepository,
         GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
         UpstreamTrackingStatus,
     },
@@ -63,7 +63,8 @@ use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
 use util::{ResultExt, debug_panic, post_inc};
 use worktree::{
-    File, PathKey, PathProgress, PathSummary, PathTarget, UpdatedGitRepositoriesSet, Worktree,
+    File, PathKey, PathProgress, PathSummary, PathTarget, UpdatedGitRepositoriesSet,
+    UpdatedGitRepository, Worktree,
 };
 
 pub struct GitStore {
@@ -236,6 +237,7 @@ pub struct RepositorySnapshot {
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
     pub branch: Option<Branch>,
+    pub head_commit: Option<CommitDetails>,
     pub merge_conflicts: TreeSet<RepoPath>,
     pub merge_head_shas: Vec<SharedString>,
     pub scan_id: u64,
@@ -891,32 +893,6 @@ impl GitStore {
         })
     }
 
-    pub fn delete_checkpoint(
-        &self,
-        checkpoint: GitStoreCheckpoint,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let repositories_by_work_directory_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-        for (work_dir_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
-            if let Some(repository) =
-                repositories_by_work_directory_abs_path.get(&work_dir_abs_path)
-            {
-                let delete = repository.update(cx, |this, _| this.delete_checkpoint(checkpoint));
-                tasks.push(async move { delete.await? });
-            }
-        }
-        cx.background_spawn(async move {
-            future::try_join_all(tasks).await?;
-            Ok(())
-        })
-    }
-
     /// Blames a buffer.
     pub fn blame_buffer(
         &self,
@@ -1234,18 +1210,23 @@ impl GitStore {
                 } else {
                     removed_ids.push(*id);
                 }
-            } else if let Some((work_directory_abs_path, dot_git_abs_path)) = update
-                .new_work_directory_abs_path
-                .clone()
-                .zip(update.dot_git_abs_path.clone())
+            } else if let UpdatedGitRepository {
+                new_work_directory_abs_path: Some(work_directory_abs_path),
+                dot_git_abs_path: Some(dot_git_abs_path),
+                repository_dir_abs_path: Some(repository_dir_abs_path),
+                common_dir_abs_path: Some(common_dir_abs_path),
+                ..
+            } = update
             {
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
                     let mut repo = Repository::local(
                         id,
-                        work_directory_abs_path,
-                        dot_git_abs_path,
+                        work_directory_abs_path.clone(),
+                        dot_git_abs_path.clone(),
+                        repository_dir_abs_path.clone(),
+                        common_dir_abs_path.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
                         git_store,
@@ -1746,10 +1727,18 @@ impl GitStore {
         let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
+        let options = envelope.payload.options.unwrap_or_default();
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.commit(message, name.zip(email), cx)
+                repository_handle.commit(
+                    message,
+                    name.zip(email),
+                    CommitOptions {
+                        amend: options.amend,
+                    },
+                    cx,
+                )
             })?
             .await??;
         Ok(proto::Ack {})
@@ -2563,6 +2552,7 @@ impl RepositorySnapshot {
             statuses_by_path: Default::default(),
             work_directory_abs_path,
             branch: None,
+            head_commit: None,
             merge_conflicts: Default::default(),
             merge_head_shas: Default::default(),
             scan_id: 0,
@@ -2572,6 +2562,7 @@ impl RepositorySnapshot {
     fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses: self
                 .statuses_by_path
                 .iter()
@@ -2636,6 +2627,7 @@ impl RepositorySnapshot {
 
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
             current_merge_conflicts: self
@@ -2693,6 +2685,8 @@ impl Repository {
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
+        repository_dir_abs_path: Arc<Path>,
+        common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         git_store: WeakEntity<GitStore>,
@@ -2710,6 +2704,8 @@ impl Repository {
             job_sender: Repository::spawn_local_git_worker(
                 work_directory_abs_path,
                 dot_git_abs_path,
+                repository_dir_abs_path,
+                common_dir_abs_path,
                 project_environment,
                 fs,
                 cx,
@@ -3389,6 +3385,7 @@ impl Repository {
         &mut self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
+        options: CommitOptions,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
@@ -3399,7 +3396,11 @@ impl Repository {
                     backend,
                     environment,
                     ..
-                } => backend.commit(message, name_and_email, environment).await,
+                } => {
+                    backend
+                        .commit(message, name_and_email, options, environment)
+                        .await
+                }
                 RepositoryState::Remote { project_id, client } => {
                     let (name, email) = name_and_email.unzip();
                     client
@@ -3409,6 +3410,9 @@ impl Repository {
                             message: String::from(message),
                             name: name.map(String::from),
                             email: email.map(String::from),
+                            options: Some(proto::commit::CommitOptions {
+                                amend: options.amend,
+                            }),
                         })
                         .await
                         .context("sending commit request")?;
@@ -3873,6 +3877,11 @@ impl Repository {
                 .map(|path| RepoPath(Path::new(&path).into())),
         );
         self.snapshot.branch = update.branch_summary.as_ref().map(proto_to_branch);
+        self.snapshot.head_commit = update
+            .head_commit_details
+            .as_ref()
+            .map(proto_to_commit_details);
+
         self.snapshot.merge_conflicts = conflicted_paths;
 
         let edits = update
@@ -3905,20 +3914,6 @@ impl Repository {
             match repo {
                 RepositoryState::Local { backend, .. } => {
                     backend.compare_checkpoints(left, right).await
-                }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
-            }
-        })
-    }
-
-    pub fn delete_checkpoint(
-        &mut self,
-        checkpoint: GitRepositoryCheckpoint,
-    ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local { backend, .. } => {
-                    backend.delete_checkpoint(checkpoint).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
@@ -3987,6 +3982,8 @@ impl Repository {
     fn spawn_local_git_worker(
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
+        _repository_dir_abs_path: Arc<Path>,
+        _common_dir_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
@@ -4199,7 +4196,7 @@ impl Repository {
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
-                                if &cursor.item().unwrap().status == status {
+                                if cursor.item().is_some_and(|entry| entry.status == *status) {
                                     continue;
                                 }
                             }
@@ -4242,6 +4239,10 @@ impl Repository {
     /// currently running git command and when it started
     pub fn current_job(&self) -> Option<JobInfo> {
         self.active_jobs.values().next().cloned()
+    }
+
+    pub fn barrier(&mut self) -> oneshot::Receiver<()> {
+        self.send_job(None, |_, _| async {})
     }
 }
 
@@ -4441,6 +4442,26 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     }
 }
 
+fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
+    proto::GitCommitDetails {
+        sha: commit.sha.to_string(),
+        message: commit.message.to_string(),
+        commit_timestamp: commit.commit_timestamp,
+        author_email: commit.author_email.to_string(),
+        author_name: commit.author_name.to_string(),
+    }
+}
+
+fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
+    CommitDetails {
+        sha: proto.sha.clone().into(),
+        message: proto.message.clone().into(),
+        commit_timestamp: proto.commit_timestamp,
+        author_email: proto.author_email.clone().into(),
+        author_name: proto.author_name.clone().into(),
+    }
+}
+
 async fn compute_snapshot(
     id: RepositoryId,
     work_directory_abs_path: Arc<Path>,
@@ -4496,6 +4517,12 @@ async fn compute_snapshot(
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
 
+    // Useful when branch is None in detached head state
+    let head_commit = match backend.head_sha() {
+        Some(head_sha) => backend.show(head_sha).await.ok(),
+        None => None,
+    };
+
     let snapshot = RepositorySnapshot {
         id,
         merge_message,
@@ -4503,6 +4530,7 @@ async fn compute_snapshot(
         work_directory_abs_path,
         scan_id: prev_snapshot.scan_id + 1,
         branch,
+        head_commit,
         merge_conflicts,
         merge_head_shas,
     };

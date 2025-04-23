@@ -25,8 +25,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Point, Result,
-    ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow,
+    Point, Result, ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -46,7 +46,7 @@ const FILE_PICKER_PORTAL_MISSING: &str =
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
-    fn keyboard_layout(&self) -> String;
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
@@ -138,7 +138,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.text_system.clone())
     }
 
-    fn keyboard_layout(&self) -> String {
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         self.keyboard_layout()
     }
 
@@ -440,7 +440,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| Some(common.menus.clone()))
     }
 
-    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}
+    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {
+        // todo(linux)
+    }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
@@ -853,6 +855,26 @@ impl crate::Modifiers {
             platform,
             function: false,
         }
+    }
+}
+
+pub(crate) struct LinuxKeyboardLayout {
+    id: String,
+}
+
+impl PlatformKeyboardLayout for LinuxKeyboardLayout {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.id
+    }
+}
+
+impl LinuxKeyboardLayout {
+    pub(crate) fn new(id: String) -> Self {
+        Self { id }
     }
 }
 

@@ -746,19 +746,20 @@ fn test_expand_excerpts(cx: &mut App) {
     drop(snapshot);
 
     multibuffer.update(cx, |multibuffer, cx| {
+        let line_zero = multibuffer.snapshot(cx).anchor_before(Point::new(0, 0));
         multibuffer.expand_excerpts(
             multibuffer.excerpt_ids(),
             1,
             ExpandExcerptDirection::UpAndDown,
             cx,
-        )
+        );
+        let snapshot = multibuffer.snapshot(cx);
+        let line_two = snapshot.anchor_before(Point::new(2, 0));
+        assert_eq!(line_two.cmp(&line_zero, &snapshot), cmp::Ordering::Greater);
     });
 
     let snapshot = multibuffer.read(cx).snapshot(cx);
 
-    // Expanding context lines causes the line containing 'fff' to appear in two different excerpts.
-    // We don't attempt to merge them, because removing the excerpt could create inconsistency with other layers
-    // that are tracking excerpt ids.
     assert_eq!(
         snapshot.text(),
         concat!(
@@ -2472,6 +2473,81 @@ impl ReferenceMultibuffer {
     fn add_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut App) {
         let buffer_id = diff.read(cx).buffer_id;
         self.diffs.insert(buffer_id, diff);
+    }
+}
+
+#[gpui::test(iterations = 100)]
+async fn test_random_set_ranges(cx: &mut TestAppContext, mut rng: StdRng) {
+    let base_text = "a\n".repeat(100);
+    let buf = cx.update(|cx| cx.new(|cx| Buffer::local(base_text, cx)));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(10);
+
+    fn row_ranges(ranges: &Vec<Range<Point>>) -> Vec<Range<u32>> {
+        ranges
+            .iter()
+            .map(|range| range.start.row..range.end.row)
+            .collect()
+    }
+
+    for _ in 0..operations {
+        let snapshot = buf.update(cx, |buf, _| buf.snapshot());
+        let num_ranges = rng.gen_range(0..=10);
+        let max_row = snapshot.max_point().row;
+        let mut ranges = (0..num_ranges)
+            .map(|_| {
+                let start = rng.gen_range(0..max_row);
+                let end = rng.gen_range(start + 1..max_row + 1);
+                Point::row_range(start..end)
+            })
+            .collect::<Vec<_>>();
+        ranges.sort_by_key(|range| range.start);
+        log::info!("Setting ranges: {:?}", row_ranges(&ranges));
+        let (created, _) = multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::for_buffer(&buf, cx),
+                buf.clone(),
+                ranges.clone(),
+                2,
+                cx,
+            )
+        });
+
+        assert_eq!(created.len(), ranges.len());
+
+        let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        let mut last_end = None;
+        let mut seen_ranges = Vec::default();
+
+        for (_, buf, range) in snapshot.excerpts() {
+            let start = range.context.start.to_point(&buf);
+            let end = range.context.end.to_point(&buf);
+            seen_ranges.push(start..end);
+
+            if let Some(last_end) = last_end.take() {
+                assert!(
+                    start > last_end,
+                    "multibuffer has out-of-order ranges: {:?}; {:?} <= {:?}",
+                    row_ranges(&seen_ranges),
+                    start,
+                    last_end
+                )
+            }
+
+            ranges.retain(|range| range.start < start || range.end > end);
+
+            last_end = Some(end)
+        }
+
+        assert!(
+            ranges.is_empty(),
+            "multibuffer {:?} did not include all ranges: {:?}",
+            row_ranges(&seen_ranges),
+            row_ranges(&ranges)
+        );
     }
 }
 

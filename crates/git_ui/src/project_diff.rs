@@ -1683,7 +1683,7 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
-                ".git":{},
+                ".git": {},
                 "a.txt": "created\n",
                 "b.txt": "really changed\n",
                 "c.txt": "unchanged\n"
@@ -1760,5 +1760,88 @@ mod tests {
             created
         "
         ));
+    }
+
+    #[gpui::test]
+    async fn test_excerpts_splitting_after_restoring_the_middle_excerpt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let git_contents = indoc! {r#"
+            #[rustfmt::skip]
+            fn main() {
+                let x = 0.0; // this line will be removed
+                // 1
+                // 2
+                // 3
+                let y = 0.0; // this line will be removed
+                // 1
+                // 2
+                // 3
+                let arr = [
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                ];
+            }
+        "#};
+        let buffer_contents = indoc! {"
+            #[rustfmt::skip]
+            fn main() {
+                // 1
+                // 2
+                // 3
+                // 1
+                // 2
+                // 3
+                let arr = [
+                ];
+            }
+        "};
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".git": {},
+                "main.rs": buffer_contents,
+            }),
+        )
+        .await;
+
+        fs.set_git_content_for_repo(
+            Path::new("/a/.git"),
+            &[("main.rs".into(), git_contents.to_owned(), None)],
+        );
+
+        let project = Project::test(fs, [Path::new("/a")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        cx.focus(&item);
+        let editor = item.update(cx, |item, _| item.editor.clone());
+
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
+
+        cx.dispatch_action(editor::actions::GoToHunk);
+        cx.dispatch_action(editor::actions::GoToHunk);
+        cx.dispatch_action(git::Restore);
+        cx.dispatch_action(editor::actions::MoveToBeginning);
+
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
     }
 }

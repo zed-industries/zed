@@ -194,6 +194,10 @@ impl VariableList {
         }
     }
 
+    pub(super) fn has_open_context_menu(&self) -> bool {
+        self.open_context_menu.is_some()
+    }
+
     fn build_entries(&mut self, cx: &mut Context<Self>) {
         let Some(stack_frame_id) = self.selected_stack_frame_id else {
             return;

@@ -1,10 +1,10 @@
-use std::{path::PathBuf, sync::OnceLock};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::adapters::latest_github_release;
 use gpui::AsyncApp;
-use task::{DebugAdapterConfig, DebugRequestType, DebugTaskDefinition};
+use task::{DebugRequest, DebugTaskDefinition};
 
 use crate::*;
 
@@ -15,6 +15,42 @@ pub(crate) struct CodeLldbDebugAdapter {
 
 impl CodeLldbDebugAdapter {
     const ADAPTER_NAME: &'static str = "CodeLLDB";
+
+    fn request_args(&self, config: &DebugTaskDefinition) -> dap::StartDebuggingRequestArguments {
+        let mut configuration = json!({
+            "request": match config.request {
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
+            },
+        });
+        let map = configuration.as_object_mut().unwrap();
+        // CodeLLDB uses `name` for a terminal label.
+        map.insert("name".into(), Value::String(config.label.clone()));
+        let request = config.request.to_dap();
+        match &config.request {
+            DebugRequest::Attach(attach) => {
+                map.insert("pid".into(), attach.process_id.into());
+            }
+            DebugRequest::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
+
+                if let Some(stop_on_entry) = config.stop_on_entry {
+                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        }
+        dap::StartDebuggingRequestArguments {
+            request,
+            configuration,
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -86,7 +122,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
     async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -104,46 +140,14 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             .ok_or_else(|| anyhow!("Adapter path is expected to be valid UTF-8"))?;
         Ok(DebugAdapterBinary {
             command,
-            cwd: Some(adapter_dir),
-            arguments: Some(vec![
+            cwd: None,
+            arguments: vec![
                 "--settings".into(),
-                json!({"sourceLanguages": ["cpp", "rust"]})
-                    .to_string()
-                    .into(),
-            ]),
-            ..Default::default()
+                json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
+            ],
+            request_args: self.request_args(config),
+            envs: HashMap::default(),
+            connection: None,
         })
-    }
-
-    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
-        let mut args = json!({
-            "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
-            },
-        });
-        let map = args.as_object_mut().unwrap();
-        // CodeLLDB uses `name` for a terminal label.
-        map.insert("name".into(), Value::String(config.label.clone()));
-        match &config.request {
-            DebugRequestType::Attach(attach) => {
-                map.insert("pid".into(), attach.process_id.into());
-            }
-            DebugRequestType::Launch(launch) => {
-                map.insert("program".into(), launch.program.clone().into());
-
-                if !launch.args.is_empty() {
-                    map.insert("args".into(), launch.args.clone().into());
-                }
-
-                if let Some(stop_on_entry) = config.stop_on_entry {
-                    map.insert("stopOnEntry".into(), stop_on_entry.into());
-                }
-                if let Some(cwd) = launch.cwd.as_ref() {
-                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-                }
-            }
-        }
-        args
     }
 }

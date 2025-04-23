@@ -1,0 +1,26 @@
+[package]
+name = "web_search_providers"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/web_search_providers.rs"
+
+[dependencies]
+anyhow.workspace = true
+client.workspace = true
+feature_flags.workspace = true
+futures.workspace = true
+gpui.workspace = true
+http_client.workspace = true
+language_model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+web_search.workspace = true
+workspace-hack.workspace = true
+zed_llm_client.workspace = true

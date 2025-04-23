@@ -1265,6 +1265,7 @@ impl Buffer {
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
+
                 Some((file.disk_state().mtime(), file.load(cx)))
             })?
             else {
@@ -1371,6 +1372,25 @@ impl Buffer {
             .last()
             .map(|info| info.language.clone())
             .or_else(|| self.language.clone())
+    }
+
+    /// Returns each [`Language`] for the active syntax layers at the given location.
+    pub fn languages_at<D: ToOffset>(&self, position: D) -> Vec<Arc<Language>> {
+        let offset = position.to_offset(self);
+        let mut languages: Vec<Arc<Language>> = self
+            .syntax_map
+            .lock()
+            .layers_for_range(offset..offset, &self.text, false)
+            .map(|info| info.language.clone())
+            .collect();
+
+        if languages.is_empty() {
+            if let Some(buffer_language) = self.language() {
+                languages.push(buffer_language.clone());
+            }
+        }
+
+        languages
     }
 
     /// An integer version number that accounts for all updates besides
@@ -3147,7 +3167,7 @@ impl BufferSnapshot {
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
         let mut scope = None;
-        let mut smallest_range: Option<Range<usize>> = None;
+        let mut smallest_range_and_depth: Option<(Range<usize>, usize)> = None;
 
         // Use the layer that has the smallest node intersecting the given point.
         for layer in self
@@ -3159,7 +3179,7 @@ impl BufferSnapshot {
             let mut range = None;
             loop {
                 let child_range = cursor.node().byte_range();
-                if !child_range.to_inclusive().contains(&offset) {
+                if !child_range.contains(&offset) {
                     break;
                 }
 
@@ -3170,11 +3190,19 @@ impl BufferSnapshot {
             }
 
             if let Some(range) = range {
-                if smallest_range
-                    .as_ref()
-                    .map_or(true, |smallest_range| range.len() < smallest_range.len())
-                {
-                    smallest_range = Some(range);
+                if smallest_range_and_depth.as_ref().map_or(
+                    true,
+                    |(smallest_range, smallest_range_depth)| {
+                        if layer.depth > *smallest_range_depth {
+                            true
+                        } else if layer.depth == *smallest_range_depth {
+                            range.len() < smallest_range.len()
+                        } else {
+                            false
+                        }
+                    },
+                ) {
+                    smallest_range_and_depth = Some((range, layer.depth));
                     scope = Some(LanguageScope {
                         language: layer.language.clone(),
                         override_id: layer.override_id(offset, &self.text),

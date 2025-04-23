@@ -38,6 +38,8 @@
       "cmd-shift-a": "editor::SelectLargerSyntaxNode",
       "cmd-shift-d": "editor::DuplicateSelection",
       "ctrl-cmd-g": "editor::SelectAllMatches", // find_all_under
+      // "cmd-alt-g": "", // find_under (cancels any selections)
+      // "cmd-alt-shift-g": "" // find_under_prev (cancels any selections)
       "f5": "editor::SortLinesCaseSensitive",
       "ctrl-f5": "editor::SortLinesCaseInsensitive",
       "shift-f12": "editor::FindAllReferences",

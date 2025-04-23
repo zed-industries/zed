@@ -16,6 +16,7 @@ use workspace::{
 };
 
 use crate::debugger_panel::DebugPanel;
+use crate::persistence::SerializedPaneLayout;
 
 pub(crate) enum DebugSessionState {
     Running(Entity<running::RunningState>),
@@ -52,6 +53,7 @@ impl DebugSession {
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
         _debug_panel: WeakEntity<DebugPanel>,
+        serialized_pane_layout: Option<SerializedPaneLayout>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -60,6 +62,7 @@ impl DebugSession {
                 session.clone(),
                 project.clone(),
                 workspace.clone(),
+                serialized_pane_layout,
                 window,
                 cx,
             )
@@ -82,6 +85,12 @@ impl DebugSession {
     pub(crate) fn session_id(&self, cx: &App) -> SessionId {
         match &self.mode {
             DebugSessionState::Running(entity) => entity.read(cx).session_id(),
+        }
+    }
+
+    pub fn session(&self, cx: &App) -> Entity<Session> {
+        match &self.mode {
+            DebugSessionState::Running(entity) => entity.read(cx).session().clone(),
         }
     }
 
@@ -112,13 +121,7 @@ impl DebugSession {
         };
 
         self.label
-            .get_or_init(|| {
-                session
-                    .read(cx)
-                    .as_local()
-                    .expect("Remote Debug Sessions are not implemented yet")
-                    .label()
-            })
+            .get_or_init(|| session.read(cx).label())
             .to_owned()
     }
 

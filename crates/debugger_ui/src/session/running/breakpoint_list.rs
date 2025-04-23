@@ -27,7 +27,7 @@ use ui::{
 use util::{ResultExt, maybe};
 use workspace::Workspace;
 
-pub(super) struct BreakpointList {
+pub(crate) struct BreakpointList {
     workspace: WeakEntity<Workspace>,
     breakpoint_store: Entity<BreakpointStore>,
     worktree_store: Entity<WorktreeStore>,
