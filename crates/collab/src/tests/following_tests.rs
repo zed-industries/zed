@@ -6,7 +6,7 @@ use collab_ui::{
     channel_view::ChannelView,
     notifications::project_shared_notification::ProjectSharedNotification,
 };
-use editor::{Editor, MultiBuffer, PathKey, test::editor_content_with_blocks};
+use editor::{Editor, MultiBuffer, PathKey};
 use gpui::{
     AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString, TestAppContext,
     VisualContext, VisualTestContext, point,
