@@ -12699,19 +12699,22 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
     // Insert some excerpts.
     leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
-            let excerpt_ids = multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::namespaced(1, Arc::from(Path::new("b.txt"))),
                 buffer_1.clone(),
-                [
-                    ExcerptRange::new(1..6),
-                    ExcerptRange::new(12..15),
-                    ExcerptRange::new(0..3),
+                vec![
+                    Point::row_range(0..3),
+                    Point::row_range(1..6),
+                    Point::row_range(12..15),
                 ],
+                0,
                 cx,
             );
-            multibuffer.insert_excerpts_after(
-                excerpt_ids[0],
+            multibuffer.set_excerpts_for_path(
+                PathKey::namespaced(1, Arc::from(Path::new("a.txt"))),
                 buffer_2.clone(),
-                [ExcerptRange::new(8..12), ExcerptRange::new(0..6)],
+                vec![Point::row_range(0..6), Point::row_range(8..12)],
+                0,
                 cx,
             );
         });

@@ -6,17 +6,18 @@ use collab_ui::{
     channel_view::ChannelView,
     notifications::project_shared_notification::ProjectSharedNotification,
 };
-use editor::{Editor, ExcerptRange, MultiBuffer};
+use editor::{Editor, MultiBuffer, PathKey, test::editor_content_with_blocks};
 use gpui::{
     AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString, TestAppContext,
-    VisualTestContext, point,
+    VisualContext, VisualTestContext, point,
 };
 use language::Capability;
 use project::WorktreeSettings;
 use rpc::proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
-use util::path;
+use text::{Point, ToPoint};
+use util::{path, test::sample_text};
 use workspace::{SplitDirection, Workspace, item::ItemHandle as _};
 
 use super::TestClient;
@@ -295,8 +296,20 @@ async fn test_basic_following(
                 .unwrap()
         });
         let mut result = MultiBuffer::new(Capability::ReadWrite);
-        result.push_excerpts(buffer_a1, [ExcerptRange::new(0..3)], cx);
-        result.push_excerpts(buffer_a2, [ExcerptRange::new(4..7)], cx);
+        result.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer_a1, cx),
+            buffer_a1,
+            [Point::row_range(1..2)],
+            1,
+            cx,
+        );
+        result.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer_a2, cx),
+            buffer_a2,
+            [Point::row_range(5..6)],
+            1,
+            cx,
+        );
         result
     });
     let multibuffer_editor_a = workspace_a.update_in(cx_a, |workspace, window, cx| {
@@ -2068,6 +2081,83 @@ async fn share_workspace(
     cx.read(ActiveCall::global)
         .update(cx, |call, cx| call.share_project(project, cx))
         .await
+}
+
+#[gpui::test]
+async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let (_server, client_a, client_b, channel) = TestServer::start2(cx_a, cx_b).await;
+
+    let (workspace, cx_a) = client_a.build_test_workspace(cx_a).await;
+    join_channel(channel, &client_a, cx_a).await.unwrap();
+    share_workspace(&workspace, cx_a).await.unwrap();
+    let buffer = workspace.update(cx_a, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.create_local_buffer(&sample_text(26, 5, 'a'), None, cx)
+        })
+    });
+    let multibuffer = cx_a.new(|cx| {
+        let mut mb = MultiBuffer::new(Capability::ReadWrite);
+        mb.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer, cx),
+            buffer.clone(),
+            [Point::row_range(1..1), Point::row_range(5..5)],
+            1,
+            cx,
+        );
+        mb
+    });
+    let snapshot = buffer.update(cx_a, |buffer, _| buffer.snapshot());
+    let editor: Entity<Editor> = cx_a.new_window_entity(|window, cx| {
+        Editor::for_multibuffer(
+            multibuffer.clone(),
+            Some(workspace.read(cx).project().clone()),
+            window,
+            cx,
+        )
+    });
+    workspace.update_in(cx_a, |workspace, window, cx| {
+        workspace.add_item_to_center(Box::new(editor.clone()) as _, window, cx)
+    });
+    editor.update_in(cx_a, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([Point::row_range(4..4)]);
+        })
+    });
+    let positions = editor.update(cx_a, |editor, _| {
+        editor
+            .selections
+            .disjoint_anchor_ranges()
+            .map(|range| range.start.text_anchor.to_point(&snapshot))
+            .collect::<Vec<_>>()
+    });
+    multibuffer.update(cx_a, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer, cx),
+            buffer,
+            [Point::row_range(1..5)],
+            1,
+            cx,
+        );
+    });
+
+    let (workspace_b, cx_b) = client_b.join_workspace(channel, cx_b).await;
+    cx_b.run_until_parked();
+    let editor_b = workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+        })
+        .unwrap();
+
+    let new_positions = editor_b.update(cx_b, |editor, _| {
+        editor
+            .selections
+            .disjoint_anchor_ranges()
+            .map(|range| range.start.text_anchor.to_point(&snapshot))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(positions, new_positions);
 }
 
 #[gpui::test]
