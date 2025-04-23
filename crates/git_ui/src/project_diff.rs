@@ -1266,10 +1266,10 @@ fn merge_anchor_ranges<'a>(
     let mut right = right.fuse().peekable();
 
     std::iter::from_fn(move || {
-        let Some(left_range) = left.peek().cloned() else {
+        let Some(left_range) = left.peek() else {
             return right.next();
         };
-        let Some(right_range) = right.peek().clone() else {
+        let Some(right_range) = right.peek() else {
             return left.next();
         };
 
