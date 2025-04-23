@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
-use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
+use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, Point, Task, WeakEntity};
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
 };
@@ -271,23 +271,10 @@ pub struct EditFileToolCard {
     diff_task: Option<Task<Result<()>>>,
     preview_expanded: bool,
     full_height_expanded: bool,
-    index: usize,
+    unique_id: Uuid,
 }
 
 impl EditFileToolCard {
-    thread_local! {
-        static NEXT_INDEX: RefCell<usize> = const { RefCell::new(0) };
-    }
-
-    fn next_index() -> usize {
-        Self::NEXT_INDEX.with(|cell| {
-            let mut index = cell.borrow_mut();
-            let current = *index;
-            *index = index.wrapping_add(1);
-            current
-        })
-    }
-
     fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
         let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
         let editor = cx.new(|cx| {
@@ -321,7 +308,7 @@ impl EditFileToolCard {
             diff_task: None,
             preview_expanded: true,
             full_height_expanded: false,
-            index: Self::next_index(),
+            unique_id: Uuid::new_v4(),
         }
     }
 
@@ -366,13 +353,13 @@ impl ToolCard for EditFileToolCard {
         &mut self,
         status: &ToolUseStatus,
         window: &mut Window,
-        _workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let failed = matches!(status, ToolUseStatus::Error(_));
 
         let path_label_button = h_flex()
-            .id(Uuid::new_v4())
+            .id(("edit-tool-path-label-button", self.unique_id))
             .w_full()
             .max_w_full()
             .px_1()
@@ -401,7 +388,42 @@ impl ToolCard for EditFileToolCard {
                             .color(Color::Ignored),
                     ),
             )
-            .on_click(move |_, _window, _cx| {})
+            .on_click({
+                let path = self.path.clone();
+                let workspace = workspace.clone();
+                move |_, window, cx| {
+                    workspace
+                        .update(cx, {
+                            |workspace, cx| {
+                                let Some(project_path) =
+                                    workspace.project().read(cx).find_project_path(&path, cx)
+                                else {
+                                    return;
+                                };
+                                let open_task =
+                                    workspace.open_path(project_path, None, true, window, cx);
+                                window
+                                    .spawn(cx, async move |cx| {
+                                        let item = open_task.await?;
+                                        if let Some(active_editor) = item.downcast::<Editor>() {
+                                            active_editor
+                                                .update_in(cx, |editor, window, cx| {
+                                                    editor.go_to_singleton_buffer_point(
+                                                        language::Point::new(0, 0),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .log_err();
+                                        }
+                                        anyhow::Ok(())
+                                    })
+                                    .detach_and_log_err(cx);
+                            }
+                        })
+                        .ok();
+                }
+            })
             .into_any_element();
 
         let codeblock_header_bg = cx
@@ -428,7 +450,7 @@ impl ToolCard for EditFileToolCard {
                 } else {
                     container.child(
                         Disclosure::new(
-                            ("edit-file-disclosure", self.index),
+                            ("edit-file-disclosure", self.unique_id),
                             self.preview_expanded,
                         )
                         .opened_icon(IconName::ChevronUp)
@@ -486,7 +508,7 @@ impl ToolCard for EditFileToolCard {
                         .child(div().pl_1().child(editor))
                         .child(
                             h_flex()
-                                .id(Uuid::new_v4())
+                                .id(("edit-tool-card-inner-hflex", self.unique_id))
                                 .when(!self.full_height_expanded, |button| {
                                     button.absolute().bottom_0()
                                 })
@@ -641,16 +663,5 @@ mod tests {
         let input = serde_json::Value::Null;
 
         assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
-    }
-
-    #[test]
-    fn unique_card_indices() {
-        let index1 = EditFileToolCard::next_index();
-        let index2 = EditFileToolCard::next_index();
-        let index3 = EditFileToolCard::next_index();
-
-        assert_ne!(index1, index2);
-        assert_ne!(index2, index3);
-        assert_ne!(index1, index3);
     }
 }
