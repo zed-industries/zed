@@ -328,32 +328,28 @@ impl ExampleContext {
         self.app
             .read_entity(&self.agent_thread, |thread, cx| {
                 let action_log = thread.action_log().read(cx);
-                let mut path_diff = HashMap::default();
+                HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
+                    |(buffer, diff)| {
+                        let snapshot = buffer.read(cx).snapshot();
 
-                for (buffer, diff) in action_log.changed_buffers(cx) {
-                    let snapshot = buffer.read(cx).snapshot();
+                        let file = snapshot.file().unwrap();
+                        let diff = diff.read(cx);
+                        let base_text = diff.base_text().text();
 
-                    let file = snapshot.file().unwrap();
-                    let diff = diff.read(cx);
-                    let base_text = diff.base_text().text();
+                        let hunks = diff
+                            .hunks(&snapshot, cx)
+                            .map(|hunk| FileEditHunk {
+                                base_text: base_text[hunk.diff_base_byte_range.clone()].to_string(),
+                                text: snapshot
+                                    .text_for_range(hunk.range.clone())
+                                    .collect::<String>(),
+                                status: hunk.status(),
+                            })
+                            .collect();
 
-                    let hunks = diff
-                        .hunks(&snapshot, cx)
-                        .map(|hunk| FileEditHunk {
-                            base_text: base_text[hunk.diff_base_byte_range.clone()].to_string(),
-                            text: snapshot
-                                .text_for_range(hunk.range.clone())
-                                .collect::<String>(),
-                            status: hunk.status(),
-                        })
-                        .collect();
-
-                    let file_edits = FileEdits { hunks };
-
-                    path_diff.insert(file.path().clone(), file_edits);
-                }
-
-                path_diff
+                        (file.path().clone(), FileEdits { hunks })
+                    },
+                ))
             })
             .unwrap()
     }
