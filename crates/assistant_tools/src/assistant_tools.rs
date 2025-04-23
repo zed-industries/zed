@@ -32,6 +32,7 @@ use copy_path_tool::CopyPathTool;
 use feature_flags::FeatureFlagAppExt;
 use gpui::App;
 use http_client::HttpClientWithUrl;
+use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
 use web_search_tool::WebSearchTool;
 
@@ -83,15 +84,25 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
 
-    cx.observe_flag::<feature_flags::ZedProWebSearchTool, _>({
-        move |is_enabled, cx| {
-            if is_enabled {
-                ToolRegistry::global(cx).register_tool(WebSearchTool);
-            } else {
-                ToolRegistry::global(cx).unregister_tool(WebSearchTool);
+    cx.subscribe(
+        &LanguageModelRegistry::global(cx),
+        move |registry, event, cx| match event {
+            language_model::Event::DefaultModelChanged => {
+                let using_zed_provider = registry
+                    .read(cx)
+                    .default_model()
+                    .map_or(false, |default| default.is_provided_by_zed());
+                if using_zed_provider {
+                    dbg!("Registered web search tool");
+                    ToolRegistry::global(cx).register_tool(WebSearchTool);
+                } else {
+                    dbg!("Unregistered web search tool");
+                    ToolRegistry::global(cx).unregister_tool(WebSearchTool);
+                }
             }
-        }
-    })
+            _ => {}
+        },
+    )
     .detach();
 }
 
