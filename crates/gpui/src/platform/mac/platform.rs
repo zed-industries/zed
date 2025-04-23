@@ -6,8 +6,8 @@ use super::{
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyboardMapper, Keymap, MacDispatcher,
+    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
     SemanticVersion, Task, WindowAppearance, WindowParams, hash,
 };
@@ -169,7 +169,6 @@ pub(crate) struct MacPlatformState {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
-    keyboard_mapper: MacKeyboardMapper,
 }
 
 impl Default for MacPlatform {
@@ -188,8 +187,6 @@ impl MacPlatform {
         #[cfg(not(feature = "font-kit"))]
         let text_system = Arc::new(crate::NoopTextSystem::new());
 
-        let keyboard_mapper = MacKeyboardMapper::new();
-
         Self(Mutex::new(MacPlatformState {
             headless,
             text_system,
@@ -199,7 +196,6 @@ impl MacPlatform {
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
-            keyboard_mapper,
             reopen: None,
             quit: None,
             menu_command: None,
@@ -1180,6 +1176,10 @@ impl Platform for MacPlatform {
             Ok(())
         })
     }
+
+    fn keyboard_mapper(&self) -> Box<dyn KeyboardMapper> {
+        Box::new(MacKeyboardMapper::new())
+    }
 }
 
 impl MacPlatform {
@@ -1354,8 +1354,6 @@ extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
 extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
-    let keyboard_mapper = MacKeyboardMapper::new();
-    lock.keyboard_mapper = keyboard_mapper;
     if let Some(mut callback) = lock.on_keyboard_layout_change.take() {
         drop(lock);
         callback();

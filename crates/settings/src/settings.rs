@@ -1,6 +1,5 @@
 mod editable_setting_control;
 mod json_schema;
-mod key_equivalents;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
@@ -13,7 +12,6 @@ use util::asset_str;
 
 pub use editable_setting_control::*;
 pub use json_schema::*;
-pub use key_equivalents::*;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeymapFile, KeymapFileLoadResult,
 };
