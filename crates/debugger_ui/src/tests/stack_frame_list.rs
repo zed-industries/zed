@@ -152,7 +152,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
     cx.run_until_parked();
 
     // select first thread
-    active_debug_session_panel(workspace, cx).update_in(cx, |session, _, cx| {
+    active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
         session
             .mode()
             .as_running()
@@ -162,6 +162,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
                     &running_state
                         .session()
                         .update(cx, |session, cx| session.threads(cx)),
+                    window,
                     cx,
                 );
             });
@@ -330,7 +331,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     cx.run_until_parked();
 
     // select first thread
-    active_debug_session_panel(workspace, cx).update_in(cx, |session, _, cx| {
+    active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
         session
             .mode()
             .as_running()
@@ -340,6 +341,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                     &running_state
                         .session()
                         .update(cx, |session, cx| session.threads(cx)),
+                    window,
                     cx,
                 );
             });
@@ -704,7 +706,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     cx.run_until_parked();
 
     // select first thread
-    active_debug_session_panel(workspace, cx).update_in(cx, |session, _, cx| {
+    active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
         session
             .mode()
             .as_running()
@@ -714,6 +716,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
                     &running_state
                         .session()
                         .update(cx, |session, cx| session.threads(cx)),
+                    window,
                     cx,
                 );
             });
