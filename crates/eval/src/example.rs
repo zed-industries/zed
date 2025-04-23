@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     fmt::{self, Debug},
+    path::Path,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -12,6 +13,8 @@ use crate::{
 use agent::ThreadEvent;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use buffer_diff::DiffHunkStatus;
+use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
@@ -234,9 +237,9 @@ impl ExampleContext {
                             let mut tool_metrics = tool_metrics.lock().unwrap();
                             if let Some(tool_result) = thread.tool_result(&tool_use_id) {
                                 let message = if tool_result.is_error {
-                                    format!("TOOL FAILED: {}", tool_use.name)
+                                    format!("✖︎ {}", tool_use.name)
                                 } else {
-                                    format!("TOOL FINISHED: {}", tool_use.name)
+                                    format!("✔︎ {}", tool_use.name)
                                 };
                                 println!("{log_prefix}{message}");
                                 tool_metrics
@@ -320,6 +323,36 @@ impl ExampleContext {
 
         Ok(response)
     }
+
+    pub fn edits(&self) -> HashMap<Arc<Path>, FileEdits> {
+        self.app
+            .read_entity(&self.agent_thread, |thread, cx| {
+                let action_log = thread.action_log().read(cx);
+                HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
+                    |(buffer, diff)| {
+                        let snapshot = buffer.read(cx).snapshot();
+
+                        let file = snapshot.file().unwrap();
+                        let diff = diff.read(cx);
+                        let base_text = diff.base_text().text();
+
+                        let hunks = diff
+                            .hunks(&snapshot, cx)
+                            .map(|hunk| FileEditHunk {
+                                base_text: base_text[hunk.diff_base_byte_range.clone()].to_string(),
+                                text: snapshot
+                                    .text_for_range(hunk.range.clone())
+                                    .collect::<String>(),
+                                status: hunk.status(),
+                            })
+                            .collect();
+
+                        (file.path().clone(), FileEdits { hunks })
+                    },
+                ))
+            })
+            .unwrap()
+    }
 }
 
 #[derive(Debug)]
@@ -344,6 +377,10 @@ impl Response {
         });
         cx.assert_some(result, format!("called `{}`", tool_name))
     }
+
+    pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {
+        self.messages.iter().flat_map(|msg| &msg.tool_use)
+    }
 }
 
 #[derive(Debug)]
@@ -355,17 +392,37 @@ pub struct Message {
 
 #[derive(Debug)]
 pub struct ToolUse {
-    name: String,
+    pub name: String,
     value: serde_json::Value,
 }
 
 impl ToolUse {
-    pub fn expect_input<Input>(&self, cx: &mut ExampleContext) -> Result<Input>
+    pub fn parse_input<Input>(&self) -> Result<Input>
     where
         Input: for<'de> serde::Deserialize<'de>,
     {
-        let result =
-            serde_json::from_value::<Input>(self.value.clone()).map_err(|err| anyhow!(err));
-        cx.log_assertion(result, format!("valid `{}` input", &self.name))
+        serde_json::from_value::<Input>(self.value.clone()).map_err(|err| anyhow!(err))
+    }
+}
+
+#[derive(Debug)]
+pub struct FileEdits {
+    hunks: Vec<FileEditHunk>,
+}
+
+#[derive(Debug)]
+struct FileEditHunk {
+    base_text: String,
+    text: String,
+    status: DiffHunkStatus,
+}
+
+impl FileEdits {
+    pub fn has_added_line(&self, line: &str) -> bool {
+        self.hunks.iter().any(|hunk| {
+            hunk.status == DiffHunkStatus::added_none()
+                && hunk.base_text.is_empty()
+                && hunk.text.contains(line)
+        })
     }
 }

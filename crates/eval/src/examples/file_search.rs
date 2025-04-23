@@ -33,7 +33,7 @@ impl Example for FileSearchExample {
 
         let response = cx.run_turn().await?;
         let tool_use = response.expect_tool("path_search", cx)?;
-        let input = tool_use.expect_input::<PathSearchToolInput>(cx)?;
+        let input = tool_use.parse_input::<PathSearchToolInput>()?;
 
         let glob = input.glob;
         cx.assert(
