@@ -35,9 +35,27 @@ use crate::{
     App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ELEMENT_ARENA, ElementId,
     FocusHandle, LayoutId, Pixels, Point, Size, Style, Window, util::FluentBuilder,
 };
+
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, mem};
+
+/// Register an element for inspection if DevTools are enabled
+pub fn register_for_inspection(
+    window: &mut Window,
+    id: &GlobalElementId,
+    bounds: Bounds<Pixels>,
+    style: Option<Style>,
+    parent: Option<GlobalElementId>,
+) {
+    if !window.show_devtools {
+        return;
+    }
+
+    if let Some(style) = style {
+        crate::debug::inspector::Inspector::register_element(window, id, bounds, style, parent);
+    }
+}
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -229,6 +247,8 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 
 /// A globally unique identifier for an element, used to track state across frames.
 #[derive(Deref, DerefMut, Default, Debug, Eq, PartialEq, Hash)]
+// todo!("this shouldn't be clone")
+#[derive(Clone)]
 pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
 
 trait ElementObject {

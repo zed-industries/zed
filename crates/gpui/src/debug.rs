@@ -1,1 +1,1 @@
-mod inspector;
+pub(crate) mod inspector;

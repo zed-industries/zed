@@ -604,6 +604,7 @@ pub struct Window {
     rem_size: Pixels,
     pub(crate) show_devtools: bool,
     pub(crate) devtools_width: Pixels,
+    pub(crate) inspector: Option<Entity<crate::debug::inspector::Inspector>>,
     /// The stack of override values for the window's rem size.
     ///
     /// This is used by `with_rem_size` to allow rendering an element tree with
@@ -938,6 +939,7 @@ impl Window {
             client_inset: None,
             show_devtools,
             devtools_width: px(200.0), // Default width for devtools panel
+            inspector: None,
         })
     }
 
@@ -1645,11 +1647,11 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
         let original_viewport_size = self.viewport_size;
-        
+
         // Fixed width for the DevTools panel when shown
         let devtools_width = px(200.0);
         self.devtools_width = devtools_width; // Store width for later use
-        
+
         // Calculate main content width: full width minus DevTools panel width when shown
         let main_content_width = if self.show_devtools {
             original_viewport_size.width - devtools_width
@@ -1745,53 +1747,28 @@ impl Window {
                 border_style: Default::default(),
             });
 
-            // Here we would render actual DevTools content
-            // For now, just adding a placeholder text label
-            // In a full implementation, this would be a proper View
-            let text_bounds = Bounds {
-                origin: Point {
-                    x: main_content_width + px(10.0),
-                    y: px(10.0),
-                },
-                size: Size {
-                    width: devtools_width - px(20.0),
-                    height: px(20.0),
-                },
-            };
-            
-            // Add a visible text label for the DevTools panel
-            self.paint_quad(PaintQuad {
-                bounds: text_bounds,
-                corner_radii: Default::default(),
-                background: rgb(0xffffff).into(),
-                border_widths: Default::default(),
-                border_color: Default::default(),
-                border_style: Default::default(),
-            });
-            
-            // Display DevTools panel title
-            let title_text = "DevTools Panel";
-            
-            let toggle_button_bounds = Bounds {
-                origin: Point {
-                    x: main_content_width + px(10.0),
-                    y: px(40.0),
-                },
-                size: Size {
-                    width: px(80.0),
-                    height: px(20.0),
-                },
-            };
-            
-            // Add a button-like element
-            self.paint_quad(PaintQuad {
-                bounds: toggle_button_bounds,
-                corner_radii: Default::default(),
-                background: rgb(0xdddddd).into(),
-                border_widths: Default::default(),
-                border_color: Default::default(),
-                border_style: Default::default(),
-            });
+            // Create and render the Inspector
+            if self.inspector.is_none() {
+                self.inspector = Some(cx.new(|cx| crate::debug::inspector::Inspector::default()));
+            }
+
+            if let Some(inspector) = &self.inspector {
+                let mut inspector_element = inspector.clone().into_any_element();
+                inspector_element.prepaint_as_root(
+                    Point {
+                        x: main_content_width + px(10.0),
+                        y: px(10.0),
+                    },
+                    Size {
+                        width: self.devtools_width - px(20.0),
+                        height: original_viewport_size.height - px(20.0),
+                    }
+                    .into(),
+                    self,
+                    cx,
+                );
+                inspector_element.paint(self, cx);
+            }
         }
 
         if let Some(mut prompt_element) = prompt_element {
@@ -3691,6 +3668,23 @@ impl Window {
     }
 
     /// Toggle full screen status on the current window at the platform level.
+    /// Register an element for inspection if DevTools are enabled
+    pub fn register_element_for_inspection(
+        &mut self,
+        id: &GlobalElementId,
+        bounds: Bounds<Pixels>,
+        style: Option<Style>,
+        parent: Option<GlobalElementId>,
+    ) {
+        if !self.show_devtools {
+            return;
+        }
+
+        if let Some(style) = style {
+            crate::debug::inspector::Inspector::register_element(self, id, bounds, style, parent);
+        }
+    }
+
     pub fn toggle_fullscreen(&self) {
         self.platform_window.toggle_fullscreen();
     }
