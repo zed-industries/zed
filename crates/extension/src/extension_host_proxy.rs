@@ -8,7 +8,7 @@ use language::{BinaryStatus, LanguageMatcher, LanguageName, LoadedLanguage};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
-use crate::{Extension, SlashCommand};
+use crate::{ContextServer, Extension, SlashCommand};
 
 #[derive(Default)]
 struct GlobalExtensionHostProxy(Arc<ExtensionHostProxy>);
@@ -359,7 +359,7 @@ pub trait ExtensionContextServerProxy: Send + Sync + 'static {
     fn register_context_server(
         &self,
         extension: Arc<dyn Extension>,
-        server_id: Arc<str>,
+        context_server: ContextServer,
         cx: &mut App,
     );
 }
@@ -368,14 +368,14 @@ impl ExtensionContextServerProxy for ExtensionHostProxy {
     fn register_context_server(
         &self,
         extension: Arc<dyn Extension>,
-        server_id: Arc<str>,
+        context_server: ContextServer,
         cx: &mut App,
     ) {
         let Some(proxy) = self.context_server_proxy.read().clone() else {
             return;
         };
 
-        proxy.register_context_server(extension, server_id, cx)
+        proxy.register_context_server(extension, context_server, cx)
     }
 }
 

@@ -982,6 +982,7 @@ impl Thread {
             };
         }
 
+        dbg!("Streaming completion");
         self.stream_completion(request, model, cx);
     }
 
@@ -1096,7 +1097,9 @@ impl Thread {
             self.tool_use
                 .attach_tool_uses(message.id, &mut request_message);
 
+            // if !request_message.content.is_empty() {
             request.messages.push(request_message);
+            // }
         }
 
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
@@ -1705,7 +1708,7 @@ impl Thread {
         canceled: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.all_tools_finished() {
+        if self.all_tools_finished() && self.has_pending_tool_uses() {
             let model_registry = LanguageModelRegistry::read_global(cx);
             if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
                 self.attach_tool_results(cx);

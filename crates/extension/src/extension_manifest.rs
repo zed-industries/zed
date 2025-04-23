@@ -195,7 +195,12 @@ impl LanguageServerManifestEntry {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct ContextServerManifestEntry {}
+pub struct ContextServerManifestEntry {
+    #[serde(default)]
+    pub installation_instructions: String,
+    #[serde(default)]
+    pub settings_hint: String,
+}
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct SlashCommandManifestEntry {

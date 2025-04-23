@@ -5,10 +5,14 @@ use collections::HashMap;
 use gpui::{App, AppContext as _, AsyncApp, Entity, Global, ReadGlobal, Task};
 use project::Project;
 
-use crate::ServerCommand;
+use crate::{ServerCommand, manager::SetupInstructions};
 
-pub type ContextServerFactory =
-    Arc<dyn Fn(Entity<Project>, &AsyncApp) -> Task<Result<ServerCommand>> + Send + Sync + 'static>;
+pub type ContextServerFactory = Arc<
+    dyn Fn(Entity<Project>, &AsyncApp) -> Task<Result<(ServerCommand, SetupInstructions)>>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 struct GlobalContextServerFactoryRegistry(Entity<ContextServerFactoryRegistry>);
 
