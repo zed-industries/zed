@@ -32,6 +32,7 @@ pub struct AssistantConfiguration {
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_manager: Entity<ContextServerManager>,
     expanded_context_server_tools: HashMap<Arc<str>, bool>,
+    starting_servers: HashMap<Arc<str>, bool>, // Track servers that are currently starting
     tools: Entity<ToolWorkingSet>,
     _registry_subscription: Subscription,
     scroll_handle: ScrollHandle,
@@ -74,6 +75,7 @@ impl AssistantConfiguration {
             configuration_views_by_provider: HashMap::default(),
             context_server_manager,
             expanded_context_server_tools: HashMap::default(),
+            starting_servers: HashMap::default(),
             tools,
             _registry_subscription: registry_subscription,
             scroll_handle,
@@ -339,6 +341,7 @@ impl AssistantConfiguration {
                                         let context_server_manager =
                                             self.context_server_manager.clone();
                                         let context_server = context_server.clone();
+                                        let server_id = context_server.id();
                                         move |state, _window, cx| match state {
                                             ToggleState::Unselected
                                             | ToggleState::Indeterminate => {
@@ -348,10 +351,20 @@ impl AssistantConfiguration {
                                                 });
                                             }
                                             ToggleState::Selected => {
+                                                // Check if this server is already starting
+                                                if self.starting_servers.get(&server_id).copied().unwrap_or(false) {
+                                                    return;
+                                                }
+
+                                                // Mark server as starting
+                                                self.starting_servers.insert(server_id.clone(), true);
+
                                                 cx.spawn({
                                                     let context_server_manager =
                                                         context_server_manager.clone();
                                                     let context_server = context_server.clone();
+                                                    let server_id = server_id.clone();
+                                                    let this = cx.view().clone();
                                                     async move |cx| {
                                                         if let Some(start_server_task) =
                                                             context_server_manager
@@ -365,6 +378,11 @@ impl AssistantConfiguration {
                                                         {
                                                             start_server_task.await.log_err();
                                                         }
+
+                                                        // Mark server as no longer starting
+                                                        this.update(cx, |this, _cx| {
+                                                            this.starting_servers.remove(&server_id);
+                                                        }).ok();
                                                     }
                                                 })
                                                 .detach();
@@ -374,7 +392,7 @@ impl AssistantConfiguration {
                             ),
                     )
                     .map(|parent| {
-                        if !are_tools_expanded {
+                        if (!are_tools_expanded) {
                             return parent;
                         }
 
