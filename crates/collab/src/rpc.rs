@@ -34,10 +34,8 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use http_client::HttpClient;
-use open_ai::{OPEN_AI_API_URL, OpenAiEmbeddingModel};
 use reqwest_client::ReqwestClient;
 use rpc::proto::split_repository_update;
-use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
@@ -436,18 +434,6 @@ impl Server {
                         count_language_model_tokens(request, response, session, &app_state.config)
                             .await
                     }
-                }
-            })
-            .add_request_handler(get_cached_embeddings)
-            .add_request_handler({
-                let app_state = app_state.clone();
-                move |request, response, session| {
-                    compute_embeddings(
-                        request,
-                        response,
-                        session,
-                        app_state.config.openai_api_key.clone(),
-                    )
                 }
             });
 
@@ -3778,129 +3764,6 @@ impl RateLimit for FreeCountLanguageModelTokensRateLimit {
     fn db_name(&self) -> &'static str {
         "free:count-language-model-tokens"
     }
-}
-
-struct ZedProComputeEmbeddingsRateLimit;
-
-impl RateLimit for ZedProComputeEmbeddingsRateLimit {
-    fn capacity(&self) -> usize {
-        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5000) // Picked arbitrarily
-    }
-
-    fn refill_duration(&self) -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name(&self) -> &'static str {
-        "zed-pro:compute-embeddings"
-    }
-}
-
-struct FreeComputeEmbeddingsRateLimit;
-
-impl RateLimit for FreeComputeEmbeddingsRateLimit {
-    fn capacity(&self) -> usize {
-        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR_FREE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5000 / 10) // Picked arbitrarily
-    }
-
-    fn refill_duration(&self) -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name(&self) -> &'static str {
-        "free:compute-embeddings"
-    }
-}
-
-async fn compute_embeddings(
-    request: proto::ComputeEmbeddings,
-    response: Response<proto::ComputeEmbeddings>,
-    session: Session,
-    api_key: Option<Arc<str>>,
-) -> Result<()> {
-    let api_key = api_key.context("no OpenAI API key configured on the server")?;
-    authorize_access_to_legacy_llm_endpoints(&session).await?;
-
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
-        proto::Plan::ZedPro => Box::new(ZedProComputeEmbeddingsRateLimit),
-        proto::Plan::Free | proto::Plan::ZedProTrial => Box::new(FreeComputeEmbeddingsRateLimit),
-    };
-
-    session
-        .app_state
-        .rate_limiter
-        .check(&*rate_limit, session.user_id())
-        .await?;
-
-    let embeddings = match request.model.as_str() {
-        "openai/text-embedding-3-small" => {
-            open_ai::embed(
-                session.http_client.as_ref(),
-                OPEN_AI_API_URL,
-                &api_key,
-                OpenAiEmbeddingModel::TextEmbedding3Small,
-                request.texts.iter().map(|text| text.as_str()),
-            )
-            .await?
-        }
-        provider => return Err(anyhow!("unsupported embedding provider {:?}", provider))?,
-    };
-
-    let embeddings = request
-        .texts
-        .iter()
-        .map(|text| {
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(text.as_bytes());
-            let result = hasher.finalize();
-            result.to_vec()
-        })
-        .zip(
-            embeddings
-                .data
-                .into_iter()
-                .map(|embedding| embedding.embedding),
-        )
-        .collect::<HashMap<_, _>>();
-
-    let db = session.db().await;
-    db.save_embeddings(&request.model, &embeddings)
-        .await
-        .context("failed to save embeddings")
-        .trace_err();
-
-    response.send(proto::ComputeEmbeddingsResponse {
-        embeddings: embeddings
-            .into_iter()
-            .map(|(digest, dimensions)| proto::Embedding { digest, dimensions })
-            .collect(),
-    })?;
-    Ok(())
-}
-
-async fn get_cached_embeddings(
-    request: proto::GetCachedEmbeddings,
-    response: Response<proto::GetCachedEmbeddings>,
-    session: Session,
-) -> Result<()> {
-    authorize_access_to_legacy_llm_endpoints(&session).await?;
-
-    let db = session.db().await;
-    let embeddings = db.get_embeddings(&request.model, &request.digests).await?;
-
-    response.send(proto::GetCachedEmbeddingsResponse {
-        embeddings: embeddings
-            .into_iter()
-            .map(|(digest, dimensions)| proto::Embedding { digest, dimensions })
-            .collect(),
-    })?;
-    Ok(())
 }
 
 /// This is leftover from before the LLM service.
