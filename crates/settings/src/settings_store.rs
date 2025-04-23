@@ -212,6 +212,7 @@ pub enum LocalSettingsKind {
     Settings,
     Tasks,
     Editorconfig,
+    Debug,
 }
 
 impl Global for SettingsStore {}
@@ -607,6 +608,13 @@ impl SettingsStore {
             (LocalSettingsKind::Tasks, _) => {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
+                    path: directory_path.join(task_file_name()),
+                });
+            }
+            (LocalSettingsKind::Debug, _) => {
+                return Err(InvalidSettingsError::Debug {
+                    message: "Attempted to submit debugger config into the settings store"
+                        .to_string(),
                     path: directory_path.join(task_file_name()),
                 });
             }
@@ -1007,6 +1015,7 @@ pub enum InvalidSettingsError {
     DefaultSettings { message: String },
     Editorconfig { path: PathBuf, message: String },
     Tasks { path: PathBuf, message: String },
+    Debug { path: PathBuf, message: String },
 }
 
 impl std::fmt::Display for InvalidSettingsError {
@@ -1017,7 +1026,8 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::ServerSettings { message }
             | InvalidSettingsError::DefaultSettings { message }
             | InvalidSettingsError::Tasks { message, .. }
-            | InvalidSettingsError::Editorconfig { message, .. } => {
+            | InvalidSettingsError::Editorconfig { message, .. }
+            | InvalidSettingsError::Debug { message, .. } => {
                 write!(f, "{message}")
             }
         }

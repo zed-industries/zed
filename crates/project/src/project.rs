@@ -38,10 +38,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{
-    adapters::{DebugAdapterBinary, DebugTaskDefinition, TcpArguments},
-    client::DebugAdapterClient,
-};
+use dap::client::DebugAdapterClient;
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;

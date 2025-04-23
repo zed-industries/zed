@@ -37,7 +37,7 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
 }
 #[async_trait]
 impl DapLocator for CargoLocator {
-    async fn run_locator(&self, mut build_config: Option<TaskTemplate>) -> Result<TaskTemplate> {
+    async fn run_locator(&self, build_config: Option<TaskTemplate>) -> Result<TaskTemplate> {
         let Some(mut build_config) = build_config else {
             return Err(anyhow!("Couldn't get build config in locator"));
         };

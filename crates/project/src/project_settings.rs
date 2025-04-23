@@ -555,8 +555,7 @@ impl SettingsObserver {
                         )
                         .unwrap(),
                 );
-                todo!();
-                (settings_dir, LocalSettingsKind::Tasks)
+                (settings_dir, LocalSettingsKind::Debug)
             } else if path.ends_with(local_vscode_launch_file_relative_path()) {
                 let settings_dir = Arc::<Path>::from(
                     path.ancestors()
@@ -568,8 +567,7 @@ impl SettingsObserver {
                         )
                         .unwrap(),
                 );
-                todo!();
-                (settings_dir, LocalSettingsKind::Tasks)
+                (settings_dir, LocalSettingsKind::Debug)
             } else if path.ends_with(EDITORCONFIG_NAME) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
@@ -734,6 +732,9 @@ impl SettingsObserver {
                         }
                     }
                 }
+                LocalSettingsKind::Debug => {
+                    todo!("Debug settings are not yet implemented")
+                }
             };
 
             if let Some(downstream_client) = &self.downstream_client {
@@ -812,6 +813,7 @@ pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSe
         proto::LocalSettingsKind::Settings => LocalSettingsKind::Settings,
         proto::LocalSettingsKind::Tasks => LocalSettingsKind::Tasks,
         proto::LocalSettingsKind::Editorconfig => LocalSettingsKind::Editorconfig,
+        proto::LocalSettingsKind::Debug => LocalSettingsKind::Debug,
     }
 }
 
@@ -820,5 +822,6 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
         LocalSettingsKind::Settings => proto::LocalSettingsKind::Settings,
         LocalSettingsKind::Tasks => proto::LocalSettingsKind::Tasks,
         LocalSettingsKind::Editorconfig => proto::LocalSettingsKind::Editorconfig,
+        LocalSettingsKind::Debug => proto::LocalSettingsKind::Debug,
     }
 }
