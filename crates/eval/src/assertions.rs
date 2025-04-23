@@ -1,16 +1,19 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::fmt::{self};
 
+use crate::example::AssertionGroupId;
+
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct AssertionsReport {
-    pub ran: Vec<RanAssertion>,
-    pub max: Option<usize>,
+    pub ran: Vec<Assertion>,
+    pub groups: BTreeSet<AssertionGroupId>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct RanAssertion {
-    pub id: String,
+pub struct Assertion {
+    pub group_id: AssertionGroupId,
     pub result: Result<RanAssertionResult, String>,
 }
 
@@ -21,19 +24,12 @@ pub struct RanAssertionResult {
 }
 
 impl AssertionsReport {
-    pub fn new(max: Option<usize>) -> Self {
-        AssertionsReport {
-            ran: Vec::new(),
-            max,
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         self.ran.is_empty()
     }
 
     pub fn total_count(&self) -> usize {
-        self.run_count().max(self.max.unwrap_or(0))
+        self.run_count()
     }
 
     pub fn run_count(&self) -> usize {
@@ -91,7 +87,7 @@ pub fn display_error_row(f: &mut String, round: usize, error: String) -> fmt::Re
     )
 }
 
-pub fn display_table_row(f: &mut String, round: usize, assertion: &RanAssertion) -> fmt::Result {
+pub fn display_table_row(f: &mut String, round: usize, assertion: &Assertion) -> fmt::Result {
     let result = match &assertion.result {
         Ok(result) if result.passed => "\x1b[32m✔︎ Passed\x1b[0m",
         Ok(_) => "\x1b[31m✗ Failed\x1b[0m",
@@ -102,7 +98,7 @@ pub fn display_table_row(f: &mut String, round: usize, assertion: &RanAssertion)
         f,
         "│ {:^ROUND_WIDTH$} │ {:<ASSERTIONS_WIDTH$} │ {:>RESULTS_WIDTH$} │",
         round,
-        truncate(&assertion.id, ASSERTIONS_WIDTH),
+        truncate(&assertion.group_id.to_string(), ASSERTIONS_WIDTH),
         result
     )
 }
