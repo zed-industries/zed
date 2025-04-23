@@ -217,9 +217,7 @@ impl Tool for EditFileTool {
             };
 
             let snapshot = cx.update(|cx| {
-                action_log.update(cx, |log, cx| {
-                    log.track_buffer(buffer.clone(), cx)
-                });
+                action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
 
                 let snapshot = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
@@ -475,35 +473,42 @@ impl ToolCard for EditFileToolCard {
             editor.render(window, cx).into_any_element()
         });
 
-        let (full_height_icon, full_height_tooltip_label, full_height_hover_color) =
-            if self.full_height_expanded {
-                (
-                    IconName::ChevronUp,
-                    "Collapse Code Block",
-                    cx.theme().colors().element_hover.opacity(0.2),
-                )
-            } else {
-                (
-                    IconName::ChevronDown,
-                    "Expand Code Block",
-                    cx.theme().colors().editor_background,
-                )
-            };
+        let (full_height_icon, full_height_tooltip_label) = if self.full_height_expanded {
+            (IconName::ChevronUp, "Collapse Code Block")
+        } else {
+            (IconName::ChevronDown, "Expand Code Block")
+        };
+
+        let gradient_overlay = div()
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .w_full()
+            .h_2_5()
+            .rounded_b_lg()
+            .bg(gpui::linear_gradient(
+                0.,
+                gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
+                gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
+            ));
+
+        let border_color = cx.theme().colors().border.opacity(0.6);
 
         v_flex()
-            .relative()
             .mb_2()
             .border_1()
             .when(failed, |card| card.border_dashed())
-            .border_color(cx.theme().colors().border.opacity(0.6))
+            .border_color(border_color)
             .rounded_lg()
             .overflow_hidden()
             .child(codeblock_header)
             .when(!failed && self.preview_expanded, |card| {
                 card.child(
-                    div()
+                    v_flex()
+                        .relative()
+                        .overflow_hidden()
                         .border_t_1()
-                        .border_color(cx.theme().colors().border.opacity(0.6))
+                        .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
                         .map(|editor_container| {
                             if self.full_height_expanded {
@@ -513,31 +518,33 @@ impl ToolCard for EditFileToolCard {
                             }
                         })
                         .child(div().pl_1().child(editor))
+                        .when(!self.full_height_expanded, |editor_container| {
+                            editor_container.child(gradient_overlay)
+                        }),
+                )
+            })
+            .when(!failed && self.preview_expanded, |card| {
+                card.child(
+                    h_flex()
+                        .id(("edit-tool-card-inner-hflex", self.unique_id))
+                        .flex_none()
+                        .cursor_pointer()
+                        .h_5()
+                        .justify_center()
+                        .rounded_b_md()
+                        .border_t_1()
+                        .border_color(border_color)
+                        .bg(cx.theme().colors().editor_background)
+                        .hover(|style| style.bg(cx.theme().colors().element_hover.opacity(0.1)))
                         .child(
-                            h_flex()
-                                .id(("edit-tool-card-inner-hflex", self.unique_id))
-                                .when(!self.full_height_expanded, |button| {
-                                    button.absolute().bottom_0()
-                                })
-                                .h_5()
-                                .w_full()
-                                .justify_center()
-                                .rounded_b_md()
-                                .bg(cx.theme().colors().editor_background.opacity(0.95))
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .hover(|style| style.bg(full_height_hover_color))
-                                .cursor_pointer()
-                                .child(
-                                    Icon::new(full_height_icon)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .tooltip(Tooltip::text(full_height_tooltip_label))
-                                .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                    this.full_height_expanded = !this.full_height_expanded;
-                                })),
-                        ),
+                            Icon::new(full_height_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .tooltip(Tooltip::text(full_height_tooltip_label))
+                        .on_click(cx.listener(move |this, _event, _window, _cx| {
+                            this.full_height_expanded = !this.full_height_expanded;
+                        })),
                 )
             })
     }
