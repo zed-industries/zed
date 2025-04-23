@@ -6,11 +6,11 @@ use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use dap::adapters::{DebugTaskDefinition, StartDebuggingRequestArguments};
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
 };
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
@@ -32,7 +32,7 @@ use settings::Settings;
 use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
-use task::{DebugScenario, DebugTaskTemplate};
+use task::DebugScenario;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
@@ -83,43 +83,8 @@ impl DebugPanel {
 
             let weak = cx.weak_entity();
 
-            let modal_subscription =
-                cx.observe_new::<tasks_ui::TasksModal>(move |_, window, cx| {
-                    let modal_entity = cx.entity();
-
-                    weak.update(cx, |_: &mut DebugPanel, cx| {
-                        let Some(window) = window else {
-                            log::error!("Debug panel couldn't subscribe to tasks modal because there was no window");
-                            return;
-                        };
-
-                        cx.subscribe_in(
-                            &modal_entity,
-                            window,
-                            |panel, _, event: &tasks_ui::ShowAttachModal, window, cx| {
-                                panel.workspace.update(cx, |workspace, cx| {
-                                    let workspace_handle = cx.entity().clone();
-                                    workspace.toggle_modal(window, cx, |window, cx| {
-                                        crate::attach_modal::AttachModal::new(
-                                            workspace_handle,
-                                            event.debug_config.clone(),
-                                            true,
-                                            window,
-                                            cx,
-                                        )
-                                    });
-                                }).ok();
-                            },
-                        )
-                        .detach();
-                    })
-                    .ok();
-                });
-
-            let _subscriptions = vec![
-                cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event),
-                modal_subscription,
-            ];
+            let _subscriptions =
+                vec![cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event)];
 
             let debug_panel = Self {
                 size: px(300.),
@@ -255,7 +220,7 @@ impl DebugPanel {
 
     pub fn start_session(
         &mut self,
-        definition: DebugTaskDefinition,
+        definition: DebugScenario,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -276,20 +241,9 @@ impl DebugPanel {
                 task::TaskContext::default()
             };
 
+            let template = DebugTaskDefinition::try_from(definition)?;
             let (session, task) = dap_store.update(cx, |dap_store, cx| {
-                let template = DebugTaskTemplate {
-                    locator: None,
-                    definition: definition.clone(),
-                };
-                let session = if let Some(debug_config) = template
-                    .to_zed_format()
-                    .resolve_task("debug_task", &task_context)
-                    .and_then(|resolved_task| resolved_task.resolved_debug_adapter_config())
-                {
-                    dap_store.new_session(debug_config.definition, None, cx)
-                } else {
-                    dap_store.new_session(definition.clone(), None, cx)
-                };
+                let session = dap_store.new_session(template, None, cx);
 
                 (session.clone(), dap_store.boot_session(session, cx))
             })?;
@@ -339,7 +293,7 @@ impl DebugPanel {
                         let definition = curr_session.update(cx, |session, _| session.definition());
                         let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
 
-                        let definition = definition.clone();
+                        let definition = definition.into();
                         cx.spawn_in(window, async move |this, cx| {
                             task.await;
 
@@ -1159,7 +1113,7 @@ impl Render for DebugPanel {
 struct DebuggerProvider(Entity<DebugPanel>);
 
 impl workspace::DebuggerProvider for DebuggerProvider {
-    fn start_session(&self, definition: DebugTaskDefinition, window: &mut Window, cx: &mut App) {
+    fn start_session(&self, definition: DebugScenario, window: &mut Window, cx: &mut App) {
         self.0.update(cx, |_, cx| {
             cx.defer_in(window, |this, window, cx| {
                 this.start_session(definition, window, cx);

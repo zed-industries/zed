@@ -2,12 +2,13 @@ use std::path::PathBuf;
 
 use anyhow::anyhow;
 use collections::HashMap;
+use gpui::SharedString;
 use serde::Deserialize;
 use util::ResultExt as _;
 
 use crate::{
-    AttachRequest, DebugRequest, DebugTaskDefinition, DebugTaskFile, DebugTaskTemplate,
-    EnvVariableReplacer, LaunchRequest, TcpArgumentsTemplate, VariableName,
+    AttachRequest, DebugRequest, DebugScenario, DebugTaskFile, EnvVariableReplacer, LaunchRequest,
+    TcpArgumentsTemplate, VariableName,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -43,11 +44,12 @@ struct VsCodeDebugTaskDefinition {
 }
 
 impl VsCodeDebugTaskDefinition {
-    fn try_to_zed(self, replacer: &EnvVariableReplacer) -> anyhow::Result<DebugTaskTemplate> {
-        let label = replacer.replace(&self.name);
+    fn try_to_zed(self, replacer: &EnvVariableReplacer) -> anyhow::Result<DebugScenario> {
+        let label = replacer.replace(&self.name).into();
         // TODO based on grep.app results it seems that vscode supports whitespace-splitting this field (ugh)
-        let definition = DebugTaskDefinition {
+        let definition = DebugScenario {
             label,
+            build: None,
             request: match self.request {
                 Request::Launch => {
                     let cwd = self.cwd.map(|cwd| PathBuf::from(replacer.replace(&cwd)));
@@ -60,11 +62,11 @@ impl VsCodeDebugTaskDefinition {
                         .into_iter()
                         .map(|arg| replacer.replace(&arg))
                         .collect();
-                    DebugRequest::Launch(LaunchRequest { program, cwd, args })
+                    DebugRequest::Launch(LaunchRequest { program, cwd, args }).into()
                 }
-                Request::Attach => DebugRequest::Attach(AttachRequest { process_id: None }),
+                Request::Attach => DebugRequest::Attach(AttachRequest { process_id: None }).into(),
             },
-            adapter: task_type_to_adapter_name(self.r#type),
+            adapter: task_type_to_adapter_name(&self.r#type),
             // TODO host?
             tcp_connection: self.port.map(|port| TcpArgumentsTemplate {
                 port: Some(port),
@@ -75,11 +77,7 @@ impl VsCodeDebugTaskDefinition {
             // TODO
             initialize_args: None,
         };
-        let template = DebugTaskTemplate {
-            locator: None,
-            definition,
-        };
-        Ok(template)
+        Ok(definition)
     }
 }
 
@@ -111,16 +109,18 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
     }
 }
 
-// TODO figure out how to make JsDebugAdapter::ADAPTER_NAME et al available here
-fn task_type_to_adapter_name(task_type: String) -> String {
-    match task_type.as_str() {
-        "node" => "JavaScript".to_owned(),
-        "go" => "Delve".to_owned(),
-        "php" => "PHP".to_owned(),
-        "cppdbg" | "lldb" => "CodeLLDB".to_owned(),
-        "debugpy" => "Debugpy".to_owned(),
+// todo(debugger) figure out how to make JsDebugAdapter::ADAPTER_NAME et al available here
+fn task_type_to_adapter_name(task_type: &str) -> SharedString {
+    match task_type {
+        "node" => "JavaScript",
+        "go" => "Delve",
+        "php" => "PHP",
+        "cppdbg" | "lldb" => "CodeLLDB",
+        "debugpy" => "Debugpy",
         _ => task_type,
     }
+    .to_owned()
+    .into()
 }
 
 #[cfg(test)]

@@ -4,7 +4,6 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
 use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
-use task::DebugScenario;
 
 use std::sync::Arc;
 use sysinfo::System;
@@ -26,35 +25,20 @@ pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
-<<<<<<< HEAD
-    project: Entity<project::Project>,
-    pub(crate) scenario: DebugScenario,
-=======
+    pub(crate) scenario: DebugTaskDefinition,
     workspace: WeakEntity<Workspace>,
-    pub(crate) debug_config: task::DebugTaskDefinition,
->>>>>>> main
     candidates: Arc<[Candidate]>,
 }
 
 impl AttachModalDelegate {
     fn new(
-<<<<<<< HEAD
-        project: Entity<project::Project>,
-        scenario: DebugScenario,
-        candidates: Arc<[Candidate]>,
-    ) -> Self {
-        Self {
-            project,
-            scenario,
-=======
         workspace: Entity<Workspace>,
-        debug_config: task::DebugTaskDefinition,
+        scenario: DebugTaskDefinition,
         candidates: Arc<[Candidate]>,
     ) -> Self {
         Self {
             workspace: workspace.downgrade(),
-            debug_config,
->>>>>>> main
+            scenario,
             candidates,
             selected_index: 0,
             matches: Vec::default(),
@@ -70,13 +54,8 @@ pub struct AttachModal {
 
 impl AttachModal {
     pub fn new(
-<<<<<<< HEAD
-        project: Entity<project::Project>,
-        scenario: DebugScenario,
-=======
+        scenario: DebugTaskDefinition,
         workspace: Entity<Workspace>,
-        debug_config: task::DebugTaskDefinition,
->>>>>>> main
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -99,21 +78,12 @@ impl AttachModal {
             .collect();
         processes.sort_by_key(|k| k.name.clone());
         let processes = processes.into_iter().collect();
-<<<<<<< HEAD
-        Self::with_processes(project, scenario, processes, modal, window, cx)
-    }
-
-    pub(super) fn with_processes(
-        project: Entity<project::Project>,
-        scenario: DebugScenario,
-=======
-        Self::with_processes(workspace, debug_config, processes, modal, window, cx)
+        Self::with_processes(workspace, scenario, processes, modal, window, cx)
     }
 
     pub(super) fn with_processes(
         workspace: Entity<Workspace>,
-        debug_config: task::DebugTaskDefinition,
->>>>>>> main
+        debug_scenario: DebugTaskDefinition,
         processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,
@@ -121,11 +91,7 @@ impl AttachModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-<<<<<<< HEAD
-                AttachModalDelegate::new(project, scenario, processes),
-=======
-                AttachModalDelegate::new(workspace, debug_config, processes),
->>>>>>> main
+                AttachModalDelegate::new(workspace, debug_scenario, processes),
                 window,
                 cx,
             )
@@ -253,30 +219,16 @@ impl PickerDelegate for AttachModalDelegate {
         };
 
         match &mut self.scenario.request {
-            Some(DebugRequest::Attach(config)) => {
+            DebugRequest::Attach(config) => {
                 config.process_id = Some(candidate.pid);
             }
-            Some(DebugRequest::Launch(_)) => {
+            DebugRequest::Launch(_) => {
                 debug_panic!("Debugger attach modal used on launch debug config");
-                return;
-            }
-            _ => {
-                debug_panic!("Debugger attach modal used without a request");
                 return;
             }
         }
 
-<<<<<<< HEAD
-        let config = self.scenario.clone();
-        self.project
-            .update(cx, |project, cx| {
-                let ret = project.start_debug_session(config, cx);
-                ret
-            })
-            .detach_and_log_err(cx);
-
-=======
-        let definition = self.debug_config.clone();
+        let scenario = self.scenario.clone().into();
         let panel = self
             .workspace
             .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
@@ -284,10 +236,10 @@ impl PickerDelegate for AttachModalDelegate {
             .flatten();
         if let Some(panel) = panel {
             panel.update(cx, |panel, cx| {
-                panel.start_session(definition, window, cx);
+                panel.start_session(scenario, window, cx);
             });
         }
->>>>>>> main
+
         cx.emit(DismissEvent);
     }
 

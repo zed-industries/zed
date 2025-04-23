@@ -568,7 +568,8 @@ impl SettingsObserver {
                         )
                         .unwrap(),
                 );
-                todo!()(settings_dir, LocalSettingsKind::Tasks)
+                todo!();
+                (settings_dir, LocalSettingsKind::Tasks)
             } else if path.ends_with(EDITORCONFIG_NAME) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;

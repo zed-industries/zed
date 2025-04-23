@@ -119,8 +119,8 @@ impl TcpArguments {
 /// Represents a debuggable binary/process.
 ///
 /// We start off with a [DebugScenario], a user-facing type that can define how a debug target is built; once
-/// an optional build step is completed, we turn it's result into a DebugScenario by running a locator (or using a user-provided task).
-/// Finally, a [DebugScenario] has to be turned into a concrete debugger invokation.
+/// an optional build step is completed, we turn it's result into a DebugTaskDefinition by running a locator (or using a user-provided task).
+/// Finally, a [DebugTaskDefinition] has to be turned into a concrete debugger invokation.
 #[derive(Clone, Debug)]
 pub struct DebugTaskDefinition {
     pub label: SharedString,
@@ -136,6 +136,60 @@ pub struct DebugTaskDefinition {
     pub tcp_connection: Option<TcpArgumentsTemplate>,
     /// Whether to tell the debug adapter to stop on entry
     pub stop_on_entry: Option<bool>,
+}
+
+impl TryFrom<DebugScenario> for DebugTaskDefinition {
+    type Error = anyhow::Error;
+
+    fn try_from(value: DebugScenario) -> Result<Self, Self::Error> {
+        let DebugScenario {
+            label,
+            adapter,
+            request: Some(request),
+            initialize_args,
+            tcp_connection,
+            stop_on_entry,
+            ..
+        } = value
+        else {
+            return Err(anyhow!(
+                "DebugScenario is expected to have a concrete binary to spawn/attach to."
+            ));
+        };
+
+        Ok(Self {
+            label,
+            adapter,
+            request,
+            initialize_args,
+            tcp_connection,
+            stop_on_entry,
+        })
+    }
+}
+
+impl From<DebugTaskDefinition> for DebugScenario {
+    fn from(value: DebugTaskDefinition) -> Self {
+        let DebugTaskDefinition {
+            label,
+            adapter,
+            request,
+            initialize_args,
+            tcp_connection,
+            stop_on_entry,
+            ..
+        } = value;
+
+        Self {
+            label,
+            adapter,
+            request: Some(request),
+            initialize_args,
+            tcp_connection,
+            stop_on_entry,
+            build: None,
+        }
+    }
 }
 
 impl DebugTaskDefinition {
@@ -184,25 +238,6 @@ impl DebugTaskDefinition {
         } else {
             None
         }
-    }
-}
-
-impl TryFrom<DebugScenario> for DebugTaskDefinition {
-    type Error = anyhow::Error;
-
-    fn try_from(value: DebugScenario) -> std::result::Result<Self, Self::Error> {
-        let Some(request) = value.request else {
-            todo!();
-            return Err(anyhow!("DebugScenario cannot be created without target"));
-        };
-        Ok(Self {
-            request,
-            adapter: value.adapter.into(),
-            label: value.label,
-            stop_on_entry: value.stop_on_entry,
-            initialize_args: value.initialize_args,
-            tcp_connection: value.tcp_connection,
-        })
     }
 }
 

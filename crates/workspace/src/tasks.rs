@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use gpui::{Context, Task};
 use project::TaskSourceKind;
 use remote::ConnectionState;
-use task::{DebugTaskDefinition, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{DebugScenario, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
 use ui::Window;
 
 use crate::Workspace;
@@ -77,7 +77,7 @@ impl Workspace {
 
     pub fn start_debug_session(
         &mut self,
-        definition: DebugTaskDefinition,
+        definition: DebugScenario,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
