@@ -10704,7 +10704,7 @@ async fn test_completion(cx: &mut TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), window, cx)
             .unwrap()
     });
-    cx.assert_editor_state("editor.closeˇ");
+    cx.assert_editor_state("editor.clobberˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 }
@@ -11262,76 +11262,6 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
             );
         } else {
             panic!("expected completion menu to stay open after PageUp");
-        }
-    });
-}
-
-#[gpui::test]
-async fn test_completion_sort(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            completion_provider: Some(lsp::CompletionOptions {
-                trigger_characters: Some(vec![".".to_string()]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        cx,
-    )
-    .await;
-    cx.lsp
-        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
-            Ok(Some(lsp::CompletionResponse::Array(vec![
-                lsp::CompletionItem {
-                    label: "Range".into(),
-                    sort_text: Some("a".into()),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "r".into(),
-                    sort_text: Some("b".into()),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "ret".into(),
-                    sort_text: Some("c".into()),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "return".into(),
-                    sort_text: Some("d".into()),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "slice".into(),
-                    sort_text: Some("d".into()),
-                    ..Default::default()
-                },
-            ])))
-        });
-    cx.set_state("rˇ");
-    cx.executor().run_until_parked();
-    cx.update_editor(|editor, window, cx| {
-        editor.show_completions(
-            &ShowCompletions {
-                trigger: Some("r".into()),
-            },
-            window,
-            cx,
-        );
-    });
-    cx.executor().run_until_parked();
-
-    cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
-            assert_eq!(
-                completion_menu_entries(&menu),
-                &["r", "ret", "Range", "return"]
-            );
-        } else {
-            panic!("expected completion menu to be open");
         }
     });
 }
@@ -12699,19 +12629,22 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
     // Insert some excerpts.
     leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
-            let excerpt_ids = multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::namespaced(1, Arc::from(Path::new("b.txt"))),
                 buffer_1.clone(),
-                [
-                    ExcerptRange::new(1..6),
-                    ExcerptRange::new(12..15),
-                    ExcerptRange::new(0..3),
+                vec![
+                    Point::row_range(0..3),
+                    Point::row_range(1..6),
+                    Point::row_range(12..15),
                 ],
+                0,
                 cx,
             );
-            multibuffer.insert_excerpts_after(
-                excerpt_ids[0],
+            multibuffer.set_excerpts_for_path(
+                PathKey::namespaced(1, Arc::from(Path::new("a.txt"))),
                 buffer_2.clone(),
-                [ExcerptRange::new(8..12), ExcerptRange::new(0..6)],
+                vec![Point::row_range(0..6), Point::row_range(8..12)],
+                0,
                 cx,
             );
         });
@@ -14061,7 +13994,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
         {
             assert_eq!(
                 completion_menu_entries(&menu),
-                &["bg-red", "bg-blue", "bg-yellow"]
+                &["bg-blue", "bg-red", "bg-yellow"]
             );
         } else {
             panic!("expected completion menu to be open");

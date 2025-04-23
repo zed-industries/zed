@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use gpui::{Context, Task};
 use project::TaskSourceKind;
 use remote::ConnectionState;
-use task::{ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{DebugTaskDefinition, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
 use ui::Window;
 
 use crate::Workspace;
@@ -75,47 +75,16 @@ impl Workspace {
         }
     }
 
-    // pub fn schedule_debug_task(
-    //     &mut self,
-    //     task: ResolvedTask,
-    //     window: &mut Window,
-    //     cx: &mut Context<Workspace>,
-    // ) {
-    //     let Some(debug_config) = task.resolved_debug_adapter_config() else {
-    //         log::error!("Debug task has no debug adapter config");
-    //         return;
-    //     };
-
-    //     let project = self.project().clone();
-    //     cx.spawn_in(window, async move |workspace, cx| {
-    //         let config = if debug_config.locator.is_some() {
-    //             let task = workspace.update_in(cx, |workspace, window, cx| {
-    //                 workspace.spawn_in_terminal(task.resolved.unwrap(), window, cx)
-    //             })?;
-
-    //             let exit_code = task.await?;
-    //             if !exit_code.success() {
-    //                 return anyhow::Ok(());
-    //             }
-    //             let ret = project
-    //                 .update(cx, |project, cx| {
-    //                     project.dap_store().update(cx, |dap_store, cx| {
-    //                         dap_store.run_debug_locator(debug_config, cx)
-    //                     })
-    //                 })?
-    //                 .await?;
-    //             ret
-    //         } else {
-    //             debug_config.definition
-    //         };
-
-    //         project
-    //             .update(cx, |project, cx| project.start_debug_session(config, cx))?
-    //             .await?;
-    //         anyhow::Ok(())
-    //     })
-    //     .detach_and_log_err(cx);
-    // }
+    pub fn start_debug_session(
+        &mut self,
+        definition: DebugTaskDefinition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(provider) = self.debugger_provider.as_mut() {
+            provider.start_session(definition, window, cx)
+        }
+    }
 
     pub fn spawn_in_terminal(
         self: &mut Workspace,

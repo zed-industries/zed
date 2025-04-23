@@ -24,6 +24,10 @@ impl ToolMetrics {
             *self.failure_counts.entry(tool_name.clone()).or_insert(0) += failure_count;
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.use_counts.is_empty() && self.failure_counts.is_empty()
+    }
 }
 
 impl Display for ToolMetrics {
@@ -79,7 +83,7 @@ impl Display for ToolMetrics {
             let failure_count = self.failure_counts.get(&tool_name).cloned().unwrap_or(0);
             writeln!(
                 f,
-                "│{:^30}│{:^10}│{:^10}│{:^10}│",
+                "│{:<30}│{:^10}│{:^10}│{:^10}│",
                 tool_name,
                 use_count,
                 failure_count,

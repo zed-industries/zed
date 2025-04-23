@@ -1,8 +1,8 @@
 use dap::DebugRequest;
 use dap::adapters::DebugTaskDefinition;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
+use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use task::DebugScenario;
 
@@ -11,7 +11,9 @@ use sysinfo::System;
 use ui::{Context, Tooltip, prelude::*};
 use ui::{ListItem, ListItemSpacing};
 use util::debug_panic;
-use workspace::ModalView;
+use workspace::{ModalView, Workspace};
+
+use crate::debugger_panel::DebugPanel;
 
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
@@ -24,13 +26,19 @@ pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
+<<<<<<< HEAD
     project: Entity<project::Project>,
     pub(crate) scenario: DebugScenario,
+=======
+    workspace: WeakEntity<Workspace>,
+    pub(crate) debug_config: task::DebugTaskDefinition,
+>>>>>>> main
     candidates: Arc<[Candidate]>,
 }
 
 impl AttachModalDelegate {
     fn new(
+<<<<<<< HEAD
         project: Entity<project::Project>,
         scenario: DebugScenario,
         candidates: Arc<[Candidate]>,
@@ -38,6 +46,15 @@ impl AttachModalDelegate {
         Self {
             project,
             scenario,
+=======
+        workspace: Entity<Workspace>,
+        debug_config: task::DebugTaskDefinition,
+        candidates: Arc<[Candidate]>,
+    ) -> Self {
+        Self {
+            workspace: workspace.downgrade(),
+            debug_config,
+>>>>>>> main
             candidates,
             selected_index: 0,
             matches: Vec::default(),
@@ -53,8 +70,13 @@ pub struct AttachModal {
 
 impl AttachModal {
     pub fn new(
+<<<<<<< HEAD
         project: Entity<project::Project>,
         scenario: DebugScenario,
+=======
+        workspace: Entity<Workspace>,
+        debug_config: task::DebugTaskDefinition,
+>>>>>>> main
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -77,12 +99,21 @@ impl AttachModal {
             .collect();
         processes.sort_by_key(|k| k.name.clone());
         let processes = processes.into_iter().collect();
+<<<<<<< HEAD
         Self::with_processes(project, scenario, processes, modal, window, cx)
     }
 
     pub(super) fn with_processes(
         project: Entity<project::Project>,
         scenario: DebugScenario,
+=======
+        Self::with_processes(workspace, debug_config, processes, modal, window, cx)
+    }
+
+    pub(super) fn with_processes(
+        workspace: Entity<Workspace>,
+        debug_config: task::DebugTaskDefinition,
+>>>>>>> main
         processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,
@@ -90,7 +121,11 @@ impl AttachModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
+<<<<<<< HEAD
                 AttachModalDelegate::new(project, scenario, processes),
+=======
+                AttachModalDelegate::new(workspace, debug_config, processes),
+>>>>>>> main
                 window,
                 cx,
             )
@@ -204,7 +239,7 @@ impl PickerDelegate for AttachModalDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let candidate = self
             .matches
             .get(self.selected_index())
@@ -231,6 +266,7 @@ impl PickerDelegate for AttachModalDelegate {
             }
         }
 
+<<<<<<< HEAD
         let config = self.scenario.clone();
         self.project
             .update(cx, |project, cx| {
@@ -239,6 +275,19 @@ impl PickerDelegate for AttachModalDelegate {
             })
             .detach_and_log_err(cx);
 
+=======
+        let definition = self.debug_config.clone();
+        let panel = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
+            .ok()
+            .flatten();
+        if let Some(panel) = panel {
+            panel.update(cx, |panel, cx| {
+                panel.start_session(definition, window, cx);
+            });
+        }
+>>>>>>> main
         cx.emit(DismissEvent);
     }
 

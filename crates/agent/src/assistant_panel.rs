@@ -1550,7 +1550,7 @@ impl AssistantPanel {
     fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let usage = self.thread.read(cx).last_usage()?;
 
-        Some(UsageBanner::new(zed_llm_client::Plan::ZedProTrial, usage.amount).into_any_element())
+        Some(UsageBanner::new(zed_llm_client::Plan::ZedProTrial, usage).into_any_element())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1951,7 +1951,9 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
                                 .collect::<Vec<_>>();
 
                             for (buffer, range) in selection_ranges {
-                                store.add_excerpt(range, buffer, cx).detach_and_log_err(cx);
+                                store
+                                    .add_selection(buffer, range, cx)
+                                    .detach_and_log_err(cx);
                             }
                         })
                     })

@@ -22,6 +22,7 @@ mod schema;
 mod symbol_info_tool;
 mod terminal_tool;
 mod thinking_tool;
+mod ui;
 mod web_search_tool;
 
 use std::sync::Arc;
@@ -54,6 +55,8 @@ use crate::rename_tool::RenameTool;
 use crate::symbol_info_tool::SymbolInfoTool;
 use crate::terminal_tool::TerminalTool;
 use crate::thinking_tool::ThinkingTool;
+
+pub use path_search_tool::PathSearchToolInput;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);

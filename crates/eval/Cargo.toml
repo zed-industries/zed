@@ -9,6 +9,7 @@ agent.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
+async-trait.workspace = true
 async-watch.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -32,9 +33,11 @@ node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
@@ -44,7 +47,6 @@ unindent.workspace = true
 util.workspace = true
 uuid = { version = "1.6", features = ["v4"] }
 workspace-hack.workspace = true
-
 [[bin]]
 name = "eval"
 path = "src/eval.rs"

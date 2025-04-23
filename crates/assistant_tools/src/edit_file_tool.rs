@@ -61,7 +61,7 @@ struct PartialInput {
 
 pub struct EditFileTool;
 
-const DEFAULT_UI_TEXT: &str = "Edit file";
+const DEFAULT_UI_TEXT: &str = "Editing file";
 
 impl Tool for EditFileTool {
     fn name(&self) -> String {
@@ -87,7 +87,7 @@ impl Tool for EditFileTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<EditFileToolInput>(input.clone()) {
             Ok(input) => input.display_description,
-            Err(_) => "Edit file".to_string(),
+            Err(_) => "Editing file".to_string(),
         }
     }
 
