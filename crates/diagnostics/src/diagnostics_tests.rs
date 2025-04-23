@@ -1318,6 +1318,98 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
         hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
     });
 }
+#[gpui::test]
+async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "main.js": "
+                function test() {
+                    const x = 10;
+                    const y = 20;
+                    return 1;
+                }
+                test();
+            "
+            .unindent(),
+        }),
+    )
+    .await;
+
+    let language_server_id = LanguageServerId(0);
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let workspace = window.root(cx).unwrap();
+    let uri = lsp::Url::from_file_path(path!("/root/main.js")).unwrap();
+
+    // Create diagnostics with code fields
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: uri.clone(),
+                    diagnostics: vec![
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 4),
+                                lsp::Position::new(1, 14),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::WARNING),
+                            code: Some(lsp::NumberOrString::String("no-unused-vars".to_string())),
+                            source: Some("eslint".to_string()),
+                            message: "'x' is assigned a value but never used".to_string(),
+                            ..Default::default()
+                        },
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(2, 4),
+                                lsp::Position::new(2, 14),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::WARNING),
+                            code: Some(lsp::NumberOrString::String("no-unused-vars".to_string())),
+                            source: Some("eslint".to_string()),
+                            message: "'y' is assigned a value but never used".to_string(),
+                            ..Default::default()
+                        },
+                    ],
+                    version: None,
+                },
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    // Open the project diagnostics view
+    let diagnostics = window.build_entity(cx, |window, cx| {
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+    });
+    let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
+
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .await;
+
+    // Verify that the diagnostic codes are displayed correctly
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.js
+             § -----
+             function test() {
+                 const x = 10; § 'x' is assigned a value but never used (eslint no-unused-vars)
+                 const y = 20; § 'y' is assigned a value but never used (eslint no-unused-vars)
+                 return 1;
+             }"
+        }
+    );
+}
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
