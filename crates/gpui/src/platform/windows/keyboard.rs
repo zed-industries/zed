@@ -118,6 +118,10 @@ impl KeyboardMapper for WindowsKeyboardMapper {
 
         Cow::Borrowed(keystroke)
     }
+
+    fn get_equivalents(&self) -> Option<&collections::HashMap<String, String>> {
+        None
+    }
 }
 
 impl WindowsKeyboardMapper {
