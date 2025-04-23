@@ -474,7 +474,7 @@ impl CopilotChatLanguageModel {
                     }
 
                     messages.push(ChatMessage::Assistant {
-                        content: if text_content.is_empty() {
+                        content: if text_content.is_empty() && tool_calls.is_empty() {
                             None
                         } else {
                             Some(text_content)
