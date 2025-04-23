@@ -1,5 +1,5 @@
 use anyhow::Result;
-use assistant_tools::PathSearchToolInput;
+use assistant_tools::FindPathToolInput;
 use async_trait::async_trait;
 use regex::Regex;
 
@@ -32,8 +32,8 @@ impl Example for FileSearchExample {
         ));
 
         let response = cx.run_turn().await?;
-        let tool_use = response.expect_tool("path_search", cx)?;
-        let input = tool_use.parse_input::<PathSearchToolInput>()?;
+        let tool_use = response.expect_tool("find_path", cx)?;
+        let input = tool_use.parse_input::<FindPathToolInput>()?;
 
         let glob = input.glob;
         cx.assert(
