@@ -719,7 +719,6 @@ dependencies = [
  "language",
  "language_model",
  "linkme",
- "multi_buffer",
  "open",
  "pretty_assertions",
  "project",

@@ -29,7 +29,6 @@ language.workspace = true
 language_model.workspace = true
 linkme.workspace = true
 open.workspace = true
-multi_buffer.workspace = true
 project.workspace = true
 regex.workspace = true
 schemars.workspace = true
