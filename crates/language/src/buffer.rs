@@ -202,6 +202,7 @@ pub struct Diagnostic {
     pub source: Option<String>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,
+    pub code_description: Option<lsp::Url>,
     /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.
@@ -4533,6 +4534,7 @@ impl Default for Diagnostic {
         Self {
             source: Default::default(),
             code: None,
+            code_description: None,
             severity: DiagnosticSeverity::ERROR,
             message: Default::default(),
             group_id: 0,
