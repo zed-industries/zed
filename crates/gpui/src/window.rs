@@ -4042,6 +4042,8 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, usize),
+    /// A combination of a name and an UUID.
+    NamedUuid(SharedString, Uuid),
     /// A path
     Path(Arc<std::path::Path>),
 }
@@ -4054,6 +4056,7 @@ impl Display for ElementId {
             ElementId::Name(name) => write!(f, "{}", name)?,
             ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
+            ElementId::NamedUuid(s, uuid) => write!(f, "{}-{}", s, uuid)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
             ElementId::Path(path) => write!(f, "{}", path.display())?,
         }
@@ -4137,6 +4140,12 @@ impl From<(&'static str, u64)> for ElementId {
 impl From<Uuid> for ElementId {
     fn from(value: Uuid) -> Self {
         Self::Uuid(value)
+    }
+}
+
+impl From<(&'static str, Uuid)> for ElementId {
+    fn from((name, uuid): (&'static str, Uuid)) -> Self {
+        ElementId::NamedUuid(name.into(), uuid)
     }
 }
 
