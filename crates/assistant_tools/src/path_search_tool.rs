@@ -69,6 +69,7 @@ impl Tool for PathSearchTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input.clone()) {

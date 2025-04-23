@@ -2,7 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolWorkingSet};
 use futures::future::join_all;
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -218,6 +218,7 @@ impl Tool for BatchTool {
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<BatchToolInput>(input) {
@@ -258,7 +259,9 @@ impl Tool for BatchTool {
                     let action_log = action_log.clone();
                     let messages = messages.clone();
                     let tool_result = cx
-                        .update(|cx| tool.run(invocation.input, &messages, project, action_log, cx))
+                        .update(|cx| {
+                            tool.run(invocation.input, &messages, project, action_log, window, cx)
+                        })
                         .map_err(|err| anyhow!("Failed to start tool '{}': {}", tool_name, err))?;
 
                     tasks.push(tool_result.output);

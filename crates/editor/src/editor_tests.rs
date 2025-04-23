@@ -5825,6 +5825,13 @@ async fn test_select_next(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+
+    // Test selection direction should be preserved
+    cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
+
+    cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«ˇabc» «ˇabc»\ndefabc\nabc");
 }
 
 #[gpui::test]
@@ -6011,6 +6018,25 @@ let «fooˇ» = 2;
 let foo = 2;
 let foo = «2ˇ»;"#,
     );
+
+    // Test last selection direction should be preserved
+    cx.set_state(
+        r#"let foo = 2;
+let foo = 2;
+let «fooˇ» = 2;
+let «ˇfoo» = 2;
+let foo = 2;"#,
+    );
+
+    cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state(
+        r#"let foo = 2;
+let foo = 2;
+let «fooˇ» = 2;
+let «ˇfoo» = 2;
+let «ˇfoo» = 2;"#,
+    );
 }
 
 #[gpui::test]
@@ -6138,25 +6164,26 @@ async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+    // selection direction is preserved
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\n«ˇabc»");
 
     cx.update_editor(|editor, window, cx| editor.undo_selection(&UndoSelection, window, cx));
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\nabc");
 
     cx.update_editor(|editor, window, cx| editor.redo_selection(&RedoSelection, window, cx));
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\n«ˇabc»");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndef«abcˇ»\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndef«ˇabc»\n«ˇabc»");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» «ˇabc»\ndef«ˇabc»\n«ˇabc»");
 }
 
 #[gpui::test]
@@ -10419,6 +10446,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
                     EditorMode::Full {
                         scale_ui_elements_with_buffer_font_size: false,
                         show_active_line_background: false,
+                        sized_by_content: false,
                     },
                     multi_buffer.clone(),
                     Some(project.clone()),
