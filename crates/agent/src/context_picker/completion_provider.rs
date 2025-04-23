@@ -503,7 +503,7 @@ impl ContextPickerCompletionProvider {
                     let url_to_fetch = url_to_fetch.clone();
                     cx.spawn(async move |cx| {
                         if context_store.update(cx, |context_store, _| {
-                            context_store.includes_url(&url_to_fetch).is_some()
+                            context_store.includes_url(&url_to_fetch)
                         })? {
                             return Ok(());
                         }

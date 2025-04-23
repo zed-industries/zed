@@ -173,7 +173,7 @@ pub fn render_thread_context_entry(
     cx: &mut App,
 ) -> Div {
     let added = context_store.upgrade().map_or(false, |ctx_store| {
-        ctx_store.read(cx).includes_thread(&thread.id).is_some()
+        ctx_store.read(cx).includes_thread(&thread.id)
     });
 
     h_flex()

@@ -25,7 +25,7 @@ use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::{PromptBuilder, PromptId, UserPromptId};
+use prompt_store::{PromptBuilder, PromptId, PromptStore, UserPromptId};
 use proto::Plan;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
@@ -188,6 +188,7 @@ pub struct AssistantPanel {
     message_editor: Entity<MessageEditor>,
     _active_thread_subscriptions: Vec<Subscription>,
     context_store: Entity<assistant_context_editor::ContextStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
@@ -204,14 +205,25 @@ impl AssistantPanel {
     pub fn load(
         workspace: WeakEntity<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
-        cx: AsyncWindowContext,
+        mut cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
+        let prompt_store = cx.update(|_window, cx| PromptStore::global(cx));
         cx.spawn(async move |cx| {
+            let prompt_store = match prompt_store {
+                Ok(prompt_store) => prompt_store.await.ok(),
+                Err(_) => None,
+            };
             let tools = cx.new(|_| ToolWorkingSet::default())?;
             let thread_store = workspace
                 .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    ThreadStore::load(project, tools.clone(), prompt_builder.clone(), cx)
+                    ThreadStore::load(
+                        project,
+                        tools.clone(),
+                        prompt_store.clone(),
+                        prompt_builder.clone(),
+                        cx,
+                    )
                 })?
                 .await?;
 
@@ -229,7 +241,16 @@ impl AssistantPanel {
                 .await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
-                cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx))
+                cx.new(|cx| {
+                    Self::new(
+                        workspace,
+                        thread_store,
+                        context_store,
+                        prompt_store,
+                        window,
+                        cx,
+                    )
+                })
             })
         })
     }
@@ -238,6 +259,7 @@ impl AssistantPanel {
         workspace: &Workspace,
         thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context_editor::ContextStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -260,6 +282,7 @@ impl AssistantPanel {
                 fs.clone(),
                 workspace.clone(),
                 message_editor_context_store.clone(),
+                prompt_store.clone(),
                 thread_store.downgrade(),
                 thread.clone(),
                 window,
@@ -319,6 +342,7 @@ impl AssistantPanel {
                 message_editor_subscription,
             ],
             context_store,
+            prompt_store,
             configuration: None,
             configuration_subscription: None,
             local_timezone: UtcOffset::from_whole_seconds(
@@ -350,6 +374,10 @@ impl AssistantPanel {
 
     pub(crate) fn local_timezone(&self) -> UtcOffset {
         self.local_timezone
+    }
+
+    pub(crate) fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
+        &self.prompt_store
     }
 
     pub(crate) fn thread_store(&self) -> &Entity<ThreadStore> {
@@ -434,6 +462,7 @@ impl AssistantPanel {
                 self.fs.clone(),
                 self.workspace.clone(),
                 message_editor_context_store,
+                self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 thread,
                 window,
@@ -621,6 +650,7 @@ impl AssistantPanel {
                         this.fs.clone(),
                         this.workspace.clone(),
                         message_editor_context_store,
+                        this.prompt_store.clone(),
                         this.thread_store.downgrade(),
                         thread,
                         window,
@@ -1852,11 +1882,14 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             else {
                 return;
             };
+            let prompt_store = None;
+            let thread_store = None;
             assistant.assist(
                 &prompt_editor,
                 self.workspace.clone(),
                 project,
-                None,
+                prompt_store,
+                thread_store,
                 window,
                 cx,
             )

@@ -27,7 +27,6 @@ use crate::{
 };
 
 pub struct ContextStrip {
-    thread_store: Entity<ThreadStore>,
     context_store: Entity<ContextStore>,
     context_picker: Entity<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
@@ -82,6 +81,8 @@ impl ContextStrip {
     }
 
     fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
+        todo!()
+        /*
         if let Some(workspace) = self.workspace.upgrade() {
             let thread_store = self.thread_store.read(cx);
             let project = workspace.read(cx).project().read(cx);
@@ -93,6 +94,7 @@ impl ContextStrip {
         } else {
             Vec::new()
         }
+        */
     }
 
     fn suggested_context(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
@@ -148,7 +150,6 @@ impl ContextStrip {
             .context_store
             .read(cx)
             .includes_thread(active_thread.id())
-            .is_some()
         {
             return None;
         }

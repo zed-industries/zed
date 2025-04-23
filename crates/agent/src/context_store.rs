@@ -32,6 +32,7 @@ pub struct ContextStore {
     next_context_element_id: ContextElementId,
     // todo! rename to context_set?
     context: IndexSet<ContextSetEntry>,
+    context_thread_ids: HashSet<ThreadId>,
 }
 
 impl ContextStore {
@@ -45,6 +46,7 @@ impl ContextStore {
             thread_summary_tasks: Vec::new(),
             next_context_element_id: ContextElementId::zero(),
             context: IndexSet::default(),
+            context_thread_ids: HashSet::default(),
         }
     }
 
@@ -58,6 +60,7 @@ impl ContextStore {
 
     pub fn clear(&mut self) {
         self.context.clear();
+        self.context_thread_ids.clear();
     }
 
     pub fn new_context_for_thread(&self, thread: &Thread) -> Vec<AssistantContext> {
@@ -255,7 +258,7 @@ impl ContextStore {
                 self.remove_context(&context, cx);
             }
         } else {
-            self.insert_context(&context, cx);
+            self.insert_context(context, cx);
         }
     }
 
@@ -349,6 +352,13 @@ impl ContextStore {
     }
 
     fn insert_context(&mut self, context: AssistantContext, cx: &mut Context<Self>) -> bool {
+        match &context {
+            AssistantContext::Thread(thread_context) => {
+                self.context_thread_ids
+                    .insert(thread_context.thread.read(cx).id().clone());
+            }
+            _ => {}
+        }
         let inserted = self.context.insert(ContextSetEntry(context));
         if inserted {
             cx.notify();
@@ -361,6 +371,13 @@ impl ContextStore {
             .context
             .shift_remove(ContextSetEntry::ref_cast(context))
         {
+            match context {
+                AssistantContext::Thread(thread_context) => {
+                    self.context_thread_ids
+                        .remove(thread_context.thread.read(cx).id());
+                }
+                _ => {}
+            }
             cx.notify();
         }
     }
@@ -412,13 +429,8 @@ impl ContextStore {
     }
     */
 
-    pub fn includes_thread(&self, thread_id: ThreadId) -> bool {
-        let context_query = AssistantContext::Rules(ThreadContext {
-            thread_id,
-            element_id: ContextElementId::for_query(),
-        });
-        self.context
-            .contains(ContextSetEntry::ref_cast(&context_query))
+    pub fn includes_thread(&self, thread_id: &ThreadId) -> bool {
+        self.context_thread_ids.contains(thread_id)
     }
 
     pub fn includes_user_rules(&self, prompt_id: UserPromptId) -> bool {
@@ -451,30 +463,31 @@ impl ContextStore {
             }
         }
     }
+    */
 
     pub fn file_paths(&self, cx: &App) -> HashSet<ProjectPath> {
-        self.context
-            .iter()
-            .filter_map(|context| match context {
-                AssistantContext::File(file) => {
-                    let buffer = file.context_buffer.buffer.read(cx);
-                    buffer.project_path(cx)
+        self.context()
+            .filter_map(|context| {
+                match context {
+                    AssistantContext::File(file) => {
+                        let buffer = file.buffer.read(cx);
+                        buffer.project_path(cx)
+                    }
+                    AssistantContext::Directory(_)
+                    | AssistantContext::Symbol(_)
+                    | AssistantContext::Selection(_)
+                    | AssistantContext::FetchedUrl(_)
+                    | AssistantContext::Thread(_)
+                    | AssistantContext::Rules(_) => None,
+                    // | AssistantContext::Image(_) => None,
                 }
-                AssistantContext::Directory(_)
-                | AssistantContext::Symbol(_)
-                | AssistantContext::Selection(_)
-                | AssistantContext::FetchedUrl(_)
-                | AssistantContext::Thread(_)
-                | AssistantContext::Rules(_)
-                | AssistantContext::Image(_) => None,
             })
             .collect()
     }
 
-    pub fn thread_ids(&self) -> HashSet<ThreadId> {
-        self.threads.keys().cloned().collect()
+    pub fn thread_ids(&self) -> &HashSet<ThreadId> {
+        &self.context_thread_ids
     }
-    */
 }
 
 pub enum FileInclusion {

@@ -82,12 +82,11 @@ impl ThreadStore {
     pub fn load(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
+        prompt_store: Option<Entity<PromptStore>>,
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
-            let prompt_store = prompt_store.await.ok();
             let (thread_store, ready_rx) = cx.update(|cx| {
                 let mut option_ready_rx = None;
                 let thread_store = cx.new(|cx| {
@@ -353,6 +352,7 @@ impl ThreadStore {
         self.prompt_store.clone()
     }
 
+    // todo! remove?
     pub fn load_rules(
         &self,
         prompt_id: UserPromptId,
@@ -370,6 +370,7 @@ impl ThreadStore {
         cx.background_spawn(async move { Ok((metadata, text_task.await?)) })
     }
 
+    // todo! remove?
     pub fn rules_metadata(&self, prompt_id: UserPromptId, cx: &App) -> Result<PromptMetadata> {
         let Some(prompt_store) = self.prompt_store.as_ref() else {
             return Err(anyhow!("Prompt store unexpectedly missing."));

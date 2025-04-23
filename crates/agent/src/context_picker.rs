@@ -583,14 +583,11 @@ fn recent_context_picker_entries(
             }),
     );
 
-    let mut current_threads = context_store.read(cx).thread_ids();
+    let current_threads = context_store.read(cx).thread_ids();
 
-    if let Some(active_thread) = workspace
+    let active_thread_id = workspace
         .panel::<AssistantPanel>(cx)
-        .map(|panel| panel.read(cx).active_thread(cx))
-    {
-        current_threads.insert(active_thread.read(cx).id().clone());
-    }
+        .map(|panel| panel.read(cx).active_thread(cx).read(cx).id());
 
     if let Some(thread_store) = thread_store.and_then(|thread_store| thread_store.upgrade()) {
         recent.extend(
@@ -598,7 +595,9 @@ fn recent_context_picker_entries(
                 .read(cx)
                 .reverse_chronological_threads()
                 .into_iter()
-                .filter(|thread| !current_threads.contains(&thread.id))
+                .filter(|thread| {
+                    Some(&thread.id) != active_thread_id && !current_threads.contains(&thread.id)
+                })
                 .take(2)
                 .map(|thread| {
                     RecentEntry::Thread(ThreadContextEntry {
@@ -620,9 +619,7 @@ fn add_selections_as_context(
     let selection_ranges = selection_ranges(workspace, cx);
     context_store.update(cx, |context_store, cx| {
         for (buffer, range) in selection_ranges {
-            context_store
-                .add_selection(buffer, range, cx)
-                .detach_and_log_err(cx);
+            context_store.add_selection(buffer, range, cx);
         }
     })
 }

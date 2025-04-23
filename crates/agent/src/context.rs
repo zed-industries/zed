@@ -13,7 +13,7 @@ use itertools::Itertools;
 use language::Buffer;
 use language_model::{LanguageModelImage, LanguageModelRequestMessage};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
-use prompt_store::UserPromptId;
+use prompt_store::{PromptStore, UserPromptId};
 use rope::{Point, Rope};
 use text::{Anchor, OffsetRangeExt as _};
 use ui::{ElementId, IconName};
@@ -21,7 +21,7 @@ use util::{ResultExt as _, post_inc};
 
 use crate::ThreadStore;
 use crate::context_store::ContextStore;
-use crate::thread::{DetailedSummaryState, Thread, ThreadId};
+use crate::thread::{DetailedSummaryState, PromptId, Thread, ThreadId};
 
 pub const RULES_ICON: IconName = IconName::Context;
 
@@ -137,7 +137,7 @@ impl FileContext {
         })
     }
 
-    fn load(self, cx: &mut App) -> Option<Task<(String, Entity<Buffer>)>> {
+    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("file context missing path");
@@ -145,7 +145,7 @@ impl FileContext {
         };
         let full_path = file.full_path(cx);
         let rope = buffer_ref.as_rope().clone();
-        let buffer = self.buffer;
+        let buffer = self.buffer.clone();
         Some(
             cx.background_spawn(
                 async move { (to_fenced_codeblock(&full_path, rope, None), buffer) },
@@ -183,7 +183,7 @@ impl DirectoryContext {
     }
 
     fn load(
-        self,
+        &self,
         project: Entity<Project>,
         cx: &mut App,
     ) -> Option<Task<Vec<(String, Entity<Buffer>)>>> {
@@ -245,7 +245,7 @@ impl SymbolContext {
         self.range.hash(state);
     }
 
-    fn load(self, cx: &mut App) -> Option<Task<(String, Entity<Buffer>)>> {
+    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("symbol context's file has no path");
@@ -256,7 +256,7 @@ impl SymbolContext {
             .text_for_range(self.enclosing_range.clone())
             .collect::<Rope>();
         let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
-        let buffer = self.buffer;
+        let buffer = self.buffer.clone();
         Some(cx.background_spawn(async move {
             (
                 to_fenced_codeblock(&full_path, rope, Some(line_range)),
@@ -283,7 +283,7 @@ impl SelectionContext {
         self.range.hash(state);
     }
 
-    fn load(self, cx: &mut App) -> Option<Task<(String, Entity<Buffer>)>> {
+    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("selection context's file has no path");
@@ -294,7 +294,7 @@ impl SelectionContext {
             .text_for_range(self.range.clone())
             .collect::<Rope>();
         let line_range = self.range.to_point(&buffer_ref.snapshot());
-        let buffer = self.buffer;
+        let buffer = self.buffer.clone();
         Some(cx.background_spawn(async move {
             (
                 to_fenced_codeblock(&full_path, rope, Some(line_range)),
@@ -375,10 +375,24 @@ impl RulesContext {
         self.prompt_id.hash(state)
     }
 
-    pub fn load(&self, thread_store: &Entity<ThreadStore>, cx: &App) -> Task<Option<String>> {
-        let rules_task = thread_store.read(cx).load_rules(self.prompt_id, cx);
+    pub fn load(
+        &self,
+        prompt_store: &Option<Entity<PromptStore>>,
+        cx: &App,
+    ) -> Task<Option<String>> {
+        // todo! better error handling
+        let Some(prompt_store) = prompt_store.as_ref() else {
+            return Task::ready(None);
+        };
+        let prompt_store = prompt_store.read(cx);
+        let prompt_id = self.prompt_id.into();
+        let Some(metadata) = prompt_store.metadata(prompt_id) else {
+            return Task::ready(None);
+        };
+        let contents_task = prompt_store.load(prompt_id, cx);
         cx.background_spawn(async move {
-            let (metadata, contents) = rules_task.await.log_err()?;
+            // todo! better error handling
+            let contents = contents_task.await.ok()?;
             let mut text = String::new();
             if let Some(title) = metadata.title {
                 text.push_str("Rules title: ");
@@ -421,10 +435,11 @@ impl ImageContext {
 */
 
 /// Loads and formats a collection of contexts.
-pub fn load_context<'a>(
-    contexts: impl Iterator<Item = &'a AssistantContext>,
-    project: Entity<Project>,
-    thread_store: Entity<ThreadStore>,
+pub fn load_context(
+    // todo! Why does it complain about taking this as a reference?
+    contexts: Vec<AssistantContext>,
+    project: &Entity<Project>,
+    prompt_store: &Option<Entity<PromptStore>>,
     cx: &mut App,
 ) -> Task<(Option<String>, HashSet<Entity<Buffer>>)> {
     let mut file_context_tasks = Vec::new();
@@ -434,8 +449,6 @@ pub fn load_context<'a>(
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
     let mut rules_context_tasks = Vec::new();
-
-    let contexts = contexts.cloned().collect::<Vec<_>>();
 
     for context in contexts {
         match context {
@@ -450,7 +463,7 @@ pub fn load_context<'a>(
             AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context.load(cx)),
             AssistantContext::Rules(context) => {
-                rules_context_tasks.push(context.load(&thread_store, cx))
+                rules_context_tasks.push(context.load(prompt_store, cx))
             }
         }
     }

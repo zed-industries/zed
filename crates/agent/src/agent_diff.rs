@@ -962,11 +962,13 @@ mod tests {
             })
             .unwrap();
 
+        let prompt_store = None;
         let thread_store = cx
             .update(|cx| {
                 ThreadStore::load(
                     project.clone(),
                     cx.new(|_| ToolWorkingSet::default()),
+                    prompt_store,
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )

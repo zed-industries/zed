@@ -23,6 +23,7 @@ use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelReques
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
+use prompt_store::PromptStore;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -50,6 +51,7 @@ pub struct MessageEditor {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     context_store: Entity<ContextStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
@@ -69,6 +71,7 @@ impl MessageEditor {
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
         context_store: Entity<ContextStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
         thread: Entity<Thread>,
         window: &mut Window,
@@ -153,6 +156,7 @@ impl MessageEditor {
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
             context_store,
+            prompt_store,
             context_strip,
             context_picker_menu_handle,
             model_selector: cx.new(|cx| {
@@ -271,11 +275,12 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
-        let mut new_context = self
+        let new_context = self
             .context_store
             .read(cx)
             .new_context_for_thread(self.thread.read(cx));
-        let context_text_task = load_context(new_context.iter(), self.project.clone(), cx);
+        let context_text_task =
+            load_context(new_context.clone(), &self.project, &self.prompt_store, cx);
         // todo! let wait_for_images = self.context_store.read(cx).wait_for_images(cx);
 
         let thread = self.thread.clone();

@@ -7,6 +7,7 @@ use gpui::{Animation, AnimationExt as _, ClickEvent, Image, MouseButton, Task, p
 use language_model::LanguageModelImage;
 use project::Project;
 use prompt_store::PromptStore;
+use text::OffsetRangeExt;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
 use crate::ThreadStore;
@@ -76,7 +77,7 @@ impl ContextPill {
 
     pub fn id(&self) -> ElementId {
         match self {
-            Self::Added { context, .. } => context.context.element_id("context-pill"),
+            Self::Added { context, .. } => context.context.element_id("context-pill".into()),
             Self::Suggested { .. } => "suggested-context-pill".into(),
         }
     }
@@ -200,14 +201,17 @@ impl RenderOnce for ContextPill {
                     )
                     .when_some(on_remove.as_ref(), |element, on_remove| {
                         element.child(
-                            IconButton::new(context.context.element_id("remove"), IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
-                                .tooltip(Tooltip::text("Remove Context"))
-                                .on_click({
-                                    let on_remove = on_remove.clone();
-                                    move |event, window, cx| on_remove(event, window, cx)
-                                }),
+                            IconButton::new(
+                                context.context.element_id("remove".into()),
+                                IconName::Close,
+                            )
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .tooltip(Tooltip::text("Remove Context"))
+                            .on_click({
+                                let on_remove = on_remove.clone();
+                                move |event, window, cx| on_remove(event, window, cx)
+                            }),
                         )
                     })
                     .when_some(on_click.as_ref(), |element, on_click| {
@@ -350,7 +354,7 @@ impl AddedContext {
                 context,
             }),
 
-            AssistantContext::Selection(selection_context) => {
+            AssistantContext::Selection(ref selection_context) => {
                 let buffer = selection_context.buffer.read(cx);
                 let full_path = buffer.file()?.full_path(cx);
                 let mut full_path_string = full_path.to_string_lossy().into_owned();

@@ -182,8 +182,7 @@ pub fn render_thread_context_entry(
     let added = context_store.upgrade().map_or(false, |context_store| {
         context_store
             .read(cx)
-            .includes_user_rules(&user_rules.prompt_id)
-            .is_some()
+            .includes_user_rules(user_rules.prompt_id.clone())
     });
 
     h_flex()
