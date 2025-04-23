@@ -1207,9 +1207,12 @@ fn possible_open_target(
 
     let fs = workspace.read(cx).project().read(cx).fs().clone();
     cx.background_spawn(async move {
-        for path_to_check in fs_paths_to_check {
-            if let Some(metadata) = fs.metadata(&path_to_check.path).await.ok().flatten() {
-                return Some(OpenTarget::File(path_to_check, metadata));
+        for mut path_to_check in fs_paths_to_check {
+            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok() {
+                if let Some(metadata) = dbg!(fs.metadata(&fs_path_to_check).await).ok().flatten() {
+                    path_to_check.path = fs_path_to_check;
+                    return Some(OpenTarget::File(path_to_check, metadata));
+                }
             }
         }
 
