@@ -223,7 +223,6 @@ impl LanguageModel for CopilotChatLanguageModel {
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
                     CopilotChatModel::O1 => open_ai::Model::O1,
                     CopilotChatModel::O3Mini => open_ai::Model::O3Mini,
-                    CopilotChatModel::O3 => open_ai::Model::O3,
                     CopilotChatModel::O4Mini => open_ai::Model::O4Mini,
                     CopilotChatModel::Claude3_5Sonnet
                     | CopilotChatModel::Claude3_7Sonnet
