@@ -228,18 +228,16 @@ pub(crate) fn add_symbol(
             )
         })?;
 
-        context_store
-            .update(cx, move |context_store, cx| {
-                context_store.add_symbol(
-                    buffer,
-                    name.into(),
-                    range,
-                    enclosing_range,
-                    remove_if_exists,
-                    cx,
-                )
-            })?
-            .await
+        context_store.update(cx, move |context_store, cx| {
+            context_store.add_symbol(
+                buffer,
+                name.into(),
+                range,
+                enclosing_range,
+                remove_if_exists,
+                cx,
+            )
+        })
     })
 }
 
@@ -355,6 +353,8 @@ fn compute_symbol_entries(
 ) -> Vec<SymbolEntry> {
     let mut symbol_entries = Vec::with_capacity(symbols.len());
     for SymbolMatch { symbol, .. } in symbols {
+        let is_included = true;
+        /* todo!
         let symbols_for_path = context_store.included_symbols_by_path().get(&symbol.path);
         let is_included = if let Some(symbols_for_path) = symbols_for_path {
             let mut is_included = false;
@@ -378,6 +378,7 @@ fn compute_symbol_entries(
         } else {
             false
         };
+        */
 
         symbol_entries.push(SymbolEntry {
             symbol,

@@ -408,9 +408,10 @@ impl CodegenAlternative {
             .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
-        let context_task = self.context_store.as_ref().map(|context_store| {
-            load_context(context_store.read(cx).context().iter(), todo!(), cx)
-        });
+        let context_task = self
+            .context_store
+            .as_ref()
+            .map(|context_store| load_context(context_store.read(cx).context(), todo!(), cx));
 
         Ok(cx.spawn(async move |_cx| {
             let mut request_message = LanguageModelRequestMessage {

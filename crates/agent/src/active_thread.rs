@@ -3238,26 +3238,15 @@ pub(crate) fn open_context(
                     cx.emit(project::Event::RevealInProjectPanel(entry_id));
                 })
             })
+        }
+        AssistantContext::Symbol(symbol_context) => {
+            if let Some(project_path) = symbol_context.buffer.read(cx).project_path(cx) {
+                let snapshot = symbol_context.buffer.read(cx).snapshot();
+                let target_position = symbol_context.range.start.to_point(&snapshot);
+                open_editor_at_position(project_path, target_position, &workspace, window, cx)
+                    .detach();
+            }
         } /*
-            AssistantContext::Symbol(symbol_context) => {
-                if let Some(project_path) = symbol_context
-                    .context_symbol
-                    .buffer
-                    .read(cx)
-                    .project_path(cx)
-                {
-                    let snapshot = symbol_context.context_symbol.buffer.read(cx).snapshot();
-                    let target_position = symbol_context
-                        .context_symbol
-                        .id
-                        .range
-                        .start
-                        .to_point(&snapshot);
-
-                  open_editor_at_position(project_path, target_position, &workspace, window, cx)
-                      .detach();
-              }
-          }
           AssistantContext::Selection(selection_context) => {
               if let Some(project_path) = selection_context
                   .context_buffer

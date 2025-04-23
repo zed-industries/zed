@@ -65,6 +65,7 @@ project.workspace = true
 prompt_library.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
+ref-cast.workspace = true
 release_channel.workspace = true
 rope.workspace = true
 schemars.workspace = true

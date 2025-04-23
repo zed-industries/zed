@@ -23,14 +23,14 @@ use workspace::Workspace;
 
 use crate::context::RULES_ICON;
 use crate::context_picker::file_context_picker::search_files;
-// use crate::context_picker::symbol_context_picker::search_symbols;
+use crate::context_picker::symbol_context_picker::search_symbols;
 use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 
 // use super::fetch_context_picker::fetch_url_content;
 use super::file_context_picker::FileMatch;
 // use super::rules_context_picker::{RulesContextEntry, search_rules};
-// use super::symbol_context_picker::SymbolMatch;
+use super::symbol_context_picker::SymbolMatch;
 // use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
     ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
@@ -39,7 +39,7 @@ use super::{
 
 pub(crate) enum Match {
     File(FileMatch),
-    // Symbol(SymbolMatch),
+    Symbol(SymbolMatch),
     // Thread(ThreadMatch),
     // Fetch(SharedString),
     // Rules(RulesContextEntry),
@@ -57,7 +57,7 @@ impl Match {
             Match::File(file) => file.mat.score,
             Match::Entry(mode) => mode.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
             // Match::Thread(_) => 1.,
-            // Match::Symbol(_) => 1.,
+            Match::Symbol(_) => 1.,
             // Match::Fetch(_) => 1.,
             // Match::Rules(_) => 1.,
         }
@@ -85,17 +85,17 @@ fn search(
                     .collect()
             })
         }
-        // Some(ContextPickerMode::Symbol) => {
-        //     let search_symbols_task =
-        //         search_symbols(query.clone(), cancellation_flag.clone(), &workspace, cx);
-        //     cx.background_spawn(async move {
-        //         search_symbols_task
-        //             .await
-        //             .into_iter()
-        //             .map(Match::Symbol)
-        //             .collect()
-        //     })
-        // }
+        Some(ContextPickerMode::Symbol) => {
+            let search_symbols_task =
+                search_symbols(query.clone(), cancellation_flag.clone(), &workspace, cx);
+            cx.background_spawn(async move {
+                search_symbols_task
+                    .await
+                    .into_iter()
+                    .map(Match::Symbol)
+                    .collect()
+            })
+        }
         // Some(ContextPickerMode::Thread) => {
         //     if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
         //         let search_threads_task =
@@ -609,7 +609,6 @@ impl ContextPickerCompletionProvider {
         }
     }
 
-    /*
     fn completion_for_symbol(
         symbol: Symbol,
         excerpt_id: ExcerptId,
@@ -675,7 +674,6 @@ impl ContextPickerCompletionProvider {
             )),
         })
     }
-    */
 }
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
@@ -776,7 +774,8 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 cx,
                             ))
                         }
-                        /* Match::Symbol(SymbolMatch { symbol, .. }) => Self::completion_for_symbol(
+
+                        Match::Symbol(SymbolMatch { symbol, .. }) => Self::completion_for_symbol(
                             symbol,
                             excerpt_id,
                             source_range.clone(),
@@ -786,7 +785,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             cx,
                         ),
 
-                        Match::Thread(ThreadMatch {
+                        /*Match::Thread(ThreadMatch {
                             thread, is_recent, ..
                         }) => {
                             let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;

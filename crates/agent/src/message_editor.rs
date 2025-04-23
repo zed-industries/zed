@@ -214,6 +214,7 @@ impl MessageEditor {
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
+
     pub fn remove_all_context(
         &mut self,
         _: &RemoveAllContext,
@@ -270,10 +271,10 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
-        let mut new_context = self.context_store.read(cx).context().clone();
-        self.thread
+        let mut new_context = self
+            .context_store
             .read(cx)
-            .remove_already_added_context(&mut new_context);
+            .new_context_for_thread(self.thread.read(cx));
         let context_text_task = load_context(new_context.iter(), self.project.clone(), cx);
         // todo! let wait_for_images = self.context_store.read(cx).wait_for_images(cx);
 

@@ -275,6 +275,8 @@ pub struct AddedContext {
 impl AddedContext {
     /// Creates an `AddedContext` by retrieving relevant details of `AssistantContext`. This returns
     /// a `None` if `DirectoryContext` no longer exists.
+    ///
+    /// TODO: `None` cases are unremovable from `ContextStore` and so are a very minor memory leak.
     pub fn new(context: AssistantContext, project: &Project, cx: &App) -> Option<AddedContext> {
         match context {
             AssistantContext::File(ref file_context) => {
@@ -327,135 +329,136 @@ impl AddedContext {
                     status: ContextStatus::Ready,
                     render_preview: None,
                 })
-            } /*
-              AssistantContext::Symbol(symbol_context) => AddedContext {
-                  id: symbol_context.id,
-                  kind: ContextKind::Symbol,
-                  name: symbol_context.context_symbol.id.name.clone(),
-                  parent: None,
-                  tooltip: None,
-                  icon_path: None,
-                  status: ContextStatus::Ready,
-                  render_preview: None,
-              },
+            }
 
-              AssistantContext::Selection(selection_context) => {
-                  let full_path = selection_context.context_buffer.full_path(cx);
-                  let mut full_path_string = full_path.to_string_lossy().into_owned();
-                  let mut name = full_path
-                      .file_name()
-                      .map(|n| n.to_string_lossy().into_owned())
-                      .unwrap_or_else(|| full_path_string.clone());
+            AssistantContext::Symbol(ref symbol_context) => Some(AddedContext {
+                context: context.clone(),
+                kind: ContextKind::Symbol,
+                name: symbol_context.symbol.clone(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                status: ContextStatus::Ready,
+                render_preview: None,
+            }),
+            /*
+            AssistantContext::Selection(selection_context) => {
+                let full_path = selection_context.context_buffer.full_path(cx);
+                let mut full_path_string = full_path.to_string_lossy().into_owned();
+                let mut name = full_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| full_path_string.clone());
 
-                  let line_range_text = format!(
-                      " ({}-{})",
-                      selection_context.line_range.start.row + 1,
-                      selection_context.line_range.end.row + 1
-                  );
+                let line_range_text = format!(
+                    " ({}-{})",
+                    selection_context.line_range.start.row + 1,
+                    selection_context.line_range.end.row + 1
+                );
 
-                  full_path_string.push_str(&line_range_text);
-                  name.push_str(&line_range_text);
+                full_path_string.push_str(&line_range_text);
+                name.push_str(&line_range_text);
 
-                  let parent = full_path
-                      .parent()
-                      .and_then(|p| p.file_name())
-                      .map(|n| n.to_string_lossy().into_owned().into());
+                let parent = full_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned().into());
 
-                  AddedContext {
-                      id: selection_context.id,
-                      kind: ContextKind::Selection,
-                      name: name.into(),
-                      parent,
-                      tooltip: None,
-                      icon_path: FileIcons::get_icon(&full_path, cx),
-                      status: ContextStatus::Ready,
-                      render_preview: Some(Rc::new({
-                          let content = selection_context.context_buffer.text.clone();
-                          move |_, cx| {
-                              div()
-                                  .id("context-pill-selection-preview")
-                                  .overflow_scroll()
-                                  .max_w_128()
-                                  .max_h_96()
-                                  .child(Label::new(content.clone()).buffer_font(cx))
-                                  .into_any_element()
-                          }
-                      })),
-                  }
-              }
+                AddedContext {
+                    id: selection_context.id,
+                    kind: ContextKind::Selection,
+                    name: name.into(),
+                    parent,
+                    tooltip: None,
+                    icon_path: FileIcons::get_icon(&full_path, cx),
+                    status: ContextStatus::Ready,
+                    render_preview: Some(Rc::new({
+                        let content = selection_context.context_buffer.text.clone();
+                        move |_, cx| {
+                            div()
+                                .id("context-pill-selection-preview")
+                                .overflow_scroll()
+                                .max_w_128()
+                                .max_h_96()
+                                .child(Label::new(content.clone()).buffer_font(cx))
+                                .into_any_element()
+                        }
+                    })),
+                }
+            }
 
-              AssistantContext::FetchedUrl(fetched_url_context) => AddedContext {
-                  id: fetched_url_context.id,
-                  kind: ContextKind::FetchedUrl,
-                  name: fetched_url_context.url.clone(),
-                  parent: None,
-                  tooltip: None,
-                  icon_path: None,
-                  status: ContextStatus::Ready,
-                  render_preview: None,
-              },
+            AssistantContext::FetchedUrl(fetched_url_context) => AddedContext {
+                id: fetched_url_context.id,
+                kind: ContextKind::FetchedUrl,
+                name: fetched_url_context.url.clone(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                status: ContextStatus::Ready,
+                render_preview: None,
+            },
 
-              AssistantContext::Thread(thread_context) => AddedContext {
-                  id: thread_context.id,
-                  kind: ContextKind::Thread,
-                  name: thread_context.summary(cx),
-                  parent: None,
-                  tooltip: None,
-                  icon_path: None,
-                  status: if thread_context
-                      .thread
-                      .read(cx)
-                      .is_generating_detailed_summary()
-                  {
-                      ContextStatus::Loading {
-                          message: "Summarizing…".into(),
-                      }
-                  } else {
-                      ContextStatus::Ready
-                  },
-                  render_preview: None,
-              },
+            AssistantContext::Thread(thread_context) => AddedContext {
+                id: thread_context.id,
+                kind: ContextKind::Thread,
+                name: thread_context.summary(cx),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                status: if thread_context
+                    .thread
+                    .read(cx)
+                    .is_generating_detailed_summary()
+                {
+                    ContextStatus::Loading {
+                        message: "Summarizing…".into(),
+                    }
+                } else {
+                    ContextStatus::Ready
+                },
+                render_preview: None,
+            },
 
-              AssistantContext::Rules(user_rules_context) => AddedContext {
-                  id: user_rules_context.id,
-                  kind: ContextKind::Rules,
-                  name: user_rules_context.title.clone(),
-                  parent: None,
-                  tooltip: None,
-                  icon_path: None,
-                  status: ContextStatus::Ready,
-                  render_preview: None,
-              },
+            AssistantContext::Rules(user_rules_context) => AddedContext {
+                id: user_rules_context.id,
+                kind: ContextKind::Rules,
+                name: user_rules_context.title.clone(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                status: ContextStatus::Ready,
+                render_preview: None,
+            },
 
-              AssistantContext::Image(image_context) => AddedContext {
-                  id: image_context.id,
-                  kind: ContextKind::Image,
-                  name: "Image".into(),
-                  parent: None,
-                  tooltip: None,
-                  icon_path: None,
-                  status: if image_context.is_loading() {
-                      ContextStatus::Loading {
-                          message: "Loading…".into(),
-                      }
-                  } else if image_context.is_error() {
-                      ContextStatus::Error {
-                          message: "Failed to load image".into(),
-                      }
-                  } else {
-                      ContextStatus::Ready
-                  },
-                  render_preview: Some(Rc::new({
-                      let image = image_context.original_image.clone();
-                      move |_, _| {
-                          gpui::img(image.clone())
-                              .max_w_96()
-                              .max_h_96()
-                              .into_any_element()
-                      }
-                  })),
-              },
-              */
+            AssistantContext::Image(image_context) => AddedContext {
+                id: image_context.id,
+                kind: ContextKind::Image,
+                name: "Image".into(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                status: if image_context.is_loading() {
+                    ContextStatus::Loading {
+                        message: "Loading…".into(),
+                    }
+                } else if image_context.is_error() {
+                    ContextStatus::Error {
+                        message: "Failed to load image".into(),
+                    }
+                } else {
+                    ContextStatus::Ready
+                },
+                render_preview: Some(Rc::new({
+                    let image = image_context.original_image.clone();
+                    move |_, _| {
+                        gpui::img(image.clone())
+                            .max_w_96()
+                            .max_h_96()
+                            .into_any_element()
+                    }
+                })),
+            },
+            */
         }
     }
 }

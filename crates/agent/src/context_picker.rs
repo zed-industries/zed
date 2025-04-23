@@ -2,7 +2,7 @@ mod completion_provider;
 // mod fetch_context_picker;
 mod file_context_picker;
 // mod rules_context_picker;
-// mod symbol_context_picker;
+mod symbol_context_picker;
 // mod thread_context_picker;
 
 use std::ops::Range;
@@ -22,7 +22,7 @@ use multi_buffer::MultiBufferRow;
 use project::{Entry, ProjectPath};
 use prompt_store::UserPromptId;
 // use rules_context_picker::RulesContextEntry;
-// use symbol_context_picker::SymbolContextPicker;
+use symbol_context_picker::SymbolContextPicker;
 // use thread_context_picker::{ThreadContextEntry, render_thread_context_entry};
 use ui::{
     ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor, prelude::*,
@@ -73,7 +73,7 @@ impl ContextPickerEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPickerMode {
     File,
-    // Symbol,
+    Symbol,
     // Fetch,
     // Thread,
     // Rules,
@@ -110,7 +110,7 @@ impl TryFrom<&str> for ContextPickerMode {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "file" => Ok(Self::File),
-            // "symbol" => Ok(Self::Symbol),
+            "symbol" => Ok(Self::Symbol),
             // "fetch" => Ok(Self::Fetch),
             // "thread" => Ok(Self::Thread),
             // "rules" => Ok(Self::Rules),
@@ -123,7 +123,7 @@ impl ContextPickerMode {
     pub fn keyword(&self) -> &'static str {
         match self {
             Self::File => "file",
-            // Self::Symbol => "symbol",
+            Self::Symbol => "symbol",
             // Self::Fetch => "fetch",
             // Self::Thread => "thread",
             // Self::Rules => "rules",
@@ -133,7 +133,7 @@ impl ContextPickerMode {
     pub fn label(&self) -> &'static str {
         match self {
             Self::File => "Files & Directories",
-            // Self::Symbol => "Symbols",
+            Self::Symbol => "Symbols",
             // Self::Fetch => "Fetch",
             // Self::Thread => "Threads",
             // Self::Rules => "Rules",
@@ -143,7 +143,7 @@ impl ContextPickerMode {
     pub fn icon(&self) -> IconName {
         match self {
             Self::File => IconName::File,
-            // Self::Symbol => IconName::Code,
+            Self::Symbol => IconName::Code,
             // Self::Fetch => IconName::Globe,
             // Self::Thread => IconName::MessageBubbles,
             // Self::Rules => RULES_ICON,
@@ -155,7 +155,7 @@ impl ContextPickerMode {
 enum ContextPickerState {
     Default(Entity<ContextMenu>),
     File(Entity<FileContextPicker>),
-    // Symbol(Entity<SymbolContextPicker>),
+    Symbol(Entity<SymbolContextPicker>),
     // Fetch(Entity<FetchContextPicker>),
     // Thread(Entity<ThreadContextPicker>),
     // Rules(Entity<RulesContextPicker>),
@@ -291,18 +291,18 @@ impl ContextPicker {
                             cx,
                         )
                     }));
+                }
+                ContextPickerMode::Symbol => {
+                    self.mode = ContextPickerState::Symbol(cx.new(|cx| {
+                        SymbolContextPicker::new(
+                            context_picker.clone(),
+                            self.workspace.clone(),
+                            self.context_store.clone(),
+                            window,
+                            cx,
+                        )
+                    }));
                 } /*
-                      ContextPickerMode::Symbol => {
-                          self.mode = ContextPickerState::Symbol(cx.new(|cx| {
-                              SymbolContextPicker::new(
-                                  context_picker.clone(),
-                                  self.workspace.clone(),
-                                  self.context_store.clone(),
-                                  window,
-                                  cx,
-                              )
-                          }));
-                      }
                       ContextPickerMode::Rules => {
                           if let Some(thread_store) = self.thread_store.as_ref() {
                               self.mode = ContextPickerState::Rules(cx.new(|cx| {
@@ -481,7 +481,7 @@ impl ContextPicker {
         match &self.mode {
             ContextPickerState::Default(entity) => entity.update(cx, |_, cx| cx.notify()),
             ContextPickerState::File(entity) => entity.update(cx, |_, cx| cx.notify()),
-            // ContextPickerState::Symbol(entity) => entity.update(cx, |_, cx| cx.notify()),
+            ContextPickerState::Symbol(entity) => entity.update(cx, |_, cx| cx.notify()),
             // ContextPickerState::Fetch(entity) => entity.update(cx, |_, cx| cx.notify()),
             // ContextPickerState::Thread(entity) => entity.update(cx, |_, cx| cx.notify()),
             // ContextPickerState::Rules(entity) => entity.update(cx, |_, cx| cx.notify()),
@@ -496,7 +496,7 @@ impl Focusable for ContextPicker {
         match &self.mode {
             ContextPickerState::Default(menu) => menu.focus_handle(cx),
             ContextPickerState::File(file_picker) => file_picker.focus_handle(cx),
-            // ContextPickerState::Symbol(symbol_picker) => symbol_picker.focus_handle(cx),
+            ContextPickerState::Symbol(symbol_picker) => symbol_picker.focus_handle(cx),
             // ContextPickerState::Fetch(fetch_picker) => fetch_picker.focus_handle(cx),
             // ContextPickerState::Thread(thread_picker) => thread_picker.focus_handle(cx),
             // ContextPickerState::Rules(user_rules_picker) => user_rules_picker.focus_handle(cx),
@@ -512,7 +512,7 @@ impl Render for ContextPicker {
             .map(|parent| match &self.mode {
                 ContextPickerState::Default(menu) => parent.child(menu.clone()),
                 ContextPickerState::File(file_picker) => parent.child(file_picker.clone()),
-                // ContextPickerState::Symbol(symbol_picker) => parent.child(symbol_picker.clone()),
+                ContextPickerState::Symbol(symbol_picker) => parent.child(symbol_picker.clone()),
                 // ContextPickerState::Fetch(fetch_picker) => parent.child(fetch_picker.clone()),
                 // ContextPickerState::Thread(thread_picker) => parent.child(thread_picker.clone()),
                 // ContextPickerState::Rules(user_rules_picker) => {
@@ -536,7 +536,7 @@ fn available_context_picker_entries(
 ) -> Vec<ContextPickerEntry> {
     let mut entries = vec![
         ContextPickerEntry::Mode(ContextPickerMode::File),
-        // todo! ContextPickerEntry::Mode(ContextPickerMode::Symbol),
+        ContextPickerEntry::Mode(ContextPickerMode::Symbol),
     ];
 
     /* todo!

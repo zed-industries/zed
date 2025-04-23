@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::{ops::Range, path::Path, sync::Arc};
 
 use anyhow::Context as _;
@@ -60,8 +61,8 @@ impl ContextKind {
 pub enum AssistantContext {
     File(FileContext),
     Directory(DirectoryContext),
-    /*
     Symbol(SymbolContext),
+    /*
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
     Selection(SelectionContext),
@@ -83,6 +84,13 @@ impl AssistantContext {
                 (name.to_string() + "-directory").into(),
                 context.entry_id.to_usize(),
             ),
+            Self::Symbol(context) => {
+                ElementId::NamedInteger(
+                    (name.to_string() + "-symbol-" + &context.symbol).into(),
+                    // TODO: avoid potential panic here on 32 bit machines
+                    context.buffer.entity_id().as_u64().try_into().unwrap(),
+                )
+            }
         }
     }
 }
@@ -98,6 +106,14 @@ pub struct FileContext {
 }
 
 impl FileContext {
+    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+        self == other
+    }
+
+    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+        self.hash(state)
+    }
+
     // todo! inline?
     pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         let file = self.buffer.read(cx).file()?;
@@ -133,6 +149,14 @@ pub struct DirectoryContext {
 }
 
 impl DirectoryContext {
+    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+        self == other
+    }
+
+    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+        self.hash(state)
+    }
+
     // todo! remove?
     pub fn project_path(&self, project: &Project, cx: &App) -> Option<ProjectPath> {
         let worktree = project.worktree_for_entry(self.entry_id, cx)?.read(cx);
@@ -182,19 +206,45 @@ impl DirectoryContext {
     }
 }
 
-/*
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct SymbolContext {
-    pub name: SharedString,
-    pub excerpt: ExcerptContext,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExcerptContext {
     pub buffer: Entity<Buffer>,
+    pub symbol: SharedString,
+    // not used by Eq and Hash for ContextSetEntry
+    //
+    // todo! this was previously used as part of symbol inclusion check
     pub range: Range<Anchor>,
 }
 
+impl SymbolContext {
+    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+        self.buffer == other.buffer && self.symbol == other.symbol
+    }
+
+    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+        self.buffer.hash(state);
+        self.symbol.hash(state);
+    }
+
+    fn load(self, cx: &mut App) -> Option<Task<(String, Entity<Buffer>)>> {
+        let buffer_ref = self.buffer.read(cx);
+        let Some(file) = buffer_ref.file() else {
+            log::error!("symbol context's file has no path");
+            return None;
+        };
+        let full_path = file.full_path(cx);
+        let rope = buffer_ref
+            .text_for_range(self.range.clone())
+            .collect::<Rope>();
+        let buffer = self.buffer.clone();
+        Some(cx.background_spawn(
+            // todo! codeblock should mention it's for a particular symbol
+            async move { (to_fenced_codeblock(&full_path, rope, None), buffer) },
+        ))
+    }
+}
+
+/*
 #[derive(Debug, Clone)]
 pub struct FetchedUrlContext {
     pub url: SharedString,
@@ -271,8 +321,8 @@ pub fn load_context<'a>(
 ) -> Task<(Option<String>, HashSet<Entity<Buffer>>)> {
     let mut file_context_tasks = Vec::new();
     let mut directory_context_tasks = Vec::new();
+    let mut symbol_context_tasks = Vec::new();
     /*
-    let mut symbol_context = Vec::new();
     let mut excerpt_context = Vec::new();
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
@@ -286,19 +336,21 @@ pub fn load_context<'a>(
             AssistantContext::File(context) => file_context_tasks.extend(context.load(cx)),
             AssistantContext::Directory(context) => {
                 directory_context_tasks.extend(context.load(project.clone(), cx))
-            } /*
-              AssistantContext::Symbol(context) => symbol_context.push(context.load(cx)),
-              AssistantContext::Excerpt(context) => excerpt_context.push(context.load(cx)),
-              AssistantContext::FetchedUrl(context) => fetch_context.push(context.load(cx)),
-              AssistantContext::Thread(context) => thread_context.push(context.load(cx)),
-              AssistantContext::Rules(context) => rules_context.push(context.load(cx)),
-              */
+            }
+            AssistantContext::Symbol(context) => symbol_context_tasks.extend(context.load(cx)),
+            /*
+            AssistantContext::Excerpt(context) => excerpt_context.push(context.load(cx)),
+            AssistantContext::FetchedUrl(context) => fetch_context.push(context.load(cx)),
+            AssistantContext::Thread(context) => thread_context.push(context.load(cx)),
+            AssistantContext::Rules(context) => rules_context.push(context.load(cx)),
+            */
         }
     }
 
-    if file_context_tasks.is_empty() && directory_context_tasks.is_empty()
+    if file_context_tasks.is_empty()
+        && directory_context_tasks.is_empty()
+        && symbol_context_tasks.is_empty()
     /*
-    && symbol_context.is_empty()
     && excerpt_context.is_empty()
     && fetch_context.is_empty()
     && thread_context.is_empty()
@@ -309,10 +361,11 @@ pub fn load_context<'a>(
     }
 
     cx.background_spawn(async move {
-        let (file_context, directory_context) =
+        let (file_context, directory_context, symbol_context) =
             futures::join!(
                 future::join_all(file_context_tasks),
-                future::join_all(directory_context_tasks));
+                future::join_all(directory_context_tasks),
+                future::join_all(symbol_context_tasks));
 
         let directory_context = directory_context.into_iter().flat_map(|context| context).collect::<Vec<_>>();
 
@@ -323,8 +376,9 @@ pub fn load_context<'a>(
             The following items were attached by the user. You don't need to use other tools to read them.\n\n");
 
         if !file_context.is_empty() {
-            result.push_str("<files>\n");
+            result.push_str("<files>");
             for (text, buffer) in file_context {
+                result.push('\n');
                 result.push_str(&text);
                 buffers.insert(buffer);
             }
@@ -332,24 +386,26 @@ pub fn load_context<'a>(
         }
 
         if !directory_context.is_empty() {
-            result.push_str("<directories>\n");
+            result.push_str("<directories>");
             for (text, buffer) in directory_context {
+                result.push('\n');
                 result.push_str(&text);
                 buffers.insert(buffer);
             }
             result.push_str("</directories>\n");
         }
 
-        /*
         if !symbol_context.is_empty() {
-            result.push_str("<symbols>\n");
-            for context in symbol_context {
-                result.push_str(&context.context_symbol.text);
+            result.push_str("<symbols>");
+            for (text, buffer) in symbol_context{
                 result.push('\n');
+                result.push_str(&text);
+                buffers.insert(buffer);
             }
             result.push_str("</symbols>\n");
         }
 
+        /*
         if !excerpt_context.is_empty() {
             result.push_str("<excerpts>\n");
             for context in excerpt_context {

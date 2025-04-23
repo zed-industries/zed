@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,12 +12,13 @@ use language::Buffer;
 use language_model::LanguageModelImage;
 use project::{Project, ProjectEntryId, ProjectItem, ProjectPath, Worktree};
 use prompt_store::UserPromptId;
+use ref_cast::RefCast;
 use rope::{Point, Rope};
 use text::{Anchor, BufferId, OffsetRangeExt};
 use util::ResultExt as _;
 
 use crate::ThreadStore;
-use crate::context::{AssistantContext, DirectoryContext, FileContext};
+use crate::context::{AssistantContext, DirectoryContext, FileContext, SymbolContext};
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
 
@@ -25,7 +27,7 @@ pub struct ContextStore {
     thread_store: Option<WeakEntity<ThreadStore>>,
     thread_summary_tasks: Vec<Task<()>>,
     // todo! rename to context_set?
-    context: IndexSet<AssistantContext>,
+    context: IndexSet<ContextSetEntry>,
 }
 
 impl ContextStore {
@@ -41,12 +43,29 @@ impl ContextStore {
         }
     }
 
-    pub fn context(&self) -> &IndexSet<AssistantContext> {
+    pub fn context(&self) -> impl Iterator<Item = &AssistantContext> {
+        self.context.iter().map(|entry| entry.as_ref())
+    }
+
+    pub fn context_set(&self) -> &IndexSet<ContextSetEntry> {
         &self.context
     }
 
     pub fn clear(&mut self) {
         self.context.clear();
+    }
+
+    pub fn new_context_for_thread(&self, thread: &Thread) -> Vec<AssistantContext> {
+        let existing_context = thread
+            .messages()
+            .flat_map(|message| &message.context)
+            .map(|context| ContextSetEntry::ref_cast(context))
+            .collect::<HashSet<_>>();
+        self.context
+            .iter()
+            .filter(|context| !existing_context.contains(context))
+            .map(|entry| entry.0.clone())
+            .collect::<Vec<_>>()
     }
 
     pub fn add_file_from_path(
@@ -68,7 +87,7 @@ impl ContextStore {
             let context = AssistantContext::File(FileContext { buffer });
 
             let already_included = this.update(cx, |this, cx| {
-                if this.context.contains(&context) {
+                if this.has_context(&context) {
                     if remove_if_exists {
                         this.remove_context(&context, cx);
                     }
@@ -110,7 +129,7 @@ impl ContextStore {
 
         let context = AssistantContext::Directory(DirectoryContext { entry_id });
 
-        if self.context.contains(&context) {
+        if self.has_context(&context) {
             if remove_if_exists {
                 self.remove_context(&context, cx);
             }
@@ -124,82 +143,33 @@ impl ContextStore {
         anyhow::Ok(())
     }
 
-    /*
     pub fn add_symbol(
         &mut self,
         buffer: Entity<Buffer>,
-        symbol_name: SharedString,
-        symbol_range: Range<Anchor>,
-        symbol_enclosing_range: Range<Anchor>,
+        symbol: SharedString,
+        range: Range<Anchor>,
+        // todo! Handle enclosing_range
+        enclosing_range: Range<Anchor>,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<bool>> {
-        let buffer_ref = buffer.read(cx);
-        let Some(project_path) = buffer_ref.project_path(cx) else {
-            return Task::ready(Err(anyhow!("buffer has no path")));
-        };
+    ) -> bool {
+        let context = AssistantContext::Symbol(SymbolContext {
+            buffer,
+            symbol,
+            range,
+        });
 
-        if let Some(symbols_for_path) = self.symbols_by_path.get(&project_path) {
-            let mut matching_symbol_id = None;
-            for symbol in symbols_for_path {
-                if &symbol.name == &symbol_name {
-                    let snapshot = buffer_ref.snapshot();
-                    if symbol.range.to_offset(&snapshot) == symbol_range.to_offset(&snapshot) {
-                        matching_symbol_id = self.symbols.get(symbol).cloned();
-                        break;
-                    }
-                }
+        if self.has_context(&context) {
+            if remove_if_exists {
+                self.remove_context(&context, cx);
             }
-
-            if let Some(id) = matching_symbol_id {
-                if remove_if_exists {
-                    self.remove_context(id, cx);
-                }
-                return Task::ready(Ok(false));
-            }
+            return false;
         }
 
-        let context_buffer_task =
-            match load_context_buffer_range(buffer, symbol_enclosing_range.clone(), cx) {
-                Ok((_line_range, context_buffer_task)) => context_buffer_task,
-                Err(err) => return Task::ready(Err(err)),
-            };
-
-        cx.spawn(async move |this, cx| {
-            let context_buffer = context_buffer_task.await;
-
-            this.update(cx, |this, cx| {
-                this.insert_symbol(
-                    make_context_symbol(
-                        context_buffer,
-                        project_path,
-                        symbol_name,
-                        symbol_range,
-                        symbol_enclosing_range,
-                    ),
-                    cx,
-                )
-            })?;
-            anyhow::Ok(true)
-        })
+        self.insert_context(context, cx)
     }
 
-    fn insert_symbol(&mut self, context_symbol: ContextSymbol, cx: &mut Context<Self>) {
-        let id = self.next_context_id.post_inc();
-        self.symbols.insert(context_symbol.id.clone(), id);
-        self.symbols_by_path
-            .entry(context_symbol.id.path.clone())
-            .or_insert_with(Vec::new)
-            .push(context_symbol.id.clone());
-        self.symbol_buffers
-            .insert(context_symbol.id.clone(), context_symbol.buffer.clone());
-        self.context.push(AssistantContext::Symbol(SymbolContext {
-            id,
-            context_symbol,
-        }));
-        cx.notify();
-    }
-
+    /*
     pub fn add_thread(
         &mut self,
         thread: Entity<Thread>,
@@ -410,23 +380,32 @@ impl ContextStore {
         }
     }
 
-    fn insert_context(&mut self, context: AssistantContext, cx: &mut Context<Self>) {
-        if self.context.insert(context) {
+    fn insert_context(&mut self, context: AssistantContext, cx: &mut Context<Self>) -> bool {
+        let inserted = self.context.insert(ContextSetEntry(context));
+        if inserted {
+            cx.notify();
+        }
+        inserted
+    }
+
+    pub fn remove_context(&mut self, context: &AssistantContext, cx: &mut Context<Self>) {
+        if self
+            .context
+            .shift_remove(ContextSetEntry::ref_cast(context))
+        {
             cx.notify();
         }
     }
 
-    pub fn remove_context(&mut self, context: &AssistantContext, cx: &mut Context<Self>) {
-        if self.context.shift_remove(context) {
-            cx.notify();
-        }
+    pub fn has_context(&mut self, context: &AssistantContext) -> bool {
+        self.context.contains(ContextSetEntry::ref_cast(context))
     }
 
     /// Returns whether this file path is already included directly in the context, or if it will be
     /// included in the context via a directory.
     pub fn file_path_included(&self, path: &ProjectPath, cx: &App) -> Option<FileInclusion> {
         let project = self.project.upgrade()?.read(cx);
-        self.context.iter().find_map(|context| match context {
+        self.context().find_map(|context| match context {
             AssistantContext::File(file_context) => {
                 FileInclusion::check_file(file_context, path, cx)
             }
@@ -437,25 +416,13 @@ impl ContextStore {
         })
     }
 
-    pub fn buffer_included(&self, buffer: Entity<Buffer>, cx: &App) -> Option<FileInclusion> {
-        let path = buffer.read(cx).project_path(cx);
-        if self
-            .context
-            .contains(&AssistantContext::File(FileContext { buffer }))
-        {
-            Some(FileInclusion::Direct)
-        } else {
-            self.path_included_in_directory(&path?, cx)
-        }
-    }
-
     pub fn path_included_in_directory(
         &self,
         path: &ProjectPath,
         cx: &App,
     ) -> Option<FileInclusion> {
         let project = self.project.upgrade()?.read(cx);
-        self.context.iter().find_map(|context| match context {
+        self.context().find_map(|context| match context {
             AssistantContext::Directory(directory_context) => {
                 FileInclusion::check_directory(directory_context, path, project, cx)
             }
@@ -563,6 +530,52 @@ impl FileInclusion {
             }
         } else {
             None
+        }
+    }
+}
+
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
+struct ContextSetEntry(AssistantContext);
+
+impl AsRef<AssistantContext> for ContextSetEntry {
+    fn as_ref(&self) -> &AssistantContext {
+        &self.0
+    }
+}
+
+impl Eq for ContextSetEntry {}
+
+impl PartialEq for ContextSetEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match &self.0 {
+            AssistantContext::File(context) => {
+                if let AssistantContext::File(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Directory(context) => {
+                if let AssistantContext::Directory(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Symbol(context) => {
+                if let AssistantContext::Symbol(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            _ => {}
+        }
+        return false;
+    }
+}
+
+impl Hash for ContextSetEntry {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match &self.0 {
+            AssistantContext::File(context) => context.hash_for_context_set(state),
+            AssistantContext::Directory(context) => context.hash_for_context_set(state),
+            AssistantContext::Symbol(context) => context.hash_for_context_set(state),
         }
     }
 }
