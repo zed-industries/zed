@@ -555,7 +555,6 @@ impl Settings for EditorSettings {
             })
         }
 
-
         let mut scrollbar_axes = ScrollbarAxesContent::default();
         vscode.enum_setting(
             "editor.scrollbar.horizontal",
@@ -635,6 +634,5 @@ impl Settings for EditorSettings {
             let search = current.search.get_or_insert_default();
             search.include_ignored = use_ignored;
         }
-
     }
 }
