@@ -24,6 +24,26 @@ use crate::ProjectDiagnosticsEditor;
 pub struct DiagnosticRenderer;
 
 impl DiagnosticRenderer {
+    fn format_diagnostic_message(diagnostic: &language::Diagnostic) -> String {
+        if let Some(code) = &diagnostic.code {
+            format!("{} ({})", diagnostic.message, code)
+        } else {
+            diagnostic.message.clone()
+        }
+    }
+
+    fn format_diagnostic(diagnostic: &language::Diagnostic) -> String {
+        if let Some(source) = diagnostic.source.as_ref() {
+            format!(
+                "{}: {}",
+                source,
+                Self::format_diagnostic_message(diagnostic)
+            )
+        } else {
+            Self::format_diagnostic_message(diagnostic)
+        }
+    }
+
     pub fn diagnostic_blocks_for_group(
         diagnostic_group: Vec<DiagnosticEntry<Point>>,
         buffer_id: BufferId,
@@ -55,35 +75,19 @@ impl DiagnosticRenderer {
         }
 
         let mut markdown =
-            Markdown::escape(&if let Some(source) = primary.diagnostic.source.as_ref() {
-                let code_str = if let Some(code) = &primary.diagnostic.code {
-                    format!(" ({})", code)
-                } else {
-                    String::new()
-                };
-                format!("{}: {}{}", source, primary.diagnostic.message, code_str)
-            } else {
-                primary.diagnostic.message
-            })
-            .to_string();
+            Markdown::escape(&Self::format_diagnostic(&primary.diagnostic)).to_string();
         for entry in same_row {
             markdown.push_str("\n- hint: ");
-            let message = if let Some(code) = &entry.diagnostic.code {
-                format!("{} ({})", entry.diagnostic.message, code)
-            } else {
-                entry.diagnostic.message.clone()
-            };
-            markdown.push_str(&Markdown::escape(&message))
+            markdown.push_str(&Markdown::escape(&Self::format_diagnostic_message(
+                &entry.diagnostic,
+            )))
         }
 
         for (ix, entry) in &distant {
             markdown.push_str("\n- hint: [");
-            let message = if let Some(code) = &entry.diagnostic.code {
-                format!("{} ({})", entry.diagnostic.message, code)
-            } else {
-                entry.diagnostic.message.clone()
-            };
-            markdown.push_str(&Markdown::escape(&message));
+            markdown.push_str(&Markdown::escape(&Self::format_diagnostic_message(
+                &entry.diagnostic,
+            )));
             markdown.push_str(&format!("](file://#diagnostic-{group_id}-{ix})\n",))
         }
 
@@ -96,17 +100,8 @@ impl DiagnosticRenderer {
         }];
 
         for entry in close {
-            let markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
-                let code_str = if let Some(code) = &entry.diagnostic.code {
-                    format!(" ({})", code)
-                } else {
-                    String::new()
-                };
-                format!("{}: {}{}", source, entry.diagnostic.message, code_str)
-            } else {
-                entry.diagnostic.message
-            };
-            let markdown = Markdown::escape(&markdown).to_string();
+            let markdown =
+                Markdown::escape(&Self::format_diagnostic(&entry.diagnostic)).to_string();
 
             results.push(DiagnosticBlock {
                 initial_range: entry.range,
@@ -118,17 +113,8 @@ impl DiagnosticRenderer {
         }
 
         for (_, entry) in distant {
-            let markdown = if let Some(source) = entry.diagnostic.source.as_ref() {
-                let code_str = if let Some(code) = &entry.diagnostic.code {
-                    format!(" ({})", code)
-                } else {
-                    String::new()
-                };
-                format!("{}: {}{}", source, entry.diagnostic.message, code_str)
-            } else {
-                entry.diagnostic.message
-            };
-            let mut markdown = Markdown::escape(&markdown).to_string();
+            let mut markdown =
+                Markdown::escape(&Self::format_diagnostic(&entry.diagnostic)).to_string();
             markdown.push_str(&format!(
                 " ([back](file://#diagnostic-{group_id}-{primary_ix}))"
             ));
