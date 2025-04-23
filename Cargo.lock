@@ -12384,7 +12384,6 @@ dependencies = [
  "itoa",
  "libc",
  "linux-raw-sys 0.4.15",
- "once_cell",
  "windows-sys 0.59.0",
 ]
 
@@ -17913,6 +17912,7 @@ dependencies = [
  "libc",
  "libsqlite3-sys",
  "linux-raw-sys 0.4.15",
+ "linux-raw-sys 0.9.4",
  "log",
  "lyon",
  "lyon_path",
