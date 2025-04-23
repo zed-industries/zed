@@ -685,17 +685,19 @@ impl CompletionsMenu {
         // For the prioritized `WordStartMatch` items, we don't sort directly by the
         // float fuzzy score. Why? Because float scores are often unique, meaning tiny,
         // almost meaningless differences in score would dominate the sorting, making
-        // LSP hints not important. Instead, we quantize the score: we map the
-        // 0.0-1.0 float score to a small integer range (0 to `NUM_OF_BUCKETS`).
-        // This allows matches with similar fuzzy relevance fall into the same bucket.
-        // And, to break tie between those snippet, LSP, etc matching is used.
+        // LSP hints not important.
+        //
+        // Instead, we quantize the score: we map the 0.0-1.0 float score to integer
+        // range (0 to `NUM_OF_BUCKETS`). This allows matches with similar fuzzy relevance
+        // fall into the same bucket. And, to break tie between those matches, other factors
+        // like snippet, LSP, etc matching is used.
 
         const NUM_OF_BUCKETS: i32 = 3;
         const CURVE_MULTIPLIER: f64 = 0.1;
 
         let map_fuzzy_score_to_int = |fuzzy_score: f64| -> i32 {
             let new_score = fuzzy_score.powf(CURVE_MULTIPLIER);
-            ((new_score * NUM_OF_BUCKETS as f64).round() as i32).clamp(0, NUM_OF_BUCKETS)
+            ((new_score * NUM_OF_BUCKETS as f64).ceil() as i32).clamp(0, NUM_OF_BUCKETS)
         };
 
         let query_start_lower = query
