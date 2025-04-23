@@ -197,9 +197,9 @@ impl LanguageServerManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct ContextServerManifestEntry {
     #[serde(default)]
-    pub installation_instructions: String,
+    pub installation_instructions: Option<String>,
     #[serde(default)]
-    pub settings_hint: String,
+    pub settings_hint: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]

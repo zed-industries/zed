@@ -19,20 +19,26 @@ pub(crate) fn init(cx: &mut App) {
                         let context_servers_to_setup = manifest
                             .context_servers
                             .iter()
-                            .map(|(id, manifest)| ContextServerConfiguration {
-                                id: id.clone(),
-                                installation_instructions: manifest
-                                    .installation_instructions
-                                    .clone()
-                                    .into(),
-                                settings_hint: manifest.settings_hint.clone().into(),
+                            .filter_map(|(id, manifest)| {
+                                Some(ContextServerConfiguration {
+                                    id: id.clone(),
+                                    installation_instructions: manifest
+                                        .installation_instructions
+                                        .clone()?
+                                        .into(),
+                                    settings_hint: manifest.settings_hint.clone()?.into(),
+                                })
                             })
                             .collect::<Vec<_>>();
 
-                        workspace.toggle_modal(window, cx, |_, cx| ConfigureContextServerModal {
-                            context_servers_to_setup,
-                            focus_handle: cx.focus_handle(),
-                        });
+                        if !context_servers_to_setup.is_empty() {
+                            workspace.toggle_modal(window, cx, |_, cx| {
+                                ConfigureContextServerModal {
+                                    context_servers_to_setup,
+                                    focus_handle: cx.focus_handle(),
+                                }
+                            });
+                        }
                     }
                 }
                 _ => {}
