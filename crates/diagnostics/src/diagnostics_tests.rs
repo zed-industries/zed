@@ -1,10 +1,13 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, InlayId,
-    actions::{GoToDiagnostic, GoToPreviousDiagnostic, MoveToBeginning},
+    DisplayPoint, EditorSettings, InlayId,
+    actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
     display_map::{DisplayRow, Inlay},
-    test::{editor_content_with_blocks, editor_test_context::EditorTestContext},
+    test::{
+        editor_content_with_blocks, editor_lsp_test_context::EditorLspTestContext,
+        editor_test_context::EditorTestContext,
+    },
 };
 use gpui::{TestAppContext, VisualTestContext};
 use indoc::indoc;
@@ -134,11 +137,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                  // comment 1
                  // comment 2
                  c(y);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `y` has type `Vec<char>`, which does not
              § implement the `Copy` trait
                  d(x);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `x` has type `Vec<char>`, which does not
              § implement the `Copy` trait
              § hint: value moved here
@@ -168,7 +173,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             lsp::Position::new(0, 15),
                         ),
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "mismatched types\nexpected `usize`, found `char`".to_string(),
+                        message: "mismatched types expected `usize`, found `char`".to_string(),
                         ..Default::default()
                     }],
                     version: None,
@@ -206,11 +211,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                  // comment 1
                  // comment 2
                  c(y);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `y` has type `Vec<char>`, which does not
              § implement the `Copy` trait
                  d(x);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `x` has type `Vec<char>`, which does not
              § implement the `Copy` trait
              § hint: value moved here
@@ -241,7 +248,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                                 lsp::Position::new(0, 15),
                             ),
                             severity: Some(lsp::DiagnosticSeverity::ERROR),
-                            message: "mismatched types\nexpected `usize`, found `char`".to_string(),
+                            message: "mismatched types expected `usize`, found `char`".to_string(),
                             ..Default::default()
                         },
                         lsp::Diagnostic {
@@ -289,11 +296,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                  // comment 1
                  // comment 2
                  c(y);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `y` has type `Vec<char>`, which does not
              § implement the `Copy` trait
                  d(x);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `x` has type `Vec<char>`, which does not
              § implement the `Copy` trait
              § hint: value moved here
@@ -1192,8 +1201,127 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
     "});
 }
 
+#[gpui::test]
+async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        fn func(abˇc def: i32) -> u32 {
+        }
+    "});
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                LanguageServerId(0),
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "we've had problems with <https://link.one>, and <https://link.two> is broken".to_string(),
+                        ..Default::default()
+                    }],
+                },
+                &[],
+                cx,
+            )
+        })
+    }).unwrap();
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor::hover_popover::hover(editor, &Default::default(), window, cx)
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| assert!(editor.hover_state.diagnostic_popover.is_some()))
+}
+
+#[gpui::test]
+async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Hover with just diagnostic, pops DiagnosticPopover immediately and then
+    // info popover once request completes
+    cx.set_state(indoc! {"
+        fn teˇst() { println!(); }
+    "});
+    // Send diagnostic to client
+    let range = cx.lsp_range(indoc! {"
+        fn «test»() { println!(); }
+    "});
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                LanguageServerId(0),
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range,
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "A test diagnostic message.".to_string(),
+                        ..Default::default()
+                    }],
+                },
+                &[],
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    // Hover pops diagnostic immediately
+    cx.update_editor(|editor, window, cx| editor::hover_popover::hover(editor, &Hover, window, cx));
+    cx.background_executor.run_until_parked();
+
+    cx.editor(|Editor { hover_state, .. }, _, _| {
+        assert!(hover_state.diagnostic_popover.is_some());
+        assert!(hover_state.info_popovers.is_empty());
+    });
+
+    // Info Popover shows after request responded to
+    let range = cx.lsp_range(indoc! {"
+            fn «test»() { println!(); }
+        "});
+    cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+        Ok(Some(lsp::Hover {
+            contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                kind: lsp::MarkupKind::Markdown,
+                value: "some new docs".to_string(),
+            }),
+            range: Some(range),
+        }))
+    });
+    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay + 1);
+    cx.background_executor
+        .advance_clock(Duration::from_millis(delay));
+
+    cx.background_executor.run_until_parked();
+    cx.editor(|Editor { hover_state, .. }, _, _| {
+        hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
+    });
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        env_logger::try_init().ok();
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);

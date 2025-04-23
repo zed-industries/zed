@@ -335,7 +335,6 @@ fn show_hover(
                         .range
                         .end
                         .to_point(&snapshot.buffer_snapshot);
-
                 let markdown = cx.update(|_, cx| {
                     renderer
                         .as_ref()
@@ -726,7 +725,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
 
 #[derive(Default)]
 pub struct HoverState {
-    pub(crate) info_popovers: Vec<InfoPopover>,
+    pub info_popovers: Vec<InfoPopover>,
     pub diagnostic_popover: Option<DiagnosticPopover>,
     pub triggered_from: Option<Anchor>,
     pub info_task: Option<Task<Option<()>>>,
@@ -808,13 +807,13 @@ impl HoverState {
     }
 }
 
-pub(crate) struct InfoPopover {
-    pub(crate) symbol_range: RangeInEditor,
-    pub(crate) parsed_content: Option<Entity<Markdown>>,
-    pub(crate) scroll_handle: ScrollHandle,
-    pub(crate) scrollbar_state: ScrollbarState,
-    pub(crate) keyboard_grace: Rc<RefCell<bool>>,
-    pub(crate) anchor: Option<Anchor>,
+pub struct InfoPopover {
+    pub symbol_range: RangeInEditor,
+    pub parsed_content: Option<Entity<Markdown>>,
+    pub scroll_handle: ScrollHandle,
+    pub scrollbar_state: ScrollbarState,
+    pub keyboard_grace: Rc<RefCell<bool>>,
+    pub anchor: Option<Anchor>,
     _subscription: Option<Subscription>,
 }
 
@@ -986,8 +985,7 @@ mod tests {
     use collections::BTreeSet;
     use gpui::App;
     use indoc::indoc;
-    use language::{Diagnostic, DiagnosticSet, language_settings::InlayHintSettings};
-    use lsp::LanguageServerId;
+    use language::language_settings::InlayHintSettings;
     use markdown::parser::MarkdownEvent;
     use smol::stream::StreamExt;
     use std::sync::atomic;
@@ -1469,76 +1467,6 @@ mod tests {
                 rendered_text, code_str,
                 "Should not have extra line breaks at end of rendered hover"
             );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |_| {});
-
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
-
-        // Hover with just diagnostic, pops DiagnosticPopover immediately and then
-        // info popover once request completes
-        cx.set_state(indoc! {"
-            fn teˇst() { println!(); }
-        "});
-
-        // Send diagnostic to client
-        let range = cx.text_anchor_range(indoc! {"
-            fn «test»() { println!(); }
-        "});
-        cx.update_buffer(|buffer, cx| {
-            let snapshot = buffer.text_snapshot();
-            let set = DiagnosticSet::from_sorted_entries(
-                vec![DiagnosticEntry {
-                    range,
-                    diagnostic: Diagnostic {
-                        message: "A test diagnostic message.".to_string(),
-                        ..Default::default()
-                    },
-                }],
-                &snapshot,
-            );
-            buffer.update_diagnostics(LanguageServerId(0), set, cx);
-        });
-
-        // Hover pops diagnostic immediately
-        cx.update_editor(|editor, window, cx| hover(editor, &Hover, window, cx));
-        cx.background_executor.run_until_parked();
-
-        cx.editor(|Editor { hover_state, .. }, _, _| {
-            assert!(
-                hover_state.diagnostic_popover.is_some() && hover_state.info_popovers.is_empty()
-            )
-        });
-
-        // Info Popover shows after request responded to
-        let range = cx.lsp_range(indoc! {"
-            fn «test»() { println!(); }
-        "});
-        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
-            Ok(Some(lsp::Hover {
-                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                    kind: lsp::MarkupKind::Markdown,
-                    value: "some new docs".to_string(),
-                }),
-                range: Some(range),
-            }))
-        });
-        cx.background_executor
-            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
-
-        cx.background_executor.run_until_parked();
-        cx.editor(|Editor { hover_state, .. }, _, _| {
-            hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
         });
     }
 
