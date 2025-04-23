@@ -6,7 +6,7 @@ license = "GPL-3.0-or-later"
 publish = false
 
 [lib]
-path = "src/agent2.rs"
+path = "src/agent.rs"
 
 [lints]
 workspace = true
@@ -20,10 +20,12 @@ collections.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+handlebars = { workspace = true, features = ["rust-embed"] }
 language_model.workspace = true
 language_models.workspace = true
 parking_lot.workspace = true
 project.workspace = true
+rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,18 +1,21 @@
+mod templates;
 #[cfg(test)]
 mod tests;
 
-use anyhow::Result;
-use assistant_tool::{ActionLog, Tool};
+use anyhow::{anyhow, Result};
 use futures::{channel::mpsc, future};
-use gpui::{Context, Entity, Task};
+use gpui::{App, Context, Entity, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, MessageContent, Role, StopReason,
 };
 use project::Project;
+use schemars::{schema::RootSchema, JsonSchema};
+use serde::Deserialize;
 use smol::stream::StreamExt;
 use std::{collections::BTreeMap, sync::Arc};
+use templates::{BaseTemplate, Template, Templates, WorktreeData};
 use util::ResultExt;
 
 #[derive(Debug)]
@@ -33,29 +36,57 @@ impl AgentMessage {
 
 pub type AgentResponseEvent = LanguageModelCompletionEvent;
 
+trait Prompt {
+    fn render(&self, prompts: &Templates, cx: &App) -> Result<String>;
+}
+
+struct BasePrompt {
+    project: Entity<Project>,
+}
+
+impl Prompt for BasePrompt {
+    fn render(&self, templates: &Templates, cx: &App) -> Result<String> {
+        BaseTemplate {
+            os: std::env::consts::OS.to_string(),
+            shell: util::get_system_shell(),
+            worktrees: self
+                .project
+                .read(cx)
+                .worktrees(cx)
+                .map(|worktree| WorktreeData {
+                    root_name: worktree.read(cx).root_name().to_string(),
+                })
+                .collect(),
+        }
+        .render(templates)
+    }
+}
+
 pub struct Agent {
     messages: Vec<AgentMessage>,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<Task<()>>,
-    tools: BTreeMap<Arc<str>, Arc<dyn Tool>>,
-    project: Entity<Project>,
-    action_log: Entity<ActionLog>,
+    system_prompts: Vec<Arc<dyn Prompt>>,
+    tools: BTreeMap<Arc<str>, Arc<dyn AnyTool>>,
+    templates: Arc<Templates>,
+    // project: Entity<Project>,
+    // action_log: Entity<ActionLog>,
 }
 
 impl Agent {
-    pub fn new(project: Entity<Project>, action_log: Entity<ActionLog>) -> Self {
+    pub fn new(templates: Arc<Templates>) -> Self {
         Self {
             messages: Vec::new(),
+            system_prompts: Vec::new(),
             running_turn: None,
             tools: BTreeMap::default(),
-            project,
-            action_log,
+            templates,
         }
     }
 
-    pub fn add_tool(&mut self, tool: Arc<dyn Tool>) {
+    pub fn add_tool(&mut self, tool: Arc<dyn AnyTool>) {
         let name = Arc::from(tool.name());
         self.tools.insert(name, tool);
     }
@@ -75,6 +106,10 @@ impl Agent {
     ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent>> {
         cx.notify();
         let (events_tx, events_rx) = mpsc::unbounded();
+
+        let system_message = self.build_system_message(cx);
+        self.messages.extend(system_message);
+
         self.messages.push(AgentMessage {
             role: Role::User,
             content: vec![content.into()],
@@ -144,6 +179,23 @@ impl Agent {
         events_rx
     }
 
+    pub fn build_system_message(&mut self, cx: &App) -> Option<AgentMessage> {
+        let mut system_message = AgentMessage {
+            role: Role::System,
+            content: Vec::new(),
+        };
+
+        for prompt in &self.system_prompts {
+            if let Some(rendered_prompt) = prompt.render(&self.templates, cx).log_err() {
+                system_message
+                    .content
+                    .push(MessageContent::Text(rendered_prompt));
+            }
+        }
+
+        (!system_message.content.is_empty()).then_some(system_message)
+    }
+
     fn handle_response_event(
         &mut self,
         event: LanguageModelCompletionEvent,
@@ -208,16 +260,10 @@ impl Agent {
         }
 
         if let Some(tool) = self.tools.get(&tool_use.name) {
-            let pending_tool_result = tool.clone().run(
-                tool_use.input,
-                &self.build_request_messages(),
-                self.project.clone(),
-                self.action_log.clone(),
-                cx,
-            );
+            let pending_tool_result = tool.clone().run(tool_use.input, cx);
 
             cx.foreground_executor().spawn(async move {
-                match pending_tool_result.output.await {
+                match pending_tool_result.await {
                     Ok(tool_output) => LanguageModelToolResult {
                         tool_use_id: tool_use.id,
                         tool_name: tool_use.name,
@@ -274,5 +320,55 @@ impl Agent {
                 cache: false,
             })
             .collect()
+    }
+}
+
+pub trait Tool {
+    type Input: for<'de> Deserialize<'de> + JsonSchema;
+
+    fn name(&self) -> String;
+    fn description(&self) -> String;
+
+    /// Returns the JSON schema that describes the tool's input.
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> RootSchema {
+        assistant_tools::root_schema_for::<Self::Input>(format)
+    }
+
+    /// Runs the tool with the provided input.
+    fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>;
+}
+
+pub trait AnyTool {
+    fn name(&self) -> String;
+    fn description(&self) -> String;
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
+    fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>>;
+}
+
+impl<T, I> AnyTool for T
+where
+    T: Tool<Input = I>,
+    I: for<'de> Deserialize<'de> + JsonSchema,
+{
+    fn name(&self) -> String {
+        <Self as Tool>::name(self)
+    }
+
+    fn description(&self) -> String {
+        <Self as Tool>::description(self)
+    }
+
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        Ok(serde_json::to_value(<Self as Tool>::input_schema(
+            self, format,
+        ))?)
+    }
+
+    fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>> {
+        let parsed_input: Result<I> = serde_json::from_value(input).map_err(Into::into);
+        match parsed_input {
+            Ok(input) => <Self as Tool>::run(self, input, cx),
+            Err(error) => Task::ready(Err(anyhow!(error))),
+        }
     }
 }

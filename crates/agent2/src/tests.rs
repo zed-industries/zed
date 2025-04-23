@@ -55,7 +55,7 @@ async fn test_tool_calls(cx: &mut TestAppContext) {
     // Test a tool calls that's likely to complete after streaming stops.
     let events = agent
         .update(cx, |agent, cx| {
-            agent.remove_tool(&EchoTool.name());
+            agent.remove_tool(&Tool::name(&EchoTool));
             agent.add_tool(Arc::new(DelayTool));
             agent.send(
                 model.clone(),
@@ -144,9 +144,10 @@ async fn agent_test(cx: &mut TestAppContext) -> AgentTest {
     cx.executor().allow_parking();
     cx.update(settings::init);
     let fs = FakeFs::new(cx.executor().clone());
-    let project = Project::test(fs.clone(), [], cx).await;
-    let action_log = cx.new(|_| ActionLog::new(project.clone()));
-    let agent = cx.new(|_| Agent::new(project.clone(), action_log.clone()));
+    // let project = Project::test(fs.clone(), [], cx).await;
+    // let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let templates = Templates::new();
+    let agent = cx.new(|_| Agent::new(templates));
 
     let model = cx
         .update(|cx| {
@@ -176,10 +177,7 @@ async fn agent_test(cx: &mut TestAppContext) -> AgentTest {
         })
         .await;
 
-    AgentTest {
-        model,
-        agent: agent,
-    }
+    AgentTest { model, agent }
 }
 
 #[cfg(test)]
