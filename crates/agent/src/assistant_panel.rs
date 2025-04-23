@@ -16,9 +16,9 @@ use client::zed_urls;
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, Corner, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task,
-    UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
+    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
+    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -1605,6 +1605,8 @@ impl AssistantPanel {
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(ERROR_MESSAGE))
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
@@ -1651,6 +1653,8 @@ impl AssistantPanel {
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(ERROR_MESSAGE))
                     .child(
                         Button::new("subscribe", "Update Monthly Spend Limit").on_click(
                             cx.listener(|this, _, _, cx| {
@@ -1716,6 +1720,8 @@ impl AssistantPanel {
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(error_message))
                     .child(
                         Button::new("subscribe", call_to_action).on_click(cx.listener(
                             |this, _, _, cx| {
@@ -1747,6 +1753,7 @@ impl AssistantPanel {
         message: SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let message_with_header = format!("{}\n{}", header, message);
         v_flex()
             .gap_0p5()
             .child(
@@ -1761,12 +1768,14 @@ impl AssistantPanel {
                     .id("error-message")
                     .max_h_32()
                     .overflow_y_scroll()
-                    .child(Label::new(message)),
+                    .child(Label::new(message.clone())),
             )
             .child(
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(message_with_header))
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
@@ -1778,6 +1787,15 @@ impl AssistantPanel {
                     ))),
             )
             .into_any()
+    }
+
+    fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
+        let message = message.into();
+        IconButton::new("copy", IconName::Copy)
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
+            })
+            .tooltip(Tooltip::text("Copy Error Message"))
     }
 
     fn key_context(&self) -> KeyContext {
