@@ -1216,28 +1216,16 @@ impl Terminal {
     }
 
     ///Write the Input payload to the tty.
-    fn write_to_pty(&self, input: String) {
-        self.pty_tx.notify(input.into_bytes());
+    fn write_to_pty(&self, input: impl Into<Vec<u8>>) {
+        self.pty_tx.notify(input.into());
     }
 
-    fn write_bytes_to_pty(&self, input: Vec<u8>) {
-        self.pty_tx.notify(input);
-    }
-
-    pub fn input(&mut self, input: String) {
+    pub fn input(&mut self, input: impl Into<Vec<u8>>) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
         self.write_to_pty(input);
-    }
-
-    pub fn input_bytes(&mut self, input: Vec<u8>) {
-        self.events
-            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
-        self.events.push_back(InternalEvent::SetSelection(None));
-
-        self.write_bytes_to_pty(input);
     }
 
     pub fn toggle_vi_mode(&mut self) {
