@@ -762,7 +762,7 @@ pub fn map_to_language_model_completion_events(
                                                     serde_json::Value::from_str(
                                                         &tool_use.input_json,
                                                     )
-                                                    .map_err(|err| anyhow!(err))?
+                                                    .map_err(|err| anyhow!("Error parsing tool call input JSON: {err:?} - JSON string was: {:?}", &tool_use.input_json))?
                                                 },
                                             },
                                         ))
