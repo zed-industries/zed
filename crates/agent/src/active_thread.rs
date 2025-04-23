@@ -1482,7 +1482,7 @@ impl ActiveThread {
         let context_store = self.context_store.clone();
         let workspace = self.workspace.clone();
         let thread = self.thread.read(cx);
-        let thread_store = self.thread_store.read(cx);
+        let prompt_store = self.thread_store.read(cx).prompt_store().as_ref();
 
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
@@ -1490,7 +1490,7 @@ impl ActiveThread {
             let project = workspace.read(cx).project().read(cx);
             thread
                 .context_for_message(message_id)
-                .flat_map(|context| AddedContext::new(context.clone(), thread_store, project, cx))
+                .flat_map(|context| AddedContext::new(context.clone(), prompt_store, project, cx))
                 .collect::<Vec<_>>()
         } else {
             return Empty.into_any();

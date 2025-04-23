@@ -12,6 +12,7 @@ use gpui::{
 use itertools::Itertools;
 use language::Buffer;
 use project::{ProjectEntryId, ProjectItem};
+use prompt_store::PromptStore;
 use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::{Workspace, notifications::NotifyResultExt};
 
@@ -33,6 +34,7 @@ pub struct ContextStrip {
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
     workspace: WeakEntity<Workspace>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
     _subscriptions: Vec<Subscription>,
     focused_index: Option<usize>,
     children_bounds: Option<Vec<Bounds<Pixels>>>,
@@ -74,6 +76,7 @@ impl ContextStrip {
             focus_handle,
             suggest_context_kind,
             workspace,
+            thread_store,
             _subscriptions: subscriptions,
             focused_index: None,
             children_bounds: None,
@@ -81,20 +84,21 @@ impl ContextStrip {
     }
 
     fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
-        todo!()
-        /*
         if let Some(workspace) = self.workspace.upgrade() {
-            let thread_store = self.thread_store.read(cx);
             let project = workspace.read(cx).project().read(cx);
+            let prompt_store = self
+                .thread_store
+                .as_ref()
+                .and_then(|thread_store| thread_store.upgrade())
+                .and_then(|thread_store| thread_store.read(cx).prompt_store().as_ref());
             self.context_store
                 .read(cx)
                 .context()
-                .flat_map(|context| AddedContext::new(context.clone(), thread_store, project, cx))
+                .flat_map(|context| AddedContext::new(context.clone(), prompt_store, project, cx))
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
         }
-        */
     }
 
     fn suggested_context(&self, cx: &Context<Self>) -> Option<SuggestedContext> {

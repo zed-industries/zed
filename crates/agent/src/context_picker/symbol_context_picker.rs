@@ -354,6 +354,7 @@ fn compute_symbol_entries(
     let mut symbol_entries = Vec::with_capacity(symbols.len());
     for SymbolMatch { symbol, .. } in symbols {
         let is_included = true;
+
         /* todo!
         let symbols_for_path = context_store.included_symbols_by_path().get(&symbol.path);
         let is_included = if let Some(symbols_for_path) = symbols_for_path {

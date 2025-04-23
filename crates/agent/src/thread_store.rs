@@ -348,8 +348,8 @@ impl ThreadStore {
         self.context_server_manager.clone()
     }
 
-    pub fn prompt_store(&self) -> Option<Entity<PromptStore>> {
-        self.prompt_store.clone()
+    pub fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
+        &self.prompt_store
     }
 
     // todo! remove?

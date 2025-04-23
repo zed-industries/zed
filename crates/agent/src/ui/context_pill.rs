@@ -3,14 +3,15 @@ use std::{rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
 use futures::FutureExt;
-use gpui::{Animation, AnimationExt as _, ClickEvent, Image, MouseButton, Task, pulsating_between};
+use gpui::{
+    Animation, AnimationExt as _, ClickEvent, Entity, Image, MouseButton, Task, pulsating_between,
+};
 use language_model::LanguageModelImage;
 use project::Project;
 use prompt_store::PromptStore;
 use text::OffsetRangeExt;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
-use crate::ThreadStore;
 use crate::context::{AssistantContext, ContextKind};
 use crate::thread::PromptId;
 
@@ -286,7 +287,7 @@ impl AddedContext {
     /// TODO: `None` cases are unremovable from `ContextStore` and so are a very minor memory leak.
     pub fn new(
         context: AssistantContext,
-        thread_store: &ThreadStore,
+        prompt_store: Option<&Entity<PromptStore>>,
         project: &Project,
         cx: &App,
     ) -> Option<AddedContext> {
@@ -434,9 +435,10 @@ impl AddedContext {
             }),
 
             AssistantContext::Rules(ref user_rules_context) => {
-                let name = thread_store
-                    .rules_metadata(user_rules_context.prompt_id, cx)
-                    .ok()?
+                let name = prompt_store
+                    .as_ref()?
+                    .read(cx)
+                    .metadata(user_rules_context.prompt_id.into())?
                     .title?;
                 Some(AddedContext {
                     kind: ContextKind::Rules,

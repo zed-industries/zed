@@ -67,7 +67,7 @@ impl ContextStore {
         let existing_context = thread
             .messages()
             .flat_map(|message| &message.context)
-            .map(|context| ContextSetEntry::ref_cast(context))
+            .map(ContextSetEntry::ref_cast)
             .collect::<HashSet<_>>();
         self.context
             .iter()

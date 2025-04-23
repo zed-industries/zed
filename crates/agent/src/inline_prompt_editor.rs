@@ -871,9 +871,7 @@ impl PromptEditor<BufferCodegen> {
                 workspace.clone(),
                 thread_store.clone(),
                 context_picker_menu_handle.clone(),
-                // todo!
-                // SuggestContextKind::Thread,
-                SuggestContextKind::File,
+                SuggestContextKind::Thread,
                 window,
                 cx,
             )
@@ -1026,9 +1024,7 @@ impl PromptEditor<TerminalCodegen> {
                 workspace.clone(),
                 thread_store.clone(),
                 context_picker_menu_handle.clone(),
-                // todo!
-                // SuggestContextKind::Thread,
-                SuggestContextKind::File,
+                SuggestContextKind::Thread,
                 window,
                 cx,
             )

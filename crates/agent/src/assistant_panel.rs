@@ -409,7 +409,6 @@ impl AssistantPanel {
             )
         });
 
-        /* todo!
         if let Some(other_thread_id) = action.from_thread_id.clone() {
             let other_thread_task = self
                 .thread_store
@@ -429,7 +428,6 @@ impl AssistantPanel {
             })
             .detach_and_log_err(cx);
         }
-        */
 
         let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
             if let ThreadEvent::MessageAdded(_) = &event {
@@ -1955,7 +1953,6 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        /* todo!
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
@@ -1987,9 +1984,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
                                 .collect::<Vec<_>>();
 
                             for (buffer, range) in selection_ranges {
-                                store
-                                    .add_selection(buffer, range, cx)
-                                    .detach_and_log_err(cx);
+                                store.add_selection(buffer, range, cx);
                             }
                         })
                     })
@@ -2006,6 +2001,5 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
                 }
             });
         });
-        */
     }
 }

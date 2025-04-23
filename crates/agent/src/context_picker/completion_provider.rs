@@ -578,13 +578,15 @@ impl ContextPickerCompletionProvider {
                 editor,
                 move |cx| {
                     context_store.update(cx, |context_store, cx| {
-                        // todo!
-                        // let task = if is_directory {
-                        //     context_store.add_directory(project_path.clone(), false, cx)
-                        // } else {
-                        let task =
-                            context_store.add_file_from_path(project_path.clone(), false, cx);
-                        // };
+                        let task = if is_directory {
+                            Task::ready(context_store.add_directory(
+                                project_path.clone(),
+                                false,
+                                cx,
+                            ))
+                        } else {
+                            context_store.add_file_from_path(project_path.clone(), false, cx)
+                        };
                         task.detach_and_log_err(cx);
                     })
                 },
