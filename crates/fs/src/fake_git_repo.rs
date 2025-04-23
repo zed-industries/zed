@@ -431,10 +431,6 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn delete_checkpoint(&self, _checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>> {
-        unimplemented!()
-    }
-
     fn diff_checkpoints(
         &self,
         _base_checkpoint: GitRepositoryCheckpoint,

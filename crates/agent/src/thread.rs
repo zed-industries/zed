@@ -619,23 +619,11 @@ impl Thread {
                     .await
                     .unwrap_or(false);
 
-                if equal {
-                    git_store
-                        .update(cx, |store, cx| {
-                            store.delete_checkpoint(pending_checkpoint.git_checkpoint, cx)
-                        })?
-                        .detach();
-                } else {
+                if !equal {
                     this.update(cx, |this, cx| {
                         this.insert_checkpoint(pending_checkpoint, cx)
                     })?;
                 }
-
-                git_store
-                    .update(cx, |store, cx| {
-                        store.delete_checkpoint(final_checkpoint, cx)
-                    })?
-                    .detach();
 
                 Ok(())
             }

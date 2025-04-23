@@ -314,9 +314,6 @@ pub trait GitRepository: Send + Sync {
         right: GitRepositoryCheckpoint,
     ) -> BoxFuture<Result<bool>>;
 
-    /// Deletes a previously-created checkpoint.
-    fn delete_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>>;
-
     /// Computes a diff between two checkpoints.
     fn diff_checkpoints(
         &self,
@@ -374,7 +371,6 @@ impl RealGitRepository {
 
 #[derive(Clone, Debug)]
 pub struct GitRepositoryCheckpoint {
-    pub ref_name: String,
     pub commit_sha: Oid,
 }
 
@@ -1225,11 +1221,8 @@ impl GitRepository for RealGitRepository {
                     } else {
                         git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
                     };
-                    let ref_name = format!("refs/zed/{}", Uuid::new_v4());
-                    git.run(&["update-ref", &ref_name, &checkpoint_sha]).await?;
 
                     Ok(GitRepositoryCheckpoint {
-                        ref_name,
                         commit_sha: checkpoint_sha.parse()?,
                     })
                 })
@@ -1308,21 +1301,6 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn delete_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>> {
-        let working_directory = self.working_directory();
-        let git_binary_path = self.git_binary_path.clone();
-
-        let executor = self.executor.clone();
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let git = GitBinary::new(git_binary_path, working_directory, executor);
-                git.run(&["update-ref", "-d", &checkpoint.ref_name]).await?;
-                Ok(())
-            })
-            .boxed()
-    }
-
     fn diff_checkpoints(
         &self,
         base_checkpoint: GitRepositoryCheckpoint,
@@ -1340,8 +1318,8 @@ impl GitRepository for RealGitRepository {
                     "diff",
                     "--find-renames",
                     "--patch",
-                    &base_checkpoint.ref_name,
-                    &target_checkpoint.ref_name,
+                    &base_checkpoint.commit_sha.to_string(),
+                    &target_checkpoint.commit_sha.to_string(),
                 ])
                 .await
             })
@@ -1865,13 +1843,6 @@ mod tests {
                 .ok(),
             None
         );
-
-        // Garbage collecting after deleting a checkpoint makes it unreachable.
-        repo.delete_checkpoint(checkpoint.clone()).await.unwrap();
-        repo.gc().await.unwrap();
-        repo.restore_checkpoint(checkpoint.clone())
-            .await
-            .unwrap_err();
     }
 
     #[gpui::test]
@@ -1984,7 +1955,7 @@ mod tests {
                     let git_binary_path = git_binary_path.clone();
                     let working_directory = working_directory?;
                     let git = GitBinary::new(git_binary_path, working_directory, executor);
-                    git.run(&["gc", "--prune=now"]).await?;
+                    git.run(&["gc", "--prune"]).await?;
                     Ok(())
                 })
                 .boxed()
