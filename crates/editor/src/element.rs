@@ -2183,6 +2183,10 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Option<(AnyElement, gpui::Point<Pixels>)>> {
+        if self.editor.read(cx).disable_expand_excerpt_buttons {
+            return vec![];
+        }
+
         let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
 
         let scroll_top = scroll_position.y * line_height;
@@ -5512,7 +5516,9 @@ impl EditorElement {
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
-        self.paint_scroll_wheel_listener(layout, window, cx);
+        if !self.editor.read(cx).disable_scrolling {
+            self.paint_scroll_wheel_listener(layout, window, cx);
+        }
 
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
@@ -6563,10 +6569,21 @@ impl Element for EditorElement {
                             },
                         )
                     }
-                    EditorMode::Full { .. } => {
+                    EditorMode::Full {
+                        sized_by_content, ..
+                    } => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
-                        style.size.height = relative(1.).into();
+                        if sized_by_content {
+                            let snapshot = editor.snapshot(window, cx);
+                            let line_height =
+                                self.style.text.line_height_in_pixels(window.rem_size());
+                            let scroll_height =
+                                (snapshot.max_point().row().next_row().0 as f32) * line_height;
+                            style.size.height = scroll_height.into();
+                        } else {
+                            style.size.height = relative(1.).into();
+                        }
                         window.request_layout(style, None, cx)
                     }
                 };
