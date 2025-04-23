@@ -1027,21 +1027,21 @@ impl Element for MarkdownElement {
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::SubstitutedText(text) => {
-                    builder.push_text(text, range.start);
+                    builder.push_text(text, range.clone());
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(self.style.inline_code.clone());
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Html => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::Rule => {
                     builder.push_div(
@@ -1054,8 +1054,8 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => builder.push_text(" ", range.start),
-                MarkdownEvent::HardBreak => builder.push_text("\n", range.start),
+                MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
+                MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
                 _ => log::error!("unsupported markdown event {:?}", event),
             }
         }
@@ -1383,13 +1383,13 @@ impl MarkdownElementBuilder {
         });
     }
 
-    fn push_text(&mut self, text: &str, source_index: usize) {
+    fn push_text(&mut self, text: &str, source_range: Range<usize>) {
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
-            source_index,
+            source_index: source_range.start,
         });
         self.pending_line.text.push_str(text);
-        self.current_source_index = source_index + text.len();
+        self.current_source_index = source_range.end;
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
@@ -1466,6 +1466,10 @@ struct RenderedLine {
 
 impl RenderedLine {
     fn rendered_index_for_source_index(&self, source_index: usize) -> usize {
+        if source_index >= self.source_end {
+            return self.layout.len();
+        }
+
         let mapping = match self
             .source_mappings
             .binary_search_by_key(&source_index, |probe| probe.source_index)
@@ -1477,6 +1481,10 @@ impl RenderedLine {
     }
 
     fn source_index_for_rendered_index(&self, rendered_index: usize) -> usize {
+        if rendered_index >= self.layout.len() {
+            return self.source_end;
+        }
+
         let mapping = match self
             .source_mappings
             .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
@@ -1657,10 +1665,13 @@ mod tests {
 
     #[gpui::test]
     fn test_mappings(cx: &mut TestAppContext) {
+        // Formatting.
         assert_mappings(
             &render_markdown("He*l*lo", cx),
             vec![vec![(0, 0), (1, 1), (2, 3), (3, 5), (4, 6), (5, 7)]],
         );
+
+        // Multiple lines.
         assert_mappings(
             &render_markdown("Hello\n\nWorld", cx),
             vec![
@@ -1668,6 +1679,8 @@ mod tests {
                 vec![(0, 7), (1, 8), (2, 9), (3, 10), (4, 11), (5, 12)],
             ],
         );
+
+        // Multi-byte characters.
         assert_mappings(
             &render_markdown("αβγ\n\nδεζ", cx),
             vec![
@@ -1675,6 +1688,8 @@ mod tests {
                 vec![(0, 8), (2, 10), (4, 12), (6, 14)],
             ],
         );
+
+        // Smart quotes.
         assert_mappings(&render_markdown("\"", cx), vec![vec![(0, 0), (3, 1)]]);
         assert_mappings(
             &render_markdown("\"hey\"", cx),
@@ -1713,8 +1728,9 @@ mod tests {
                     mappings[0].source_index < mappings[1].source_index
                         && mappings[0].rendered_index < mappings[1].rendered_index
                 }),
-                "line {} has duplicate mappings",
-                line_ix
+                "line {} has duplicate mappings: {:?}",
+                line_ix,
+                line.source_mappings
             );
 
             for (rendered_ix, source_ix) in line_mappings {
