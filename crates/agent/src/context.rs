@@ -87,12 +87,16 @@ impl AssistantContext {
     }
 }
 
+/// File context provides the entire contents of a file.
+///
+/// This holds an `Entity<Buffer>` so that file path renames affect its display and so that it can
+/// be opened even if the file has been deleted. An alternative might be to use `ProjectEntryId`,
+/// but then when deleted there is no path info or ability to open.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct FileContext {
     pub buffer: Entity<Buffer>,
 }
 
-/// File
 impl FileContext {
     pub fn project_path(&self, project: &Project, cx: &App) -> Option<ProjectPath> {
         /*
@@ -123,6 +127,9 @@ impl FileContext {
     }
 }
 
+/// Directory contents provides the entire contents of text files in a directory.
+///
+/// This has a `ProjectEntryId` so that it follows renames.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct DirectoryContext {
     pub entry_id: ProjectEntryId,
