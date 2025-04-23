@@ -36,10 +36,7 @@ impl Example for FileSearchExample {
         let input = tool_use.parse_input::<FindPathToolInput>()?;
 
         let glob = input.glob;
-        cx.assert(
-            glob.ends_with(FILENAME),
-            format!("glob ends with file name"),
-        )?;
+        cx.assert(glob.ends_with(FILENAME), "glob ends with file name")?;
 
         let without_filename = glob.replace(FILENAME, "");
         let matches = Regex::new("(\\*\\*|zed)/(\\*\\*?/)?")
