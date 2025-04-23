@@ -12,7 +12,7 @@ use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
-use client::zed_urls;
+use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
@@ -180,6 +180,7 @@ impl ActiveView {
 
 pub struct AssistantPanel {
     workspace: WeakEntity<Workspace>,
+    user_store: Entity<UserStore>,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
@@ -243,6 +244,7 @@ impl AssistantPanel {
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
+        let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
         let workspace = workspace.weak_handle();
@@ -307,6 +309,7 @@ impl AssistantPanel {
         Self {
             active_view,
             workspace,
+            user_store,
             project: project.clone(),
             fs: fs.clone(),
             language_registry,
@@ -1543,9 +1546,19 @@ impl AssistantPanel {
     }
 
     fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let plan = self
+            .user_store
+            .read(cx)
+            .current_plan()
+            .map(|plan| match plan {
+                Plan::Free => zed_llm_client::Plan::Free,
+                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
+                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+            })
+            .unwrap_or(zed_llm_client::Plan::Free);
         let usage = self.thread.read(cx).last_usage()?;
 
-        Some(UsageBanner::new(zed_llm_client::Plan::ZedProTrial, usage).into_any_element())
+        Some(UsageBanner::new(plan, usage).into_any_element())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
