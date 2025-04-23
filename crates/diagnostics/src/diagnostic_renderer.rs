@@ -55,26 +55,27 @@ impl DiagnosticRenderer {
             }
         }
 
-        let mut markdown =
-            Markdown::escape(&if let Some(source) = primary.diagnostic.source.as_ref() {
-                format!("{}: {}", source, primary.diagnostic.message)
-            } else {
-                primary.diagnostic.message
-            })
-            .to_string();
+        let mut markdown = String::new();
+        if let Some(source) = primary.diagnostic.source.as_ref() {
+            markdown.push_str(&Markdown::escape(&source));
+        }
         if let Some(code) = primary.diagnostic.code.as_ref() {
+            if primary.diagnostic.source.is_some() {
+                markdown.push(' ');
+            }
             if let Some(description) = primary.diagnostic.code_description.as_ref() {
-                markdown.push_str(" ([");
+                markdown.push('[');
                 markdown.push_str(&Markdown::escape(&code.to_string()));
                 markdown.push_str("](");
                 markdown.push_str(&Markdown::escape(&description.to_string()));
-                markdown.push_str("))");
             } else {
-                markdown.push_str(" (");
                 markdown.push_str(&Markdown::escape(&code.to_string()));
-                markdown.push(')');
             }
         }
+        if primary.diagnostic.source.is_some() || primary.diagnostic.code.is_some() {
+            markdown.push_str(": ");
+        }
+        markdown.push_str(&Markdown::escape(&primary.diagnostic.message));
         for entry in same_row {
             markdown.push_str("\n- hint: ");
             markdown.push_str(&Markdown::escape(&entry.diagnostic.message))
