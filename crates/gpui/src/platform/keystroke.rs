@@ -431,25 +431,37 @@ impl Modifiers {
     }
 
     /// Returns [`Modifiers`] with no modifiers.
-    pub fn none() -> Modifiers {
-        Default::default()
+    pub const fn none() -> Modifiers {
+        Modifiers {
+            control: false,
+            alt: false,
+            shift: false,
+            platform: false,
+            function: false,
+        }
     }
 
     /// Returns [`Modifiers`] with just the command key.
-    pub fn command() -> Modifiers {
+    pub const fn command() -> Modifiers {
         Modifiers {
+            control: false,
+            alt: false,
+            shift: false,
             platform: true,
-            ..Default::default()
+            function: false,
         }
     }
 
     /// A Returns [`Modifiers`] with just the secondary key pressed.
-    pub fn secondary_key() -> Modifiers {
+    pub const fn secondary_key() -> Modifiers {
         #[cfg(target_os = "macos")]
         {
             Modifiers {
+                control: false,
+                alt: false,
+                shift: false,
                 platform: true,
-                ..Default::default()
+                function: false,
             }
         }
 
@@ -457,66 +469,88 @@ impl Modifiers {
         {
             Modifiers {
                 control: true,
-                ..Default::default()
+                alt: false,
+                shift: false,
+                platform: false,
+                function: false,
             }
         }
     }
 
     /// Returns [`Modifiers`] with just the windows key.
-    pub fn windows() -> Modifiers {
+    pub const fn windows() -> Modifiers {
         Modifiers {
+            control: false,
+            alt: false,
+            shift: false,
             platform: true,
-            ..Default::default()
+            function: false,
         }
     }
 
     /// Returns [`Modifiers`] with just the super key.
-    pub fn super_key() -> Modifiers {
+    pub const fn super_key() -> Modifiers {
         Modifiers {
+            control: false,
+            alt: false,
+            shift: false,
             platform: true,
-            ..Default::default()
+            function: false,
         }
     }
 
     /// Returns [`Modifiers`] with just control.
-    pub fn control() -> Modifiers {
+    pub const fn control() -> Modifiers {
         Modifiers {
             control: true,
-            ..Default::default()
+            alt: false,
+            shift: false,
+            platform: false,
+            function: false,
         }
     }
 
     /// Returns [`Modifiers`] with just alt.
-    pub fn alt() -> Modifiers {
+    pub const fn alt() -> Modifiers {
         Modifiers {
+            control: false,
             alt: true,
-            ..Default::default()
+            shift: false,
+            platform: false,
+            function: false,
         }
     }
 
     /// Returns [`Modifiers`] with just shift.
-    pub fn shift() -> Modifiers {
+    pub const fn shift() -> Modifiers {
         Modifiers {
+            control: false,
+            alt: false,
             shift: true,
-            ..Default::default()
+            platform: false,
+            function: false,
         }
     }
 
     /// Returns [`Modifiers`] with command + shift.
-    pub fn command_shift() -> Modifiers {
+    pub const fn command_shift() -> Modifiers {
         Modifiers {
+            control: false,
+            alt: false,
             shift: true,
             platform: true,
-            ..Default::default()
+            function: false,
         }
     }
 
     /// Returns [`Modifiers`] with command + shift.
-    pub fn control_shift() -> Modifiers {
+    pub const fn control_shift() -> Modifiers {
         Modifiers {
-            shift: true,
             control: true,
-            ..Default::default()
+            alt: false,
+            shift: true,
+            platform: false,
+            function: false,
         }
     }
 
