@@ -5,8 +5,7 @@ use editor::{
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
-    App, Context, Entity, Hsla, InteractiveElement as _, ParentElement as _, Subscription,
-    WeakEntity,
+    App, Context, Entity, InteractiveElement as _, ParentElement as _, Subscription, WeakEntity,
 };
 use language::{Anchor, Buffer, BufferId};
 use project::{ConflictRegion, ConflictSet, ConflictSetUpdate};
@@ -297,14 +296,11 @@ fn update_conflict_highlighting(
         .anchor_in_excerpt(excerpt_id, conflict.theirs.end)
         .unwrap();
 
-    let mut ours_background = colors.version_control_conflict_ours;
-    let mut ours_marker = colors.version_control_conflict_ours;
-    let mut theirs_marker = colors.version_control_conflict_theirs;
-    let mut theirs_background = colors.version_control_conflict_theirs;
-    ours_marker.fade_out(0.4);
-    theirs_marker.fade_out(0.4);
-    ours_background.fade_out(0.7);
-    theirs_background.fade_out(0.7);
+    let ours_background = colors.version_control_conflict_ours_background;
+    let ours_marker = colors.version_control_conflict_ours_marker_background;
+    let theirs_background = colors.version_control_conflict_theirs_background;
+    let theirs_marker = colors.version_control_conflict_theirs_marker_background;
+    let divider_background = colors.version_control_conflict_divider_background;
 
     let options = RowHighlightOptions {
         include_gutter: false,
@@ -312,7 +308,12 @@ fn update_conflict_highlighting(
     };
 
     // Prevent diff hunk highlighting within the entire conflict region.
-    editor.highlight_rows::<ConflictsOuter>(outer_start..outer_end, Hsla::default(), options, cx);
+    editor.highlight_rows::<ConflictsOuter>(
+        outer_start..outer_end,
+        divider_background,
+        options,
+        cx,
+    );
     editor.highlight_rows::<ConflictsOurs>(our_start..our_end, ours_background, options, cx);
     editor.highlight_rows::<ConflictsOursMarker>(outer_start..our_start, ours_marker, options, cx);
     editor.highlight_rows::<ConflictsTheirs>(
