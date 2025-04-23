@@ -35,7 +35,7 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use zed_llm_client::{
-    CURRENT_PLAN_HEADER_NAME, CompletionBody, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    CURRENT_PLAN_HEADER_NAME, CompletionBody, CompletionMode, EXPIRED_LLM_TOKEN_HEADER_NAME,
     MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
     SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
 };
@@ -748,6 +748,7 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
+                            mode: Some(CompletionMode::Max),
                             provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -794,6 +795,7 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
+                            mode: Some(CompletionMode::Max),
                             provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -824,6 +826,7 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
+                            mode: Some(CompletionMode::Max),
                             provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
