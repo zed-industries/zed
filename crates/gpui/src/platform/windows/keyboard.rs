@@ -56,11 +56,22 @@ impl KeyboardMapper for WindowsKeyboardMapper {
     }
 
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
-        if is_immutable_key(keystroke.key.as_str())
-            || is_letter_key(keystroke.key.as_str())
-            || is_already_vim_style(&keystroke.modifiers)
-        {
+        if is_immutable_key(keystroke.key.as_str()) || is_already_vim_style(&keystroke.modifiers) {
             return Cow::Borrowed(keystroke);
+        }
+
+        if is_letter_key(keystroke.key.as_str()) {
+            if keystroke.modifiers.shift {
+                let mut modifiers = keystroke.modifiers.clone();
+                modifiers.shift = false;
+                return Cow::Owned(Keystroke {
+                    modifiers,
+                    key: keystroke.key.to_uppercase(),
+                    key_char: keystroke.key_char.clone(),
+                });
+            } else {
+                return Cow::Borrowed(keystroke);
+            }
         }
 
         // This handles case 1, case 4 and case 5, where the keystroke outputs a single character
@@ -538,7 +549,29 @@ mod tests {
                     key_char: Some(c.to_string().to_uppercase()),
                 };
                 let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
-                assert_eq!(*vim_keystroke, keystroke);
+                assert_eq!(
+                    *vim_keystroke,
+                    Keystroke {
+                        modifiers: Modifiers::default(),
+                        key: c.to_string().to_uppercase(),
+                        key_char: Some(c.to_string().to_uppercase()),
+                    }
+                );
+
+                let keystroke = Keystroke {
+                    modifiers: Modifiers::control_shift(),
+                    key: c.to_string(),
+                    key_char: None,
+                };
+                let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+                assert_eq!(
+                    *vim_keystroke,
+                    Keystroke {
+                        modifiers: Modifiers::control(),
+                        key: c.to_string().to_uppercase(),
+                        key_char: None,
+                    }
+                );
             }
         }
         // Test case 2 and case 3
