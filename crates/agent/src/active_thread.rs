@@ -6,7 +6,9 @@ use crate::thread::{
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
-use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
+use crate::ui::{
+    AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
+};
 use crate::{AssistantPanel, OpenActiveThreadAsMarkdown};
 use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
@@ -1505,45 +1507,8 @@ impl ActiveThread {
 
         let needs_confirmation = tool_uses.iter().any(|tool_use| tool_use.needs_confirmation);
 
-        let generating_label = (is_generating && is_last_message).then(|| {
-            Label::new("Generating")
-                .color(Color::Muted)
-                .size(LabelSize::Small)
-                .with_animations(
-                    "generating-label",
-                    vec![
-                        Animation::new(Duration::from_secs(1)),
-                        Animation::new(Duration::from_secs(1)).repeat(),
-                    ],
-                    |mut label, animation_ix, delta| {
-                        match animation_ix {
-                            0 => {
-                                let chars_to_show = (delta * 10.).ceil() as usize;
-                                let text = &"Generating"[0..chars_to_show];
-                                label.set_text(text);
-                            }
-                            1 => {
-                                let text = match delta {
-                                    d if d < 0.25 => "Generating",
-                                    d if d < 0.5 => "Generating.",
-                                    d if d < 0.75 => "Generating..",
-                                    _ => "Generating...",
-                                };
-                                label.set_text(text);
-                            }
-                            _ => {}
-                        }
-                        label
-                    },
-                )
-                .with_animation(
-                    "pulsating-label",
-                    Animation::new(Duration::from_secs(2))
-                        .repeat()
-                        .with_easing(pulsating_between(0.6, 1.)),
-                    |label, delta| label.map_element(|label| label.alpha(delta)),
-                )
-        });
+        let generating_label = (is_generating && is_last_message)
+            .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
 
         // Don't render user messages that are just there for returning tool results.
         if message.role == Role::User && thread.message_has_tool_results(message_id) {
@@ -2304,34 +2269,7 @@ impl ActiveThread {
                                             .size(IconSize::XSmall)
                                             .color(Color::Muted),
                                     )
-                                    .child({
-                                        Label::new("Thinking")
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small)
-                                            .with_animation(
-                                                "generating-label",
-                                                Animation::new(Duration::from_secs(1)).repeat(),
-                                                |mut label, delta| {
-                                                    let text = match delta {
-                                                        d if d < 0.25 => "Thinking",
-                                                        d if d < 0.5 => "Thinking.",
-                                                        d if d < 0.75 => "Thinking..",
-                                                        _ => "Thinking...",
-                                                    };
-                                                    label.set_text(text);
-                                                    label
-                                                },
-                                            )
-                                            .with_animation(
-                                                "pulsating-label",
-                                                Animation::new(Duration::from_secs(2))
-                                                    .repeat()
-                                                    .with_easing(pulsating_between(0.6, 1.)),
-                                                |label, delta| {
-                                                    label.map_element(|label| label.alpha(delta))
-                                                },
-                                            )
-                                    }),
+                                    .child(AnimatedLabel::new("Thinking").size(LabelSize::Small)),
                             )
                             .child(
                                 h_flex()
@@ -2896,30 +2834,7 @@ impl ActiveThread {
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
                                 .child(
-                                    Label::new("Waiting for Confirmation…")
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small)
-                                        .with_animation(
-                                            "generating-label",
-                                            Animation::new(Duration::from_secs(1)).repeat(),
-                                            |mut label, delta| {
-                                                let text = match delta {
-                                                    d if d < 0.25 => "Waiting for Confirmation",
-                                                    d if d < 0.5 => "Waiting for Confirmation.",
-                                                    d if d < 0.75 => "Waiting for Confirmation..",
-                                                    _ => "Waiting for Confirmation...",
-                                                };
-                                                label.set_text(text);
-                                                label
-                                            },
-                                        )
-                                        .with_animation(
-                                            "pulsating-label",
-                                            Animation::new(Duration::from_secs(2))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.6, 1.)),
-                                            |label, delta| label.map_element(|label| label.alpha(delta)),
-                                        ),
+                                    AnimatedLabel::new("Waiting for Confirmation").size(LabelSize::Small)
                                 )
                                 .child(
                                     h_flex()

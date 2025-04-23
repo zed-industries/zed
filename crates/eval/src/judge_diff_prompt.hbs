@@ -1,5 +1,5 @@
-You are an expert software developer. Your task is to evaluate a diff produced by an AI agent in response to a prompt.
-Here is the prompt and the diff:
+You are an expert software developer. Your task is to evaluate a diff produced by an AI agent
+in response to a prompt. Here is the prompt and the diff:
 
 <prompt>
 {{{prompt}}}
@@ -9,17 +9,17 @@ Here is the prompt and the diff:
 {{{repository_diff}}}
 </diff>
 
-Evaluate how many of the following criteria were satisfied by the diff:
+Evaluate whether or not the diff passes the following assertion:
 
-<criteria>
-{{criteria}}
-- There are no changes unrelated to the prompt
-</criteria>
+<assertion>
+{{assertion}}
+</assertion>
 
 Analyze the diff hunk by hunk, and structure your answer in the following XML format:
 
 ```
 <analysis>{YOUR ANALYSIS HERE}</analysis>
-<total_criteria>{THE TOTAL NUMBER OF CRITERIA THAT WERE LISTED}</total_criteria>
-<passing_criteria>{THE NUMBER OF CRITERIA THAT ARE MET BY THE DIFF}</passing_criteria>
+<passed>{PASSED_ASSERTION}</passed>
 ```
+
+Where `PASSED_ASSERTION` is either `true` or `false`.

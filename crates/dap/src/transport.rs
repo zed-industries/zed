@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 use task::TcpArgumentsTemplate;
-use util::ResultExt as _;
+use util::{ResultExt as _, TryFutureExt};
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -126,6 +126,7 @@ pub(crate) struct TransportDelegate {
     pending_requests: Requests,
     transport: Transport,
     server_tx: Arc<Mutex<Option<Sender<Message>>>>,
+    _tasks: Vec<gpui::Task<Option<()>>>,
 }
 
 impl TransportDelegate {
@@ -140,6 +141,7 @@ impl TransportDelegate {
             log_handlers: Default::default(),
             current_requests: Default::default(),
             pending_requests: Default::default(),
+            _tasks: Default::default(),
         };
         let messages = this.start_handlers(transport_pipes, cx).await?;
         Ok((messages, this))
@@ -166,35 +168,43 @@ impl TransportDelegate {
 
         cx.update(|cx| {
             if let Some(stdout) = params.stdout.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_adapter_log(stdout, log_handler.clone()))
-                    .detach_and_log_err(cx);
+                self._tasks.push(
+                    cx.background_executor()
+                        .spawn(Self::handle_adapter_log(stdout, log_handler.clone()).log_err()),
+                );
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_output(
-                    params.output,
-                    client_tx,
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+            self._tasks.push(
+                cx.background_executor().spawn(
+                    Self::handle_output(
+                        params.output,
+                        client_tx,
+                        self.pending_requests.clone(),
+                        log_handler.clone(),
+                    )
+                    .log_err(),
+                ),
+            );
 
             if let Some(stderr) = params.stderr.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_error(stderr, self.log_handlers.clone()))
-                    .detach_and_log_err(cx);
+                self._tasks.push(
+                    cx.background_executor()
+                        .spawn(Self::handle_error(stderr, self.log_handlers.clone()).log_err()),
+                );
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_input(
-                    params.input,
-                    client_rx,
-                    self.current_requests.clone(),
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+            self._tasks.push(
+                cx.background_executor().spawn(
+                    Self::handle_input(
+                        params.input,
+                        client_rx,
+                        self.current_requests.clone(),
+                        self.pending_requests.clone(),
+                        log_handler.clone(),
+                    )
+                    .log_err(),
+                ),
+            );
         })?;
 
         {
@@ -367,6 +377,7 @@ impl TransportDelegate {
     where
         Stderr: AsyncRead + Unpin + Send + 'static,
     {
+        log::debug!("Handle error started");
         let mut buffer = String::new();
 
         let mut reader = BufReader::new(stderr);
