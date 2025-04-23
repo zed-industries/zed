@@ -15,7 +15,7 @@ impl Example for FileSearchExample {
             url: "https://github.com/zed-industries/zed.git".to_string(),
             revision: "03ecb88fe30794873f191ddb728f597935b3101c".to_string(),
             language_server: None,
-            max_assertions: Some(4),
+            max_assertions: Some(3),
         }
     }
 
@@ -38,7 +38,7 @@ impl Example for FileSearchExample {
         let glob = input.glob;
         cx.assert(
             glob.ends_with(FILENAME),
-            format!("glob ends with `{FILENAME}`"),
+            format!("glob ends with file name"),
         )?;
 
         let without_filename = glob.replace(FILENAME, "");
@@ -46,7 +46,7 @@ impl Example for FileSearchExample {
             .unwrap()
             .is_match(&without_filename);
 
-        cx.assert(matches, "glob starts with either `**` or `zed`")?;
+        cx.assert(matches, "glob starts with `**` or project")?;
 
         Ok(())
     }
