@@ -9281,8 +9281,9 @@ dependencies = [
 [[package]]
 name = "nvim-rs"
 version = "0.9.2"
-source = "git+https://github.com/KillTheMule/nvim-rs?branch=master#4c85d61cc6fadc64fb67d8eb46e908f5a8723396"
+source = "git+https://github.com/KillTheMule/nvim-rs?rev=764dd270c642f77f10f3e19d05cc178a6cbe69f3#764dd270c642f77f10f3e19d05cc178a6cbe69f3"
 dependencies = [
+ "async-trait",
  "futures 0.3.31",
  "log",
  "rmp",
