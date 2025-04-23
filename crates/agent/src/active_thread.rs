@@ -1538,13 +1538,14 @@ impl ActiveThread {
                 window.dispatch_action(Box::new(OpenActiveThreadAsMarkdown), cx)
             });
 
-        // For all items that should be aligned with the Assistant's response.
+        // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(18.);
 
         let feedback_container = h_flex()
             .py_2()
             .px(RESPONSE_PADDING_X)
             .gap_1()
+            .flex_wrap()
             .justify_between();
         let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
@@ -1556,7 +1557,8 @@ impl ActiveThread {
                         }
                     })
                     .color(Color::Muted)
-                    .size(LabelSize::XSmall),
+                    .size(LabelSize::XSmall)
+                    .truncate(),
                 )
                 .child(
                     h_flex()
@@ -1607,7 +1609,8 @@ impl ActiveThread {
                         "Rating the thread sends all of your current conversation to the Zed team.",
                     )
                     .color(Color::Muted)
-                    .size(LabelSize::XSmall),
+                    .size(LabelSize::XSmall)
+                    .truncate(),
                 )
                 .child(
                     h_flex()
