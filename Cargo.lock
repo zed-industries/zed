@@ -731,6 +731,7 @@ dependencies = [
  "ui",
  "unindent",
  "util",
+ "uuid",
  "web_search",
  "workspace",
  "workspace-hack",

@@ -21,6 +21,7 @@ use std::{
 };
 use ui::{Disclosure, IconName, Tooltip, Window, prelude::*};
 use util::ResultExt;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
