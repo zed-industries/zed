@@ -116,11 +116,11 @@ impl TcpArguments {
     }
 }
 
-/// Represents a debuggable binary/process.
+/// Represents a debuggable binary/process (what process is going to be debugged and with what arguments).
 ///
-/// We start off with a [DebugScenario], a user-facing type that can define how a debug target is built; once
+/// We start off with a [DebugScenario], a user-facing type that additionally defines how a debug target is built; once
 /// an optional build step is completed, we turn it's result into a DebugTaskDefinition by running a locator (or using a user-provided task).
-/// Finally, a [DebugTaskDefinition] has to be turned into a concrete debugger invokation.
+/// Finally, a [DebugTaskDefinition] has to be turned into a concrete debugger invokation ([DebugAdapterBinary]).
 #[derive(Clone, Debug)]
 pub struct DebugTaskDefinition {
     pub label: SharedString,
@@ -128,14 +128,14 @@ pub struct DebugTaskDefinition {
     pub request: DebugRequest,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
     /// Optional TCP connection information
     ///
     /// If provided, this will be used to connect to the debug adapter instead of
-    /// spawning a new process. This is useful for connecting to a debug adapter
+    /// spawning a new debug adapter process. This is useful for connecting to a debug adapter
     /// that is already running or is started by another process.
     pub tcp_connection: Option<TcpArgumentsTemplate>,
-    /// Whether to tell the debug adapter to stop on entry
-    pub stop_on_entry: Option<bool>,
 }
 
 impl TryFrom<DebugScenario> for DebugTaskDefinition {
@@ -241,6 +241,7 @@ impl DebugTaskDefinition {
     }
 }
 
+/// Created from a [DebugTaskDefinition], this struct describes how to spawn the debugger to create a previously-configured debug session.
 #[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
     pub command: String,
@@ -553,7 +554,7 @@ impl DebugAdapter for FakeAdapter {
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
-        config: &DebugScenario,
+        config: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -585,7 +586,7 @@ impl DebugAdapter for FakeAdapter {
     async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugScenario,
+        _: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
