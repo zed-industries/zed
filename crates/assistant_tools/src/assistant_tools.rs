@@ -93,10 +93,8 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
                     .default_model()
                     .map_or(false, |default| default.is_provided_by_zed());
                 if using_zed_provider {
-                    dbg!("Registered web search tool");
                     ToolRegistry::global(cx).register_tool(WebSearchTool);
                 } else {
-                    dbg!("Unregistered web search tool");
                     ToolRegistry::global(cx).unregister_tool(WebSearchTool);
                 }
             }

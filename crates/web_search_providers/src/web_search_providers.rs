@@ -27,13 +27,11 @@ fn register_web_search_providers(
                     .default_model()
                     .map_or(false, |default| default.is_provided_by_zed());
                 if using_zed_provider {
-                    dbg!("Registered cloud web search provider");
                     this.register_provider(
                         cloud::CloudWebSearchProvider::new(client.clone(), cx),
                         cx,
                     )
                 } else {
-                    dbg!("Unregistered cloud web search provider");
                     this.unregister_provider(WebSearchProviderId(
                         cloud::ZED_WEB_SEARCH_PROVIDER_ID.into(),
                     ));
