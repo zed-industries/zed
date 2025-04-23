@@ -188,26 +188,3 @@ enum LanguageModelProvider {
     Google = 2;
     Zed = 3;
 }
-
-message GetCachedEmbeddings {
-    string model = 1;
-    repeated bytes digests = 2;
-}
-
-message GetCachedEmbeddingsResponse {
-    repeated Embedding embeddings = 1;
-}
-
-message ComputeEmbeddings {
-    string model = 1;
-    repeated string texts = 2;
-}
-
-message ComputeEmbeddingsResponse {
-    repeated Embedding embeddings = 1;
-}
-
-message Embedding {
-    bytes digest = 1;
-    repeated float dimensions = 2;
-}
