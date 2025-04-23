@@ -703,6 +703,8 @@ dependencies = [
  "anyhow",
  "assistant_tool",
  "chrono",
+ "client",
+ "clock",
  "collections",
  "component",
  "futures 0.3.31",

@@ -105,20 +105,23 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
+    use client::Client;
+    use clock::FakeSystemClock;
     use http_client::FakeHttpClient;
 
     use super::*;
 
     #[gpui::test]
     fn test_builtin_tool_schema_compatibility(cx: &mut App) {
-        crate::init(
-            Arc::new(http_client::HttpClientWithUrl::new(
-                FakeHttpClient::with_200_response(),
-                "https://zed.dev",
-                None,
-            )),
+        settings::init(cx);
+
+        let client = Client::new(
+            Arc::new(FakeSystemClock::new()),
+            FakeHttpClient::with_200_response(),
             cx,
         );
+        language_model::init(client.clone(), cx);
+        crate::init(client.http_client(), cx);
 
         for tool in ToolRegistry::global(cx).tools() {
             let actual_schema = tool
