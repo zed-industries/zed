@@ -675,7 +675,7 @@
     }
   },
   {
-    "context": "Editor && mode == full",
+    "context": "!ContextEditor > Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
