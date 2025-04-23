@@ -368,7 +368,8 @@ impl ToolCard for EditFileToolCard {
         let failed = matches!(status, ToolUseStatus::Error(_));
 
         let path_label_button = h_flex()
-            .id(Uuid::new_v4())
+            .id(("code-block-header-label", self.index))
+            // .id(Uuid::new_v4()) // just so i can run for now, to uncomment later
             .w_full()
             .max_w_full()
             .px_1()
@@ -385,8 +386,9 @@ impl ToolCard for EditFileToolCard {
                             .color(Color::Muted),
                     )
                     .child(
-                        Label::new(self.path.display().to_string())
-                            .size(LabelSize::Small)
+                        div()
+                            .text_size(rems(0.8125))
+                            .child(self.path.display().to_string())
                             .ml_1p5()
                             .mr_0p5(),
                     )
@@ -441,10 +443,26 @@ impl ToolCard for EditFileToolCard {
             editor.render(window, cx).into_any_element()
         });
 
+        let (full_height_icon, full_height_tooltip_label, full_height_hover_color) =
+            if self.full_height_expanded {
+                (
+                    IconName::ChevronUp,
+                    "Collapse Code Block",
+                    cx.theme().colors().element_hover.opacity(0.2),
+                )
+            } else {
+                (
+                    IconName::ChevronDown,
+                    "Expand Code Block",
+                    cx.theme().colors().editor_background,
+                )
+            };
+
         v_flex()
+            .relative()
             .mb_2()
             .border_1()
-            .when(failed, |container| container.border_dashed())
+            .when(failed, |card| card.border_dashed())
             .border_color(cx.theme().colors().border.opacity(0.6))
             .rounded_lg()
             .overflow_hidden()
@@ -452,11 +470,9 @@ impl ToolCard for EditFileToolCard {
             .when(!failed && self.preview_expanded, |card| {
                 card.child(
                     div()
-                        .px_1()
                         .border_t_1()
                         .border_color(cx.theme().colors().border.opacity(0.6))
                         .bg(cx.theme().colors().editor_background)
-                        .relative()
                         .map(|buffer_container| {
                             if self.full_height_expanded {
                                 buffer_container.h_full()
@@ -471,18 +487,19 @@ impl ToolCard for EditFileToolCard {
                                 .when(!self.full_height_expanded, |button| {
                                     button.absolute().bottom_0()
                                 })
-                                .h_4()
+                                .h_5()
                                 .w_full()
                                 .justify_center()
                                 .rounded_b_md()
                                 .bg(cx.theme().colors().editor_background.opacity(0.95))
-                                .hover(|style| style.bg(cx.theme().colors().editor_background))
+                                .hover(|style| style.bg(full_height_hover_color))
                                 .cursor_pointer()
                                 .child(
-                                    Icon::new(IconName::ChevronDown)
+                                    Icon::new(full_height_icon)
                                         .size(IconSize::Small)
                                         .color(Color::Muted),
                                 )
+                                .tooltip(Tooltip::text(full_height_tooltip_label))
                                 .on_click(cx.listener(move |this, _event, _window, _cx| {
                                     this.full_height_expanded = !this.full_height_expanded;
                                 })),
