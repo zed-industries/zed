@@ -67,7 +67,7 @@ impl DiagnosticRenderer {
                 markdown.push('[');
                 markdown.push_str(&Markdown::escape(&code.to_string()));
                 markdown.push_str("](");
-                markdown.push_str(&Markdown::escape(&description.to_string()));
+                markdown.push_str(&Markdown::escape(description.as_ref()));
             } else {
                 markdown.push_str(&Markdown::escape(&code.to_string()));
             }
