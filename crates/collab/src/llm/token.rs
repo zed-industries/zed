@@ -33,6 +33,8 @@ pub struct LlmTokenClaims {
     pub plan: Plan,
     #[serde(default)]
     pub subscription_period: Option<(NaiveDateTime, NaiveDateTime)>,
+    #[serde(default)]
+    pub can_use_web_search_tool: bool,
 }
 
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
@@ -70,6 +72,7 @@ impl LlmTokenClaims {
             bypass_account_age_check: feature_flags
                 .iter()
                 .any(|flag| flag == "bypass-account-age-check"),
+            can_use_web_search_tool: feature_flags.iter().any(|flag| flag == "assistant2"),
             has_llm_subscription: has_legacy_llm_subscription,
             max_monthly_spend_in_cents: billing_preferences
                 .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
