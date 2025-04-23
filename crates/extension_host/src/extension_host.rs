@@ -1297,21 +1297,9 @@ impl ExtensionStore {
                         );
                     }
 
-                    for (id, context_server) in &manifest.context_servers {
-                        this.proxy.register_context_server(
-                            extension.clone(),
-                            extension::ContextServer {
-                                id: id.clone(),
-                                setup: extension::ContextServerSetupInstructions {
-                                    installation_instructions: context_server
-                                        .installation_instructions
-                                        .clone()
-                                        .into(),
-                                    settings_hint: context_server.settings_hint.clone().into(),
-                                },
-                            },
-                            cx,
-                        );
+                    for (id, _context_server) in &manifest.context_servers {
+                        this.proxy
+                            .register_context_server(extension.clone(), id.clone(), cx);
                     }
 
                     for (provider_id, _provider) in &manifest.indexed_docs_providers {

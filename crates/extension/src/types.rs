@@ -1,10 +1,8 @@
-mod context_server;
 mod lsp;
 mod slash_command;
 
 use std::ops::Range;
 
-pub use context_server::*;
 pub use lsp::*;
 pub use slash_command::*;
 

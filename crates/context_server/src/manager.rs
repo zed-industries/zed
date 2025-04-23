@@ -38,26 +38,14 @@ use crate::{
 pub struct ContextServer {
     pub id: Arc<str>,
     pub config: Arc<ServerConfig>,
-    pub setup_instructions: Option<SetupInstructions>,
     pub client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
 }
 
-#[derive(Debug, Clone)]
-pub struct SetupInstructions {
-    pub installation_instructions: Arc<str>,
-    pub settings: Arc<str>,
-}
-
 impl ContextServer {
-    pub fn new(
-        id: Arc<str>,
-        config: Arc<ServerConfig>,
-        setup_instructions: Option<SetupInstructions>,
-    ) -> Self {
+    pub fn new(id: Arc<str>, config: Arc<ServerConfig>) -> Self {
         Self {
             id,
             config,
-            setup_instructions,
             client: RwLock::new(None),
         }
     }
@@ -68,10 +56,6 @@ impl ContextServer {
 
     pub fn config(&self) -> Arc<ServerConfig> {
         self.config.clone()
-    }
-
-    pub fn setup_instructions(&self) -> Option<SetupInstructions> {
-        self.setup_instructions.clone()
     }
 
     pub fn client(&self) -> Option<Arc<crate::protocol::InitializedContextServerProtocol>> {
@@ -232,9 +216,7 @@ impl ContextServerManager {
             if let Some(server) = this.update(cx, |this, _cx| this.servers.remove(&id))? {
                 server.stop()?;
                 let config = server.config();
-                let setup_instructions = server.setup_instructions();
-                let new_server =
-                    Arc::new(ContextServer::new(id.clone(), config, setup_instructions));
+                let new_server = Arc::new(ContextServer::new(id.clone(), config));
                 new_server.clone().start(&cx).await?;
                 this.update(cx, |this, cx| {
                     this.servers.insert(id.clone(), new_server);
@@ -276,10 +258,7 @@ impl ContextServerManager {
                     path: Path::new(""),
                 });
             let settings = ContextServerSettings::get(location, cx);
-
-            for (id, server) in &settings.context_servers {
-                desired_servers.insert(id.clone(), (server.clone(), None));
-            }
+            desired_servers = settings.context_servers.clone();
 
             (this.registry.clone(), this.project.clone())
         })?;
@@ -287,13 +266,10 @@ impl ContextServerManager {
         for (id, factory) in
             registry.read_with(cx, |registry, _| registry.context_server_factories())?
         {
-            let (config, instructions) = desired_servers.entry(id).or_default();
+            let config = desired_servers.entry(id).or_default();
             if config.command.is_none() {
-                if let Some((extension_command, extension_instructions)) =
-                    factory(project.clone(), &cx).await.log_err()
-                {
+                if let Some(extension_command) = factory(project.clone(), &cx).await.log_err() {
                     config.command = Some(extension_command);
-                    *instructions = Some(extension_instructions);
                 }
             }
         }
@@ -311,12 +287,11 @@ impl ContextServerManager {
                 }
             });
 
-            for (id, (config, setup_instructions)) in desired_servers {
+            for (id, config) in desired_servers {
                 let existing_config = this.servers.get(&id).map(|server| server.config());
                 if existing_config.as_deref() != Some(&config) {
                     let config = Arc::new(config);
-                    let server =
-                        Arc::new(ContextServer::new(id.clone(), config, setup_instructions));
+                    let server = Arc::new(ContextServer::new(id.clone(), config));
                     servers_to_start.insert(id.clone(), server.clone());
                     let old_server = this.servers.insert(id.clone(), server);
                     if let Some(old_server) = old_server {
