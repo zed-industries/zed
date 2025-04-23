@@ -148,7 +148,6 @@ impl ContextStore {
         buffer: Entity<Buffer>,
         symbol: SharedString,
         range: Range<Anchor>,
-        // todo! Handle enclosing_range
         enclosing_range: Range<Anchor>,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
@@ -157,6 +156,7 @@ impl ContextStore {
             buffer,
             symbol,
             range,
+            enclosing_range,
         });
 
         if self.has_context(&context) {

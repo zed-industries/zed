@@ -210,20 +210,23 @@ impl DirectoryContext {
 pub struct SymbolContext {
     pub buffer: Entity<Buffer>,
     pub symbol: SharedString,
-    // not used by Eq and Hash for ContextSetEntry
-    //
-    // todo! this was previously used as part of symbol inclusion check
     pub range: Range<Anchor>,
+    /// The range that fully contain the symbol. e.g. for function symbol, this will include not
+    /// only the signature, but also the body.
+    ///
+    /// Note: not used by Eq and Hash for ContextSetEntry
+    pub enclosing_range: Range<Anchor>,
 }
 
 impl SymbolContext {
     pub fn eq_for_context_set(&self, other: &Self) -> bool {
-        self.buffer == other.buffer && self.symbol == other.symbol
+        self.buffer == other.buffer && self.symbol == other.symbol && self.range == other.range
     }
 
     pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
         self.buffer.hash(state);
         self.symbol.hash(state);
+        self.range.hash(state);
     }
 
     fn load(self, cx: &mut App) -> Option<Task<(String, Entity<Buffer>)>> {
