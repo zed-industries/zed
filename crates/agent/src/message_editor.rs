@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::{AssistantContext, format_context_as_string};
+use crate::context::{ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -13,6 +13,8 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fs::Fs;
+use futures::future::Shared;
+use futures::{FutureExt as _, future};
 use gpui::{
     Animation, AnimationExt, App, ClipboardEntry, Entity, EventEmitter, Focusable, Subscription,
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
@@ -22,6 +24,7 @@ use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelReques
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
+use prompt_store::PromptStore;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -31,7 +34,7 @@ use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
-use crate::context_store::{ContextStore, refresh_context_store_text};
+use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{Thread, TokenUsageRatio};
@@ -49,9 +52,12 @@ pub struct MessageEditor {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     context_store: Entity<ContextStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
+    last_loaded_context: Option<ContextLoadResult>,
+    context_load_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
     editor_is_expanded: bool,
@@ -68,6 +74,7 @@ impl MessageEditor {
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
         context_store: Entity<ContextStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
         thread: Entity<Thread>,
         window: &mut Window,
@@ -135,13 +142,11 @@ impl MessageEditor {
         let subscriptions = vec![
             cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
             cx.subscribe(&editor, |this, _, event, cx| match event {
-                EditorEvent::BufferEdited => {
-                    this.message_or_context_changed(true, cx);
-                }
+                EditorEvent::BufferEdited => this.handle_message_changed(cx),
                 _ => {}
             }),
             cx.observe(&context_store, |this, _, cx| {
-                this.message_or_context_changed(false, cx);
+                this.handle_context_changed(cx)
             }),
         ];
 
@@ -152,8 +157,11 @@ impl MessageEditor {
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
             context_store,
+            prompt_store,
             context_strip,
             context_picker_menu_handle,
+            context_load_task: None,
+            last_loaded_context: None,
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs.clone(),
@@ -173,6 +181,10 @@ impl MessageEditor {
             update_token_count_task: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    pub fn context_store(&self) -> &Entity<ContextStore> {
+        &self.context_store
     }
 
     fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
@@ -214,6 +226,7 @@ impl MessageEditor {
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
+
     pub fn remove_all_context(
         &mut self,
         _: &RemoveAllContext,
@@ -270,68 +283,22 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
-        let refresh_task =
-            refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
-        let wait_for_images = self.context_store.read(cx).wait_for_images(cx);
-
         let thread = self.thread.clone();
-        let context_store = self.context_store.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
+        let context_task = self.wait_for_context(cx);
         let window_handle = window.window_handle();
 
-        cx.spawn(async move |this, cx| {
-            let checkpoint = checkpoint.await.ok();
-            refresh_task.await;
-            wait_for_images.await;
+        cx.spawn(async move |_this, cx| {
+            let (checkpoint, loaded_context) = future::join(checkpoint, context_task).await;
+            let loaded_context = loaded_context.unwrap_or_default();
 
             thread
                 .update(cx, |thread, cx| {
-                    let context = context_store.read(cx).context().clone();
-                    thread.insert_user_message(user_message, context, checkpoint, cx);
+                    thread.insert_user_message(user_message, loaded_context, checkpoint.ok(), cx);
                 })
                 .log_err();
 
-            context_store
-                .update(cx, |context_store, cx| {
-                    let excerpt_ids = context_store
-                        .context()
-                        .iter()
-                        .filter(|ctx| {
-                            matches!(
-                                ctx,
-                                AssistantContext::Selection(_) | AssistantContext::Image(_)
-                            )
-                        })
-                        .map(|ctx| ctx.id())
-                        .collect::<Vec<_>>();
-
-                    for id in excerpt_ids {
-                        context_store.remove_context(id, cx);
-                    }
-                })
-                .log_err();
-
-            if let Some(wait_for_summaries) = context_store
-                .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
-                .log_err()
-            {
-                this.update(cx, |this, cx| {
-                    this.waiting_for_summaries_to_send = true;
-                    cx.notify();
-                })
-                .log_err();
-
-                wait_for_summaries.await;
-
-                this.update(cx, |this, cx| {
-                    this.waiting_for_summaries_to_send = false;
-                    cx.notify();
-                })
-                .log_err();
-            }
-
-            // Send to model after summaries are done
             thread
                 .update(cx, |thread, cx| {
                     thread.advance_prompt_id();
@@ -340,6 +307,30 @@ impl MessageEditor {
                 .log_err();
         })
         .detach();
+    }
+
+    fn wait_for_summaries(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let context_store = self.context_store.clone();
+        cx.spawn(async move |this, cx| {
+            if let Some(wait_for_summaries) = context_store
+                .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
+                .ok()
+            {
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries_to_send = true;
+                    cx.notify();
+                })
+                .ok();
+
+                wait_for_summaries.await;
+
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries_to_send = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1015,6 +1006,49 @@ impl MessageEditor {
         self.update_token_count_task.is_some()
     }
 
+    fn handle_message_changed(&mut self, cx: &mut Context<Self>) {
+        self.message_or_context_changed(true, cx);
+    }
+
+    fn handle_context_changed(&mut self, cx: &mut Context<Self>) {
+        let summaries_task = self.wait_for_summaries(cx);
+        let load_task = cx.spawn(async move |this, cx| {
+            // Waits for detailed summaries before `load_context`, as it directly reads these from
+            // the thread. TODO: Would be cleaner to have context loading await on summarization.
+            summaries_task.await;
+            let Ok(load_task) = this.update(cx, |this, cx| {
+                let new_context = this.context_store.read_with(cx, |context_store, cx| {
+                    context_store.new_context_for_thread(this.thread.read(cx))
+                });
+                load_context(new_context, &this.project, &this.prompt_store, cx)
+            }) else {
+                return;
+            };
+            let result = load_task.await;
+            this.update(cx, |this, cx| {
+                this.last_loaded_context = Some(result);
+                this.context_load_task = None;
+                this.message_or_context_changed(false, cx);
+            })
+            .ok();
+        });
+        // Replace existing load task, if any, causing it to be cancelled.
+        self.context_load_task = Some(load_task.shared());
+    }
+
+    fn wait_for_context(&self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
+        if let Some(context_load_task) = self.context_load_task.clone() {
+            cx.spawn(async move |this, cx| {
+                context_load_task.await;
+                this.read_with(cx, |this, _cx| this.last_loaded_context.clone())
+                    .ok()
+                    .flatten()
+            })
+        } else {
+            Task::ready(self.last_loaded_context.clone())
+        }
+    }
+
     fn message_or_context_changed(&mut self, debounce: bool, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Changed);
         self.update_token_count_task.take();
@@ -1024,9 +1058,7 @@ impl MessageEditor {
             return;
         };
 
-        let context_store = self.context_store.clone();
         let editor = self.editor.clone();
-        let thread = self.thread.clone();
 
         self.update_token_count_task = Some(cx.spawn(async move |this, cx| {
             if debounce {
@@ -1035,27 +1067,33 @@ impl MessageEditor {
                     .await;
             }
 
-            let token_count = if let Some(task) = cx.update(|cx| {
-                let context = context_store.read(cx).context().iter();
-                let new_context = thread.read(cx).filter_new_context(context);
-                let context_text =
-                    format_context_as_string(new_context, cx).unwrap_or(String::new());
+            let token_count = if let Some(task) = this.update(cx, |this, cx| {
+                let loaded_context = this
+                    .last_loaded_context
+                    .as_ref()
+                    .map(|context_load_result| &context_load_result.loaded_context);
                 let message_text = editor.read(cx).text(cx);
 
-                let content = context_text + &message_text;
-
-                if content.is_empty() {
+                if message_text.is_empty()
+                    && loaded_context.map_or(true, |loaded_context| loaded_context.is_empty())
+                {
                     return None;
+                }
+
+                let mut request_message = LanguageModelRequestMessage {
+                    role: language_model::Role::User,
+                    content: Vec::new(),
+                    cache: false,
+                };
+
+                if let Some(loaded_context) = loaded_context {
+                    loaded_context.add_to_request_message(&mut request_message);
                 }
 
                 let request = language_model::LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
-                    messages: vec![LanguageModelRequestMessage {
-                        role: language_model::Role::User,
-                        content: vec![content.into()],
-                        cache: false,
-                    }],
+                    messages: vec![request_message],
                     tools: vec![],
                     stop: vec![],
                     temperature: None,
