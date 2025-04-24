@@ -18,7 +18,7 @@
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
-      "alt-shift-enter": "menu::Restart",
+      "shift-alt-enter": "menu::Restart",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
@@ -116,7 +116,7 @@
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
-      "ctrl-shift-i": "editor::Format",
+      "alt-shift-f": "editor::Format",
       "alt-shift-o": "editor::OrganizeImports",
       // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true, "stop_at_indent": true }],
       // "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
@@ -362,13 +362,13 @@
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
-      "shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
+      "ctrl-shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
+      "ctrl-shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
-      "ctrl-alt-shift-up": "editor::DuplicateLineUp",
-      "ctrl-alt-shift-down": "editor::DuplicateLineDown",
+      "shift-alt-up": "editor::DuplicateLineUp",
+      "shift-alt-down": "editor::DuplicateLineDown",
       "alt-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
       "alt-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
@@ -391,9 +391,9 @@
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
       "ctrl-shift-f10": "editor::GoToDefinitionSplit",
-      "ctrl-f12": "editor::GoToTypeDefinition",
-      "shift-f12": "editor::GoToImplementation",
-      "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
+      "ctrl-f12": "editor::GoToImplementation",
+      "shift-f12": "editor::GoToTypeDefinition",
+      "ctrl-shift-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket",
       "ctrl-shift-\\": "editor::MoveToEnclosingBracket",
