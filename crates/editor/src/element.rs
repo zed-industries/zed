@@ -1910,7 +1910,7 @@ impl EditorElement {
             let maybe_element = self.editor.update(cx, |editor, cx| {
                 editor
                     .workspace()
-                    .and_then(|workspace| Some(workspace.downgrade()))
+                    .map(|workspace| workspace.downgrade())
                     .and_then(|workspace| {
                         render_blame_entry_popover(blame_entry, workspace, &blame, cx)
                     })
