@@ -10,7 +10,6 @@ use gpui::{
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{DocumentSymbol, Symbol};
-use text::OffsetRangeExt;
 use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -228,18 +227,16 @@ pub(crate) fn add_symbol(
             )
         })?;
 
-        context_store
-            .update(cx, move |context_store, cx| {
-                context_store.add_symbol(
-                    buffer,
-                    name.into(),
-                    range,
-                    enclosing_range,
-                    remove_if_exists,
-                    cx,
-                )
-            })?
-            .await
+        context_store.update(cx, move |context_store, cx| {
+            context_store.add_symbol(
+                buffer,
+                name.into(),
+                range,
+                enclosing_range,
+                remove_if_exists,
+                cx,
+            )
+        })
     })
 }
 
@@ -353,38 +350,13 @@ fn compute_symbol_entries(
     context_store: &ContextStore,
     cx: &App,
 ) -> Vec<SymbolEntry> {
-    let mut symbol_entries = Vec::with_capacity(symbols.len());
-    for SymbolMatch { symbol, .. } in symbols {
-        let symbols_for_path = context_store.included_symbols_by_path().get(&symbol.path);
-        let is_included = if let Some(symbols_for_path) = symbols_for_path {
-            let mut is_included = false;
-            for included_symbol_id in symbols_for_path {
-                if included_symbol_id.name.as_ref() == symbol.name.as_str() {
-                    if let Some(buffer) = context_store.buffer_for_symbol(included_symbol_id) {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let included_symbol_range =
-                            included_symbol_id.range.to_point_utf16(&snapshot);
-
-                        if included_symbol_range.start == symbol.range.start.0
-                            && included_symbol_range.end == symbol.range.end.0
-                        {
-                            is_included = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            is_included
-        } else {
-            false
-        };
-
-        symbol_entries.push(SymbolEntry {
+    symbols
+        .into_iter()
+        .map(|SymbolMatch { symbol, .. }| SymbolEntry {
+            is_included: context_store.includes_symbol(&symbol, cx),
             symbol,
-            is_included,
         })
-    }
-    symbol_entries
+        .collect::<Vec<_>>()
 }
 
 pub fn render_symbol_context_entry(id: ElementId, entry: &SymbolEntry) -> Stateful<Div> {

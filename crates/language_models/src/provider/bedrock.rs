@@ -32,9 +32,10 @@ use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, TokenUsage,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -542,7 +543,12 @@ impl LanguageModel for BedrockModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let Ok(region) = cx.read_entity(&self.state, |state, _cx| {
             // Get region - from credentials or directly from settings
             let region = state
@@ -780,7 +786,7 @@ pub fn get_bedrock_tokens(
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -894,6 +900,7 @@ pub fn map_to_language_model_completion_events(
                                                 id: tool_use.id.into(),
                                                 name: tool_use.name.into(),
                                                 is_input_complete: true,
+                                                raw_input: tool_use.input_json.clone(),
                                                 input: if tool_use.input_json.is_empty() {
                                                     Value::Null
                                                 } else {
@@ -970,7 +977,7 @@ pub fn map_to_language_model_completion_events(
                                     _ => {}
                                 },
 
-                                Err(err) => return Some((Some(Err(anyhow!(err))), state)),
+                                Err(err) => return Some((Some(Err(anyhow!(err).into())), state)),
                             }
                         }
                         None

@@ -115,6 +115,7 @@ pub struct TerminalView {
     blinking_paused: bool,
     blink_epoch: usize,
     hover_target_tooltip: Option<String>,
+    hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
     show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
@@ -197,6 +198,7 @@ impl TerminalView {
             blinking_paused: false,
             blink_epoch: 0,
             hover_target_tooltip: None,
+            hover_tooltip_update: Task::ready(()),
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
@@ -844,7 +846,7 @@ fn subscribe_for_terminal_events(
     let terminal_events_subscription = cx.subscribe_in(
         terminal,
         window,
-        move |this, _, event, window, cx| match event {
+        move |terminal_view, _, event, window, cx| match event {
             Event::Wakeup => {
                 cx.notify();
                 cx.emit(Event::Wakeup);
@@ -853,7 +855,7 @@ fn subscribe_for_terminal_events(
             }
 
             Event::Bell => {
-                this.has_bell = true;
+                terminal_view.has_bell = true;
                 cx.emit(Event::Wakeup);
             }
 
@@ -862,7 +864,7 @@ fn subscribe_for_terminal_events(
                     TerminalSettings::get_global(cx).blinking,
                     TerminalBlink::TerminalControlled
                 ) {
-                    this.blinking_terminal_enabled = *blinking;
+                    terminal_view.blinking_terminal_enabled = *blinking;
                 }
             }
 
@@ -871,25 +873,46 @@ fn subscribe_for_terminal_events(
             }
 
             Event::NewNavigationTarget(maybe_navigation_target) => {
-                this.hover_target_tooltip =
-                    maybe_navigation_target
-                        .as_ref()
-                        .and_then(|navigation_target| match navigation_target {
-                            MaybeNavigationTarget::Url(url) => Some(url.clone()),
-                            MaybeNavigationTarget::PathLike(path_like_target) => {
-                                let valid_files_to_open_task = possible_open_target(
-                                    &workspace,
-                                    &path_like_target.terminal_dir,
-                                    &path_like_target.maybe_path,
-                                    cx,
-                                );
-                                Some(match smol::block_on(valid_files_to_open_task)? {
-                                    OpenTarget::File(path, _) | OpenTarget::Worktree(path, _) => {
-                                        path.to_string(|path| path.to_string_lossy().to_string())
-                                    }
-                                })
-                            }
-                        });
+                match maybe_navigation_target.as_ref() {
+                    None => {
+                        terminal_view.hover_target_tooltip = None;
+                        terminal_view.hover_tooltip_update = Task::ready(());
+                    }
+                    Some(MaybeNavigationTarget::Url(url)) => {
+                        terminal_view.hover_target_tooltip = Some(url.clone());
+                        terminal_view.hover_tooltip_update = Task::ready(());
+                    }
+                    Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
+                        let valid_files_to_open_task = possible_open_target(
+                            &workspace,
+                            &path_like_target.terminal_dir,
+                            &path_like_target.maybe_path,
+                            cx,
+                        );
+
+                        terminal_view.hover_tooltip_update =
+                            cx.spawn(async move |terminal_view, cx| {
+                                let file_to_open = valid_files_to_open_task.await;
+                                terminal_view
+                                    .update(cx, |terminal_view, _| match file_to_open {
+                                        Some(
+                                            OpenTarget::File(path, _)
+                                            | OpenTarget::Worktree(path, _),
+                                        ) => {
+                                            terminal_view.hover_target_tooltip =
+                                                Some(path.to_string(|path| {
+                                                    path.to_string_lossy().to_string()
+                                                }));
+                                        }
+                                        None => {
+                                            terminal_view.hover_target_tooltip = None;
+                                        }
+                                    })
+                                    .ok();
+                            });
+                    }
+                }
+
                 cx.notify()
             }
 
@@ -897,7 +920,7 @@ fn subscribe_for_terminal_events(
                 MaybeNavigationTarget::Url(url) => cx.open_url(url),
 
                 MaybeNavigationTarget::PathLike(path_like_target) => {
-                    if this.hover_target_tooltip.is_none() {
+                    if terminal_view.hover_target_tooltip.is_none() {
                         return;
                     }
                     let task_workspace = workspace.clone();
@@ -1207,9 +1230,12 @@ fn possible_open_target(
 
     let fs = workspace.read(cx).project().read(cx).fs().clone();
     cx.background_spawn(async move {
-        for path_to_check in fs_paths_to_check {
-            if let Some(metadata) = fs.metadata(&path_to_check.path).await.ok().flatten() {
-                return Some(OpenTarget::File(path_to_check, metadata));
+        for mut path_to_check in fs_paths_to_check {
+            if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok() {
+                if let Some(metadata) = fs.metadata(&fs_path_to_check).await.ok().flatten() {
+                    path_to_check.path = fs_path_to_check;
+                    return Some(OpenTarget::File(path_to_check, metadata));
+                }
             }
         }
 
@@ -1394,9 +1420,6 @@ impl Item for TerminalView {
                     }
                 }
             },
-            None if self.terminal.read(cx).debug_terminal() => {
-                (IconName::Debug, Color::Muted, None)
-            }
             None => (IconName::Terminal, Color::Muted, None),
         };
 
@@ -1557,7 +1580,7 @@ impl SerializableItem for TerminalView {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let terminal = self.terminal().read(cx);
-        if terminal.task().is_some() || terminal.debug_terminal() {
+        if terminal.task().is_some() {
             return None;
         }
 

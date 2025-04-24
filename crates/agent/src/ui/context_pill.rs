@@ -1,14 +1,13 @@
-use std::sync::Arc;
 use std::{rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
-use futures::FutureExt;
-use gpui::{Animation, AnimationExt as _, Image, MouseButton, pulsating_between};
-use gpui::{ClickEvent, Task};
-use language_model::LanguageModelImage;
+use gpui::{Animation, AnimationExt as _, ClickEvent, Entity, MouseButton, pulsating_between};
+use project::Project;
+use prompt_store::PromptStore;
+use text::OffsetRangeExt;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
-use crate::context::{AssistantContext, ContextId, ContextKind, ImageContext};
+use crate::context::{AgentContext, ContextKind, ImageStatus};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -73,9 +72,7 @@ impl ContextPill {
 
     pub fn id(&self) -> ElementId {
         match self {
-            Self::Added { context, .. } => {
-                ElementId::NamedInteger("context-pill".into(), context.id.0)
-            }
+            Self::Added { context, .. } => context.context.element_id("context-pill".into()),
             Self::Suggested { .. } => "suggested-context-pill".into(),
         }
     }
@@ -199,14 +196,17 @@ impl RenderOnce for ContextPill {
                     )
                     .when_some(on_remove.as_ref(), |element, on_remove| {
                         element.child(
-                            IconButton::new(("remove", context.id.0), IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
-                                .tooltip(Tooltip::text("Remove Context"))
-                                .on_click({
-                                    let on_remove = on_remove.clone();
-                                    move |event, window, cx| on_remove(event, window, cx)
-                                }),
+                            IconButton::new(
+                                context.context.element_id("remove".into()),
+                                IconName::Close,
+                            )
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .tooltip(Tooltip::text("Remove Context"))
+                            .on_click({
+                                let on_remove = on_remove.clone();
+                                move |event, window, cx| on_remove(event, window, cx)
+                            }),
                         )
                     })
                     .when_some(on_click.as_ref(), |element, on_click| {
@@ -262,9 +262,11 @@ pub enum ContextStatus {
     Error { message: SharedString },
 }
 
-#[derive(RegisterComponent)]
+// TODO: Component commented out due to new dependency on `Project`.
+//
+// #[derive(RegisterComponent)]
 pub struct AddedContext {
-    pub id: ContextId,
+    pub context: AgentContext,
     pub kind: ContextKind,
     pub name: SharedString,
     pub parent: Option<SharedString>,
@@ -275,10 +277,19 @@ pub struct AddedContext {
 }
 
 impl AddedContext {
-    pub fn new(context: &AssistantContext, cx: &App) -> AddedContext {
+    /// Creates an `AddedContext` by retrieving relevant details of `AgentContext`. This returns a
+    /// `None` if `DirectoryContext` or `RulesContext` no longer exist.
+    ///
+    /// TODO: `None` cases are unremovable from `ContextStore` and so are a very minor memory leak.
+    pub fn new(
+        context: AgentContext,
+        prompt_store: Option<&Entity<PromptStore>>,
+        project: &Project,
+        cx: &App,
+    ) -> Option<AddedContext> {
         match context {
-            AssistantContext::File(file_context) => {
-                let full_path = file_context.context_buffer.full_path(cx);
+            AgentContext::File(ref file_context) => {
+                let full_path = file_context.buffer.read(cx).file()?.full_path(cx);
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path
@@ -289,8 +300,7 @@ impl AddedContext {
                     .parent()
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().into_owned().into());
-                AddedContext {
-                    id: file_context.id,
+                Some(AddedContext {
                     kind: ContextKind::File,
                     name,
                     parent,
@@ -298,18 +308,16 @@ impl AddedContext {
                     icon_path: FileIcons::get_icon(&full_path, cx),
                     status: ContextStatus::Ready,
                     render_preview: None,
-                }
+                    context,
+                })
             }
 
-            AssistantContext::Directory(directory_context) => {
-                let worktree = directory_context.worktree.read(cx);
-                // If the directory no longer exists, use its last known path.
-                let full_path = worktree
-                    .entry_for_id(directory_context.entry_id)
-                    .map_or_else(
-                        || directory_context.last_path.clone(),
-                        |entry| worktree.full_path(&entry.path).into(),
-                    );
+            AgentContext::Directory(ref directory_context) => {
+                let worktree = project
+                    .worktree_for_entry(directory_context.entry_id, cx)?
+                    .read(cx);
+                let entry = worktree.entry_for_id(directory_context.entry_id)?;
+                let full_path = worktree.full_path(&entry.path);
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
                 let name = full_path
@@ -320,8 +328,7 @@ impl AddedContext {
                     .parent()
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().into_owned().into());
-                AddedContext {
-                    id: directory_context.id,
+                Some(AddedContext {
                     kind: ContextKind::Directory,
                     name,
                     parent,
@@ -329,33 +336,34 @@ impl AddedContext {
                     icon_path: None,
                     status: ContextStatus::Ready,
                     render_preview: None,
-                }
+                    context,
+                })
             }
 
-            AssistantContext::Symbol(symbol_context) => AddedContext {
-                id: symbol_context.id,
+            AgentContext::Symbol(ref symbol_context) => Some(AddedContext {
                 kind: ContextKind::Symbol,
-                name: symbol_context.context_symbol.id.name.clone(),
+                name: symbol_context.symbol.clone(),
                 parent: None,
                 tooltip: None,
                 icon_path: None,
                 status: ContextStatus::Ready,
                 render_preview: None,
-            },
+                context,
+            }),
 
-            AssistantContext::Selection(selection_context) => {
-                let full_path = selection_context.context_buffer.full_path(cx);
+            AgentContext::Selection(ref selection_context) => {
+                let buffer = selection_context.buffer.read(cx);
+                let full_path = buffer.file()?.full_path(cx);
                 let mut full_path_string = full_path.to_string_lossy().into_owned();
                 let mut name = full_path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| full_path_string.clone());
 
-                let line_range_text = format!(
-                    " ({}-{})",
-                    selection_context.line_range.start.row + 1,
-                    selection_context.line_range.end.row + 1
-                );
+                let line_range = selection_context.range.to_point(&buffer.snapshot());
+
+                let line_range_text =
+                    format!(" ({}-{})", line_range.start.row + 1, line_range.end.row + 1);
 
                 full_path_string.push_str(&line_range_text);
                 name.push_str(&line_range_text);
@@ -365,16 +373,17 @@ impl AddedContext {
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().into_owned().into());
 
-                AddedContext {
-                    id: selection_context.id,
+                Some(AddedContext {
                     kind: ContextKind::Selection,
                     name: name.into(),
                     parent,
                     tooltip: None,
                     icon_path: FileIcons::get_icon(&full_path, cx),
                     status: ContextStatus::Ready,
+                    render_preview: None,
+                    /*
                     render_preview: Some(Rc::new({
-                        let content = selection_context.context_buffer.text.clone();
+                        let content = selection_context.text.clone();
                         move |_, cx| {
                             div()
                                 .id("context-pill-selection-preview")
@@ -385,11 +394,12 @@ impl AddedContext {
                                 .into_any_element()
                         }
                     })),
-                }
+                    */
+                    context,
+                })
             }
 
-            AssistantContext::FetchedUrl(fetched_url_context) => AddedContext {
-                id: fetched_url_context.id,
+            AgentContext::FetchedUrl(ref fetched_url_context) => Some(AddedContext {
                 kind: ContextKind::FetchedUrl,
                 name: fetched_url_context.url.clone(),
                 parent: None,
@@ -397,12 +407,12 @@ impl AddedContext {
                 icon_path: None,
                 status: ContextStatus::Ready,
                 render_preview: None,
-            },
+                context,
+            }),
 
-            AssistantContext::Thread(thread_context) => AddedContext {
-                id: thread_context.id,
+            AgentContext::Thread(ref thread_context) => Some(AddedContext {
                 kind: ContextKind::Thread,
-                name: thread_context.summary(cx),
+                name: thread_context.name(cx),
                 parent: None,
                 tooltip: None,
                 icon_path: None,
@@ -418,36 +428,41 @@ impl AddedContext {
                     ContextStatus::Ready
                 },
                 render_preview: None,
-            },
+                context,
+            }),
 
-            AssistantContext::Rules(user_rules_context) => AddedContext {
-                id: user_rules_context.id,
-                kind: ContextKind::Rules,
-                name: user_rules_context.title.clone(),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                status: ContextStatus::Ready,
-                render_preview: None,
-            },
+            AgentContext::Rules(ref user_rules_context) => {
+                let name = prompt_store
+                    .as_ref()?
+                    .read(cx)
+                    .metadata(user_rules_context.prompt_id.into())?
+                    .title?;
+                Some(AddedContext {
+                    kind: ContextKind::Rules,
+                    name: name.clone(),
+                    parent: None,
+                    tooltip: None,
+                    icon_path: None,
+                    status: ContextStatus::Ready,
+                    render_preview: None,
+                    context,
+                })
+            }
 
-            AssistantContext::Image(image_context) => AddedContext {
-                id: image_context.id,
+            AgentContext::Image(ref image_context) => Some(AddedContext {
                 kind: ContextKind::Image,
                 name: "Image".into(),
                 parent: None,
                 tooltip: None,
                 icon_path: None,
-                status: if image_context.is_loading() {
-                    ContextStatus::Loading {
+                status: match image_context.status() {
+                    ImageStatus::Loading => ContextStatus::Loading {
                         message: "Loading…".into(),
-                    }
-                } else if image_context.is_error() {
-                    ContextStatus::Error {
+                    },
+                    ImageStatus::Error => ContextStatus::Error {
                         message: "Failed to load image".into(),
-                    }
-                } else {
-                    ContextStatus::Ready
+                    },
+                    ImageStatus::Ready => ContextStatus::Ready,
                 },
                 render_preview: Some(Rc::new({
                     let image = image_context.original_image.clone();
@@ -458,7 +473,8 @@ impl AddedContext {
                             .into_any_element()
                     }
                 })),
-            },
+                context,
+            }),
         }
     }
 }
@@ -478,6 +494,8 @@ impl Render for ContextPillPreview {
     }
 }
 
+// TODO: Component commented out due to new dependency on `Project`.
+/*
 impl Component for AddedContext {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
@@ -487,12 +505,13 @@ impl Component for AddedContext {
         "AddedContext"
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        let next_context_id = ContextId::zero();
         let image_ready = (
             "Ready",
             AddedContext::new(
-                &AssistantContext::Image(ImageContext {
-                    id: ContextId(0),
+                AgentContext::Image(ImageContext {
+                    context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
                 }),
@@ -503,8 +522,8 @@ impl Component for AddedContext {
         let image_loading = (
             "Loading",
             AddedContext::new(
-                &AssistantContext::Image(ImageContext {
-                    id: ContextId(1),
+                AgentContext::Image(ImageContext {
+                    context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: cx
                         .background_spawn(async move {
@@ -520,8 +539,8 @@ impl Component for AddedContext {
         let image_error = (
             "Error",
             AddedContext::new(
-                &AssistantContext::Image(ImageContext {
-                    id: ContextId(2),
+                AgentContext::Image(ImageContext {
+                    context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(None).shared(),
                 }),
@@ -544,5 +563,8 @@ impl Component for AddedContext {
                 )
                 .into_any(),
         )
+
+        None
     }
 }
+*/

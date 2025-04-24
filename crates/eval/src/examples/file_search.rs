@@ -1,5 +1,5 @@
 use anyhow::Result;
-use assistant_tools::PathSearchToolInput;
+use assistant_tools::FindPathToolInput;
 use async_trait::async_trait;
 use regex::Regex;
 
@@ -15,7 +15,7 @@ impl Example for FileSearchExample {
             url: "https://github.com/zed-industries/zed.git".to_string(),
             revision: "03ecb88fe30794873f191ddb728f597935b3101c".to_string(),
             language_server: None,
-            max_assertions: Some(4),
+            max_assertions: Some(3),
         }
     }
 
@@ -32,21 +32,18 @@ impl Example for FileSearchExample {
         ));
 
         let response = cx.run_turn().await?;
-        let tool_use = response.expect_tool("path_search", cx)?;
-        let input = tool_use.expect_input::<PathSearchToolInput>(cx)?;
+        let tool_use = response.expect_tool("find_path", cx)?;
+        let input = tool_use.parse_input::<FindPathToolInput>()?;
 
         let glob = input.glob;
-        cx.assert(
-            glob.ends_with(FILENAME),
-            format!("glob ends with `{FILENAME}`"),
-        )?;
+        cx.assert(glob.ends_with(FILENAME), "glob ends with file name")?;
 
         let without_filename = glob.replace(FILENAME, "");
         let matches = Regex::new("(\\*\\*|zed)/(\\*\\*?/)?")
             .unwrap()
             .is_match(&without_filename);
 
-        cx.assert(matches, "glob starts with either `**` or `zed`")?;
+        cx.assert(matches, "glob starts with `**` or project")?;
 
         Ok(())
     }

@@ -12,10 +12,10 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
-    LanguageModelKnownError, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, MessageContent,
-    RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::{ResultExt, maybe};
+use util::ResultExt;
 
 const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: &str = "Anthropic";
@@ -448,7 +448,12 @@ impl LanguageModel for AnthropicModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = into_anthropic(
             request,
             self.model.request_id().into(),
@@ -626,7 +631,7 @@ pub fn into_anthropic(
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -714,61 +719,58 @@ pub fn map_to_language_model_completion_events(
                                 if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
                                     tool_use.input_json.push_str(&partial_json);
 
-                                    return Some((
-                                        vec![maybe!({
-                                            Ok(LanguageModelCompletionEvent::ToolUse(
+                                    // Try to convert invalid (incomplete) JSON into
+                                    // valid JSON that serde can accept, e.g. by closing
+                                    // unclosed delimiters. This way, we can update the
+                                    // UI with whatever has been streamed back so far.
+                                    if let Ok(input) = serde_json::Value::from_str(
+                                        &partial_json_fixer::fix_json(&tool_use.input_json),
+                                    ) {
+                                        return Some((
+                                            vec![Ok(LanguageModelCompletionEvent::ToolUse(
                                                 LanguageModelToolUse {
                                                     id: tool_use.id.clone().into(),
                                                     name: tool_use.name.clone().into(),
                                                     is_input_complete: false,
-                                                    input: if tool_use.input_json.is_empty() {
-                                                        serde_json::Value::Object(
-                                                            serde_json::Map::default(),
-                                                        )
-                                                    } else {
-                                                        serde_json::Value::from_str(
-                                                            // Convert invalid (incomplete) JSON into
-                                                            // JSON that serde will accept, e.g. by closing
-                                                            // unclosed delimiters. This way, we can update
-                                                            // the UI with whatever has been streamed back so far.
-                                                            &partial_json_fixer::fix_json(
-                                                                &tool_use.input_json,
-                                                            ),
-                                                        )
-                                                        .map_err(|err| anyhow!(err))?
-                                                    },
+                                                    raw_input: tool_use.input_json.clone(),
+                                                    input,
                                                 },
-                                            ))
-                                        })],
-                                        state,
-                                    ));
+                                            ))],
+                                            state,
+                                        ));
+                                    }
                                 }
                             }
                         },
                         Event::ContentBlockStop { index } => {
                             if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
-                                return Some((
-                                    vec![maybe!({
-                                        Ok(LanguageModelCompletionEvent::ToolUse(
-                                            LanguageModelToolUse {
-                                                id: tool_use.id.into(),
-                                                name: tool_use.name.into(),
-                                                is_input_complete: true,
-                                                input: if tool_use.input_json.is_empty() {
-                                                    serde_json::Value::Object(
-                                                        serde_json::Map::default(),
-                                                    )
-                                                } else {
-                                                    serde_json::Value::from_str(
-                                                        &tool_use.input_json,
-                                                    )
-                                                    .map_err(|err| anyhow!(err))?
-                                                },
-                                            },
-                                        ))
-                                    })],
-                                    state,
-                                ));
+                                let input_json = tool_use.input_json.trim();
+                                let input_value = if input_json.is_empty() {
+                                    Ok(serde_json::Value::Object(serde_json::Map::default()))
+                                } else {
+                                    serde_json::Value::from_str(input_json)
+                                };
+                                let event_result = match input_value {
+                                    Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                        LanguageModelToolUse {
+                                            id: tool_use.id.into(),
+                                            name: tool_use.name.into(),
+                                            is_input_complete: true,
+                                            input,
+                                            raw_input: tool_use.input_json.clone(),
+                                        },
+                                    )),
+                                    Err(json_parse_err) => {
+                                        Err(LanguageModelCompletionError::BadInputJson {
+                                            id: tool_use.id.into(),
+                                            tool_name: tool_use.name.into(),
+                                            raw_input: input_json.into(),
+                                            json_parse_error: json_parse_err.to_string(),
+                                        })
+                                    }
+                                };
+
+                                return Some((vec![event_result], state));
                             }
                         }
                         Event::MessageStart { message } => {
@@ -815,14 +817,19 @@ pub fn map_to_language_model_completion_events(
                         }
                         Event::Error { error } => {
                             return Some((
-                                vec![Err(anyhow!(AnthropicError::ApiError(error)))],
+                                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                                    AnthropicError::ApiError(error)
+                                )))],
                                 state,
                             ));
                         }
                         _ => {}
                     },
                     Err(err) => {
-                        return Some((vec![Err(anthropic_err_to_anyhow(err))], state));
+                        return Some((
+                            vec![Err(LanguageModelCompletionError::Other(anyhow!(err)))],
+                            state,
+                        ));
                     }
                 }
             }

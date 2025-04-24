@@ -83,7 +83,6 @@ impl VsCodeDebugTaskDefinition {
     }
 }
 
-/// blah
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VsCodeDebugTaskFile {

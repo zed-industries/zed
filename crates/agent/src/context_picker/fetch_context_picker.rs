@@ -227,7 +227,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let added = self.context_store.upgrade().map_or(false, |context_store| {
-            context_store.read(cx).includes_url(&self.url).is_some()
+            context_store.read(cx).includes_url(&self.url)
         });
 
         Some(
