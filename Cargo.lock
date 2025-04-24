@@ -6018,6 +6018,7 @@ dependencies = [
  "multi_buffer",
  "notifications",
  "panel",
+ "paths",
  "picker",
  "postage",
  "pretty_assertions",

@@ -46,6 +46,7 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
+use paths;
 use project::git_store::RepositoryEvent;
 use project::{
     Fs, Project, ProjectPath,
@@ -54,6 +55,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::future::Future;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -1716,6 +1718,18 @@ impl GitPanel {
             }
         });
 
+        let default_prompt: &str = include_str!("commit_message_prompt.txt");
+        const COMMIT_PROMPT_FILENAME: &str = "commit_message_prompt.txt";
+        let custom_prompt: Option<String> = {
+            let prompt_path = paths::config_dir().join(COMMIT_PROMPT_FILENAME);
+
+            if prompt_path.exists() {
+                fs::read_to_string(prompt_path).ok()
+            } else {
+                None
+            }
+        };
+
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
@@ -1735,13 +1749,17 @@ impl GitPanel {
 
                 let text_empty = subject.trim().is_empty();
 
-                let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
+                let prompt: &str = if let Some(ref p) = custom_prompt {
+                    p.as_str()
                 } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                    default_prompt
                 };
 
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
+                let content = if text_empty {
+                    format!("{prompt}\nHere are the changes in this commit:\n{diff_text}")
+                } else {
+                    format!("{prompt}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                };
 
                 let request = LanguageModelRequest {
                     thread_id: None,
