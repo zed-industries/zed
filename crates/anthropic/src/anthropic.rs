@@ -1,5 +1,3 @@
-mod supported_countries;
-
 use std::str::FromStr;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -10,8 +8,6 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
-
-pub use supported_countries::*;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
