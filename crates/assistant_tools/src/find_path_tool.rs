@@ -16,7 +16,7 @@ use util::{ResultExt, paths::PathMatcher};
 use workspace::Workspace;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct PathSearchToolInput {
+pub struct FindPathToolInput {
     /// The glob to match against every path in the project.
     ///
     /// <example>
@@ -38,12 +38,11 @@ pub struct PathSearchToolInput {
 
 const RESULTS_PER_PAGE: usize = 50;
 
-#[derive(RegisterComponent)]
-pub struct PathSearchTool;
+pub struct FindPathTool;
 
-impl Tool for PathSearchTool {
+impl Tool for FindPathTool {
     fn name(&self) -> String {
-        "path_search".into()
+        "find_path".into()
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
@@ -51,7 +50,7 @@ impl Tool for PathSearchTool {
     }
 
     fn description(&self) -> String {
-        include_str!("./path_search_tool/description.md").into()
+        include_str!("./find_path_tool/description.md").into()
     }
 
     fn icon(&self) -> IconName {
@@ -59,12 +58,12 @@ impl Tool for PathSearchTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        json_schema_for::<PathSearchToolInput>(format)
+        json_schema_for::<FindPathToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<PathSearchToolInput>(input.clone()) {
-            Ok(input) => format!("Find paths matching \"`{}`\"", input.glob),
+        match serde_json::from_value::<FindPathToolInput>(input.clone()) {
+            Ok(input) => format!("Find paths matching “`{}`”", input.glob),
             Err(_) => "Search paths".to_string(),
         }
     }
@@ -78,7 +77,7 @@ impl Tool for PathSearchTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input.clone()) {
+        let (offset, glob) = match serde_json::from_value::<FindPathToolInput>(input) {
             Ok(input) => (input.offset, input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
@@ -100,13 +99,13 @@ impl Tool for PathSearchTool {
 
             Some(
                 cx.new(|cx| {
-                    PathSearchToolCard::new(total_matches, matches_for_card, glob.clone(), cx)
+                    FindPathToolCard::new(total_matches, matches_for_card, glob.clone(), cx)
                 })
                 .into(),
             )
         } else {
             Some(
-                cx.new(|cx| PathSearchToolCard::new(0, Vec::new(), glob.clone(), cx))
+                cx.new(|cx| FindPathToolCard::new(0, Vec::new(), glob.clone(), cx))
                     .into(),
             )
         };
@@ -169,14 +168,14 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Result<Ve
     Ok(matches)
 }
 
-struct PathSearchToolCard {
+struct FindPathToolCard {
     total_matches: usize,
     paths: Vec<String>,
     expanded: bool,
     glob: String,
 }
 
-impl PathSearchToolCard {
+impl FindPathToolCard {
     fn new(
         total_matches: usize,
         paths: Vec<String>,
@@ -192,7 +191,7 @@ impl PathSearchToolCard {
     }
 }
 
-impl ToolCard for PathSearchToolCard {
+impl ToolCard for FindPathToolCard {
     fn render(
         &mut self,
         _status: &ToolUseStatus,
@@ -297,7 +296,7 @@ impl ToolCard for PathSearchToolCard {
     }
 }
 
-impl Component for PathSearchTool {
+impl Component for FindPathTool {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
     }
@@ -307,7 +306,7 @@ impl Component for PathSearchTool {
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let successful_card = cx.new(|_| PathSearchToolCard {
+        let successful_card = cx.new(|_| FindPathToolCard {
             total_matches: 3,
             paths: vec![
                 "src/main.rs".to_string(),
@@ -318,7 +317,7 @@ impl Component for PathSearchTool {
             glob: "*.rs".to_string(),
         });
 
-        let empty_card = cx.new(|_| PathSearchToolCard {
+        let empty_card = cx.new(|_| FindPathToolCard {
             total_matches: 0,
             paths: Vec::new(),
             expanded: false,
@@ -375,7 +374,7 @@ mod test {
     use util::path;
 
     #[gpui::test]
-    async fn test_path_search_tool(cx: &mut TestAppContext) {
+    async fn test_find_path_tool(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(

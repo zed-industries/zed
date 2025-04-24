@@ -172,19 +172,3 @@ enum LanguageModelRole {
     LanguageModelSystem = 2;
     reserved 3;
 }
-
-message CountLanguageModelTokens {
-    LanguageModelProvider provider = 1;
-    string request = 2;
-}
-
-message CountLanguageModelTokensResponse {
-    uint32 token_count = 1;
-}
-
-enum LanguageModelProvider {
-    Anthropic = 0;
-    OpenAI = 1;
-    Google = 2;
-    Zed = 3;
-}

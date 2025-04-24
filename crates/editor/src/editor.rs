@@ -394,9 +394,31 @@ pub trait DiagnosticRenderer {
         editor: WeakEntity<Editor>,
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>>;
+
+    fn render_hover(
+        &self,
+        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        range: Range<Point>,
+        buffer_id: BufferId,
+        cx: &mut App,
+    ) -> Option<Entity<markdown::Markdown>>;
+
+    fn open_link(
+        &self,
+        editor: &mut Editor,
+        link: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    );
 }
 
 pub(crate) struct GlobalDiagnosticRenderer(pub Arc<dyn DiagnosticRenderer>);
+
+impl GlobalDiagnosticRenderer {
+    fn global(cx: &App) -> Option<Arc<dyn DiagnosticRenderer>> {
+        cx.try_global::<Self>().map(|g| g.0.clone())
+    }
+}
 
 impl gpui::Global for GlobalDiagnosticRenderer {}
 pub fn set_diagnostic_renderer(renderer: impl DiagnosticRenderer + 'static, cx: &mut App) {
@@ -867,7 +889,7 @@ pub struct Editor {
     read_only: bool,
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
-    hover_state: HoverState,
+    pub hover_state: HoverState,
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
@@ -14788,25 +14810,17 @@ impl Editor {
         }
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
-        let Some(diagnostic_renderer) = cx
-            .try_global::<GlobalDiagnosticRenderer>()
-            .map(|g| g.0.clone())
-        else {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let Some(renderer) = GlobalDiagnosticRenderer::global(cx) else {
             return;
         };
-        let buffer = self.buffer.read(cx).snapshot(cx);
 
         let diagnostic_group = buffer
             .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
             .collect::<Vec<_>>();
 
-        let blocks = diagnostic_renderer.render_group(
-            diagnostic_group,
-            buffer_id,
-            snapshot,
-            cx.weak_entity(),
-            cx,
-        );
+        let blocks =
+            renderer.render_group(diagnostic_group, buffer_id, snapshot, cx.weak_entity(), cx);
 
         let blocks = self.display_map.update(cx, |display_map, cx| {
             display_map.insert_blocks(blocks, cx).into_iter().collect()
