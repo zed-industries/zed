@@ -1,7 +1,9 @@
 use crate::persistence::DebuggerPaneItem;
 use crate::{
-    ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, Pause, Restart, StepBack,
-    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
+    ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, FocusBreakpointList,
+    FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
+    Pause, Restart, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
+    persistence,
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
@@ -1114,6 +1116,23 @@ impl DebugPanel {
         }
     }
 
+    fn activate_item(
+        &mut self,
+        item: DebuggerPaneItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(session) = self.active_session() {
+            session.update(cx, |session, cx| {
+                if let Some(running) = session.mode().as_running() {
+                    running.update(cx, |running, cx| {
+                        running.activate_item(item, window, cx);
+                    })
+                }
+            })
+        }
+    }
+
     fn activate_session(
         &mut self,
         session_item: Entity<DebugSession>,
@@ -1251,6 +1270,69 @@ impl Render for DebugPanel {
                 move |_: &workspace::ActivatePaneDown, window, cx| {
                     this.update(cx, |this, cx| {
                         this.activate_pane_in_direction(SplitDirection::Down, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusConsole, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Console, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusVariables, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Variables, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusBreakpointList, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::BreakpointList, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusFrames, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Frames, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusModules, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Modules, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusLoadedSources, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::LoadedSources, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusTerminal, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Terminal, window, cx);
                     })
                     .ok();
                 }

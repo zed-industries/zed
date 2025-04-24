@@ -810,8 +810,7 @@ impl RunningState {
         &self.module_list
     }
 
-    #[cfg(test)]
-    pub(crate) fn activate_modules_list(&self, window: &mut Window, cx: &mut App) {
+    pub(crate) fn activate_item(&self, item: DebuggerPaneItem, window: &mut Window, cx: &mut App) {
         let (variable_list_position, pane) = self
             .panes
             .panes()
@@ -819,7 +818,7 @@ impl RunningState {
             .find_map(|pane| {
                 pane.read(cx)
                     .items_of_type::<SubView>()
-                    .position(|view| view.read(cx).view_kind().to_shared_string() == *"Modules")
+                    .position(|view| view.read(cx).view_kind() == item)
                     .map(|view| (view, pane))
             })
             .unwrap();
@@ -827,6 +826,7 @@ impl RunningState {
             this.activate_item(variable_list_position, true, true, window, cx);
         })
     }
+
     #[cfg(test)]
     pub(crate) fn variable_list(&self) -> &Entity<VariableList> {
         &self.variable_list
