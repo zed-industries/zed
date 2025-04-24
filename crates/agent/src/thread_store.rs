@@ -24,8 +24,8 @@ use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
 use prompt_store::{
-    ProjectContext, PromptBuilder, PromptId, PromptMetadata, PromptStore, PromptsUpdatedEvent,
-    RulesFileContext, UserPromptId, UserRulesContext, WorktreeContext,
+    ProjectContext, PromptBuilder, PromptId, PromptStore, PromptsUpdatedEvent, RulesFileContext,
+    UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};

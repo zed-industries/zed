@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::anyhow;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use prompt_store::{PromptId, UserPromptId};

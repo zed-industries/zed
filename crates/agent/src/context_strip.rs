@@ -1,25 +1,23 @@
-use std::iter;
 use std::path::Path;
 use std::rc::Rc;
 
-use collections::{HashSet, IndexSet};
+use collections::HashSet;
 use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
-    App, Bounds, ClickEvent, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    App, Bounds, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, WeakEntity,
 };
 use itertools::Itertools;
 use language::Buffer;
-use project::{ProjectEntryId, ProjectItem};
-use prompt_store::PromptStore;
+use project::ProjectItem;
 use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
-use workspace::{Workspace, notifications::NotifyResultExt};
+use workspace::Workspace;
 
 use crate::context::{AssistantContext, ContextKind};
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
-use crate::thread::{Thread, ThreadId};
+use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
 use crate::ui::{AddedContext, ContextPill};
 use crate::{
@@ -358,7 +356,6 @@ impl Focusable for ContextStrip {
 
 impl Render for ContextStrip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let context_store = self.context_store.read(cx);
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 

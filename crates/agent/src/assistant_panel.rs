@@ -25,7 +25,7 @@ use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::{PromptBuilder, PromptId, PromptStore, UserPromptId};
+use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;

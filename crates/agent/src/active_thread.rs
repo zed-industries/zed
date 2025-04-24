@@ -25,8 +25,8 @@ use gpui::{
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolUseId, RequestUsage, Role,
-    StopReason,
+    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent,
+    RequestUsage, Role, StopReason,
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
@@ -1253,20 +1253,30 @@ impl ActiveThread {
                 };
                 let message_text = editor.read(cx).text(cx);
 
-                let content = message.context_text.to_string() + &message_text;
-
-                if content.is_empty() {
+                if message_text.is_empty() && message.loaded_context.is_empty() {
                     return None;
+                }
+
+                let mut request_message = LanguageModelRequestMessage {
+                    role: language_model::Role::User,
+                    content: Vec::new(),
+                    cache: false,
+                };
+
+                message
+                    .loaded_context
+                    .add_to_request_message(&mut request_message);
+
+                if !message_text.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text(message_text.into()));
                 }
 
                 let request = language_model::LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
-                    messages: vec![LanguageModelRequestMessage {
-                        role: language_model::Role::User,
-                        content: vec![content.into()],
-                        cache: false,
-                    }],
+                    messages: vec![request_message],
                     tools: vec![],
                     stop: vec![],
                     temperature: None,
@@ -3261,7 +3271,8 @@ pub(crate) fn open_context(
             }),
             cx,
         ),
-        // AssistantContext::Image(_) => {}
+
+        AssistantContext::Image(_) => {}
     }
 }
 

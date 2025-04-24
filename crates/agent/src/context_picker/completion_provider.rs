@@ -15,7 +15,6 @@ use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
-use prompt_store::PromptId;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
@@ -443,7 +442,6 @@ impl ContextPickerCompletionProvider {
         source_range: Range<Anchor>,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
-        thread_store: Entity<ThreadStore>,
     ) -> Completion {
         let new_text = MentionLink::for_rules(&rules);
         let new_text_len = new_text.len();
@@ -785,17 +783,13 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             ))
                         }
 
-                        Match::Rules(user_rules) => {
-                            let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
-                            Some(Self::completion_for_rules(
-                                user_rules,
-                                excerpt_id,
-                                source_range.clone(),
-                                editor.clone(),
-                                context_store.clone(),
-                                thread_store,
-                            ))
-                        }
+                        Match::Rules(user_rules) => Some(Self::completion_for_rules(
+                            user_rules,
+                            excerpt_id,
+                            source_range.clone(),
+                            editor.clone(),
+                            context_store.clone(),
+                        )),
 
                         Match::Fetch(url) => Some(Self::completion_for_fetch(
                             source_range.clone(),

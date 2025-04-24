@@ -13,13 +13,13 @@ use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
-use language::Buffer;
 use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
+use language::Buffer;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelImage, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
@@ -36,7 +36,7 @@ use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 
-use crate::context::AssistantContext;
+use crate::context::{AssistantContext, LoadedContext};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse, SharedProjectContext,
@@ -100,8 +100,7 @@ pub struct Message {
     pub role: Role,
     pub segments: Vec<MessageSegment>,
     pub context: Vec<AssistantContext>,
-    pub context_text: String,
-    pub images: Vec<LanguageModelImage>,
+    pub loaded_context: LoadedContext,
 }
 
 impl Message {
@@ -140,8 +139,8 @@ impl Message {
     pub fn to_string(&self) -> String {
         let mut result = String::new();
 
-        if !self.context_text.is_empty() {
-            result.push_str(&self.context_text);
+        if !self.loaded_context.text.is_empty() {
+            result.push_str(&self.loaded_context.text);
         }
 
         for segment in &self.segments {
@@ -417,9 +416,11 @@ impl Thread {
                             }
                         })
                         .collect(),
-                    context_text: message.context,
                     context: Vec::new(),
-                    images: Vec::new(),
+                    loaded_context: LoadedContext {
+                        text: message.context,
+                        images: Vec::new(),
+                    },
                 })
                 .collect(),
             next_message_id,
@@ -704,12 +705,11 @@ impl Thread {
         &mut self,
         text: String,
         context: Vec<AssistantContext>,
-        context_text: String,
+        loaded_context: LoadedContext,
         context_buffers: HashSet<Entity<Buffer>>,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        // Track all buffers added as context
         if !context_buffers.is_empty() {
             self.action_log.update(cx, |log, cx| {
                 for buffer in context_buffers {
@@ -718,24 +718,11 @@ impl Thread {
             });
         }
 
-        /* todo!
-                message.images = new_context
-                    .iter()
-                    .filter_map(|context| {
-                        if let AssistantContext::Image(image_context) = context {
-                            image_context.image_task.clone().now_or_never().flatten()
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-        */
-
         let message_id = self.insert_message(
             Role::User,
             vec![MessageSegment::Text(text)],
             context,
-            context_text,
+            loaded_context,
             cx,
         );
 
@@ -751,12 +738,26 @@ impl Thread {
         message_id
     }
 
+    pub fn insert_assistant_message(
+        &mut self,
+        segments: Vec<MessageSegment>,
+        cx: &mut Context<Self>,
+    ) -> MessageId {
+        self.insert_message(
+            Role::Assistant,
+            segments,
+            vec![],
+            LoadedContext::default(),
+            cx,
+        )
+    }
+
     pub fn insert_message(
         &mut self,
         role: Role,
         segments: Vec<MessageSegment>,
         context: Vec<AssistantContext>,
-        context_text: String,
+        loaded_context: LoadedContext,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
@@ -765,8 +766,7 @@ impl Thread {
             role,
             segments,
             context,
-            context_text,
-            images: Vec::new(),
+            loaded_context,
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -881,7 +881,7 @@ impl Thread {
                                 content: tool_result.content.clone(),
                             })
                             .collect(),
-                        context: message.context_text.clone(),
+                        context: message.loaded_context.text.clone(),
                     })
                     .collect(),
                 initial_project_snapshot,
@@ -1002,26 +1002,9 @@ impl Thread {
             self.tool_use
                 .attach_tool_results(message.id, &mut request_message);
 
-            if !message.context_text.is_empty() {
-                request_message
-                    .content
-                    .push(MessageContent::Text(message.context_text.to_string()));
-            }
-
-            if !message.images.is_empty() {
-                // Some providers only support image parts after an initial text part
-                if request_message.content.is_empty() {
-                    request_message
-                        .content
-                        .push(MessageContent::Text("Images attached by user:".to_string()));
-                }
-
-                for image in &message.images {
-                    request_message
-                        .content
-                        .push(MessageContent::Image(image.clone()))
-                }
-            }
+            message
+                .loaded_context
+                .add_to_request_message(&mut request_message);
 
             for segment in &message.segments {
                 match segment {
@@ -1201,11 +1184,8 @@ impl Thread {
                     thread.update(cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
-                                thread.insert_message(
-                                    Role::Assistant,
+                                thread.insert_assistant_message(
                                     vec![MessageSegment::Text(String::new())],
-                                    vec![],
-                                    String::new(),
                                     cx,
                                 );
                             }
@@ -1234,11 +1214,8 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(
-                                            Role::Assistant,
+                                        thread.insert_assistant_message(
                                             vec![MessageSegment::Text(chunk.to_string())],
-                                            vec![],
-                                            String::new(),
                                             cx,
                                         );
                                     };
@@ -1261,14 +1238,11 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(
-                                            Role::Assistant,
+                                        thread.insert_assistant_message(
                                             vec![MessageSegment::Thinking {
                                                 text: chunk.to_string(),
                                                 signature,
                                             }],
-                                            vec![],
-                                            String::new(),
                                             cx,
                                         );
                                     };
@@ -1280,15 +1254,7 @@ impl Thread {
                                     .iter_mut()
                                     .rfind(|message| message.role == Role::Assistant)
                                     .map(|message| message.id)
-                                    .unwrap_or_else(|| {
-                                        thread.insert_message(
-                                            Role::Assistant,
-                                            vec![],
-                                            vec![],
-                                            String::new(),
-                                            cx,
-                                        )
-                                    });
+                                    .unwrap_or_else(|| thread.insert_assistant_message(vec![], cx));
 
                                 let tool_use_id = tool_use.id.clone();
                                 let streamed_input = if tool_use.is_input_complete {
@@ -1702,7 +1668,7 @@ impl Thread {
     pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
         // Tool results are assumed to be waiting on the next message id, so they will populate
         // this empty message before sending to model. Would prefer this to be more straightforward.
-        self.insert_message(Role::User, vec![], vec![], String::new(), cx);
+        self.insert_message(Role::User, vec![], vec![], LoadedContext::default(), cx);
         self.auto_capture_telemetry(cx);
     }
 
@@ -1980,8 +1946,16 @@ impl Thread {
                 }
             )?;
 
-            if !message.context_text.is_empty() {
-                writeln!(markdown, "{}", message.context_text)?;
+            if !message.loaded_context.text.is_empty() {
+                writeln!(markdown, "{}", message.loaded_context.text)?;
+            }
+
+            if !message.loaded_context.images.is_empty() {
+                writeln!(
+                    markdown,
+                    "\n{} images attached as context.\n",
+                    message.loaded_context.images.len()
+                )?;
             }
 
             for segment in &message.segments {

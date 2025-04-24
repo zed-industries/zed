@@ -2,16 +2,12 @@ use std::hash::{Hash, Hasher};
 use std::usize;
 use std::{ops::Range, path::Path, sync::Arc};
 
-use anyhow::Context as _;
-use anyhow::Result;
-use collections::{FxHasher, HashSet};
-use fs::Fs;
+use collections::HashSet;
 use futures::future;
 use futures::{FutureExt, future::Shared};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
-use itertools::Itertools;
 use language::Buffer;
-use language_model::{LanguageModelImage, LanguageModelRequestMessage};
+use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use rope::{Point, Rope};
@@ -19,9 +15,7 @@ use text::{Anchor, OffsetRangeExt as _};
 use ui::{ElementId, IconName};
 use util::{ResultExt as _, post_inc};
 
-use crate::ThreadStore;
-use crate::context_store::ContextStore;
-use crate::thread::{DetailedSummaryState, PromptId, Thread, ThreadId};
+use crate::thread::Thread;
 
 pub const RULES_ICON: IconName = IconName::Context;
 
@@ -88,9 +82,7 @@ pub enum AssistantContext {
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
     Rules(RulesContext),
-    /*
     Image(ImageContext),
-    */
 }
 
 impl AssistantContext {
@@ -103,6 +95,7 @@ impl AssistantContext {
             Self::FetchedUrl(context) => &context.element_id,
             Self::Thread(context) => &context.element_id,
             Self::Rules(context) => &context.element_id,
+            Self::Image(context) => &context.element_id,
         };
         ElementId::NamedInteger(name, context_element_id.0)
     }
@@ -381,32 +374,75 @@ impl RulesContext {
     }
 }
 
-/*
 #[derive(Debug, Clone)]
 pub struct ImageContext {
-    pub id: ContextId,
     pub original_image: Arc<gpui::Image>,
     pub image_task: Shared<Task<Option<LanguageModelImage>>>,
+    pub element_id: ContextElementId,
+}
+
+pub enum ImageStatus {
+    Loading,
+    Error,
+    Ready,
 }
 
 impl ImageContext {
+    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+        self.original_image.id == other.original_image.id
+    }
+
+    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+        self.original_image.id.hash(state);
+    }
+
     pub fn image(&self) -> Option<LanguageModelImage> {
         self.image_task.clone().now_or_never().flatten()
     }
 
-    pub fn is_loading(&self) -> bool {
-        self.image_task.clone().now_or_never().is_none()
-    }
-
-    pub fn is_error(&self) -> bool {
-        self.image_task
-            .clone()
-            .now_or_never()
-            .map(|result| result.is_none())
-            .unwrap_or(false)
+    pub fn status(&self) -> ImageStatus {
+        match self.image_task.clone().now_or_never() {
+            None => ImageStatus::Loading,
+            Some(None) => ImageStatus::Error,
+            Some(Some(_)) => ImageStatus::Ready,
+        }
     }
 }
-*/
+
+#[derive(Debug, Clone, Default)]
+pub struct LoadedContext {
+    pub text: String,
+    pub images: Vec<LanguageModelImage>,
+}
+
+impl LoadedContext {
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty() && self.images.is_empty()
+    }
+
+    pub fn add_to_request_message(&self, request_message: &mut LanguageModelRequestMessage) {
+        if !self.text.is_empty() {
+            request_message
+                .content
+                .push(MessageContent::Text(self.text.to_string()));
+        }
+
+        if !self.images.is_empty() {
+            // Some providers only support image parts after an initial text part
+            if request_message.content.is_empty() {
+                request_message
+                    .content
+                    .push(MessageContent::Text("Images attached by user:".to_string()));
+            }
+
+            for image in &self.images {
+                request_message
+                    .content
+                    .push(MessageContent::Image(image.clone()))
+            }
+        }
+    }
+}
 
 /// Loads and formats a collection of contexts.
 pub fn load_context(
@@ -414,45 +450,54 @@ pub fn load_context(
     project: &Entity<Project>,
     prompt_store: &Option<Entity<PromptStore>>,
     cx: &mut App,
-) -> Task<(Option<String>, HashSet<Entity<Buffer>>)> {
-    let mut file_context_tasks = Vec::new();
-    let mut directory_context_tasks = Vec::new();
-    let mut symbol_context_tasks = Vec::new();
-    let mut selection_context_tasks = Vec::new();
+) -> Task<(LoadedContext, HashSet<Entity<Buffer>>)> {
+    let mut file_tasks = Vec::new();
+    let mut directory_tasks = Vec::new();
+    let mut symbol_tasks = Vec::new();
+    let mut selection_tasks = Vec::new();
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
-    let mut rules_context_tasks = Vec::new();
+    let mut rules_tasks = Vec::new();
+    let mut image_tasks = Vec::new();
 
     for context in contexts {
         match context {
-            AssistantContext::File(context) => file_context_tasks.extend(context.load(cx)),
+            AssistantContext::File(context) => file_tasks.extend(context.load(cx)),
             AssistantContext::Directory(context) => {
-                directory_context_tasks.extend(context.load(project.clone(), cx))
+                directory_tasks.extend(context.load(project.clone(), cx))
             }
-            AssistantContext::Symbol(context) => symbol_context_tasks.extend(context.load(cx)),
-            AssistantContext::Selection(context) => {
-                selection_context_tasks.extend(context.load(cx))
-            }
+            AssistantContext::Symbol(context) => symbol_tasks.extend(context.load(cx)),
+            AssistantContext::Selection(context) => selection_tasks.extend(context.load(cx)),
             AssistantContext::FetchedUrl(context) => fetch_context.push(context),
             AssistantContext::Thread(context) => thread_context.push(context.load(cx)),
-            AssistantContext::Rules(context) => {
-                rules_context_tasks.push(context.load(prompt_store, cx))
-            }
+            AssistantContext::Rules(context) => rules_tasks.push(context.load(prompt_store, cx)),
+            AssistantContext::Image(context) => image_tasks.push(context.image_task.clone()),
         }
     }
 
     cx.background_spawn(async move {
-        let (file_context, directory_context, symbol_context, selection_context, rules_context) =
-            futures::join!(
-                future::join_all(file_context_tasks),
-                future::join_all(directory_context_tasks),
-                future::join_all(symbol_context_tasks),
-                future::join_all(selection_context_tasks),
-                future::join_all(rules_context_tasks),
-            );
+        let (
+            file_context,
+            directory_context,
+            symbol_context,
+            selection_context,
+            rules_context,
+            images,
+        ) = futures::join!(
+            future::join_all(file_tasks),
+            future::join_all(directory_tasks),
+            future::join_all(symbol_tasks),
+            future::join_all(selection_tasks),
+            future::join_all(rules_tasks),
+            future::join_all(image_tasks)
+        );
 
         let directory_context = directory_context.into_iter().flatten().collect::<Vec<_>>();
         let rules_context = rules_context.into_iter().flatten().collect::<Vec<_>>();
+        let images = images.into_iter().flatten().collect::<Vec<_>>();
+
+        let mut buffers = HashSet::default();
+        let mut text = String::new();
 
         if file_context.is_empty()
             && directory_context.is_empty()
@@ -462,90 +507,91 @@ pub fn load_context(
             && thread_context.is_empty()
             && rules_context.is_empty()
         {
-            return (None, HashSet::default());
+            return (LoadedContext { text, images }, buffers);
         }
 
-        let mut buffers = HashSet::default();
-
-        let mut result = String::new();
-        result.push_str("\n<context>\n\
-            The following items were attached by the user. You don't need to use other tools to read them.\n\n");
+        text.push_str(
+            "\n<context>\n\
+            The following items were attached by the user. \
+            You don't need to use other tools to read them.\n\n",
+        );
 
         if !file_context.is_empty() {
-            result.push_str("<files>");
-            for (text, buffer) in file_context {
-                result.push('\n');
-                result.push_str(&text);
+            text.push_str("<files>");
+            for (file_text, buffer) in file_context {
+                text.push('\n');
+                text.push_str(&file_text);
                 buffers.insert(buffer);
             }
-            result.push_str("</files>\n");
+            text.push_str("</files>\n");
         }
 
         if !directory_context.is_empty() {
-            result.push_str("<directories>");
-            for (text, buffer) in directory_context {
-                result.push('\n');
-                result.push_str(&text);
+            text.push_str("<directories>");
+            for (file_text, buffer) in directory_context {
+                text.push('\n');
+                text.push_str(&file_text);
                 buffers.insert(buffer);
             }
-            result.push_str("</directories>\n");
+            text.push_str("</directories>\n");
         }
 
         if !symbol_context.is_empty() {
-            result.push_str("<symbols>");
-            for (text, buffer) in symbol_context{
-                result.push('\n');
-                result.push_str(&text);
+            text.push_str("<symbols>");
+            for (symbol_text, buffer) in symbol_context {
+                text.push('\n');
+                text.push_str(&symbol_text);
                 buffers.insert(buffer);
             }
-            result.push_str("</symbols>\n");
+            text.push_str("</symbols>\n");
         }
 
         if !selection_context.is_empty() {
-            result.push_str("<selections>");
-            for (text, buffer) in selection_context {
-                result.push('\n');
-                result.push_str(&text);
+            text.push_str("<selections>");
+            for (selection_text, buffer) in selection_context {
+                text.push('\n');
+                text.push_str(&selection_text);
                 buffers.insert(buffer);
             }
-            result.push_str("</selections>\n");
+            text.push_str("</selections>\n");
         }
 
         if !fetch_context.is_empty() {
-            result.push_str("<fetched_urls>");
+            text.push_str("<fetched_urls>");
             for context in fetch_context {
                 // todo! Better formatting
-                result.push('\n');
-                result.push_str(&context.url);
-                result.push('\n');
-                result.push_str(&context.text);
+                text.push('\n');
+                text.push_str(&context.url);
+                text.push('\n');
+                text.push_str(&context.text);
             }
-            result.push_str("</fetched_urls>\n");
+            text.push_str("</fetched_urls>\n");
         }
 
         if !thread_context.is_empty() {
-            result.push_str("<conversation_threads>");
-            for text in thread_context {
-                result.push('\n');
-                result.push_str(&text);
+            text.push_str("<conversation_threads>");
+            for thread_text in thread_context {
+                text.push('\n');
+                text.push_str(&thread_text);
             }
-            result.push_str("</conversation_threads>\n");
+            text.push_str("</conversation_threads>\n");
         }
 
         if !rules_context.is_empty() {
-            result.push_str(
+            text.push_str(
                 "<user_rules>\n\
                 The user has specified the following rules that should be applied:\n",
             );
-            for text in rules_context {
-                result.push('\n');
-                result.push_str(&text);
+            for rules_text in rules_context {
+                text.push('\n');
+                text.push_str(&rules_text);
             }
-            result.push_str("</user_rules>\n");
+            text.push_str("</user_rules>\n");
         }
 
-        result.push_str("</context>\n");
-        (Some(result), buffers)
+        text.push_str("</context>\n");
+
+        (LoadedContext { text, images }, buffers)
     })
 }
 

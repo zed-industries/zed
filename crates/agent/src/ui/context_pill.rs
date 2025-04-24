@@ -1,19 +1,13 @@
-use std::sync::Arc;
 use std::{rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
-use futures::FutureExt;
-use gpui::{
-    Animation, AnimationExt as _, ClickEvent, Entity, Image, MouseButton, Task, pulsating_between,
-};
-use language_model::LanguageModelImage;
+use gpui::{Animation, AnimationExt as _, ClickEvent, Entity, MouseButton, pulsating_between};
 use project::Project;
 use prompt_store::PromptStore;
 use text::OffsetRangeExt;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
-use crate::context::{AssistantContext, ContextKind};
-use crate::thread::PromptId;
+use crate::context::{AssistantContext, ContextKind, ImageStatus};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -450,36 +444,34 @@ impl AddedContext {
                     render_preview: None,
                     context,
                 })
-            } /*
-              AssistantContext::Image(image_context) => AddedContext {
-                  id: image_context.id,
-                  kind: ContextKind::Image,
-                  name: "Image".into(),
-                  parent: None,
-                  tooltip: None,
-                  icon_path: None,
-                  status: if image_context.is_loading() {
-                      ContextStatus::Loading {
-                          message: "Loading…".into(),
-                      }
-                  } else if image_context.is_error() {
-                      ContextStatus::Error {
-                          message: "Failed to load image".into(),
-                      }
-                  } else {
-                      ContextStatus::Ready
-                  },
-                  render_preview: Some(Rc::new({
-                      let image = image_context.original_image.clone();
-                      move |_, _| {
-                          gpui::img(image.clone())
-                              .max_w_96()
-                              .max_h_96()
-                              .into_any_element()
-                      }
-                  })),
-              },
-              */
+            }
+
+            AssistantContext::Image(ref image_context) => Some(AddedContext {
+                kind: ContextKind::Image,
+                name: "Image".into(),
+                parent: None,
+                tooltip: None,
+                icon_path: None,
+                status: match image_context.status() {
+                    ImageStatus::Loading => ContextStatus::Loading {
+                        message: "Loading…".into(),
+                    },
+                    ImageStatus::Error => ContextStatus::Error {
+                        message: "Failed to load image".into(),
+                    },
+                    ImageStatus::Ready => ContextStatus::Ready,
+                },
+                render_preview: Some(Rc::new({
+                    let image = image_context.original_image.clone();
+                    move |_, _| {
+                        gpui::img(image.clone())
+                            .max_w_96()
+                            .max_h_96()
+                            .into_any_element()
+                    }
+                })),
+                context,
+            }),
         }
     }
 }

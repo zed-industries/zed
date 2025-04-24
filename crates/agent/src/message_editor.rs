@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::{AssistantContext, load_context};
+use crate::context::load_context;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -282,10 +282,8 @@ impl MessageEditor {
 
         let summaries_task = self.wait_for_summaries(cx);
         let context_task = cx.spawn(async move |this, cx| {
-            // Need to wait for detailed summaries before `load_context` as it directly reads from
-            // the thread.
-            //
-            // TODO: Would be cleaner to have context loading await on summarization.
+            // Waits for detailed summaries before `load_context`, as it directly reads these from
+            // the thread. TODO: Would be cleaner to have context loading await on summarization.
             summaries_task.await;
             let (load_task, new_context) = this
                 .update(cx, |this, cx| {
@@ -300,29 +298,25 @@ impl MessageEditor {
             Some((load_task.await, new_context))
         });
 
-        // todo! let wait_for_images = self.context_store.read(cx).wait_for_images(cx);
-
         let thread = self.thread.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
         let window_handle = window.window_handle();
 
         cx.spawn(async move |_this, cx| {
-            // todo! wait in parallel
-            let checkpoint = checkpoint.await.ok();
-            let Some(((context_text, context_buffers), new_context)) = context_task.await else {
+            let (checkpoint, context_result) = future::join(checkpoint, context_task).await;
+            let Some(((loaded_context, context_buffers), new_context)) = context_result else {
                 return;
             };
-            // todo! wait_for_images.await;
 
             thread
                 .update(cx, |thread, cx| {
                     thread.insert_user_message(
                         user_message,
                         new_context,
-                        context_text.unwrap_or_else(|| "".to_string()),
+                        loaded_context,
                         context_buffers,
-                        checkpoint,
+                        checkpoint.ok(),
                         cx,
                     );
                 })
@@ -400,7 +394,6 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        /* todo!
         let images = cx
             .read_from_clipboard()
             .map(|item| {
@@ -426,7 +419,6 @@ impl MessageEditor {
                 store.add_image(Arc::new(image), cx);
             }
         });
-        */
     }
 
     fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1038,7 +1030,6 @@ impl MessageEditor {
     }
 
     fn message_or_context_changed(&mut self, debounce: bool, cx: &mut Context<Self>) {
-        /* todo!
         cx.emit(MessageEditorEvent::Changed);
         self.update_token_count_task.take();
 
@@ -1097,7 +1088,6 @@ impl MessageEditor {
                 this.update_token_count_task.take();
             })
         }));
-        */
     }
 }
 

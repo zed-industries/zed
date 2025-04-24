@@ -1,26 +1,25 @@
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, anyhow};
-use collections::{BTreeMap, HashMap, HashSet, IndexSet};
+use anyhow::{Result, anyhow};
+use collections::{HashSet, IndexSet};
 use futures::future::join_all;
-use futures::{self, Future, FutureExt, future};
-use gpui::{App, AppContext as _, Context, Entity, Image, SharedString, Task, WeakEntity};
+use futures::{self, FutureExt};
+use gpui::{App, Context, Entity, Image, SharedString, Task, WeakEntity};
 use language::Buffer;
 use language_model::LanguageModelImage;
-use project::{Project, ProjectEntryId, ProjectItem, ProjectPath, Symbol, Worktree};
+use project::{Project, ProjectItem, ProjectPath, Symbol};
 use prompt_store::UserPromptId;
 use ref_cast::RefCast;
-use rope::{Point, Rope};
-use text::{Anchor, BufferId, OffsetRangeExt};
+use text::{Anchor, OffsetRangeExt};
 use util::ResultExt as _;
 
 use crate::ThreadStore;
 use crate::context::{
     AssistantContext, ContextElementId, DirectoryContext, FetchedUrlContext, FileContext,
-    RulesContext, SelectionContext, SymbolContext, ThreadContext,
+    ImageContext, RulesContext, SelectionContext, SymbolContext, ThreadContext,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -264,22 +263,19 @@ impl ContextStore {
         self.insert_context(context, cx);
     }
 
-    /*
     pub fn add_image(&mut self, image: Arc<Image>, cx: &mut Context<ContextStore>) {
         let image_task = LanguageModelImage::from_image(image.clone(), cx).shared();
-        let id = self.next_context_id.post_inc();
-        self.context.push(AssistantContext::Image(ImageContext {
-            id,
+        let context = AssistantContext::Image(ImageContext {
             original_image: image,
             image_task,
-        }));
-        cx.notify();
+            element_id: self.next_context_element_id.post_inc(),
+        });
+        self.insert_context(context, cx);
     }
 
     pub fn wait_for_images(&self, cx: &App) -> Task<()> {
         let tasks = self
-            .context
-            .iter()
+            .context()
             .filter_map(|ctx| match ctx {
                 AssistantContext::Image(ctx) => Some(ctx.image_task.clone()),
                 _ => None,
@@ -290,7 +286,6 @@ impl ContextStore {
             join_all(tasks).await;
         })
     }
-    */
 
     pub fn add_selection(
         &mut self,
@@ -450,20 +445,18 @@ impl ContextStore {
 
     pub fn file_paths(&self, cx: &App) -> HashSet<ProjectPath> {
         self.context()
-            .filter_map(|context| {
-                match context {
-                    AssistantContext::File(file) => {
-                        let buffer = file.buffer.read(cx);
-                        buffer.project_path(cx)
-                    }
-                    AssistantContext::Directory(_)
-                    | AssistantContext::Symbol(_)
-                    | AssistantContext::Selection(_)
-                    | AssistantContext::FetchedUrl(_)
-                    | AssistantContext::Thread(_)
-                    | AssistantContext::Rules(_) => None,
-                    // | AssistantContext::Image(_) => None,
+            .filter_map(|context| match context {
+                AssistantContext::File(file) => {
+                    let buffer = file.buffer.read(cx);
+                    buffer.project_path(cx)
                 }
+                AssistantContext::Directory(_)
+                | AssistantContext::Symbol(_)
+                | AssistantContext::Selection(_)
+                | AssistantContext::FetchedUrl(_)
+                | AssistantContext::Thread(_)
+                | AssistantContext::Rules(_)
+                | AssistantContext::Image(_) => None,
             })
             .collect()
     }
@@ -566,6 +559,11 @@ impl PartialEq for ContextSetEntry {
                     return context.eq_for_context_set(other_context);
                 }
             }
+            AssistantContext::Image(context) => {
+                if let AssistantContext::Image(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
         }
         return false;
     }
@@ -581,6 +579,7 @@ impl Hash for ContextSetEntry {
             AssistantContext::FetchedUrl(context) => context.hash_for_context_set(state),
             AssistantContext::Thread(context) => context.hash_for_context_set(state),
             AssistantContext::Rules(context) => context.hash_for_context_set(state),
+            AssistantContext::Image(context) => context.hash_for_context_set(state),
         }
     }
 }

@@ -26,7 +26,7 @@ use language_model::{
 };
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::{PromptBuilder, PromptId, UserPromptId};
+use prompt_store::{PromptBuilder, UserPromptId};
 
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};

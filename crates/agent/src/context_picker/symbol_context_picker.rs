@@ -10,7 +10,6 @@ use gpui::{
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{DocumentSymbol, Symbol};
-use text::OffsetRangeExt;
 use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
