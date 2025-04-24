@@ -258,6 +258,9 @@ impl ExampleContext {
                         }
                     });
                 }
+                ThreadEvent::InvalidToolInput { .. } => {
+                    println!("{log_prefix} invalid tool input");
+                }
                 ThreadEvent::ToolConfirmationNeeded => {
                     panic!(
                         "{}Bug: Tool confirmation should not be required in eval",
