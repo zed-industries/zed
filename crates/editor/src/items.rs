@@ -957,6 +957,7 @@ impl Item for Editor {
             cx.subscribe(&workspace, |editor, _, event: &workspace::Event, _cx| {
                 if matches!(event, workspace::Event::ModalOpened) {
                     editor.mouse_context_menu.take();
+                    editor.inline_blame_popover.take();
                 }
             })
             .detach();
