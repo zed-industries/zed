@@ -12,14 +12,14 @@ use language::Buffer;
 use language_model::LanguageModelImage;
 use project::{Project, ProjectItem, ProjectPath, Symbol};
 use prompt_store::UserPromptId;
-use ref_cast::RefCast;
+use ref_cast::RefCast as _;
 use text::{Anchor, OffsetRangeExt};
 use util::ResultExt as _;
 
 use crate::ThreadStore;
 use crate::context::{
-    AssistantContext, ContextId, DirectoryContext, FetchedUrlContext, FileContext, ImageContext,
-    RulesContext, SelectionContext, SymbolContext, ThreadContext,
+    AssistantContext, ContextId, ContextSetEntry, DirectoryContext, FetchedUrlContext, FileContext,
+    ImageContext, RulesContext, SelectionContext, SymbolContext, ThreadContext,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -425,22 +425,13 @@ impl ContextStore {
     }
 
     pub fn includes_user_rules(&self, prompt_id: UserPromptId) -> bool {
-        let context_query = AssistantContext::Rules(RulesContext {
-            prompt_id,
-            context_id: ContextId::for_query(),
-        });
         self.context_set
-            .contains(ContextSetEntry::ref_cast(&context_query))
+            .contains(&RulesContext::new_context_set_query(prompt_id))
     }
 
     pub fn includes_url(&self, url: impl Into<SharedString>) -> bool {
-        let context_query = AssistantContext::FetchedUrl(FetchedUrlContext {
-            url: url.into(),
-            text: "".into(),
-            context_id: ContextId::for_query(),
-        });
         self.context_set
-            .contains(ContextSetEntry::ref_cast(&context_query))
+            .contains(&FetchedUrlContext::new_context_set_query(url.into()))
     }
 
     pub fn file_paths(&self, cx: &App) -> HashSet<ProjectPath> {
@@ -505,81 +496,6 @@ impl FileInclusion {
             }
         } else {
             None
-        }
-    }
-}
-
-#[derive(Debug, Clone, RefCast)]
-#[repr(transparent)]
-struct ContextSetEntry(AssistantContext);
-
-impl AsRef<AssistantContext> for ContextSetEntry {
-    fn as_ref(&self) -> &AssistantContext {
-        &self.0
-    }
-}
-
-impl Eq for ContextSetEntry {}
-
-impl PartialEq for ContextSetEntry {
-    fn eq(&self, other: &Self) -> bool {
-        match &self.0 {
-            AssistantContext::File(context) => {
-                if let AssistantContext::File(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
-                }
-            }
-            AssistantContext::Directory(context) => {
-                if let AssistantContext::Directory(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
-                }
-            }
-            AssistantContext::Symbol(context) => {
-                if let AssistantContext::Symbol(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
-                }
-            }
-            AssistantContext::Selection(context) => {
-                if let AssistantContext::Selection(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
-                }
-            }
-            AssistantContext::FetchedUrl(context) => {
-                if let AssistantContext::FetchedUrl(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
-                }
-            }
-            AssistantContext::Thread(context) => {
-                if let AssistantContext::Thread(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
-                }
-            }
-            AssistantContext::Rules(context) => {
-                if let AssistantContext::Rules(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
-                }
-            }
-            AssistantContext::Image(context) => {
-                if let AssistantContext::Image(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
-                }
-            }
-        }
-        return false;
-    }
-}
-
-impl Hash for ContextSetEntry {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        match &self.0 {
-            AssistantContext::File(context) => context.hash_for_context_set(state),
-            AssistantContext::Directory(context) => context.hash_for_context_set(state),
-            AssistantContext::Symbol(context) => context.hash_for_context_set(state),
-            AssistantContext::Selection(context) => context.hash_for_context_set(state),
-            AssistantContext::FetchedUrl(context) => context.hash_for_context_set(state),
-            AssistantContext::Thread(context) => context.hash_for_context_set(state),
-            AssistantContext::Rules(context) => context.hash_for_context_set(state),
-            AssistantContext::Image(context) => context.hash_for_context_set(state),
         }
     }
 }

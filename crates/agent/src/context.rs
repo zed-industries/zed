@@ -10,6 +10,7 @@ use language::Buffer;
 use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
+use ref_cast::RefCast;
 use rope::{Point, Rope};
 use text::{Anchor, OffsetRangeExt as _};
 use ui::{ElementId, IconName};
@@ -18,25 +19,6 @@ use util::{ResultExt as _, post_inc};
 use crate::thread::Thread;
 
 pub const RULES_ICON: IconName = IconName::Context;
-
-/// ID created at time of context add, for use in ElementId. This is not the stable identity of a
-/// context, instead that's handled by the `Eq` and `Hash` of `ContextSetEntry`.
-#[derive(Debug, Clone)]
-pub struct ContextId(usize);
-
-impl ContextId {
-    pub fn zero() -> Self {
-        ContextId(0)
-    }
-
-    fn for_query() -> Self {
-        ContextId(usize::MAX)
-    }
-
-    pub fn post_inc(&mut self) -> Self {
-        Self(post_inc(&mut self.0))
-    }
-}
 
 pub enum ContextKind {
     File,
@@ -86,18 +68,40 @@ pub enum AssistantContext {
 }
 
 impl AssistantContext {
-    pub fn context_id(&self, name: SharedString) -> ElementId {
-        let context_context_id = match self {
-            Self::File(context) => &context.context_id,
-            Self::Directory(context) => &context.context_id,
-            Self::Symbol(context) => &context.context_id,
-            Self::Selection(context) => &context.context_id,
-            Self::FetchedUrl(context) => &context.context_id,
-            Self::Thread(context) => &context.context_id,
-            Self::Rules(context) => &context.context_id,
-            Self::Image(context) => &context.context_id,
-        };
-        ElementId::NamedInteger(name, context_context_id.0)
+    fn id(&self) -> ContextId {
+        match self {
+            Self::File(context) => context.context_id,
+            Self::Directory(context) => context.context_id,
+            Self::Symbol(context) => context.context_id,
+            Self::Selection(context) => context.context_id,
+            Self::FetchedUrl(context) => context.context_id,
+            Self::Thread(context) => context.context_id,
+            Self::Rules(context) => context.context_id,
+            Self::Image(context) => context.context_id,
+        }
+    }
+
+    pub fn element_id(&self, name: SharedString) -> ElementId {
+        ElementId::NamedInteger(name, self.id().0)
+    }
+}
+
+/// ID created at time of context add, for use in ElementId. This is not the stable identity of a
+/// context, instead that's handled by the `Eq` and `Hash` of `ContextSetEntry`.
+#[derive(Debug, Copy, Clone)]
+pub struct ContextId(usize);
+
+impl ContextId {
+    pub fn zero() -> Self {
+        ContextId(0)
+    }
+
+    fn for_query() -> Self {
+        ContextId(usize::MAX)
+    }
+
+    pub fn post_inc(&mut self) -> Self {
+        Self(post_inc(&mut self.0))
     }
 }
 
@@ -290,6 +294,14 @@ impl FetchedUrlContext {
     pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
         self.url.hash(state);
     }
+
+    pub fn new_context_set_query(url: SharedString) -> ContextSetEntry {
+        ContextSetEntry(AssistantContext::FetchedUrl(FetchedUrlContext {
+            url: url.into(),
+            text: "".into(),
+            context_id: ContextId::for_query(),
+        }))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -340,6 +352,13 @@ impl RulesContext {
 
     pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
         self.prompt_id.hash(state)
+    }
+
+    pub fn new_context_set_query(prompt_id: UserPromptId) -> ContextSetEntry {
+        ContextSetEntry(AssistantContext::Rules(RulesContext {
+            prompt_id,
+            context_id: ContextId::for_query(),
+        }))
     }
 
     pub fn load(
@@ -695,4 +714,81 @@ fn to_fenced_codeblock(
     );
 
     buffer
+}
+
+/// Wraps `AssistantContext` to opt-in to `PartialEq` and `Hash` impls which use a subset of fields
+/// needed for stable context identity.
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
+pub struct ContextSetEntry(pub AssistantContext);
+
+impl AsRef<AssistantContext> for ContextSetEntry {
+    fn as_ref(&self) -> &AssistantContext {
+        &self.0
+    }
+}
+
+impl Eq for ContextSetEntry {}
+
+impl PartialEq for ContextSetEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match &self.0 {
+            AssistantContext::File(context) => {
+                if let AssistantContext::File(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Directory(context) => {
+                if let AssistantContext::Directory(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Symbol(context) => {
+                if let AssistantContext::Symbol(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Selection(context) => {
+                if let AssistantContext::Selection(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::FetchedUrl(context) => {
+                if let AssistantContext::FetchedUrl(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Thread(context) => {
+                if let AssistantContext::Thread(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Rules(context) => {
+                if let AssistantContext::Rules(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+            AssistantContext::Image(context) => {
+                if let AssistantContext::Image(other_context) = &other.0 {
+                    return context.eq_for_context_set(other_context);
+                }
+            }
+        }
+        return false;
+    }
+}
+
+impl Hash for ContextSetEntry {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match &self.0 {
+            AssistantContext::File(context) => context.hash_for_context_set(state),
+            AssistantContext::Directory(context) => context.hash_for_context_set(state),
+            AssistantContext::Symbol(context) => context.hash_for_context_set(state),
+            AssistantContext::Selection(context) => context.hash_for_context_set(state),
+            AssistantContext::FetchedUrl(context) => context.hash_for_context_set(state),
+            AssistantContext::Thread(context) => context.hash_for_context_set(state),
+            AssistantContext::Rules(context) => context.hash_for_context_set(state),
+            AssistantContext::Image(context) => context.hash_for_context_set(state),
+        }
+    }
 }
