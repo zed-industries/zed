@@ -17,10 +17,10 @@ use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelImage, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelImage, LanguageModelKnownError, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
     TokenUsage,
 };
@@ -1248,9 +1248,31 @@ impl Thread {
                             .push(event.as_ref().map_err(|error| error.to_string()).cloned());
                     }
 
-                    let event = event?;
-
                     thread.update(cx, |thread, cx| {
+                        let event = match event {
+                            Ok(event) => event,
+                            Err(LanguageModelCompletionError::BadInputJson {
+                                id,
+                                tool_name,
+                                invalid_input_json,
+                                json_parse_error,
+                            }) => {
+                                thread.receive_invalid_tool_json(
+                                    id,
+                                    tool_name,
+                                    invalid_input_json,
+                                    json_parse_error,
+                                    window,
+                                    cx,
+                                );
+                                return;
+                            }
+                            Err(LanguageModelCompletionError::Other(error)) => {
+                                log::error!("error in completion stream: {error}");
+                                return;
+                            }
+                        };
+
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
                                 thread.insert_message(
@@ -1648,6 +1670,28 @@ impl Thread {
         }
 
         pending_tool_uses
+    }
+
+    pub fn receive_invalid_tool_json(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        invalid_json: Arc<str>,
+        error: String,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Thread>,
+    ) {
+        let pending_tool_use = self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            tool_name,
+            Err(anyhow!(
+                "Error parsing input JSON: {} - JSON was {}",
+                error,
+                invalid_json
+            )),
+            cx,
+        );
+        self.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
     }
 
     pub fn run_tool(
