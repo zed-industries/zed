@@ -340,6 +340,15 @@ pub struct MessageMetadata {
     pub(crate) timestamp: clock::Lamport,
     #[serde(skip)]
     pub cache: Option<MessageCacheMetadata>,
+    #[serde(default)]
+    pub model_info: Option<ModelInfo>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub model_id: String,
+    pub model_name: String,
+    pub provider_id: String,
 }
 
 impl From<&Message> for MessageMetadata {
@@ -349,6 +358,7 @@ impl From<&Message> for MessageMetadata {
             status: message.status.clone(),
             timestamp: message.id.0,
             cache: message.cache.clone(),
+            model_info: None, // This needs to be set separately
         }
     }
 }
@@ -1935,6 +1945,15 @@ impl Context {
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
             .unwrap();
+            
+        // Store model information in the message's metadata
+        if let Some(metadata) = self.messages_metadata.get_mut(&assistant_message.id) {
+            metadata.model_info = Some(ModelInfo {
+                model_id: model.id().0.to_string(),
+                model_name: model.name().0.to_string(),
+                provider_id: provider.id().0.to_string(),
+            });
+        }
 
         // Queue up the user's next reply.
         let user_message = self

@@ -2655,19 +2655,40 @@ impl ContextEditor {
                                 Label::new("You").color(Color::Default).into_any_element()
                             }
                             Role::Assistant => {
-                                let label = Label::new("Assistant").color(Color::Info);
-                                if show_spinner {
-                                    label
-                                        .with_animation(
-                                            "pulsating-label",
-                                            Animation::new(Duration::from_secs(2))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.4, 0.8)),
-                                            |label, delta| label.alpha(delta),
-                                        )
-                                        .into_any_element()
+                                // If we have model info, display it alongside the Assistant label
+                                if let Some(model_info) = message.model_info.as_ref() {
+                                    let label_text = format!("Assistant ({})", model_info.model_name);
+                                    let label = Label::new(label_text).color(Color::Info);
+                                    
+                                    if show_spinner {
+                                        label
+                                            .with_animation(
+                                                "pulsating-label",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                                |label, delta| label.alpha(delta),
+                                            )
+                                            .into_any_element()
+                                    } else {
+                                        label.into_any_element()
+                                    }
                                 } else {
-                                    label.into_any_element()
+                                    // Default behavior when no model info is available
+                                    let label = Label::new("Assistant").color(Color::Info);
+                                    if show_spinner {
+                                        label
+                                            .with_animation(
+                                                "pulsating-label",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                                |label, delta| label.alpha(delta),
+                                            )
+                                            .into_any_element()
+                                    } else {
+                                        label.into_any_element()
+                                    }
                                 }
                             }
 
