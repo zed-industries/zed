@@ -745,11 +745,10 @@ pub fn map_to_language_model_completion_events(
                         Event::ContentBlockStop { index } => {
                             if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
                                 let input_json = tool_use.input_json.trim();
-                                let input_json = format!(",{input_json}"); // break it intentionally
                                 let input_value = if input_json.is_empty() {
                                     Ok(serde_json::Value::Object(serde_json::Map::default()))
                                 } else {
-                                    serde_json::Value::from_str(&input_json)
+                                    serde_json::Value::from_str(input_json)
                                 };
                                 let event_result = match input_value {
                                     Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
