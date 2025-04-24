@@ -338,6 +338,7 @@ pub struct CountTokensResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
+    pub raw_args: String,
     pub args: serde_json::Value,
 }
 
