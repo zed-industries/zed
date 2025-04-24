@@ -1,6 +1,6 @@
 use dap::StartDebuggingRequestArguments;
 use gpui::AsyncApp;
-use std::{ffi::OsStr, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
 
 use crate::*;
@@ -12,12 +12,12 @@ impl GoDebugAdapter {
     const ADAPTER_NAME: &'static str = "Delve";
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         let mut args = match &config.request {
-            dap::DebugRequestType::Attach(attach_config) => {
+            dap::DebugRequest::Attach(attach_config) => {
                 json!({
                     "processId": attach_config.process_id,
                 })
             }
-            dap::DebugRequestType::Launch(launch_config) => json!({
+            dap::DebugRequest::Launch(launch_config) => json!({
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
                 "args": launch_config.args
@@ -92,15 +92,14 @@ impl DebugAdapter for GoDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: delve_path,
-            arguments: Some(vec![
+            arguments: vec![
                 "dap".into(),
                 "--listen".into(),
-                format!("{}:{}", host, port).into(),
-            ]),
+                format!("{}:{}", host, port),
+            ],
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
                 port,

@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use dap::StackFrameId;
@@ -9,6 +10,7 @@ use gpui::{
 };
 
 use language::PointUtf16;
+use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
 use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
@@ -28,11 +30,11 @@ pub struct StackFrameList {
     _subscription: Subscription,
     session: Entity<Session>,
     state: WeakEntity<RunningState>,
-    invalidate: bool,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
     selected_stack_frame_id: Option<StackFrameId>,
     scrollbar_state: ScrollbarState,
+    _refresh_task: Task<()>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -68,14 +70,17 @@ impl StackFrameList {
         );
 
         let _subscription =
-            cx.subscribe_in(&session, window, |this, _, event, _, cx| match event {
-                SessionEvent::Stopped(_) | SessionEvent::StackTrace | SessionEvent::Threads => {
-                    this.refresh(cx);
+            cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
+                SessionEvent::Threads => {
+                    this.schedule_refresh(false, window, cx);
+                }
+                SessionEvent::Stopped(..) | SessionEvent::StackTrace => {
+                    this.schedule_refresh(true, window, cx);
                 }
                 _ => {}
             });
 
-        Self {
+        let mut this = Self {
             scrollbar_state: ScrollbarState::new(list.clone()),
             list,
             session,
@@ -83,10 +88,12 @@ impl StackFrameList {
             focus_handle,
             state,
             _subscription,
-            invalidate: true,
             entries: Default::default(),
             selected_stack_frame_id: None,
-        }
+            _refresh_task: Task::ready(()),
+        };
+        this.schedule_refresh(true, window, cx);
+        this
     }
 
     #[cfg(test)]
@@ -136,10 +143,32 @@ impl StackFrameList {
         self.selected_stack_frame_id
     }
 
-    pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.invalidate = true;
-        self.entries.clear();
-        cx.notify();
+    pub(super) fn schedule_refresh(
+        &mut self,
+        select_first: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        const REFRESH_DEBOUNCE: Duration = Duration::from_millis(20);
+
+        self._refresh_task = cx.spawn_in(window, async move |this, cx| {
+            let debounce = this
+                .update(cx, |this, cx| {
+                    let new_stack_frames = this.stack_frames(cx);
+                    new_stack_frames.is_empty() && !this.entries.is_empty()
+                })
+                .ok()
+                .unwrap_or_default();
+
+            if debounce {
+                cx.background_executor().timer(REFRESH_DEBOUNCE).await;
+            }
+            this.update_in(cx, |this, window, cx| {
+                this.build_entries(select_first, window, cx);
+                cx.notify();
+            })
+            .ok();
+        })
     }
 
     pub fn build_entries(
@@ -237,6 +266,7 @@ impl StackFrameList {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
+        let stack_frame_id = stack_frame.id;
         cx.spawn_in(window, async move |this, cx| {
             let (worktree, relative_path) = this
                 .update(cx, |this, cx| {
@@ -285,12 +315,22 @@ impl StackFrameList {
             .await?;
 
             this.update(cx, |this, cx| {
+                let Some(thread_id) = this.state.read_with(cx, |state, _| state.thread_id)? else {
+                    return Err(anyhow!("No selected thread ID found"));
+                };
+
                 this.workspace.update(cx, |workspace, cx| {
                     let breakpoint_store = workspace.project().read(cx).breakpoint_store();
 
                     breakpoint_store.update(cx, |store, cx| {
                         store.set_active_position(
-                            (this.session.read(cx).session_id(), abs_path, position),
+                            ActiveStackFrame {
+                                session_id: this.session.read(cx).session_id(),
+                                thread_id,
+                                stack_frame_id,
+                                path: abs_path,
+                                position,
+                            },
                             cx,
                         );
                     })
@@ -515,13 +555,7 @@ impl StackFrameList {
 }
 
 impl Render for StackFrameList {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.invalidate {
-            self.build_entries(self.entries.is_empty(), window, cx);
-            self.invalidate = false;
-            cx.notify();
-        }
-
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .p_1()

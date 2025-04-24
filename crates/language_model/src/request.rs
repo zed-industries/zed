@@ -32,7 +32,14 @@ impl std::fmt::Debug for LanguageModelImage {
 const ANTHROPIC_SIZE_LIMT: f32 = 1568.;
 
 impl LanguageModelImage {
-    pub fn from_image(data: Image, cx: &mut App) -> Task<Option<Self>> {
+    pub fn empty() -> Self {
+        Self {
+            source: "".into(),
+            size: size(DevicePixels(0), DevicePixels(0)),
+        }
+    }
+
+    pub fn from_image(data: Arc<Image>, cx: &mut App) -> Task<Option<Self>> {
         cx.background_spawn(async move {
             match data.format() {
                 gpui::ImageFormat::Png
@@ -239,23 +246,16 @@ impl LanguageModelRequestMessage {
     }
 
     pub fn contents_empty(&self) -> bool {
-        self.content.is_empty()
-            || self
-                .content
-                .first()
-                .map(|content| match content {
-                    MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
-                    MessageContent::Thinking { text, .. } => {
-                        text.chars().all(|c| c.is_whitespace())
-                    }
-                    MessageContent::ToolResult(tool_result) => {
-                        tool_result.content.chars().all(|c| c.is_whitespace())
-                    }
-                    MessageContent::RedactedThinking(_)
-                    | MessageContent::ToolUse(_)
-                    | MessageContent::Image(_) => true,
-                })
-                .unwrap_or(false)
+        self.content.iter().all(|content| match content {
+            MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::Thinking { text, .. } => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::ToolResult(tool_result) => {
+                tool_result.content.chars().all(|c| c.is_whitespace())
+            }
+            MessageContent::RedactedThinking(_)
+            | MessageContent::ToolUse(_)
+            | MessageContent::Image(_) => false,
+        })
     }
 }
 

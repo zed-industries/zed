@@ -646,7 +646,7 @@
           "fetch": true,
           "list_directory": false,
           "now": true,
-          "path_search": true,
+          "find_path": true,
           "read_file": true,
           "grep": true,
           "thinking": true,
@@ -670,7 +670,7 @@
           "list_directory": true,
           "move_path": false,
           "now": false,
-          "path_search": true,
+          "find_path": true,
           "read_file": true,
           "grep": true,
           "rename": false,
@@ -1489,7 +1489,12 @@
     "use_multiline_find": false,
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
-    "custom_digraphs": {}
+    "custom_digraphs": {},
+    // Cursor shape for the each mode.
+    // Specify the mode as the key and the shape as the value.
+    // The mode can be one of the following: "normal", "replace", "insert", "visual".
+    // The shape can be one of the following: "block", "bar", "underline", "hollow".
+    "cursor_shape": {}
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

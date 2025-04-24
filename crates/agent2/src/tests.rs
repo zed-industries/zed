@@ -1,5 +1,4 @@
 use super::*;
-use assistant_tool::{IconName, Project, ToolResult};
 use client::{Client, UserStore};
 use fs::FakeFs;
 use gpui::{AppContext, TestAppContext};
@@ -38,7 +37,7 @@ async fn test_tool_calls(cx: &mut TestAppContext) {
     // Test a tool calls that's likely to complete before streaming stops.
     let events = agent
         .update(cx, |agent, cx| {
-            agent.add_tool(Arc::new(EchoTool));
+            agent.add_tool(EchoTool);
             agent.send(
                 model.clone(),
                 "Now test the echo tool with 'Hello'. Does it work? Say 'Yes' or 'No'.",
@@ -56,7 +55,7 @@ async fn test_tool_calls(cx: &mut TestAppContext) {
     let events = agent
         .update(cx, |agent, cx| {
             agent.remove_tool(&Tool::name(&EchoTool));
-            agent.add_tool(Arc::new(DelayTool));
+            agent.add_tool(DelayTool);
             agent.send(
                 model.clone(),
                 "Now call the delay tool with 200ms. When the timer goes off, then you echo the output of the tool.",
@@ -93,7 +92,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     // Test concurrent tool calls with different delay times
     let events = agent
         .update(cx, |agent, cx| {
-            agent.add_tool(Arc::new(DelayTool));
+            agent.add_tool(DelayTool);
             agent.send(
                 model.clone(),
                 "Call the delay tool twice in the same message. Once with 100ms. Once with 300ms. When both timers are complete, describe the outputs.",

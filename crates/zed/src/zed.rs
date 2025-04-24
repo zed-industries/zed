@@ -444,7 +444,7 @@ fn initialize_panels(
                     window,
                     async move |workspace: gpui::WeakEntity<Workspace>,
                                 cx: &mut AsyncWindowContext| {
-                        let debug_panel = DebugPanel::load(workspace.clone(), cx.clone()).await?;
+                        let debug_panel = DebugPanel::load(workspace.clone(), cx).await?;
                         workspace.update_in(cx, |workspace, window, cx| {
                             workspace.add_panel(debug_panel, window, cx);
                         })?;

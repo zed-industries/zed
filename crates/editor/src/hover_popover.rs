@@ -1614,6 +1614,7 @@ mod tests {
     async fn test_hover_inlay_label_parts(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
+                show_value_hints: true,
                 enabled: true,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,

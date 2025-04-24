@@ -1028,10 +1028,10 @@
       // Using `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
       // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-shift-space": "terminal::ToggleViMode",
-      "ctrl-k up": "pane::SplitUp",
-      "ctrl-k down": "pane::SplitDown",
-      "ctrl-k left": "pane::SplitLeft",
-      "ctrl-k right": "pane::SplitRight"
+      "ctrl-alt-up": "pane::SplitUp",
+      "ctrl-alt-down": "pane::SplitDown",
+      "ctrl-alt-left": "pane::SplitLeft",
+      "ctrl-alt-right": "pane::SplitRight"
     }
   },
   {

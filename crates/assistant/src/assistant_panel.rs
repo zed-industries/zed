@@ -23,11 +23,10 @@ use gpui::{
 use language::LanguageRegistry;
 use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry,
-    ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::{PromptBuilder, PromptId};
+use prompt_store::{PromptBuilder, PromptId, UserPromptId};
 
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
@@ -58,11 +57,11 @@ pub fn init(cx: &mut App) {
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context)
                 .register_action(AssistantPanel::restart_context_servers)
-                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                .register_action(|workspace, action: &OpenPromptLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(&OpenPromptLibrary::default(), window, cx)
+                            panel.deploy_prompt_library(action, window, cx)
                         });
                     }
                 });
@@ -489,8 +488,8 @@ impl AssistantPanel {
 
         // If we're signed out and don't have a provider configured, or we're signed-out AND Zed.dev is
         // the provider, we want to show a nudge to sign in.
-        let show_zed_ai_notice = client_status.is_signed_out()
-            && model.map_or(true, |model| model.provider.id().0 == ZED_CLOUD_PROVIDER_ID);
+        let show_zed_ai_notice =
+            client_status.is_signed_out() && model.map_or(true, |model| model.is_provided_by_zed());
 
         self.show_zed_ai_notice = show_zed_ai_notice;
         cx.notify();
@@ -1060,7 +1059,9 @@ impl AssistantPanel {
                     None,
                 ))
             }),
-            action.prompt_to_focus.map(|uuid| PromptId::User { uuid }),
+            action.prompt_to_select.map(|uuid| PromptId::User {
+                uuid: UserPromptId(uuid),
+            }),
             cx,
         )
         .detach_and_log_err(cx);

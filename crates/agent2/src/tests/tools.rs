@@ -10,12 +10,12 @@ pub struct EchoTool;
 impl Tool for EchoTool {
     type Input = EchoToolInput;
 
-    fn name(&self) -> String {
-        "echo".to_string()
+    fn name(&self) -> SharedString {
+        "echo".into()
     }
 
-    fn description(&self) -> String {
-        "A tool that echoes its input".to_string()
+    fn description(&self) -> SharedString {
+        "A tool that echoes its input".into()
     }
 
     fn run(self: Arc<Self>, input: Self::Input, _cx: &mut App) -> Task<Result<String>> {
@@ -33,12 +33,12 @@ pub struct DelayTool;
 impl Tool for DelayTool {
     type Input = DelayToolInput;
 
-    fn name(&self) -> String {
-        "delay".to_string()
+    fn name(&self) -> SharedString {
+        "delay".into()
     }
 
-    fn description(&self) -> String {
-        "A tool that waits for a specified delay".to_string()
+    fn description(&self) -> SharedString {
+        "A tool that waits for a specified delay".into()
     }
 
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>

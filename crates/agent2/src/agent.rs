@@ -1,10 +1,11 @@
+mod prompts;
 mod templates;
 #[cfg(test)]
 mod tests;
 
 use anyhow::{anyhow, Result};
 use futures::{channel::mpsc, future};
-use gpui::{App, Context, Entity, Task};
+use gpui::{App, Context, Entity, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolSchemaFormat,
@@ -30,28 +31,6 @@ trait Prompt {
     fn render(&self, prompts: &Templates, cx: &App) -> Result<String>;
 }
 
-struct BasePrompt {
-    project: Entity<Project>,
-}
-
-impl Prompt for BasePrompt {
-    fn render(&self, templates: &Templates, cx: &App) -> Result<String> {
-        BaseTemplate {
-            os: std::env::consts::OS.to_string(),
-            shell: util::get_system_shell(),
-            worktrees: self
-                .project
-                .read(cx)
-                .worktrees(cx)
-                .map(|worktree| WorktreeData {
-                    root_name: worktree.read(cx).root_name().to_string(),
-                })
-                .collect(),
-        }
-        .render(templates)
-    }
-}
-
 pub struct Agent {
     messages: Vec<AgentMessage>,
     /// Holds the task that handles agent interaction until the end of the turn.
@@ -59,7 +38,7 @@ pub struct Agent {
     /// we run tools, report their results.
     running_turn: Option<Task<()>>,
     system_prompts: Vec<Arc<dyn Prompt>>,
-    tools: BTreeMap<Arc<str>, Arc<dyn ErasedTool>>,
+    tools: BTreeMap<SharedString, Arc<dyn ErasedTool>>,
     templates: Arc<Templates>,
     // project: Entity<Project>,
     // action_log: Entity<ActionLog>,
@@ -76,9 +55,8 @@ impl Agent {
         }
     }
 
-    pub fn add_tool(&mut self, tool: Arc<dyn ErasedTool>) {
-        let name = Arc::from(tool.name());
-        self.tools.insert(name, tool);
+    pub fn add_tool(&mut self, tool: impl Tool) {
+        self.tools.insert(tool.name(), tool.erase());
     }
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
@@ -249,7 +227,7 @@ impl Agent {
             todo!("does this happen in practice?");
         }
 
-        if let Some(tool) = self.tools.get(&tool_use.name) {
+        if let Some(tool) = self.tools.get(tool_use.name.as_ref()) {
             let pending_tool_result = tool.clone().run(tool_use.input, cx);
 
             cx.foreground_executor().spawn(async move {
@@ -288,8 +266,8 @@ impl Agent {
                 .values()
                 .filter_map(|tool| {
                     Some(LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
+                        name: tool.name().to_string(),
+                        description: tool.description().to_string(),
                         input_schema: tool
                             .input_schema(LanguageModelToolSchemaFormat::JsonSchema)
                             .log_err()?,
@@ -315,12 +293,12 @@ impl Agent {
 
 pub trait Tool
 where
-    Self: Sized,
+    Self: 'static + Sized,
 {
     type Input: for<'de> Deserialize<'de> + JsonSchema;
 
-    fn name(&self) -> String;
-    fn description(&self) -> String;
+    fn name(&self) -> SharedString;
+    fn description(&self) -> SharedString;
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> RootSchema {
@@ -329,27 +307,30 @@ where
 
     /// Runs the tool with the provided input.
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>;
+
+    fn erase(self) -> Arc<dyn ErasedTool> {
+        Arc::new(Erased(Arc::new(self)))
+    }
 }
 
 pub struct Erased<T>(T);
 
 pub trait ErasedTool {
-    fn name(&self) -> String;
-    fn description(&self) -> String;
+    fn name(&self) -> SharedString;
+    fn description(&self) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
     fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>>;
 }
 
-impl<T, I> ErasedTool for Erased<T>
+impl<T> ErasedTool for Erased<Arc<T>>
 where
-    T: Tool<Input = I>,
-    I: for<'de> Deserialize<'de> + JsonSchema,
+    T: Tool,
 {
-    fn name(&self) -> String {
+    fn name(&self) -> SharedString {
         self.0.name()
     }
 
-    fn description(&self) -> String {
+    fn description(&self) -> SharedString {
         self.0.description()
     }
 
@@ -358,9 +339,9 @@ where
     }
 
     fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>> {
-        let parsed_input: Result<I> = serde_json::from_value(input).map_err(Into::into);
+        let parsed_input: Result<T::Input> = serde_json::from_value(input).map_err(Into::into);
         match parsed_input {
-            Ok(input) => self.0.run(input, cx),
+            Ok(input) => self.0.clone().run(input, cx),
             Err(error) => Task::ready(Err(anyhow!(error))),
         }
     }

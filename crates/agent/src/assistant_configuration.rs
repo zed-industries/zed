@@ -16,7 +16,7 @@ use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageMod
 use settings::{Settings, update_settings_file};
 use ui::{
     Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Scrollbar, ScrollbarState,
-    Switch, Tooltip, prelude::*,
+    Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
@@ -236,6 +236,7 @@ impl AssistantConfiguration {
                             "always-allow-tool-actions-switch",
                             always_allow_tool_actions.into(),
                         )
+                        .color(SwitchColor::Accent)
                         .on_click({
                             let fs = self.fs.clone();
                             move |state, _window, cx| {
@@ -332,41 +333,44 @@ impl AssistantConfiguration {
                                     ),
                             )
                             .child(
-                                Switch::new("context-server-switch", is_running.into()).on_click({
-                                    let context_server_manager =
-                                        self.context_server_manager.clone();
-                                    let context_server = context_server.clone();
-                                    move |state, _window, cx| match state {
-                                        ToggleState::Unselected | ToggleState::Indeterminate => {
-                                            context_server_manager.update(cx, |this, cx| {
-                                                this.stop_server(context_server.clone(), cx)
-                                                    .log_err();
-                                            });
-                                        }
-                                        ToggleState::Selected => {
-                                            cx.spawn({
-                                                let context_server_manager =
-                                                    context_server_manager.clone();
-                                                let context_server = context_server.clone();
-                                                async move |cx| {
-                                                    if let Some(start_server_task) =
-                                                        context_server_manager
-                                                            .update(cx, |this, cx| {
-                                                                this.start_server(
-                                                                    context_server,
-                                                                    cx,
-                                                                )
-                                                            })
-                                                            .log_err()
-                                                    {
-                                                        start_server_task.await.log_err();
+                                Switch::new("context-server-switch", is_running.into())
+                                    .color(SwitchColor::Accent)
+                                    .on_click({
+                                        let context_server_manager =
+                                            self.context_server_manager.clone();
+                                        let context_server = context_server.clone();
+                                        move |state, _window, cx| match state {
+                                            ToggleState::Unselected
+                                            | ToggleState::Indeterminate => {
+                                                context_server_manager.update(cx, |this, cx| {
+                                                    this.stop_server(context_server.clone(), cx)
+                                                        .log_err();
+                                                });
+                                            }
+                                            ToggleState::Selected => {
+                                                cx.spawn({
+                                                    let context_server_manager =
+                                                        context_server_manager.clone();
+                                                    let context_server = context_server.clone();
+                                                    async move |cx| {
+                                                        if let Some(start_server_task) =
+                                                            context_server_manager
+                                                                .update(cx, |this, cx| {
+                                                                    this.start_server(
+                                                                        context_server,
+                                                                        cx,
+                                                                    )
+                                                                })
+                                                                .log_err()
+                                                        {
+                                                            start_server_task.await.log_err();
+                                                        }
                                                     }
-                                                }
-                                            })
-                                            .detach();
+                                                })
+                                                .detach();
+                                            }
                                         }
-                                    }
-                                }),
+                                    }),
                             ),
                     )
                     .map(|parent| {
