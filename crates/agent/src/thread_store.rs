@@ -24,8 +24,8 @@ use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::{Project, Worktree};
 use prompt_store::{
-    ProjectContext, PromptBuilder, PromptId, PromptMetadata, PromptStore, PromptsUpdatedEvent,
-    RulesFileContext, UserPromptId, UserRulesContext, WorktreeContext,
+    ProjectContext, PromptBuilder, PromptId, PromptStore, PromptsUpdatedEvent, RulesFileContext,
+    UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
@@ -82,12 +82,11 @@ impl ThreadStore {
     pub fn load(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
+        prompt_store: Option<Entity<PromptStore>>,
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
-            let prompt_store = prompt_store.await.ok();
             let (thread_store, ready_rx) = cx.update(|cx| {
                 let mut option_ready_rx = None;
                 let thread_store = cx.new(|cx| {
@@ -349,25 +348,8 @@ impl ThreadStore {
         self.context_server_manager.clone()
     }
 
-    pub fn prompt_store(&self) -> Option<Entity<PromptStore>> {
-        self.prompt_store.clone()
-    }
-
-    pub fn load_rules(
-        &self,
-        prompt_id: UserPromptId,
-        cx: &App,
-    ) -> Task<Result<(PromptMetadata, String)>> {
-        let prompt_id = PromptId::User { uuid: prompt_id };
-        let Some(prompt_store) = self.prompt_store.as_ref() else {
-            return Task::ready(Err(anyhow!("Prompt store unexpectedly missing.")));
-        };
-        let prompt_store = prompt_store.read(cx);
-        let Some(metadata) = prompt_store.metadata(prompt_id) else {
-            return Task::ready(Err(anyhow!("User rules not found in library.")));
-        };
-        let text_task = prompt_store.load(prompt_id, cx);
-        cx.background_spawn(async move { Ok((metadata, text_task.await?)) })
+    pub fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
+        &self.prompt_store
     }
 
     pub fn tools(&self) -> Entity<ToolWorkingSet> {
@@ -379,14 +361,10 @@ impl ThreadStore {
         self.threads.len()
     }
 
-    pub fn threads(&self) -> Vec<SerializedThreadMetadata> {
+    pub fn reverse_chronological_threads(&self) -> Vec<SerializedThreadMetadata> {
         let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
         threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
         threads
-    }
-
-    pub fn recent_threads(&self, limit: usize) -> Vec<SerializedThreadMetadata> {
-        self.threads().into_iter().take(limit).collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
