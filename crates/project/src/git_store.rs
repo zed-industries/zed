@@ -233,7 +233,7 @@ pub struct RepositoryId(pub u64);
 pub struct MergeDetails {
     pub conflicted_paths: TreeSet<RepoPath>,
     pub message: Option<SharedString>,
-    pub heads: Vec<SharedString>,
+    pub heads: Vec<Option<SharedString>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2705,7 +2705,7 @@ impl MergeDetails {
             .log_err()
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|opt| Some(SharedString::from(opt?)))
+            .map(|opt| opt.map(SharedString::from))
             .collect::<Vec<_>>();
         let merge_heads_changed = heads != prev_snapshot.merge.heads;
         let conflicted_paths = if merge_heads_changed {
