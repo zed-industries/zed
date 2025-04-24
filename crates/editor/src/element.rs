@@ -1903,9 +1903,7 @@ impl EditorElement {
             editor
                 .inline_blame_hover_state
                 .as_ref()
-                .map_or(false, |state| {
-                    state.show_task.is_none() && state.hide_task.is_none()
-                })
+                .map_or(false, |state| state.show_task.is_none())
         });
 
         if should_draw {
