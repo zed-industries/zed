@@ -14,7 +14,6 @@ doctest = false
 
 [features]
 default = []
-schemars = ["dep:schemars"]
 test-support = [
     "collections/test-support",
     "gpui/test-support",
@@ -43,11 +42,9 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
-schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-strum.workspace = true
 task.workspace = true
 ui.workspace = true
 util.workspace = true
