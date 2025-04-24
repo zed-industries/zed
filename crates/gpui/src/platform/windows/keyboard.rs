@@ -35,15 +35,13 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
             key_char,
         } = keystroke;
         if use_key_equivalents {
-            key = self
-                .map_virtual_key(&key)
-                .or_else(|_| self.map_for_char(&key, &mut modifiers))
+            key = map_based_on_virtual_key(&key)
+                .or_else(|_| map_based_on_char(&key, &mut modifiers))
                 .context("Failed to map keystroke with use_key_equivalents = true")
                 .log_err()
                 .unwrap_or(key);
         } else {
-            key = self
-                .map_for_char(&key, &mut modifiers)
+            key = map_based_on_char(&key, &mut modifiers)
                 .context("Failed to map keystroke with use_key_equivalents = false")
                 .log_err()
                 .unwrap_or(key);
@@ -93,9 +91,7 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
 
         // Below handles case 2 and case 3, `ctrl-shit-4` -> `ctrl-$`, `alt-shift-3` -> `alt-#`
         let mut modifiers = keystroke.modifiers;
-        let Some(vkey) = self
-            .get_vkey_from_char(keystroke.key.as_str(), &mut modifiers)
-            .log_err()
+        let Some(vkey) = get_vkey_from_char(keystroke.key.as_str(), &mut modifiers).log_err()
         else {
             log::error!(
                 "Failed to convert keystroke to vim keystroke: {}",
@@ -137,125 +133,125 @@ impl WindowsKeyboardMapper {
     pub fn new() -> Self {
         Self
     }
+}
 
-    fn map_virtual_key(&self, key: &str) -> Result<String> {
-        // todo(windows)
-        // This only includes the keys that are present in the US ANSI104 layout.
-        let virtual_key = match key {
-            // letters
-            "a" => VK_A,
-            "b" => VK_B,
-            "c" => VK_C,
-            "d" => VK_D,
-            "e" => VK_E,
-            "f" => VK_F,
-            "g" => VK_G,
-            "h" => VK_H,
-            "i" => VK_I,
-            "j" => VK_J,
-            "k" => VK_K,
-            "l" => VK_L,
-            "m" => VK_M,
-            "n" => VK_N,
-            "o" => VK_O,
-            "p" => VK_P,
-            "q" => VK_Q,
-            "r" => VK_R,
-            "s" => VK_S,
-            "t" => VK_T,
-            "u" => VK_U,
-            "v" => VK_V,
-            "w" => VK_W,
-            "x" => VK_X,
-            "y" => VK_Y,
-            "z" => VK_Z,
-            // other keys
-            "`" => VK_OEM_3,
-            "1" => VK_1,
-            "2" => VK_2,
-            "3" => VK_3,
-            "4" => VK_4,
-            "5" => VK_5,
-            "6" => VK_6,
-            "7" => VK_7,
-            "8" => VK_8,
-            "9" => VK_9,
-            "0" => VK_0,
-            "-" => VK_OEM_MINUS,
-            "=" => VK_OEM_PLUS,
-            "[" => VK_OEM_4,
-            "]" => VK_OEM_6,
-            "\\" => VK_OEM_5,
-            ";" => VK_OEM_1,
-            "'" => VK_OEM_7,
-            "," => VK_OEM_COMMA,
-            "." => VK_OEM_PERIOD,
-            "/" => VK_OEM_2,
-            _ => anyhow::bail!("Unrecognized key to virtual key: {}", key),
-        };
-        let (key, _) = get_key_from_vkey(virtual_key).context(format!(
-            "Failed to generate char given virtual key: {}, {:?}",
-            key, virtual_key
-        ))?;
-        Ok(key)
-    }
+fn map_based_on_virtual_key(key: &str) -> Result<String> {
+    // todo(windows)
+    // This only includes the keys that are present in the US ANSI104 layout.
+    let virtual_key = match key {
+        // letters
+        "a" => VK_A,
+        "b" => VK_B,
+        "c" => VK_C,
+        "d" => VK_D,
+        "e" => VK_E,
+        "f" => VK_F,
+        "g" => VK_G,
+        "h" => VK_H,
+        "i" => VK_I,
+        "j" => VK_J,
+        "k" => VK_K,
+        "l" => VK_L,
+        "m" => VK_M,
+        "n" => VK_N,
+        "o" => VK_O,
+        "p" => VK_P,
+        "q" => VK_Q,
+        "r" => VK_R,
+        "s" => VK_S,
+        "t" => VK_T,
+        "u" => VK_U,
+        "v" => VK_V,
+        "w" => VK_W,
+        "x" => VK_X,
+        "y" => VK_Y,
+        "z" => VK_Z,
+        // other keys
+        "`" => VK_OEM_3,
+        "1" => VK_1,
+        "2" => VK_2,
+        "3" => VK_3,
+        "4" => VK_4,
+        "5" => VK_5,
+        "6" => VK_6,
+        "7" => VK_7,
+        "8" => VK_8,
+        "9" => VK_9,
+        "0" => VK_0,
+        "-" => VK_OEM_MINUS,
+        "=" => VK_OEM_PLUS,
+        "[" => VK_OEM_4,
+        "]" => VK_OEM_6,
+        "\\" => VK_OEM_5,
+        ";" => VK_OEM_1,
+        "'" => VK_OEM_7,
+        "," => VK_OEM_COMMA,
+        "." => VK_OEM_PERIOD,
+        "/" => VK_OEM_2,
+        _ => anyhow::bail!("Unrecognized key to virtual key: {}", key),
+    };
+    let (key, _) = get_key_from_vkey(virtual_key).context(format!(
+        "Failed to generate char given virtual key: {}, {:?}",
+        key, virtual_key
+    ))?;
+    Ok(key)
+}
 
-    fn map_for_char(&self, key: &str, modifiers: &mut Modifiers) -> Result<String> {
-        let virtual_key = self.get_vkey_from_char(key, modifiers)?;
-        let (key, _) = get_key_from_vkey(virtual_key).context(format!(
-            "Failed to generate char given virtual key: {}, {:?}",
-            key, virtual_key
-        ))?;
-        Ok(key)
-    }
+fn map_based_on_char(key: &str, modifiers: &mut Modifiers) -> Result<String> {
+    let virtual_key = get_vkey_from_char(key, modifiers)?;
+    let (key, _) = get_key_from_vkey(virtual_key).context(format!(
+        "Failed to generate char given virtual key: {}, {:?}",
+        key, virtual_key
+    ))?;
+    Ok(key)
+}
 
-    fn get_vkey_from_char(&self, key: &str, modifiers: &mut Modifiers) -> Result<VIRTUAL_KEY> {
-        if key.len() != 1 {
-            anyhow::bail!("Key must be a single character, but got: {}", key);
-        }
-        let key_char = key
-            .encode_utf16()
-            .next()
-            .context("Empty key in keystorke")?;
-        let result = unsafe { VkKeyScanW(key_char) };
-        if result == -1 {
-            anyhow::bail!("Failed to get vkey from char: {}", key);
-        }
-        let high = (result >> 8) as i8;
-        let low = result as u8;
-        let (shift, ctrl, alt) = get_modifiers(high);
-        if ctrl {
-            if modifiers.control {
-                anyhow::bail!(
-                    "Error parsing: {}, Ctrl modifier already set, but ctrl is required for this key: {}, you may be unable to use this shortcut.",
-                    display_keystroke(key, modifiers),
-                    key
-                );
-            }
-            modifiers.control = true;
-        }
-        if alt {
-            if modifiers.alt {
-                anyhow::bail!(
-                    "Error parsing: {}, Alt modifier already set, but alt is required for this key: {}, you may be unable to use this shortcut.",
-                    display_keystroke(key, modifiers),
-                    key
-                );
-            }
-            modifiers.alt = true;
-        }
-        if shift {
-            if modifiers.shift {
-                anyhow::bail!(
-                    "Error parsing: {}, Shift modifier already set, but shift is required for this key: {}, you may be unable to use this shortcut.",
-                    display_keystroke(key, modifiers),
-                    key
-                );
-            }
-            modifiers.shift = true;
-        }
-        Ok(VIRTUAL_KEY(low as u16))
+fn get_vkey_from_char(key: &str, modifiers: &mut Modifiers) -> Result<VIRTUAL_KEY> {
+    if key.len() != 1 {
+        anyhow::bail!("Key must be a single character, but got: {}", key);
     }
+    let key_char = key
+        .encode_utf16()
+        .next()
+        .context("Empty key in keystorke")?;
+    let result = unsafe { VkKeyScanW(key_char) };
+    if result == -1 {
+        anyhow::bail!("Failed to get vkey from char: {}", key);
+    }
+    let high = (result >> 8) as i8;
+    let low = result as u8;
+    let (shift, ctrl, alt) = get_modifiers(high);
+    if ctrl {
+        if modifiers.control {
+            anyhow::bail!(
+                "Error parsing: {}, Ctrl modifier already set, but ctrl is required for this key: {}, you may be unable to use this shortcut.",
+                display_keystroke(key, modifiers),
+                key
+            );
+        }
+        modifiers.control = true;
+    }
+    if alt {
+        if modifiers.alt {
+            anyhow::bail!(
+                "Error parsing: {}, Alt modifier already set, but alt is required for this key: {}, you may be unable to use this shortcut.",
+                display_keystroke(key, modifiers),
+                key
+            );
+        }
+        modifiers.alt = true;
+    }
+    if shift {
+        if modifiers.shift {
+            anyhow::bail!(
+                "Error parsing: {}, Shift modifier already set, but shift is required for this key: {}, you may be unable to use this shortcut.",
+                display_keystroke(key, modifiers),
+                key
+            );
+        }
+        modifiers.shift = true;
+    }
+    Ok(VIRTUAL_KEY(low as u16))
 }
 
 fn display_keystroke(key: &str, modifiers: &Modifiers) -> String {
@@ -266,11 +262,11 @@ fn display_keystroke(key: &str, modifiers: &Modifiers) -> String {
     if modifiers.control {
         display.push_str("ctrl-");
     }
-    if modifiers.alt {
-        display.push_str("alt-");
-    }
     if modifiers.shift {
         display.push_str("shift-");
+    }
+    if modifiers.alt {
+        display.push_str("alt-");
     }
     display.push_str(key);
     display
@@ -425,14 +421,14 @@ impl KeyboardLayout {
     }
 }
 
-pub(crate) fn get_keyboard_layout_id() -> Result<String> {
+fn get_keyboard_layout_id() -> Result<String> {
     let mut buffer = [0u16; KL_NAMELENGTH as usize];
     unsafe { GetKeyboardLayoutNameW(&mut buffer) }?;
     let kbd_layout_name = HSTRING::from_wide(&buffer);
     Ok(kbd_layout_name.to_string())
 }
 
-pub(crate) fn get_keyboard_layout_name(id: &str) -> Result<String> {
+fn get_keyboard_layout_name(id: &str) -> Result<String> {
     let entry = format!(
         "System\\CurrentControlSet\\Control\\Keyboard Layouts\\{}",
         id
@@ -447,7 +443,10 @@ mod tests {
         KLF_ACTIVATE, LoadKeyboardLayoutW, UnloadKeyboardLayout,
     };
 
-    use crate::{Keystroke, Modifiers, PlatformKeyboardMapper, WindowsKeyboardMapper};
+    use crate::{
+        Keystroke, Modifiers, PlatformKeyboardMapper, WindowsKeyboardMapper,
+        platform::windows::keyboard::map_based_on_char,
+    };
 
     use super::is_already_vim_style;
 
@@ -688,14 +687,13 @@ mod tests {
     }
 
     #[test]
-    fn test_map_for_char() {
-        let mapper = WindowsKeyboardMapper::new();
+    fn test_map_based_on_char() {
         // Test letter keys
         {
             let mut modifiers = Modifiers::default();
             for c in 'a'..='z' {
                 let key = c.to_string();
-                let mapped_key = mapper.map_for_char(&key, &mut modifiers).unwrap();
+                let mapped_key = map_based_on_char(&key, &mut modifiers).unwrap();
                 assert_eq!(mapped_key, key);
             }
         }
@@ -704,7 +702,7 @@ mod tests {
             let mut modifiers = Modifiers::default();
             for c in '0'..='9' {
                 let key = c.to_string();
-                let mapped_key = mapper.map_for_char(&key, &mut modifiers).unwrap();
+                let mapped_key = map_based_on_char(&key, &mut modifiers).unwrap();
                 assert_eq!(mapped_key, key);
             }
         }
@@ -735,7 +733,7 @@ mod tests {
             ];
             for (key, shift_key) in shift_pairs {
                 let mut modifiers = Modifiers::default();
-                let mapped_key = mapper.map_for_char(shift_key, &mut modifiers).unwrap();
+                let mapped_key = map_based_on_char(shift_key, &mut modifiers).unwrap();
                 assert_eq!(mapped_key, key.to_string());
                 assert!(modifiers.shift);
             }
