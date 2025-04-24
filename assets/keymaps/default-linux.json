@@ -212,7 +212,7 @@
       "ctrl-shift-g": "search::SelectPreviousMatch",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::OpenPromptLibrary",
+      "ctrl-k l": "assistant::OpenRulesLibrary",
       "new": "assistant::NewChat",
       "ctrl-t": "assistant::NewChat",
       "ctrl-n": "assistant::NewChat"
@@ -241,7 +241,7 @@
       "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenConfiguration",
-      "ctrl-alt-p": "assistant::OpenPromptLibrary",
+      "ctrl-alt-p": "assistant::OpenRulesLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
@@ -308,9 +308,9 @@
   {
     "context": "PromptLibrary",
     "bindings": {
-      "new": "prompt_library::NewPrompt",
-      "ctrl-n": "prompt_library::NewPrompt",
-      "ctrl-shift-s": "prompt_library::ToggleDefaultPrompt"
+      "new": "rules_library::NewRule",
+      "ctrl-n": "rules_library::NewRule",
+      "ctrl-shift-s": "rules_library::ToggleDefaultRule"
     }
   },
   {
