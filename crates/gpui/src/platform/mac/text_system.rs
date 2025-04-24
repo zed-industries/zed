@@ -11,7 +11,7 @@ use core_foundation::{
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
     number::CFNumber,
-    string::CFString,
+    string::{CFString, CFStringRef},
 };
 use core_graphics::{
     base::{CGGlyph, kCGImageAlphaPremultipliedLast},
@@ -49,6 +49,10 @@ use super::open_type::apply_features_and_fallbacks;
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
+
+unsafe extern "C" {
+    pub static kCTTrackingAttributeName: CFStringRef;
+}
 
 pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 
@@ -450,6 +454,7 @@ impl MacTextSystemState {
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
 
                 let font: &FontKitFont = &self.fonts[run.font_id.0];
+                let letter_spacing = CFNumber::from(run.letter_spacing.to_px(font_size).0);
 
                 unsafe {
                     string.set_attribute(
@@ -457,6 +462,7 @@ impl MacTextSystemState {
                         kCTFontAttributeName,
                         &font.native_font().clone_with_font_size(font_size.into()),
                     );
+                    string.set_attribute(cf_range, kCTTrackingAttributeName, &letter_spacing);
                 }
 
                 if utf16_end == utf16_line_len {
@@ -674,7 +680,7 @@ mod lenient_font_attributes {
 
 #[cfg(test)]
 mod tests {
-    use crate::{FontRun, GlyphId, MacTextSystem, PlatformTextSystem, font, px};
+    use crate::{FontRun, GlyphId, LetterSpacing, MacTextSystem, PlatformTextSystem, font, px};
 
     #[test]
     fn test_layout_line_bom_char() {
@@ -684,6 +690,7 @@ mod tests {
         let mut style = FontRun {
             font_id,
             len: line.len(),
+            letter_spacing: LetterSpacing::default(),
         };
 
         let layout = fonts.layout_line(line, px(16.), &[style]);

@@ -265,14 +265,28 @@ impl TextSystem {
     }
 
     /// Returns a handle to a line wrapper, for the given font and font size.
-    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
+    pub fn line_wrapper(
+        self: &Arc<Self>,
+        font: Font,
+        font_size: Pixels,
+        letter_spacing: LetterSpacing,
+    ) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
         let font_id = self.resolve_font(&font);
         let wrappers = lock
-            .entry(FontIdWithSize { font_id, font_size })
+            .entry(FontIdWithSize {
+                font_id,
+                font_size,
+                letter_spacing,
+            })
             .or_default();
         let wrapper = wrappers.pop().unwrap_or_else(|| {
-            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
+            LineWrapper::new(
+                font_id,
+                font_size,
+                letter_spacing,
+                self.platform_text_system.clone(),
+            )
         });
 
         LineWrapperHandle {
@@ -401,7 +415,7 @@ impl WindowTextSystem {
         let mut process_line = |line_text: SharedString| {
             let line_end = line_start + line_text.len();
 
-            let mut last_font: Option<Font> = None;
+            let mut last_font: Option<(Font, LetterSpacing)> = None;
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
@@ -411,13 +425,14 @@ impl WindowTextSystem {
 
                 let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
 
-                if last_font == Some(run.font.clone()) {
+                if last_font == Some((run.font.clone(), run.letter_spacing)) {
                     font_runs.last_mut().unwrap().len += run_len_within_line;
                 } else {
-                    last_font = Some(run.font.clone());
+                    last_font = Some((run.font.clone(), run.letter_spacing));
                     font_runs.push(FontRun {
                         len: run_len_within_line,
                         font_id: self.resolve_font(&run.font),
+                        letter_spacing: run.letter_spacing,
                     });
                 }
 
@@ -519,7 +534,7 @@ impl WindowTextSystem {
         for run in runs.iter() {
             let font_id = self.resolve_font(&run.font);
             if let Some(last_run) = font_runs.last_mut() {
-                if last_run.font_id == font_id {
+                if last_run.font_id == font_id && last_run.letter_spacing == run.letter_spacing {
                     last_run.len += run.len;
                     continue;
                 }
@@ -527,6 +542,7 @@ impl WindowTextSystem {
             font_runs.push(FontRun {
                 len: run.len,
                 font_id,
+                letter_spacing: run.letter_spacing,
             });
         }
 
@@ -545,6 +561,7 @@ impl WindowTextSystem {
 struct FontIdWithSize {
     font_id: FontId,
     font_size: Pixels,
+    letter_spacing: LetterSpacing,
 }
 
 /// A handle into the text system, which can be used to compute the wrapped layout of text
@@ -561,6 +578,7 @@ impl Drop for LineWrapperHandle {
             .get_mut(&FontIdWithSize {
                 font_id: wrapper.font_id,
                 font_size: wrapper.font_size,
+                letter_spacing: wrapper.letter_spacing,
             })
             .unwrap()
             .push(wrapper);
@@ -653,6 +671,33 @@ impl Display for FontStyle {
     }
 }
 
+/// Letter spacing (in ems).
+#[derive(
+    Clone, Copy, Default, Debug, PartialEq, PartialOrd, Deserialize, Serialize, JsonSchema,
+)]
+pub struct LetterSpacing(pub f32);
+
+impl Hash for LetterSpacing {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u32(u32::from_be_bytes(self.0.to_be_bytes()));
+    }
+}
+
+impl Eq for LetterSpacing {}
+
+impl Display for LetterSpacing {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        Debug::fmt(self, f)
+    }
+}
+
+impl LetterSpacing {
+    /// Converts the letter spacing (in ems) to pixels.
+    pub fn to_px(&self, font_size: Pixels) -> Pixels {
+        self.0 * font_size
+    }
+}
+
 /// A styled run of text, for use in [`TextLayout`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextRun {
@@ -660,6 +705,8 @@ pub struct TextRun {
     pub len: usize,
     /// The font to use for this run.
     pub font: Font,
+    /// The letter spacing to use for this run.
+    pub letter_spacing: LetterSpacing,
     /// The color
     pub color: Hsla,
     /// The background color (if any)

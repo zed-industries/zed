@@ -3,7 +3,7 @@ use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase, Element,
     ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
     Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    LetterSpacing, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
     StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UTF16Selection,
     UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem, div, fill, point, px,
     relative, size,
@@ -390,6 +390,7 @@ impl TerminalElement {
             },
             underline,
             strikethrough,
+            letter_spacing: LetterSpacing::default(),
         };
 
         if let Some((style, range)) = hyperlink {
@@ -789,6 +790,7 @@ impl Element for TerminalElement {
                                 &[TextRun {
                                     len,
                                     font: text_style.font(),
+                                    letter_spacing: text_style.letter_spacing,
                                     color: theme.colors().terminal_ansi_background,
                                     background_color: None,
                                     underline: Default::default(),

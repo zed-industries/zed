@@ -1920,7 +1920,7 @@ mod tests {
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap},
         test::test_font,
     };
-    use gpui::{App, AppContext as _, Element, div, font, px};
+    use gpui::{App, AppContext as _, Element, LetterSpacing, div, font, px};
     use itertools::Itertools;
     use language::{Buffer, Capability};
     use multi_buffer::{ExcerptRange, MultiBuffer};
@@ -1955,8 +1955,16 @@ mod tests {
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
-        let (wrap_map, wraps_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let (wrap_map, wraps_snapshot) = cx.update(|cx| {
+            WrapMap::new(
+                tab_snapshot,
+                font("Helvetica"),
+                px(14.0),
+                LetterSpacing::default(),
+                None,
+                cx,
+            )
+        });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -2159,7 +2167,14 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(multi_buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
+        let (_, wraps_snapshot) = WrapMap::new(
+            tab_snapshot,
+            font,
+            font_size,
+            LetterSpacing::default(),
+            Some(wrap_width),
+            cx,
+        );
 
         let block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
         let snapshot = block_map.read(wraps_snapshot, Default::default());
@@ -2193,8 +2208,16 @@ mod tests {
         let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
-        let (_wrap_map, wraps_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let (_wrap_map, wraps_snapshot) = cx.update(|cx| {
+            WrapMap::new(
+                tab_snapshot,
+                font("Helvetica"),
+                px(14.0),
+                LetterSpacing::default(),
+                None,
+                cx,
+            )
+        });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -2295,7 +2318,14 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = cx.update(|cx| {
-            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(90.)), cx)
+            WrapMap::new(
+                tab_snapshot,
+                font("Helvetica"),
+                px(14.0),
+                LetterSpacing::default(),
+                Some(px(90.)),
+                cx,
+            )
         });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
@@ -2339,8 +2369,16 @@ mod tests {
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let tab_size = 1.try_into().unwrap();
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
-        let (wrap_map, wraps_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let (wrap_map, wraps_snapshot) = cx.update(|cx| {
+            WrapMap::new(
+                tab_snapshot,
+                font("Helvetica"),
+                px(14.0),
+                LetterSpacing::default(),
+                None,
+                cx,
+            )
+        });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -2506,8 +2544,16 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (_, wrap_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let (_, wrap_snapshot) = cx.update(|cx| {
+            WrapMap::new(
+                tab_snapshot,
+                font("Helvetica"),
+                px(14.0),
+                LetterSpacing::default(),
+                None,
+                cx,
+            )
+        });
         let mut block_map = BlockMap::new(wrap_snapshot.clone(), 2, 1);
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
 
@@ -2851,8 +2897,16 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (_, wrap_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let (_, wrap_snapshot) = cx.update(|cx| {
+            WrapMap::new(
+                tab_snapshot,
+                font("Helvetica"),
+                px(14.0),
+                LetterSpacing::default(),
+                None,
+                cx,
+            )
+        });
         let mut block_map = BlockMap::new(wrap_snapshot.clone(), 2, 1);
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
 
@@ -2932,8 +2986,16 @@ mod tests {
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let font = test_font();
-        let (wrap_map, wraps_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font, font_size, wrap_width, cx));
+        let (wrap_map, wraps_snapshot) = cx.update(|cx| {
+            WrapMap::new(
+                tab_snapshot,
+                font,
+                font_size,
+                LetterSpacing::default(),
+                wrap_width,
+                cx,
+            )
+        });
         let mut block_map = BlockMap::new(
             wraps_snapshot,
             buffer_start_header_height,
@@ -3514,8 +3576,16 @@ mod tests {
         let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (_wrap_map, wraps_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let (_wrap_map, wraps_snapshot) = cx.update(|cx| {
+            WrapMap::new(
+                tab_snapshot,
+                font("Helvetica"),
+                px(14.0),
+                LetterSpacing::default(),
+                None,
+                cx,
+            )
+        });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());

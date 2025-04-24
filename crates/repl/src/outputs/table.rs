@@ -98,6 +98,7 @@ impl TableView {
         let mut runs = [TextRun {
             len: 0,
             font: text_font,
+            letter_spacing: text_style.letter_spacing,
             color: text_style.color,
             background_color: None,
             underline: None,

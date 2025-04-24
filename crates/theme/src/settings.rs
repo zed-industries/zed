@@ -6,8 +6,8 @@ use crate::{
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription, Window, px,
+    App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, LetterSpacing,
+    Pixels, Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::{
@@ -106,6 +106,8 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_font: Font,
+    /// The letter spacing used for buffers, and the terminal, in ems.
+    pub buffer_letter_spacing: LetterSpacing,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -402,6 +404,9 @@ pub struct ThemeSettingsContent {
     /// The weight of the editor font in CSS units from 100 to 900.
     #[serde(default)]
     pub buffer_font_weight: Option<f32>,
+    /// The letter spacing of the editor font in ems.
+    #[serde(default)]
+    pub buffer_letter_spacing: Option<LetterSpacing>,
     /// The buffer's line height.
     #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,
@@ -788,6 +793,7 @@ impl settings::Settings for ThemeSettings {
                 style: FontStyle::default(),
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
+            buffer_letter_spacing: defaults.buffer_letter_spacing.unwrap(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
             theme_selection: defaults.theme.clone(),
             active_theme: themes
@@ -891,6 +897,7 @@ impl settings::Settings for ThemeSettings {
             );
             this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
 
+            merge(&mut this.buffer_letter_spacing, value.buffer_letter_spacing);
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 
             // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.

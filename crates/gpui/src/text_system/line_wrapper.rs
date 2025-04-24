@@ -1,4 +1,6 @@
-use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, px};
+use crate::{
+    FontId, FontRun, LetterSpacing, Pixels, PlatformTextSystem, SharedString, TextRun, px,
+};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -7,6 +9,7 @@ pub struct LineWrapper {
     platform_text_system: Arc<dyn PlatformTextSystem>,
     pub(crate) font_id: FontId,
     pub(crate) font_size: Pixels,
+    pub(crate) letter_spacing: LetterSpacing,
     cached_ascii_char_widths: [Option<Pixels>; 128],
     cached_other_char_widths: HashMap<char, Pixels>,
 }
@@ -18,12 +21,14 @@ impl LineWrapper {
     pub(crate) fn new(
         font_id: FontId,
         font_size: Pixels,
+        letter_spacing: LetterSpacing,
         text_system: Arc<dyn PlatformTextSystem>,
     ) -> Self {
         Self {
             platform_text_system: text_system,
             font_id,
             font_size,
+            letter_spacing,
             cached_ascii_char_widths: [None; 128],
             cached_other_char_widths: HashMap::default(),
         }
@@ -220,6 +225,7 @@ impl LineWrapper {
                 &[FontRun {
                     len: buffer.len(),
                     font_id: self.font_id,
+                    letter_spacing: self.letter_spacing,
                 }],
             )
             .width
@@ -331,7 +337,12 @@ mod tests {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         let cx = TestAppContext::build(dispatcher, None);
         let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
-        LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
+        LineWrapper::new(
+            id,
+            px(16.),
+            LetterSpacing::default(),
+            cx.text_system().platform_text_system.clone(),
+        )
     }
 
     fn generate_test_runs(input_run_len: &[usize]) -> Vec<TextRun> {
@@ -346,6 +357,7 @@ mod tests {
                     weight: FontWeight::default(),
                     style: FontStyle::Normal,
                 },
+                letter_spacing: LetterSpacing::default(),
                 color: Hsla::default(),
                 background_color: None,
                 underline: None,
@@ -692,6 +704,7 @@ mod tests {
             let normal = TextRun {
                 len: 0,
                 font: font("Helvetica"),
+                letter_spacing: LetterSpacing::default(),
                 color: Default::default(),
                 underline: Default::default(),
                 strikethrough: None,
@@ -700,6 +713,7 @@ mod tests {
             let bold = TextRun {
                 len: 0,
                 font: font("Helvetica").bold(),
+                letter_spacing: LetterSpacing::default(),
                 color: Default::default(),
                 underline: Default::default(),
                 strikethrough: None,

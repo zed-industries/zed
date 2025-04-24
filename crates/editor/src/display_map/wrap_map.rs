@@ -3,7 +3,7 @@ use super::{
     fold_map::{Chunk, FoldRows},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
-use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
+use gpui::{App, AppContext as _, Context, Entity, Font, LetterSpacing, LineWrapper, Pixels, Task};
 use language::Point;
 use multi_buffer::{MultiBufferSnapshot, RowInfo};
 use smol::future::yield_now;
@@ -25,7 +25,7 @@ pub struct WrapMap {
     edits_since_sync: Patch<u32>,
     wrap_width: Option<Pixels>,
     background_task: Option<Task<()>>,
-    font_with_size: (Font, Pixels),
+    font_with_size: (Font, Pixels, LetterSpacing),
 }
 
 #[derive(Clone)]
@@ -89,12 +89,13 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         font: Font,
         font_size: Pixels,
+        letter_spacing: LetterSpacing,
         wrap_width: Option<Pixels>,
         cx: &mut App,
     ) -> (Entity<Self>, WrapSnapshot) {
         let handle = cx.new(|cx| {
             let mut this = Self {
-                font_with_size: (font, font_size),
+                font_with_size: (font, font_size, letter_spacing),
                 wrap_width: None,
                 pending_edits: Default::default(),
                 interpolated_edits: Default::default(),
@@ -138,9 +139,10 @@ impl WrapMap {
         &mut self,
         font: Font,
         font_size: Pixels,
+        letter_spacing: LetterSpacing,
         cx: &mut Context<Self>,
     ) -> bool {
-        let font_with_size = (font, font_size);
+        let font_with_size = (font, font_size, letter_spacing);
 
         if font_with_size == self.font_with_size {
             false
@@ -170,9 +172,9 @@ impl WrapMap {
             let mut new_snapshot = self.snapshot.clone();
 
             let text_system = cx.text_system().clone();
-            let (font, font_size) = self.font_with_size.clone();
+            let (font, font_size, letter_spacing) = self.font_with_size.clone();
             let task = cx.background_spawn(async move {
-                let mut line_wrapper = text_system.line_wrapper(font, font_size);
+                let mut line_wrapper = text_system.line_wrapper(font, font_size, letter_spacing);
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
                 let edits = new_snapshot
@@ -254,10 +256,11 @@ impl WrapMap {
                 let pending_edits = self.pending_edits.clone();
                 let mut snapshot = self.snapshot.clone();
                 let text_system = cx.text_system().clone();
-                let (font, font_size) = self.font_with_size.clone();
+                let (font, font_size, letter_spacing) = self.font_with_size.clone();
                 let update_task = cx.background_spawn(async move {
                     let mut edits = Patch::default();
-                    let mut line_wrapper = text_system.line_wrapper(font, font_size);
+                    let mut line_wrapper =
+                        text_system.line_wrapper(font, font_size, letter_spacing);
                     for (tab_snapshot, tab_edits) in pending_edits {
                         let wrap_edits = snapshot
                             .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
@@ -1215,6 +1218,7 @@ mod tests {
         let font = test_font();
         let _font_id = text_system.font_id(&font);
         let font_size = px(14.0);
+        let letter_spacing = LetterSpacing::default();
 
         log::info!("Tab size: {}", tab_size);
         log::info!("Wrap width: {:?}", wrap_width);
@@ -1240,11 +1244,20 @@ mod tests {
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-        let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size);
+        let mut line_wrapper =
+            text_system.line_wrapper(font.clone(), font_size, LetterSpacing::default());
         let expected_text = wrap_text(&tabs_snapshot, wrap_width, &mut line_wrapper);
 
-        let (wrap_map, _) =
-            cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, wrap_width, cx));
+        let (wrap_map, _) = cx.update(|cx| {
+            WrapMap::new(
+                tabs_snapshot.clone(),
+                font,
+                font_size,
+                letter_spacing,
+                wrap_width,
+                cx,
+            )
+        });
         let mut notifications = observe(&wrap_map, cx);
 
         if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
