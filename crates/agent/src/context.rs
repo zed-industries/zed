@@ -22,15 +22,15 @@ pub const RULES_ICON: IconName = IconName::Context;
 /// ID created at time of context add, for use in ElementId. This is not the stable identity of a
 /// context, instead that's handled by the `Eq` and `Hash` of `ContextSetEntry`.
 #[derive(Debug, Clone)]
-pub struct ContextElementId(usize);
+pub struct ContextId(usize);
 
-impl ContextElementId {
+impl ContextId {
     pub fn zero() -> Self {
-        ContextElementId(0)
+        ContextId(0)
     }
 
-    pub fn for_query() -> Self {
-        ContextElementId(usize::MAX)
+    fn for_query() -> Self {
+        ContextId(usize::MAX)
     }
 
     pub fn post_inc(&mut self) -> Self {
@@ -86,18 +86,18 @@ pub enum AssistantContext {
 }
 
 impl AssistantContext {
-    pub fn element_id(&self, name: SharedString) -> ElementId {
-        let context_element_id = match self {
-            Self::File(context) => &context.element_id,
-            Self::Directory(context) => &context.element_id,
-            Self::Symbol(context) => &context.element_id,
-            Self::Selection(context) => &context.element_id,
-            Self::FetchedUrl(context) => &context.element_id,
-            Self::Thread(context) => &context.element_id,
-            Self::Rules(context) => &context.element_id,
-            Self::Image(context) => &context.element_id,
+    pub fn context_id(&self, name: SharedString) -> ElementId {
+        let context_context_id = match self {
+            Self::File(context) => &context.context_id,
+            Self::Directory(context) => &context.context_id,
+            Self::Symbol(context) => &context.context_id,
+            Self::Selection(context) => &context.context_id,
+            Self::FetchedUrl(context) => &context.context_id,
+            Self::Thread(context) => &context.context_id,
+            Self::Rules(context) => &context.context_id,
+            Self::Image(context) => &context.context_id,
         };
-        ElementId::NamedInteger(name, context_element_id.0)
+        ElementId::NamedInteger(name, context_context_id.0)
     }
 }
 
@@ -109,7 +109,7 @@ impl AssistantContext {
 #[derive(Debug, Clone)]
 pub struct FileContext {
     pub buffer: Entity<Buffer>,
-    pub element_id: ContextElementId,
+    pub context_id: ContextId,
 }
 
 impl FileContext {
@@ -152,7 +152,7 @@ impl FileContext {
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
     pub entry_id: ProjectEntryId,
-    pub element_id: ContextElementId,
+    pub context_id: ContextId,
 }
 
 impl DirectoryContext {
@@ -198,7 +198,7 @@ pub struct SymbolContext {
     ///
     /// Note: not used by Eq and Hash for ContextSetEntry
     pub enclosing_range: Range<Anchor>,
-    pub element_id: ContextElementId,
+    pub context_id: ContextId,
 }
 
 impl SymbolContext {
@@ -237,7 +237,7 @@ impl SymbolContext {
 pub struct SelectionContext {
     pub buffer: Entity<Buffer>,
     pub range: Range<Anchor>,
-    pub element_id: ContextElementId,
+    pub context_id: ContextId,
 }
 
 impl SelectionContext {
@@ -279,7 +279,7 @@ pub struct FetchedUrlContext {
     ///
     /// Note: not used by Eq and Hash for ContextSetEntry
     pub text: SharedString,
-    pub element_id: ContextElementId,
+    pub context_id: ContextId,
 }
 
 impl FetchedUrlContext {
@@ -295,7 +295,7 @@ impl FetchedUrlContext {
 #[derive(Debug, Clone)]
 pub struct ThreadContext {
     pub thread: Entity<Thread>,
-    pub element_id: ContextElementId,
+    pub context_id: ContextId,
 }
 
 impl ThreadContext {
@@ -330,7 +330,7 @@ impl ThreadContext {
 #[derive(Debug, Clone)]
 pub struct RulesContext {
     pub prompt_id: UserPromptId,
-    pub element_id: ContextElementId,
+    pub context_id: ContextId,
 }
 
 impl RulesContext {
@@ -378,7 +378,7 @@ impl RulesContext {
 pub struct ImageContext {
     pub original_image: Arc<gpui::Image>,
     pub image_task: Shared<Task<Option<LanguageModelImage>>>,
-    pub element_id: ContextElementId,
+    pub context_id: ContextId,
 }
 
 pub enum ImageStatus {

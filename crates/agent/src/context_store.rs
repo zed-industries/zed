@@ -18,8 +18,8 @@ use util::ResultExt as _;
 
 use crate::ThreadStore;
 use crate::context::{
-    AssistantContext, ContextElementId, DirectoryContext, FetchedUrlContext, FileContext,
-    ImageContext, RulesContext, SelectionContext, SymbolContext, ThreadContext,
+    AssistantContext, ContextId, DirectoryContext, FetchedUrlContext, FileContext, ImageContext,
+    RulesContext, SelectionContext, SymbolContext, ThreadContext,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -28,7 +28,7 @@ pub struct ContextStore {
     project: WeakEntity<Project>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     thread_summary_tasks: Vec<Task<()>>,
-    next_context_element_id: ContextElementId,
+    next_context_id: ContextId,
     context_set: IndexSet<ContextSetEntry>,
     context_thread_ids: HashSet<ThreadId>,
 }
@@ -42,7 +42,7 @@ impl ContextStore {
             project,
             thread_store,
             thread_summary_tasks: Vec::new(),
-            next_context_element_id: ContextElementId::zero(),
+            next_context_id: ContextId::zero(),
             context_set: IndexSet::default(),
             context_thread_ids: HashSet::default(),
         }
@@ -80,7 +80,7 @@ impl ContextStore {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
-        let element_id = self.next_context_element_id.post_inc();
+        let context_id = self.next_context_id.post_inc();
 
         cx.spawn(async move |this, cx| {
             let open_buffer_task = project.update(cx, |project, cx| {
@@ -88,7 +88,7 @@ impl ContextStore {
             })?;
 
             let buffer = open_buffer_task.await?;
-            let context = AssistantContext::File(FileContext { buffer, element_id });
+            let context = AssistantContext::File(FileContext { buffer, context_id });
 
             let already_included = this.update(cx, |this, cx| {
                 if this.has_context(&context) {
@@ -129,10 +129,10 @@ impl ContextStore {
             return Err(anyhow!("no entry found for directory context"));
         };
 
-        let element_id = self.next_context_element_id.post_inc();
+        let context_id = self.next_context_id.post_inc();
         let context = AssistantContext::Directory(DirectoryContext {
             entry_id,
-            element_id,
+            context_id,
         });
 
         if self.has_context(&context) {
@@ -155,13 +155,13 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        let element_id = self.next_context_element_id.post_inc();
+        let context_id = self.next_context_id.post_inc();
         let context = AssistantContext::Symbol(SymbolContext {
             buffer,
             symbol,
             range,
             enclosing_range,
-            element_id,
+            context_id,
         });
 
         if self.has_context(&context) {
@@ -180,8 +180,8 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) {
-        let element_id = self.next_context_element_id.post_inc();
-        let context = AssistantContext::Thread(ThreadContext { thread, element_id });
+        let context_id = self.next_context_id.post_inc();
+        let context = AssistantContext::Thread(ThreadContext { thread, context_id });
 
         if self.has_context(&context) {
             if remove_if_exists {
@@ -233,10 +233,10 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<ContextStore>,
     ) {
-        let element_id = self.next_context_element_id.post_inc();
+        let context_id = self.next_context_id.post_inc();
         let context = AssistantContext::Rules(RulesContext {
             prompt_id,
-            element_id,
+            context_id,
         });
 
         if self.has_context(&context) {
@@ -257,7 +257,7 @@ impl ContextStore {
         let context = AssistantContext::FetchedUrl(FetchedUrlContext {
             url: url.into(),
             text: text.into(),
-            element_id: self.next_context_element_id.post_inc(),
+            context_id: self.next_context_id.post_inc(),
         });
 
         self.insert_context(context, cx);
@@ -268,7 +268,7 @@ impl ContextStore {
         let context = AssistantContext::Image(ImageContext {
             original_image: image,
             image_task,
-            element_id: self.next_context_element_id.post_inc(),
+            context_id: self.next_context_id.post_inc(),
         });
         self.insert_context(context, cx);
     }
@@ -293,11 +293,11 @@ impl ContextStore {
         range: Range<Anchor>,
         cx: &mut Context<ContextStore>,
     ) {
-        let element_id = self.next_context_element_id.post_inc();
+        let context_id = self.next_context_id.post_inc();
         let context = AssistantContext::Selection(SelectionContext {
             buffer,
             range,
-            element_id,
+            context_id,
         });
         self.insert_context(context, cx);
     }
@@ -314,18 +314,18 @@ impl ContextStore {
                 name: _,
             } => {
                 if let Some(buffer) = buffer.upgrade() {
-                    let element_id = self.next_context_element_id.post_inc();
+                    let context_id = self.next_context_id.post_inc();
                     self.insert_context(
-                        AssistantContext::File(FileContext { buffer, element_id }),
+                        AssistantContext::File(FileContext { buffer, context_id }),
                         cx,
                     );
                 };
             }
             SuggestedContext::Thread { thread, name: _ } => {
                 if let Some(thread) = thread.upgrade() {
-                    let element_id = self.next_context_element_id.post_inc();
+                    let context_id = self.next_context_id.post_inc();
                     self.insert_context(
-                        AssistantContext::Thread(ThreadContext { thread, element_id }),
+                        AssistantContext::Thread(ThreadContext { thread, context_id }),
                         cx,
                     );
                 }
@@ -427,7 +427,7 @@ impl ContextStore {
     pub fn includes_user_rules(&self, prompt_id: UserPromptId) -> bool {
         let context_query = AssistantContext::Rules(RulesContext {
             prompt_id,
-            element_id: ContextElementId::for_query(),
+            context_id: ContextId::for_query(),
         });
         self.context_set
             .contains(ContextSetEntry::ref_cast(&context_query))
@@ -437,7 +437,7 @@ impl ContextStore {
         let context_query = AssistantContext::FetchedUrl(FetchedUrlContext {
             url: url.into(),
             text: "".into(),
-            element_id: ContextElementId::for_query(),
+            context_id: ContextId::for_query(),
         });
         self.context_set
             .contains(ContextSetEntry::ref_cast(&context_query))
