@@ -35,7 +35,9 @@ use settings::Settings;
 use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
-use task::{DebugScenario, RevealStrategy, RevealTarget, TaskContext, TaskId};
+use task::{
+    DebugScenario, HideStrategy, RevealStrategy, RevealTarget, TaskContext, TaskId, TaskTemplate,
+};
 use terminal_view::TerminalView;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
@@ -222,36 +224,14 @@ impl DebugPanel {
         })
     }
 
-    pub fn start_session(
+    fn start_from_definition(
         &mut self,
-        scenario: DebugScenario,
+        definition: DebugTaskDefinition,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let task_contexts = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                tasks_ui::task_contexts(workspace, window, cx)
-            })
-            .ok();
-        let dap_store = self.project.read(cx).dap_store().clone().downgrade();
-
+    ) -> Task<Result<()>> {
         cx.spawn_in(window, async move |this, cx| {
-            let (worktree_id, task_context) = if let Some(task) = task_contexts {
-                task.await.active_worktree_context.map_or(
-                    (None, task::TaskContext::default()),
-                    |(worktree_id, context)| (Some(worktree_id), context),
-                )
-            } else {
-                (None, task::TaskContext::default())
-            };
-
-            let definition = this
-                .update(cx, |this, cx| {
-                    this.resolve_scenario(scenario, worktree_id, task_context, cx)
-                })?
-                .await?;
-
+            let dap_store = this.update(cx, |this, cx| this.project.read(cx).dap_store())?;
             let (session, task) = dap_store.update(cx, |dap_store, cx| {
                 let session = dap_store.new_session(definition, None, cx);
 
@@ -275,6 +255,41 @@ impl DebugPanel {
             }
 
             anyhow::Ok(())
+        })
+    }
+
+    pub fn start_session(
+        &mut self,
+        scenario: DebugScenario,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let task_contexts = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                tasks_ui::task_contexts(workspace, window, cx)
+            })
+            .ok();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let (worktree_id, task_context) = if let Some(task) = task_contexts {
+                task.await.active_worktree_context.map_or(
+                    (None, task::TaskContext::default()),
+                    |(worktree_id, context)| (Some(worktree_id), context),
+                )
+            } else {
+                (None, task::TaskContext::default())
+            };
+
+            let definition = this
+                .update_in(cx, |this, window, cx| {
+                    this.resolve_scenario(scenario, worktree_id, task_context, window, cx)
+                })?
+                .await?;
+            this.update_in(cx, |this, window, cx| {
+                this.start_from_definition(definition, window, cx)
+            })?
+            .await
         })
         .detach_and_log_err(cx);
     }
@@ -301,13 +316,13 @@ impl DebugPanel {
                         let definition = curr_session.update(cx, |session, _| session.definition());
                         let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
 
-                        let definition = definition.into();
                         cx.spawn_in(window, async move |this, cx| {
                             task.await;
 
                             this.update_in(cx, |this, window, cx| {
-                                this.start_session(definition, window, cx)
-                            })
+                                this.start_from_definition(definition, window, cx)
+                            })?
+                            .await
                         })
                         .detach_and_log_err(cx);
                     }
@@ -466,13 +481,14 @@ impl DebugPanel {
         scenario: DebugScenario,
         worktree_id: Option<WorktreeId>,
         task_context: TaskContext,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugTaskDefinition>> {
         let project = self.project.read(cx);
         let dap_store = project.dap_store().downgrade();
         let task_store = project.task_store().downgrade();
         let workspace = self.workspace.clone();
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
                 adapter,
                 label,
@@ -503,7 +519,7 @@ impl DebugPanel {
                 };
 
                 let run_build = workspace.update_in(cx, |workspace, window, cx| {
-                    workspace.spawn_in_terminal(task.resolved, window, cx)
+                    workspace.spawn_in_terminal(task.resolved.clone(), window, cx)
                 })?;
 
                 let exit_status = run_build.await?;
@@ -511,11 +527,16 @@ impl DebugPanel {
                     anyhow::bail!("Build failed");
                 }
 
+                let template = TaskTemplate {
+                    label: task.resolved.full_label,
+                    command: task.resolved.command,
+                    args: task.resolved.args,
+                    env: task.resolved.env,
+                    cwd: task.resolved.cwd.map(|s| s.to_string_lossy().into_owned()),
+                    ..Default::default()
+                };
                 dap_store
-                    .update(cx, |this, cx| {
-                        // todo: query all locators.
-                        this.run_debug_locator(task.resolved, cx)
-                    })?
+                    .update(cx, |this, cx| this.run_debug_locator(template, cx))?
                     .await?
             } else {
                 return Err(anyhow!("No request or build provided"));

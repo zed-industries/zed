@@ -361,7 +361,7 @@ impl DapStore {
                     })
                 } else {
                     Task::ready(Err(anyhow!(
-                        "Couldn't find any locator for task `{}`",
+                        "Couldn't find any locator for task `{}`. Specify the `attach` or `launch` arguments in your debug scenario definition",
                         template.label
                     )))
                 }
