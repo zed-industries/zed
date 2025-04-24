@@ -313,7 +313,7 @@ impl Platform for WindowsPlatform {
         self.text_system.clone()
     }
 
-    fn keyboard_mapper(&self) -> Box<dyn KeyboardMapper> {
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
         Box::new(WindowsKeyboardMapper::new())
     }
 

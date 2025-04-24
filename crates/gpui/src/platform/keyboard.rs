@@ -13,7 +13,7 @@ pub trait PlatformKeyboardLayout {
 }
 
 /// TODO:
-pub trait KeyboardMapper {
+pub trait PlatformKeyboardMapper {
     /// TODO:
     fn map_keystroke(&self, keystroke: Keystroke, use_key_equivalents: bool) -> Keystroke;
     /// TODO:
@@ -25,7 +25,7 @@ pub trait KeyboardMapper {
 /// TODO:
 pub struct EmptyKeyboardMapper;
 
-impl KeyboardMapper for EmptyKeyboardMapper {
+impl PlatformKeyboardMapper for EmptyKeyboardMapper {
     fn map_keystroke(&self, keystroke: Keystroke, _: bool) -> Keystroke {
         keystroke
     }
@@ -67,7 +67,7 @@ impl TestKeyboardMapper {
     }
 }
 
-impl KeyboardMapper for TestKeyboardMapper {
+impl PlatformKeyboardMapper for TestKeyboardMapper {
     fn map_keystroke(&self, keystroke: Keystroke, use_key_equivalents: bool) -> Keystroke {
         self.mapper.map_keystroke(keystroke, use_key_equivalents)
     }

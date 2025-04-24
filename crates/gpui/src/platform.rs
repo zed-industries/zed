@@ -234,7 +234,7 @@ pub(crate) trait Platform: 'static {
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
-    fn keyboard_mapper(&self) -> Box<dyn KeyboardMapper> {
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
         Box::new(EmptyKeyboardMapper)
     }
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);

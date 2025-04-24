@@ -6,10 +6,10 @@ use super::{
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyboardMapper, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
-    SemanticVersion, Task, WindowAppearance, WindowParams, hash,
+    CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay,
+    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result,
+    ScreenCaptureSource, SemanticVersion, Task, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -1177,7 +1177,7 @@ impl Platform for MacPlatform {
         })
     }
 
-    fn keyboard_mapper(&self) -> Box<dyn KeyboardMapper> {
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
         Box::new(MacKeyboardMapper::new())
     }
 }

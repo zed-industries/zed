@@ -6,7 +6,7 @@ use std::{
 use collections::HashMap;
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
-use crate::{KeyboardMapper, Keystroke, Modifiers, PlatformKeyboardLayout};
+use crate::{Keystroke, Modifiers, PlatformKeyboardLayout, PlatformKeyboardMapper};
 
 use super::{
     TISCopyCurrentKeyboardLayoutInputSource, TISGetInputSourceProperty, kTISPropertyInputSourceID,
@@ -60,7 +60,7 @@ pub(crate) struct MacKeyboardMapper {
     mappings: Option<HashMap<String, String>>,
 }
 
-impl KeyboardMapper for MacKeyboardMapper {
+impl PlatformKeyboardMapper for MacKeyboardMapper {
     fn map_keystroke(&self, keystroke: Keystroke, use_key_equivalents: bool) -> Keystroke {
         if use_key_equivalents {
             if let Some(mappings) = &self.mappings {
@@ -1561,7 +1561,7 @@ fn is_letter_key(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{KeyboardMapper, Keystroke, MacKeyboardMapper, Modifiers};
+    use crate::{Keystroke, MacKeyboardMapper, Modifiers, PlatformKeyboardMapper};
 
     #[test]
     fn test_to_vim_keystroke() {

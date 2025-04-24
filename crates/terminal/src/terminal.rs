@@ -61,8 +61,8 @@ use thiserror::Error;
 
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    KeyboardMapper, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformKeyboardMapper, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
     Window, actions, black, px,
 };
 
@@ -1245,7 +1245,11 @@ impl Terminal {
         self.events.push_back(InternalEvent::ToggleViMode);
     }
 
-    pub fn vi_motion(&mut self, keystroke: &Keystroke, keyboard_mapper: &dyn KeyboardMapper) {
+    pub fn vi_motion(
+        &mut self,
+        keystroke: &Keystroke,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
+    ) {
         if !self.vi_mode_enabled {
             return;
         }
@@ -1338,7 +1342,7 @@ impl Terminal {
         &mut self,
         keystroke: &Keystroke,
         alt_is_meta: bool,
-        mapper: &dyn KeyboardMapper,
+        mapper: &dyn PlatformKeyboardMapper,
     ) -> bool {
         if self.vi_mode_enabled {
             self.vi_motion(keystroke, mapper);

@@ -5,7 +5,7 @@ use util::ResultExt;
 use windows::Win32::UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::KL_NAMELENGTH};
 use windows_core::HSTRING;
 
-use crate::{KeyboardMapper, Keystroke, Modifiers, PlatformKeyboardLayout};
+use crate::{PlatformKeyboardMapper, Keystroke, Modifiers, PlatformKeyboardLayout};
 
 pub(crate) struct KeyboardLayout {
     id: String,
@@ -24,7 +24,7 @@ impl PlatformKeyboardLayout for KeyboardLayout {
 
 pub(crate) struct WindowsKeyboardMapper;
 
-impl KeyboardMapper for WindowsKeyboardMapper {
+impl PlatformKeyboardMapper for WindowsKeyboardMapper {
     fn map_keystroke(&self, keystroke: Keystroke, use_key_equivalents: bool) -> Keystroke {
         if is_immutable_key(keystroke.key.as_str()) {
             return keystroke;
@@ -447,7 +447,7 @@ mod tests {
         KLF_ACTIVATE, LoadKeyboardLayoutW, UnloadKeyboardLayout,
     };
 
-    use crate::{KeyboardMapper, Keystroke, Modifiers, WindowsKeyboardMapper};
+    use crate::{PlatformKeyboardMapper, Keystroke, Modifiers, WindowsKeyboardMapper};
 
     use super::is_already_vim_style;
 

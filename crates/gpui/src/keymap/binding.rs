@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use crate::{
-    Action, EmptyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate, KeyboardMapper,
+    Action, EmptyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate, PlatformKeyboardMapper,
     Keystroke,
 };
 use smallvec::SmallVec;
@@ -47,7 +47,7 @@ impl KeyBinding {
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         use_key_equivalents: bool,
-        keyboard_mapper: &dyn KeyboardMapper,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()

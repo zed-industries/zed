@@ -2,11 +2,11 @@ use std::borrow::Cow;
 
 use collections::HashMap;
 
-use crate::{KeyboardMapper, Keystroke, Modifiers};
+use crate::{Keystroke, Modifiers, PlatformKeyboardMapper};
 
 pub(crate) struct LinuxKeyboardMapper;
 
-impl KeyboardMapper for LinuxKeyboardMapper {
+impl PlatformKeyboardMapper for LinuxKeyboardMapper {
     fn map_keystroke(&self, keystroke: Keystroke, _: bool) -> Keystroke {
         keystroke
     }

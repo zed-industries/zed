@@ -24,9 +24,9 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, KeyboardMapper, Keymap, LinuxDispatcher, LinuxKeyboardMapper, Menu,
-    MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Point, Result, ScreenCaptureSource,
+    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxKeyboardMapper, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, Result, ScreenCaptureSource,
     Task, WindowAppearance, WindowParams, px,
 };
 
@@ -139,7 +139,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.text_system.clone())
     }
 
-    fn keyboard_mapper(&self) -> Box<dyn KeyboardMapper> {
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
         Box::new(LinuxKeyboardMapper::new())
     }
 

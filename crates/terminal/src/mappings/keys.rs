@@ -1,6 +1,6 @@
 /// The mappings defined in this file where created from reading the alacritty source
 use alacritty_terminal::term::TermMode;
-use gpui::{KeyboardMapper, Keystroke};
+use gpui::{Keystroke, PlatformKeyboardMapper};
 
 #[derive(Debug, PartialEq, Eq)]
 enum AlacModifiers {
@@ -45,7 +45,7 @@ pub fn to_esc_str(
     keystroke: &Keystroke,
     mode: &TermMode,
     alt_is_meta: bool,
-    mapper: &dyn KeyboardMapper,
+    mapper: &dyn PlatformKeyboardMapper,
 ) -> Option<String> {
     let keystroke = mapper.to_vim_keystroke(keystroke);
     let modifiers = AlacModifiers::new(&keystroke);

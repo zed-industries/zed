@@ -34,7 +34,7 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    KeyboardMapper, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    PlatformKeyboardMapper, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
@@ -250,7 +250,7 @@ pub struct App {
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
-    pub(crate) keyboard_mapper: Box<dyn KeyboardMapper>,
+    pub(crate) keyboard_mapper: Box<dyn PlatformKeyboardMapper>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -1639,7 +1639,7 @@ impl App {
     }
 
     /// TODO:
-    pub fn keyboard_mapper(&self) -> &dyn KeyboardMapper {
+    pub fn keyboard_mapper(&self) -> &dyn PlatformKeyboardMapper {
         self.keyboard_mapper.as_ref()
     }
 }
