@@ -180,6 +180,10 @@ impl MessageEditor {
         }
     }
 
+    pub fn context_store(&self) -> &Entity<ContextStore> {
+        &self.context_store
+    }
+
     fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
         cx.notify();
     }

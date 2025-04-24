@@ -128,7 +128,6 @@ impl FileContext {
         self.buffer.hash(state)
     }
 
-    // todo! inline?
     pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         let file = self.buffer.read(cx).file()?;
         Some(ProjectPath {
@@ -172,16 +171,6 @@ impl DirectoryContext {
         self.entry_id.hash(state)
     }
 
-    // todo! remove?
-    pub fn project_path(&self, project: &Project, cx: &App) -> Option<ProjectPath> {
-        let worktree = project.worktree_for_entry(self.entry_id, cx)?.read(cx);
-        let entry = worktree.entry_for_id(self.entry_id)?;
-        Some(ProjectPath {
-            worktree_id: worktree.id(),
-            path: entry.path.clone(),
-        })
-    }
-
     fn load(
         &self,
         project: Entity<Project>,
@@ -195,28 +184,13 @@ impl DirectoryContext {
             return None;
         }
 
-        // todo! Make sure this handles all descendants
-        let file_paths = worktree_ref
-            .child_entries(entry.path.as_ref())
-            .filter_map(|entry| {
-                if entry.is_file() {
-                    Some(entry.path.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
+        let file_paths = collect_files_in_path(worktree_ref, entry.path.as_ref());
         let texts_future = future::join_all(file_paths.into_iter().map(|path| {
             load_file_path_text_as_fenced_codeblock(project.clone(), worktree.clone(), path, cx)
         }));
 
         Some(cx.background_spawn(async move {
-            texts_future
-                .await
-                .into_iter()
-                .filter_map(|option| option)
-                .collect::<Vec<_>>()
+            texts_future.await.into_iter().flatten().collect::<Vec<_>>()
         }))
     }
 }
@@ -576,7 +550,6 @@ pub fn load_context(
     })
 }
 
-/* todo!
 fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
     let mut files = Vec::new();
 
@@ -590,7 +563,6 @@ fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
 
     files
 }
-*/
 
 fn load_file_path_text_as_fenced_codeblock(
     project: Entity<Project>,

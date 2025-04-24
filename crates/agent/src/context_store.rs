@@ -10,7 +10,7 @@ use futures::{self, Future, FutureExt, future};
 use gpui::{App, AppContext as _, Context, Entity, Image, SharedString, Task, WeakEntity};
 use language::Buffer;
 use language_model::LanguageModelImage;
-use project::{Project, ProjectEntryId, ProjectItem, ProjectPath, Worktree};
+use project::{Project, ProjectEntryId, ProjectItem, ProjectPath, Symbol, Worktree};
 use prompt_store::UserPromptId;
 use ref_cast::RefCast;
 use rope::{Point, Rope};
@@ -412,6 +412,27 @@ impl ContextStore {
                 FileInclusion::check_directory(directory_context, path, project, cx)
             }
             _ => None,
+        })
+    }
+
+    pub fn includes_symbol(&self, symbol: &Symbol, cx: &App) -> bool {
+        self.context().any(|context| match context {
+            AssistantContext::Symbol(context) => {
+                if context.symbol != symbol.name {
+                    return false;
+                }
+                let buffer = context.buffer.read(cx);
+                let Some(context_path) = buffer.project_path(cx) else {
+                    return false;
+                };
+                if context_path != symbol.path {
+                    return false;
+                }
+                let context_range = context.range.to_point_utf16(&buffer.snapshot());
+                context_range.start == symbol.range.start.0
+                    && context_range.end == symbol.range.end.0
+            }
+            _ => false,
         })
     }
 

@@ -314,7 +314,6 @@ impl AssistantPanel {
                 thread.clone(),
                 thread_store.clone(),
                 language_registry.clone(),
-                message_editor_context_store.clone(),
                 workspace.clone(),
                 window,
                 cx,
@@ -441,7 +440,6 @@ impl AssistantPanel {
                 thread.clone(),
                 self.thread_store.clone(),
                 self.language_registry.clone(),
-                message_editor_context_store.clone(),
                 self.workspace.clone(),
                 window,
                 cx,
@@ -629,7 +627,6 @@ impl AssistantPanel {
                         thread.clone(),
                         this.thread_store.clone(),
                         this.language_registry.clone(),
-                        message_editor_context_store.clone(),
                         this.workspace.clone(),
                         window,
                         cx,
@@ -1966,8 +1963,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
                 if panel.has_active_thread() {
-                    panel.thread.update(cx, |thread, cx| {
-                        thread.context_store().update(cx, |store, cx| {
+                    panel.message_editor.update(cx, |message_editor, cx| {
+                        message_editor.context_store().update(cx, |store, cx| {
                             let buffer = buffer.read(cx);
                             let selection_ranges = selection_ranges
                                 .into_iter()

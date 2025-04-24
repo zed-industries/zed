@@ -46,13 +46,10 @@ use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 use zed_actions::assistant::OpenPromptLibrary;
 
-use crate::context_store::ContextStore;
-
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
-    context_store: Entity<ContextStore>,
     workspace: WeakEntity<Workspace>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
@@ -724,7 +721,6 @@ impl ActiveThread {
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
-        context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -747,7 +743,6 @@ impl ActiveThread {
             language_registry,
             thread_store,
             thread: thread.clone(),
-            context_store,
             workspace,
             save_thread_task: None,
             messages: Vec::new(),
@@ -785,10 +780,6 @@ impl ActiveThread {
         }
 
         this
-    }
-
-    pub fn context_store(&self) -> &Entity<ContextStore> {
-        &self.context_store
     }
 
     pub fn thread(&self) -> &Entity<Thread> {
@@ -1479,7 +1470,6 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
-        let context_store = self.context_store.clone();
         let workspace = self.workspace.clone();
         let thread = self.thread.read(cx);
         let prompt_store = self.thread_store.read(cx).prompt_store().as_ref();
@@ -1727,16 +1717,9 @@ impl ActiveThread {
                             ContextPill::added(added_context, false, false, None).on_click(Rc::new(
                                 cx.listener({
                                     let workspace = workspace.clone();
-                                    let context_store = context_store.clone();
                                     move |_, _, window, cx| {
                                         if let Some(workspace) = workspace.upgrade() {
-                                            open_context(
-                                                &context,
-                                                context_store.clone(),
-                                                workspace,
-                                                window,
-                                                cx,
-                                            );
+                                            open_context(&context, workspace, window, cx);
                                             cx.notify();
                                         }
                                     }
@@ -3217,7 +3200,6 @@ impl Render for ActiveThread {
 
 pub(crate) fn open_context(
     context: &AssistantContext,
-    context_store: Entity<ContextStore>,
     workspace: Entity<Workspace>,
     window: &mut Window,
     cx: &mut App,

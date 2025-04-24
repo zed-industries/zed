@@ -295,13 +295,7 @@ impl ContextStrip {
             return;
         };
 
-        crate::active_thread::open_context(
-            context,
-            self.context_store.clone(),
-            workspace,
-            window,
-            cx,
-        );
+        crate::active_thread::open_context(context, workspace, window, cx);
     }
 
     fn remove_focused_context(
