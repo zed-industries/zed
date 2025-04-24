@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use crate::{
-    Action, EmptyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate, PlatformKeyboardMapper,
-    Keystroke,
+    Action, EmptyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke,
+    PlatformKeyboardMapper,
 };
 use smallvec::SmallVec;
 

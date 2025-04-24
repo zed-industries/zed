@@ -5,7 +5,7 @@ use util::ResultExt;
 use windows::Win32::UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::KL_NAMELENGTH};
 use windows_core::HSTRING;
 
-use crate::{PlatformKeyboardMapper, Keystroke, Modifiers, PlatformKeyboardLayout};
+use crate::{Keystroke, Modifiers, PlatformKeyboardLayout, PlatformKeyboardMapper};
 
 pub(crate) struct KeyboardLayout {
     id: String,
@@ -447,7 +447,7 @@ mod tests {
         KLF_ACTIVATE, LoadKeyboardLayoutW, UnloadKeyboardLayout,
     };
 
-    use crate::{PlatformKeyboardMapper, Keystroke, Modifiers, WindowsKeyboardMapper};
+    use crate::{Keystroke, Modifiers, PlatformKeyboardMapper, WindowsKeyboardMapper};
 
     use super::is_already_vim_style;
 
