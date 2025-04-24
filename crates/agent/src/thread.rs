@@ -1720,6 +1720,21 @@ impl Thread {
             Err(anyhow!("Error parsing input JSON: {error}")),
             cx,
         );
+        let ui_text = if let Some(pending_tool_use) = &pending_tool_use {
+            pending_tool_use.ui_text.clone()
+        } else {
+            log::error!(
+                "There was no pending tool use for tool use {tool_use_id}, even though it finished (with invalid input JSON)."
+            );
+            format!("Unknown tool {}", tool_use_id).into()
+        };
+
+        cx.emit(ThreadEvent::InvalidToolInput {
+            tool_use_id: tool_use_id.clone(),
+            ui_text,
+            invalid_input_json: invalid_json,
+        });
+
         self.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
     }
 
@@ -2323,6 +2338,11 @@ pub enum ThreadEvent {
         tool_use_id: LanguageModelToolUseId,
         ui_text: Arc<str>,
         input: serde_json::Value,
+    },
+    InvalidToolInput {
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: Arc<str>,
+        invalid_input_json: Arc<str>,
     },
     Stopped(Result<StopReason, Arc<anyhow::Error>>),
     MessageAdded(MessageId),
