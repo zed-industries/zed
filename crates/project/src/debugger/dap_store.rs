@@ -53,7 +53,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{DebugScenario, TaskContext, TaskTemplate};
+use task::TaskTemplate;
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -277,7 +277,7 @@ impl DapStore {
             DapStoreMode::Ssh(ssh) => {
                 let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {
                     project_id: ssh.upstream_project_id,
-                    scenario: Some(definition.to_proto()),
+                    definition: Some(definition.to_proto()),
                 });
                 let ssh_client = ssh.ssh_client.clone();
 
@@ -330,75 +330,6 @@ impl DapStore {
         }
     }
 
-    fn task_template_from_proto(template: proto::DebugTaskDefinition) -> TaskTemplate {
-        let proto::DebugTaskDefinition {
-            command,
-            args,
-            cwd,
-            env,
-            ..
-        } = template;
-        TaskTemplate {
-            command,
-            args,
-            cwd,
-            env,
-            ..Default::default()
-        }
-    }
-
-    fn task_template_to_proto(template: &TaskTemplate) -> proto::DebugTaskDefinition {
-        proto::DebugTaskDefinition {
-            command: template.command.clone(),
-            args: template.args.clone(),
-            cwd: template.cwd.clone(),
-            env: template.env.clone(),
-        }
-    }
-
-    fn debug_request_to_proto(request: DebugRequest) -> proto::DebugRequest {
-        match request {
-            DebugRequest::Launch(launch_request) => proto::DebugRequest {
-                request: Some(proto::debug_request::Request::DebugLaunchRequest(
-                    proto::DebugLaunchRequest {
-                        program: launch_request.program,
-                        cwd: launch_request
-                            .cwd
-                            .map(|cwd| cwd.to_string_lossy().into_owned()),
-                        args: launch_request.args,
-                    },
-                )),
-            },
-            DebugRequest::Attach(attach_request) => proto::DebugRequest {
-                request: Some(proto::debug_request::Request::DebugAttachRequest(
-                    proto::DebugAttachRequest {
-                        process_id: attach_request
-                            .process_id
-                            .expect("The process ID to be already filled out."),
-                    },
-                )),
-            },
-        }
-    }
-
-    fn debug_request_from_proto(val: proto::DebugRequest) -> DebugRequest {
-        match val.request {
-            Some(proto::debug_request::Request::DebugLaunchRequest(
-                proto::DebugLaunchRequest { program, cwd, args },
-            )) => DebugRequest::Launch(task::LaunchRequest {
-                program,
-                cwd: cwd.map(From::from),
-                args,
-            }),
-
-            Some(proto::debug_request::Request::DebugAttachRequest(
-                proto::DebugAttachRequest { process_id },
-            )) => DebugRequest::Attach(task::AttachRequest {
-                process_id: Some(process_id),
-            }),
-            _ => todo!(),
-        }
-    }
     pub fn run_debug_locator(
         &mut self,
         template: TaskTemplate,
@@ -438,11 +369,11 @@ impl DapStore {
             DapStoreMode::Ssh(ssh) => {
                 let request = ssh.upstream_client.request(proto::RunDebugLocators {
                     project_id: ssh.upstream_project_id,
-                    task: Some(Self::task_template_to_proto(&template)),
+                    task: Some(template.to_proto()),
                 });
                 cx.background_spawn(async move {
                     let response = request.await?;
-                    Ok(Self::debug_request_from_proto(response))
+                    DebugRequest::from_proto(response)
                 })
             }
             DapStoreMode::Collab => {
@@ -458,43 +389,6 @@ impl DapStore {
         }
     }
 
-    pub fn resolve_scenario(
-        &self,
-        scenario: DebugScenario,
-        task_context: TaskContext,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<DebugTaskDefinition>> {
-        cx.spawn(async move |this, cx| {
-            let DebugScenario {
-                adapter,
-                label,
-                build,
-                request,
-                initialize_args,
-                tcp_connection,
-                stop_on_entry,
-            } = scenario;
-            let request = if let Some(request) = request {
-                request
-            } else if let Some(build) = build {
-                this.update(cx, |this, cx| {
-                    // todo: query all locators.
-                    this.run_debug_locator(build, cx)
-                })?
-                .await?
-            } else {
-                return Err(anyhow!("No request or build provided"));
-            };
-            Ok(DebugTaskDefinition {
-                label,
-                adapter,
-                request,
-                initialize_args,
-                stop_on_entry,
-                tcp_connection,
-            })
-        })
-    }
     pub fn new_session(
         &mut self,
         template: DebugTaskDefinition,
@@ -1076,12 +970,12 @@ impl DapStore {
             .payload
             .task
             .ok_or_else(|| anyhow!("missing definition"))?;
-        let build_task = Self::task_template_from_proto(task);
+        let build_task = TaskTemplate::from_proto(task);
         let request = this
             .update(&mut cx, |this, cx| this.run_debug_locator(build_task, cx))?
             .await?;
 
-        Ok(Self::debug_request_to_proto(request))
+        Ok(request.to_proto())
     }
 
     async fn handle_get_debug_adapter_binary(
@@ -1089,15 +983,15 @@ impl DapStore {
         envelope: TypedEnvelope<proto::GetDebugAdapterBinary>,
         mut cx: AsyncApp,
     ) -> Result<proto::DebugAdapterBinary> {
-        let scenario = DebugTaskDefinition::from_proto(
+        let definition = DebugTaskDefinition::from_proto(
             envelope
                 .payload
-                .scenario
+                .definition
                 .ok_or_else(|| anyhow!("missing definition"))?,
         )?;
         let binary = this
             .update(&mut cx, |this, cx| {
-                this.get_debug_adapter_binary(scenario, cx)
+                this.get_debug_adapter_binary(definition, cx)
             })?
             .await?;
         Ok(binary.to_proto())

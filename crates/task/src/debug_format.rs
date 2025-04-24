@@ -1,5 +1,6 @@
 use anyhow::Result;
 use gpui::SharedString;
+use proto::DebugTaskDefinition;
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -76,6 +77,57 @@ pub enum DebugRequest {
     Attach(AttachRequest),
 }
 
+impl DebugRequest {
+    pub fn to_proto(&self) -> proto::DebugRequest {
+        match self {
+            DebugRequest::Launch(launch_request) => proto::DebugRequest {
+                request: Some(proto::debug_request::Request::DebugLaunchRequest(
+                    proto::DebugLaunchRequest {
+                        program: launch_request.program.clone(),
+                        cwd: launch_request
+                            .cwd
+                            .as_ref()
+                            .map(|cwd| cwd.to_string_lossy().into_owned()),
+                        args: launch_request.args.clone(),
+                    },
+                )),
+            },
+            DebugRequest::Attach(attach_request) => proto::DebugRequest {
+                request: Some(proto::debug_request::Request::DebugAttachRequest(
+                    proto::DebugAttachRequest {
+                        process_id: attach_request
+                            .process_id
+                            .expect("The process ID to be already filled out."),
+                    },
+                )),
+            },
+        }
+    }
+
+    pub fn from_proto(val: proto::DebugRequest) -> Result<DebugRequest> {
+        let request = val
+            .request
+            .ok_or_else(|| anyhow::anyhow!("Missing debug request"))?;
+        match request {
+            proto::debug_request::Request::DebugLaunchRequest(proto::DebugLaunchRequest {
+                program,
+                cwd,
+                args,
+            }) => Ok(DebugRequest::Launch(LaunchRequest {
+                program,
+                cwd: cwd.map(From::from),
+                args,
+            })),
+
+            proto::debug_request::Request::DebugAttachRequest(proto::DebugAttachRequest {
+                process_id,
+            }) => Ok(DebugRequest::Attach(AttachRequest {
+                process_id: Some(process_id),
+            })),
+        }
+    }
+}
+
 impl From<LaunchRequest> for DebugRequest {
     fn from(launch_config: LaunchRequest) -> Self {
         DebugRequest::Launch(launch_config)
@@ -88,37 +140,6 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
-// impl TryFrom<TaskTemplate> for DebugTaskTemplate {
-//     type Error = ();
-
-//     fn try_from(value: TaskTemplate) -> Result<Self, Self::Error> {
-//         let TaskType::Debug(debug_args) = value.task_type else {
-//             return Err(());
-//         };
-
-//         let request = match debug_args.request {
-//             crate::DebugArgsRequest::Launch => DebugRequest::Launch(LaunchRequest {
-//                 program: value.command,
-//                 cwd: value.cwd.map(PathBuf::from),
-//                 args: value.args,
-//             }),
-//             crate::DebugArgsRequest::Attach(attach_config) => DebugRequest::Attach(attach_config),
-//         };
-
-//         Ok(DebugTaskTemplate {
-//             locator: debug_args.locator,
-//             definition: DebugTaskDefinition {
-//                 adapter: debug_args.adapter,
-//                 request,
-//                 label: value.label,
-//                 initialize_args: debug_args.initialize_args,
-//                 tcp_connection: debug_args.tcp_connection,
-//                 stop_on_entry: debug_args.stop_on_entry,
-//             },
-//         })
-//     }
-// }
-
 /// This struct represent a user created debug task
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -127,7 +148,7 @@ pub struct DebugScenario {
     /// Name of the debug task
     pub label: SharedString,
     /// A task to run prior to spawning the debugee
-    pub build: Option<TaskTemplate>,
+    pub build: Option<SharedString>,
     #[serde(flatten)]
     pub request: Option<DebugRequest>,
     /// Additional initialization arguments to be sent on DAP initialization

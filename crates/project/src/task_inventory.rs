@@ -157,6 +157,19 @@ impl Inventory {
             .cloned()
             .collect()
     }
+
+    pub fn task_template_by_label(
+        &self,
+        worktree_id: Option<WorktreeId>,
+        label: &str,
+        cx: &App,
+    ) -> Option<TaskTemplate> {
+        self.list_tasks(None, None, worktree_id, cx)
+            .iter()
+            .find(|(_, template)| template.label == label)
+            .map(|val| val.1.clone())
+    }
+
     /// Pulls its task sources relevant to the worktree and the language given,
     /// returns all task templates with their source kinds, worktree tasks first, language tasks second
     /// and global tasks last. No specific order inside source kinds groups.
@@ -819,7 +832,6 @@ mod tests {
                     Some(&mock_tasks_from_names(
                         expected_initial_state.iter().map(|name| name.as_str()),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -875,7 +887,6 @@ mod tests {
                             .into_iter()
                             .chain(expected_initial_state.iter().map(|name| name.as_str())),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -1000,7 +1011,6 @@ mod tests {
                             .iter()
                             .map(|(_, name)| name.as_str()),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
             inventory
@@ -1012,7 +1022,6 @@ mod tests {
                     Some(&mock_tasks_from_names(
                         worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
             inventory
@@ -1024,7 +1033,6 @@ mod tests {
                     Some(&mock_tasks_from_names(
                         worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });

@@ -522,11 +522,15 @@ message DapModule {
 }
 
 message DebugTaskDefinition {
-    reserved 1;
-    string command = 2;
-    repeated string args = 3;
-    optional string cwd = 4;
-    map<string, string> env = 5;
+    string adapter = 1;
+    string label = 2;
+    oneof request {
+        DebugLaunchRequest debug_launch_request = 3;
+        DebugAttachRequest debug_attach_request = 4;
+    }
+    optional string initialize_args = 5;
+    optional TcpHost tcp_connection = 6;
+    optional bool stop_on_entry = 7;
 }
 
 message TcpHost {
@@ -554,7 +558,7 @@ message DapModuleId {
 
 message GetDebugAdapterBinary {
     uint64 project_id = 1;
-    DebugScenario scenario = 2;
+    DebugTaskDefinition definition = 2;
 }
 
 message DebugAdapterBinary {
@@ -573,7 +577,7 @@ message DebugAdapterBinary {
 
 message RunDebugLocators {
     uint64 project_id = 1;
-    DebugTaskDefinition task = 2;
+    TaskTemplate task = 2;
 }
 
 message DebugRequest {
@@ -582,12 +586,20 @@ message DebugRequest {
         DebugAttachRequest debug_attach_request = 2;
     }
 }
+
 message DebugScenario {
     string label = 1;
     string adapter = 2;
-    string locator = 3;
+    reserved 3;
     DebugRequest request = 4;
     optional TcpHost connection = 5;
     optional bool stop_on_entry = 6;
     optional string configuration = 7;
+}
+
+message TaskTemplate {
+    string command = 1;
+    repeated string args = 2;
+    map<string, string> env = 3;
+    optional string cwd = 4;
 }

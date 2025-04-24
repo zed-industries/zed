@@ -6934,7 +6934,7 @@ impl Editor {
             let context = task_context.await?;
             let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
 
-            let resolved = resolved_task.resolved.as_mut()?;
+            let resolved = &mut resolved_task.resolved;
             resolved.reveal = reveal_strategy;
 
             workspace

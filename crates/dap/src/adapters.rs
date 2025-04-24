@@ -10,7 +10,6 @@ use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
 use language::LanguageToolchainStore;
 use node_runtime::NodeRuntime;
-use proto::{DebugAttachRequest, DebugLaunchRequest};
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use smol::{self, fs::File, lock::Mutex};
@@ -22,7 +21,6 @@ use std::{
     net::Ipv4Addr,
     ops::Deref,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
 };
 use task::{AttachRequest, DebugRequest, DebugScenario, LaunchRequest, TcpArgumentsTemplate};
@@ -139,109 +137,84 @@ pub struct DebugTaskDefinition {
     pub tcp_connection: Option<TcpArgumentsTemplate>,
 }
 
-// impl TryFrom<DebugScenario> for DebugTaskDefinition {
-//     type Error = anyhow::Error;
-
-//     fn try_from(value: DebugScenario) -> Result<Self, Self::Error> {
-//         let DebugScenario {
-//             label,
-//             adapter,
-//             request: Some(request),
-//             initialize_args,
-//             tcp_connection,
-//             stop_on_entry,
-//             ..
-//         } = value
-//         else {
-//             return Err(anyhow!(
-//                 "DebugScenario is expected to have a concrete binary to spawn/attach to."
-//             ));
-//         };
-
-//         Ok(Self {
-//             label,
-//             adapter,
-//             request,
-//             initialize_args,
-//             tcp_connection,
-//             stop_on_entry,
-//         })
-//     }
-// }
-
-impl From<DebugTaskDefinition> for DebugScenario {
-    fn from(value: DebugTaskDefinition) -> Self {
-        let DebugTaskDefinition {
-            label,
-            adapter,
-            request,
-            initialize_args,
-            tcp_connection,
-            stop_on_entry,
-            ..
-        } = value;
-
-        Self {
-            label,
-            adapter,
-            request: Some(request),
-            initialize_args,
-            tcp_connection,
-            stop_on_entry,
-            build: None,
-        }
-    }
-}
-
 impl DebugTaskDefinition {
-    pub fn from_proto(payload: proto::DebugScenario) -> Result<Self> {
-        let Some(proto::DebugRequest {
-            request: Some(request),
-        }) = payload.request
-        else {
-            return Err(anyhow!("Missing request in debug scenario"));
-        };
-        let request = match request {
-            proto::debug_request::Request::DebugAttachRequest(request) => {
-                DebugRequest::Attach(AttachRequest {
-                    process_id: Some(request.process_id),
-                })
-            }
-
-            proto::debug_request::Request::DebugLaunchRequest(request) => {
-                DebugRequest::Launch(LaunchRequest {
-                    program: request.program,
-                    cwd: request.cwd.map(|cwd| cwd.into()),
-                    args: request.args,
-                })
-            }
-        };
-        Ok(Self {
-            adapter: payload.adapter.into(),
-            label: payload.label.into(),
-            request,
-            initialize_args: payload
-                .configuration
-                .as_deref()
-                .map(serde_json::Value::from_str)
-                .transpose()?,
-            tcp_connection: payload
-                .connection
-                .map(TcpArgumentsTemplate::from_proto)
-                .transpose()?,
-            stop_on_entry: payload.stop_on_entry,
-        })
-    }
-
-    pub fn to_proto(&self) -> proto::DebugScenario {
-        todo!()
-    }
     pub fn cwd(&self) -> Option<&Path> {
         if let DebugRequest::Launch(config) = &self.request {
             config.cwd.as_ref().map(Path::new)
         } else {
             None
         }
+    }
+
+    pub fn to_scenario(&self) -> DebugScenario {
+        DebugScenario {
+            label: self.label.clone(),
+            adapter: self.adapter.clone(),
+            build: None,
+            request: Some(self.request.clone()),
+            stop_on_entry: self.stop_on_entry,
+            tcp_connection: self.tcp_connection.clone(),
+            initialize_args: self.initialize_args.clone(),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::DebugTaskDefinition {
+        proto::DebugTaskDefinition {
+            adapter: self.label.to_string(),
+            request: Some(match &self.request {
+                DebugRequest::Launch(config) => {
+                    proto::debug_task_definition::Request::DebugLaunchRequest(
+                        proto::DebugLaunchRequest {
+                            program: config.program.clone(),
+                            cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
+                            args: config.args.clone(),
+                        },
+                    )
+                }
+                DebugRequest::Attach(attach_request) => {
+                    proto::debug_task_definition::Request::DebugAttachRequest(
+                        proto::DebugAttachRequest {
+                            process_id: attach_request.process_id.unwrap_or_default(),
+                        },
+                    )
+                }
+            }),
+            label: self.label.to_string(),
+            initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
+            tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
+            stop_on_entry: self.stop_on_entry,
+        }
+    }
+
+    pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
+        let request = proto
+            .request
+            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
+        Ok(Self {
+            label: proto.label.into(),
+            initialize_args: proto.initialize_args.map(|v| v.into()),
+            tcp_connection: proto
+                .tcp_connection
+                .map(TcpArgumentsTemplate::from_proto)
+                .transpose()?,
+            stop_on_entry: proto.stop_on_entry,
+            adapter: proto.adapter.into(),
+            request: match request {
+                proto::debug_task_definition::Request::DebugAttachRequest(config) => {
+                    DebugRequest::Attach(AttachRequest {
+                        process_id: Some(config.process_id),
+                    })
+                }
+
+                proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
+                    DebugRequest::Launch(LaunchRequest {
+                        program: config.program,
+                        cwd: config.cwd.map(|cwd| cwd.into()),
+                        args: config.args,
+                    })
+                }
+            },
+        })
     }
 }
 

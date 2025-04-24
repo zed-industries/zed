@@ -87,7 +87,7 @@ pub struct ResolvedTask {
     substituted_variables: HashSet<VariableName>,
     /// Further actions that need to take place after the resolved task is spawned,
     /// with all task variables resolved.
-    pub resolved: Option<SpawnInTerminal>,
+    pub resolved: SpawnInTerminal,
 }
 
 impl ResolvedTask {
@@ -103,10 +103,7 @@ impl ResolvedTask {
 
     /// A human-readable label to display in the UI.
     pub fn display_label(&self) -> &str {
-        self.resolved
-            .as_ref()
-            .map(|resolved| resolved.label.as_str())
-            .unwrap_or_else(|| self.resolved_label.as_str())
+        self.resolved.command_label.as_str()
     }
 }
 

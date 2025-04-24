@@ -48,30 +48,28 @@ impl Workspace {
     pub fn schedule_resolved_task(
         self: &mut Workspace,
         task_source_kind: TaskSourceKind,
-        mut resolved_task: ResolvedTask,
+        resolved_task: ResolvedTask,
         omit_history: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        if let Some(spawn_in_terminal) = resolved_task.resolved.take() {
-            if !omit_history {
-                resolved_task.resolved = Some(spawn_in_terminal.clone());
-                self.project().update(cx, |project, cx| {
-                    if let Some(task_inventory) =
-                        project.task_store().read(cx).task_inventory().cloned()
-                    {
-                        task_inventory.update(cx, |inventory, _| {
-                            inventory.task_scheduled(task_source_kind, resolved_task);
-                        })
-                    }
-                });
-            }
+        let spawn_in_terminal = resolved_task.resolved.clone();
+        if !omit_history {
+            self.project().update(cx, |project, cx| {
+                if let Some(task_inventory) =
+                    project.task_store().read(cx).task_inventory().cloned()
+                {
+                    task_inventory.update(cx, |inventory, _| {
+                        inventory.task_scheduled(task_source_kind, resolved_task);
+                    })
+                }
+            });
+        }
 
-            if let Some(terminal_provider) = self.terminal_provider.as_ref() {
-                terminal_provider
-                    .spawn(spawn_in_terminal, window, cx)
-                    .detach_and_log_err(cx);
-            }
+        if let Some(terminal_provider) = self.terminal_provider.as_ref() {
+            terminal_provider
+                .spawn(spawn_in_terminal, window, cx)
+                .detach_and_log_err(cx);
         }
     }
 

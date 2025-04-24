@@ -629,11 +629,6 @@ impl ContextProvider for RustContextProvider {
         } else {
             vec!["run".into()]
         };
-        let debug_task_args = if let Some(package_to_run) = package_to_run {
-            vec!["build".into(), "-p".into(), package_to_run]
-        } else {
-            vec!["build".into()]
-        };
         let mut task_templates = vec![
             TaskTemplate {
                 label: format!(

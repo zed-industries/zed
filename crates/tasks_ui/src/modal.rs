@@ -351,9 +351,7 @@ impl PickerDelegate for TasksModalDelegate {
             reveal_target: Some(reveal_target),
         }) = &self.task_overrides
         {
-            if let Some(resolved_task) = &mut task.resolved {
-                resolved_task.reveal_target = *reveal_target;
-            }
+            task.resolved.reveal_target = *reveal_target;
         }
 
         self.workspace
@@ -393,16 +391,14 @@ impl PickerDelegate for TasksModalDelegate {
         } else {
             String::new()
         };
-        if let Some(resolved) = resolved_task.resolved.as_ref() {
-            if resolved.command_label != display_label
-                && resolved.command_label != resolved_task.resolved_label
-            {
-                if !tooltip_label_text.trim().is_empty() {
-                    tooltip_label_text.push('\n');
-                }
-                tooltip_label_text.push_str(&resolved.command_label);
+
+        if resolved_task.resolved.command_label != resolved_task.resolved_label {
+            if !tooltip_label_text.trim().is_empty() {
+                tooltip_label_text.push('\n');
             }
+            tooltip_label_text.push_str(&resolved_task.resolved.command_label);
         }
+
         if template.tags.len() > 0 {
             tooltip_label_text.push('\n');
             tooltip_label_text.push_str(
@@ -524,7 +520,7 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        Some(task.resolved.as_ref()?.command_label.clone())
+        Some(task.resolved.command_label.clone())
     }
 
     fn confirm_input(
@@ -541,9 +537,7 @@ impl PickerDelegate for TasksModalDelegate {
             reveal_target: Some(reveal_target),
         }) = self.task_overrides
         {
-            if let Some(resolved_task) = &mut task.resolved {
-                resolved_task.reveal_target = reveal_target;
-            }
+            task.resolved.reveal_target = reveal_target;
         }
         self.workspace
             .update(cx, |workspace, cx| {

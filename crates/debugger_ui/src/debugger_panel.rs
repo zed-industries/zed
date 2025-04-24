@@ -6,6 +6,7 @@ use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
+use dap::DebugRequest;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
@@ -18,6 +19,7 @@ use gpui::{
     actions, anchored, deferred,
 };
 
+use project::WorktreeId;
 use project::debugger::session::{Session, SessionStateEvent};
 use project::{
     Project,
@@ -32,7 +34,7 @@ use settings::Settings;
 use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
-use task::DebugScenario;
+use task::{DebugScenario, TaskContext};
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
@@ -220,7 +222,7 @@ impl DebugPanel {
 
     pub fn start_session(
         &mut self,
-        definition: DebugScenario,
+        scenario: DebugScenario,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -233,22 +235,23 @@ impl DebugPanel {
         let dap_store = self.project.read(cx).dap_store().clone().downgrade();
 
         cx.spawn_in(window, async move |this, cx| {
-            let task_context = if let Some(task) = task_contexts {
-                task.await
-                    .active_worktree_context
-                    .map_or(task::TaskContext::default(), |context| context.1)
+            let (worktree_id, task_context) = if let Some(task) = task_contexts {
+                task.await.active_worktree_context.map_or(
+                    (None, task::TaskContext::default()),
+                    |(worktree_id, context)| (Some(worktree_id), context),
+                )
             } else {
-                task::TaskContext::default()
+                (None, task::TaskContext::default())
             };
 
-            let template = dap_store
+            let definition = this
                 .update(cx, |this, cx| {
-                    this.resolve_scenario(definition, task_context, cx)
+                    this.resolve_scenario(scenario, worktree_id, task_context, cx)
                 })?
                 .await?;
 
             let (session, task) = dap_store.update(cx, |dap_store, cx| {
-                let session = dap_store.new_session(template, None, cx);
+                let session = dap_store.new_session(definition, None, cx);
 
                 (session.clone(), dap_store.boot_session(session, cx))
             })?;
@@ -454,6 +457,76 @@ impl DebugPanel {
             }
             _ => {}
         }
+    }
+
+    pub fn resolve_scenario(
+        &self,
+        scenario: DebugScenario,
+        worktree_id: Option<WorktreeId>,
+        task_context: TaskContext,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<DebugTaskDefinition>> {
+        let project = self.project.read(cx);
+        let dap_store = project.dap_store().downgrade();
+        let task_store = project.task_store().downgrade();
+        let workspace = self.workspace.clone();
+        cx.spawn(async move |this, cx| {
+            let DebugScenario {
+                adapter,
+                label,
+                build,
+                request,
+                initialize_args,
+                tcp_connection,
+                stop_on_entry,
+            } = scenario;
+            let request = if let Some(mut request) = request {
+                // Resolve task variables within the request.
+                if let DebugRequest::Launch(request) = &mut request {}
+
+                request
+            } else if let Some(build) = build {
+                let Some(task) = task_store.update(cx, |this, cx| {
+                    this.task_inventory().and_then(|inventory| {
+                        inventory
+                            .read(cx)
+                            .task_template_by_label(worktree_id, &build, cx)
+                    })
+                })?
+                else {
+                    anyhow::bail!("Couldn't find task template for {:?}", build)
+                };
+                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
+                    anyhow::bail!("Could not resolve task variables within a task");
+                };
+
+                let run_build = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.spawn_in_terminal(task.resolved, window, cx)
+                })?;
+
+                let exit_status = run_build.await?;
+                if !exit_status.success() {
+                    anyhow::bail!("Build failed");
+                }
+
+                dap_store
+                    .update(cx, |this, cx| {
+                        // todo: query all locators.
+                        this.run_debug_locator(task.resolved, cx)
+                    })?
+                    .await?
+            } else {
+                return Err(anyhow!("No request or build provided"));
+            };
+            Ok(DebugTaskDefinition {
+                label,
+                adapter,
+                request,
+                initialize_args,
+                stop_on_entry,
+                tcp_connection,
+            })
+        })
     }
 
     fn handle_run_in_terminal_request(

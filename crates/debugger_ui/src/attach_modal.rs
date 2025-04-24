@@ -4,6 +4,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
 use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
+use task::DebugScenario;
 
 use std::sync::Arc;
 use sysinfo::System;
@@ -228,7 +229,8 @@ impl PickerDelegate for AttachModalDelegate {
             }
         }
 
-        let scenario = self.scenario.clone().into();
+        let scenario = self.scenario.to_scenario();
+
         let panel = self
             .workspace
             .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))

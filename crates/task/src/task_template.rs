@@ -74,6 +74,28 @@ pub struct TaskTemplate {
     pub show_command: bool,
 }
 
+impl TaskTemplate {
+    pub fn to_proto(&self) -> proto::TaskTemplate {
+        proto::TaskTemplate {
+            command: self.command.clone(),
+            args: self.args.clone(),
+            env: self.env.clone(),
+            cwd: self.cwd.clone(),
+        }
+    }
+
+    pub fn from_proto(proto: proto::TaskTemplate) -> Self {
+        Self {
+            label: proto.command.clone(),
+            command: proto.command.clone(),
+            args: proto.args.clone(),
+            env: proto.env.clone(),
+            cwd: proto.cwd.clone(),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
 /// Use to represent debug request type
 pub enum DebugArgsRequest {
@@ -251,7 +273,7 @@ impl TaskTemplate {
             substituted_variables,
             original_task: self.clone(),
             resolved_label: full_label.clone(),
-            resolved: Some(SpawnInTerminal {
+            resolved: SpawnInTerminal {
                 id,
                 cwd,
                 full_label,
@@ -276,7 +298,7 @@ impl TaskTemplate {
                 show_summary: self.show_summary,
                 show_command: self.show_command,
                 show_rerun: true,
-            }),
+            },
         })
     }
 }

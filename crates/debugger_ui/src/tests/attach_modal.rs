@@ -31,9 +31,10 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
         cx,
         DebugScenario {
             adapter: "fake-adapter".to_string(),
-            request: dap::DebugRequest::Attach(AttachRequest {
+            request: Some(dap::DebugRequest::Attach(AttachRequest {
                 process_id: Some(10),
-            }),
+            })),
+            build: None,
             label: "label".to_string(),
             initialize_args: None,
             tcp_connection: None,
@@ -105,7 +106,7 @@ async fn test_show_attach_modal_and_select_process(
                     DebugScenario {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
                         build: None,
-                        request: dap::DebugRequest::Attach(AttachRequest::default()),
+                        request: Some(dap::DebugRequest::Attach(AttachRequest::default())),
                         label: "attach example".into(),
                         initialize_args: None,
                         tcp_connection: Some(TcpArgumentsTemplate::default()),
