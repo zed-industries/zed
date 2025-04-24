@@ -982,7 +982,7 @@ and then another
             output_excerpt = completion.output_excerpt,
             feedback
         );
-        self.client.telemetry().flush_events();
+        self.client.telemetry().flush_events().detach();
         cx.notify();
     }
 

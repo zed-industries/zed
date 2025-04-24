@@ -33,4 +33,8 @@ impl Settings for VimModeSetting {
                 .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
         ))
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
+        // TODO: could possibly check if any of the `vim.<foo>` keys are set?
+    }
 }

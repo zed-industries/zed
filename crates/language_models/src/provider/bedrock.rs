@@ -893,6 +893,8 @@ pub fn map_to_language_model_completion_events(
                                             let tool_use_event = LanguageModelToolUse {
                                                 id: tool_use.id.into(),
                                                 name: tool_use.name.into(),
+                                                is_input_complete: true,
+                                                raw_input: tool_use.input_json.clone(),
                                                 input: if tool_use.input_json.is_empty() {
                                                     Value::Null
                                                 } else {

@@ -1,22 +1,21 @@
-You are an expert software developer tasked with evaluating an AI agent's messages and tool calls in this conversation:
+You are an expert software developer.
+Your task is to evaluate an AI agent's messages and tool calls in this conversation:
 
 <messages>
 {{{messages}}}
 </messages>
 
-Use the following criteria to score the above messages.
+Evaluate whether or not the sequence of messages passes the following assertion:
 
-<criteria>
-{{criteria}}
-</criteria>
+<assertion>
+{{{assertion}}}
+</assertion>
 
-Based on these criteria, give the messages a score between 0 and 5.
-The output score should ONLY INCLUDE whole numbers. DO NOT return decimals or floats.
-
-- 5 means: messages meet all criteria
-- 0 means: messages don't meet any criteria
+Analyze the messages one by one, and structure your answer in the following XML format:
 
 ```
 <analysis>{YOUR ANALYSIS HERE}</analysis>
-<score>{YOUR SCORE HERE}</score>
+<passed>{PASSED_ASSERTION}</passed>
 ```
+
+Where `PASSED_ASSERTION` is either `true` or `false`.

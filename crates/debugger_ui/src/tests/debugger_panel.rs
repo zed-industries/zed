@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{tests::start_debug_session, *};
 use dap::{
     ErrorResponse, Message, RunInTerminalRequestArguments, SourceBreakpoint,
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
@@ -48,9 +48,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<Threads, _>(move |_, _| {
@@ -187,9 +185,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<Threads, _>(move |_, _| {
@@ -354,9 +350,7 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client
@@ -419,6 +413,86 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     shutdown_session.await.unwrap();
 }
 
+#[gpui::test]
+async fn test_handle_start_debugging_request(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        "/project",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    let fake_config = json!({"one": "two"});
+    let launched_with = Arc::new(parking_lot::Mutex::new(None));
+
+    let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
+        let launched_with = launched_with.clone();
+        move |client| {
+            let launched_with = launched_with.clone();
+            client.on_request::<dap::requests::Launch, _>(move |_, args| {
+                launched_with.lock().replace(args.raw);
+                Ok(())
+            });
+            client.on_request::<dap::requests::Attach, _>(move |_, _| {
+                assert!(false, "should not get attach request");
+                Ok(())
+            });
+        }
+    });
+
+    client
+        .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
+            request: StartDebuggingRequestArgumentsRequest::Launch,
+            configuration: fake_config.clone(),
+        })
+        .await;
+
+    cx.run_until_parked();
+
+    workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let active_session = debug_panel
+                .read(cx)
+                .active_session()
+                .unwrap()
+                .read(cx)
+                .session(cx);
+            let parent_session = active_session.read(cx).parent_session().unwrap();
+
+            assert_eq!(
+                active_session.read(cx).definition(),
+                parent_session.read(cx).definition()
+            );
+        })
+        .unwrap();
+
+    assert_eq!(&fake_config, launched_with.lock().as_ref().unwrap());
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+}
+
 // // covers that we always send a response back, if something when wrong,
 // // while spawning the terminal
 #[gpui::test]
@@ -444,9 +518,7 @@ async fn test_handle_error_run_in_terminal_reverse_request(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client
@@ -522,9 +594,7 @@ async fn test_handle_start_debugging_reverse_request(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
@@ -629,9 +699,7 @@ async fn test_shutdown_children_when_parent_session_shutdown(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let parent_session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let parent_session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = parent_session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
@@ -737,9 +805,7 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let parent_session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let parent_session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = parent_session.update(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_response::<StartDebugging, _>(move |_| {}).await;
@@ -858,7 +924,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session(&project, cx, |client| {
+    let session = start_debug_session(&workspace, cx, |client| {
         client.on_request::<dap::requests::Initialize, _>(move |_, _| {
             Ok(dap::Capabilities {
                 supports_step_back: Some(true),
@@ -866,7 +932,6 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
             })
         });
     })
-    .await
     .unwrap();
 
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
@@ -1073,9 +1138,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         .update(cx, |_, _, cx| worktree.read(cx).id())
         .unwrap();
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     let buffer = project
@@ -1290,9 +1353,7 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
         editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
     });
 
-    let session = debugger::test::start_debug_session(&project, cx, |_| {})
-        .await
-        .unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
@@ -1358,7 +1419,7 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project::debugger::test::start_debug_session(&project, cx, |client| {
+    start_debug_session(&workspace, cx, |client| {
         client.on_request::<dap::requests::Initialize, _>(|_, _| {
             Err(ErrorResponse {
                 error: Some(Message {
@@ -1372,12 +1433,8 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
                 }),
             })
         });
-    });
-
-    assert!(
-        task.await.is_err(),
-        "Session should failed to start if launch request fails"
-    );
+    })
+    .ok();
 
     cx.run_until_parked();
 

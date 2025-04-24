@@ -2,7 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::StreamExt;
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::OffsetRangeExt;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{
@@ -20,6 +20,8 @@ use util::paths::PathMatcher;
 pub struct GrepToolInput {
     /// A regex pattern to search for in the entire project. Note that the regex
     /// will be parsed by the Rust `regex` crate.
+    ///
+    /// Do NOT specify a path here! This will only be matched against the code **content**.
     pub regex: String,
 
     /// A glob pattern for the paths of files to include in the search.
@@ -96,6 +98,7 @@ impl Tool for GrepTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         const CONTEXT_LINES: u32 = 2;
@@ -405,7 +408,7 @@ mod tests {
     ) -> String {
         let tool = Arc::new(GrepTool);
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
-        let task = cx.update(|cx| tool.run(input, &[], project, action_log, cx));
+        let task = cx.update(|cx| tool.run(input, &[], project, action_log, None, cx));
 
         match task.output.await {
             Ok(result) => result,
