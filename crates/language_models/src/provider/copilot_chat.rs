@@ -453,9 +453,11 @@ impl CopilotChatLanguageModel {
                         }
                     }
 
-                    messages.push(ChatMessage::User {
-                        content: text_content,
-                    });
+                    if !text_content.is_empty() {
+                        messages.push(ChatMessage::User {
+                            content: text_content,
+                        });
+                    }
                 }
                 Role::Assistant => {
                     let mut tool_calls = Vec::new();

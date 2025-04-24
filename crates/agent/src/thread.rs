@@ -1267,6 +1267,8 @@ impl Thread {
                         .ok();
                 }
 
+                let mut request_assistant_message_id = None;
+
                 while let Some(event) = events.next().await {
                     if let Some((_, response_events)) = request_callback_parameters.as_mut() {
                         response_events
@@ -1278,11 +1280,11 @@ impl Thread {
                     thread.update(cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
-                                thread.insert_message(
+                                request_assistant_message_id = Some(thread.insert_message(
                                     Role::Assistant,
                                     vec![MessageSegment::Text(String::new())],
                                     cx,
-                                );
+                                ));
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
@@ -1311,11 +1313,11 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(
+                                        request_assistant_message_id = Some(thread.insert_message(
                                             Role::Assistant,
                                             vec![MessageSegment::Text(chunk.to_string())],
                                             cx,
-                                        );
+                                        ));
                                     };
                                 }
                             }
@@ -1338,25 +1340,25 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(
+                                        request_assistant_message_id = Some(thread.insert_message(
                                             Role::Assistant,
                                             vec![MessageSegment::Thinking {
                                                 text: chunk.to_string(),
                                                 signature,
                                             }],
                                             cx,
-                                        );
+                                        ));
                                     };
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                let last_assistant_message_id = thread
-                                    .messages
-                                    .iter_mut()
-                                    .rfind(|message| message.role == Role::Assistant)
-                                    .map(|message| message.id)
+                                let last_assistant_message_id = request_assistant_message_id
                                     .unwrap_or_else(|| {
-                                        thread.insert_message(Role::Assistant, vec![], cx)
+                                        let new_assistant_message_id =
+                                            thread.insert_message(Role::Assistant, vec![], cx);
+                                        request_assistant_message_id =
+                                            Some(new_assistant_message_id);
+                                        new_assistant_message_id
                                     });
 
                                 let tool_use_id = tool_use.id.clone();
@@ -1775,22 +1777,19 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let canceled = if self.pending_completions.pop().is_some() {
-            true
-        } else {
-            let mut canceled = false;
-            for pending_tool_use in self.tool_use.cancel_pending() {
-                canceled = true;
-                self.tool_finished(
-                    pending_tool_use.id.clone(),
-                    Some(pending_tool_use),
-                    true,
-                    window,
-                    cx,
-                );
-            }
-            canceled
-        };
+        let mut canceled = self.pending_completions.pop().is_some();
+
+        for pending_tool_use in self.tool_use.cancel_pending() {
+            canceled = true;
+            self.tool_finished(
+                pending_tool_use.id.clone(),
+                Some(pending_tool_use),
+                true,
+                window,
+                cx,
+            );
+        }
+
         self.finalize_pending_checkpoint(cx);
         canceled
     }
