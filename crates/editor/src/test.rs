@@ -199,6 +199,9 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                         lines[row.0 as usize].push_str("§ ");
                         lines[row.0 as usize].push_str(block_lines[0].trim_end());
                         for i in 1..height as usize {
+                            if row.0 as usize + i >= lines.len() {
+                                lines.push("".to_string());
+                            };
                             lines[row.0 as usize + i].push_str("§ ");
                             lines[row.0 as usize + i].push_str(block_lines[i].trim_end());
                         }

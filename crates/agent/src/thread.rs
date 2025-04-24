@@ -13,10 +13,12 @@ use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
-use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+};
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelImage, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
@@ -38,7 +40,7 @@ use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse, SharedProjectContext,
 };
-use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState, USING_TOOL_MARKER};
+use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -97,6 +99,7 @@ pub struct Message {
     pub role: Role,
     pub segments: Vec<MessageSegment>,
     pub context: String,
+    pub images: Vec<LanguageModelImage>,
 }
 
 impl Message {
@@ -167,12 +170,9 @@ pub enum MessageSegment {
 
 impl MessageSegment {
     pub fn should_display(&self) -> bool {
-        // We add USING_TOOL_MARKER when making a request that includes tool uses
-        // without non-whitespace text around them, and this can cause the model
-        // to mimic the pattern, so we consider those segments not displayable.
         match self {
-            Self::Text(text) => text.is_empty() || text.trim() == USING_TOOL_MARKER,
-            Self::Thinking { text, .. } => text.is_empty() || text.trim() == USING_TOOL_MARKER,
+            Self::Text(text) => text.is_empty(),
+            Self::Thinking { text, .. } => text.is_empty(),
             Self::RedactedThinking(_) => false,
         }
     }
@@ -317,6 +317,7 @@ pub struct Thread {
     request_callback: Option<
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
     >,
+    remaining_turns: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -370,6 +371,7 @@ impl Thread {
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
             request_callback: None,
+            remaining_turns: u32::MAX,
         }
     }
 
@@ -418,6 +420,7 @@ impl Thread {
                         })
                         .collect(),
                     context: message.context,
+                    images: Vec::new(),
                 })
                 .collect(),
             next_message_id,
@@ -443,6 +446,7 @@ impl Thread {
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
             request_callback: None,
+            remaining_turns: u32::MAX,
         }
     }
 
@@ -523,7 +527,7 @@ impl Thread {
         self.messages.iter().find(|message| message.id == id)
     }
 
-    pub fn messages(&self) -> impl Iterator<Item = &Message> {
+    pub fn messages(&self) -> impl ExactSizeIterator<Item = &Message> {
         self.messages.iter()
     }
 
@@ -617,23 +621,11 @@ impl Thread {
                     .await
                     .unwrap_or(false);
 
-                if equal {
-                    git_store
-                        .update(cx, |store, cx| {
-                            store.delete_checkpoint(pending_checkpoint.git_checkpoint, cx)
-                        })?
-                        .detach();
-                } else {
+                if !equal {
                     this.update(cx, |this, cx| {
                         this.insert_checkpoint(pending_checkpoint, cx)
                     })?;
                 }
-
-                git_store
-                    .update(cx, |store, cx| {
-                        store.delete_checkpoint(final_checkpoint, cx)
-                    })?
-                    .detach();
 
                 Ok(())
             }
@@ -750,31 +742,41 @@ impl Thread {
                 }
             }
 
+            if let Some(message) = self.messages.iter_mut().find(|m| m.id == message_id) {
+                message.images = new_context
+                    .iter()
+                    .filter_map(|context| {
+                        if let AssistantContext::Image(image_context) = context {
+                            image_context.image_task.clone().now_or_never().flatten()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+            }
+
             self.action_log.update(cx, |log, cx| {
                 // Track all buffers added as context
                 for ctx in &new_context {
                     match ctx {
                         AssistantContext::File(file_ctx) => {
-                            log.buffer_added_as_context(file_ctx.context_buffer.buffer.clone(), cx);
+                            log.track_buffer(file_ctx.context_buffer.buffer.clone(), cx);
                         }
                         AssistantContext::Directory(dir_ctx) => {
                             for context_buffer in &dir_ctx.context_buffers {
-                                log.buffer_added_as_context(context_buffer.buffer.clone(), cx);
+                                log.track_buffer(context_buffer.buffer.clone(), cx);
                             }
                         }
                         AssistantContext::Symbol(symbol_ctx) => {
-                            log.buffer_added_as_context(
-                                symbol_ctx.context_symbol.buffer.clone(),
-                                cx,
-                            );
+                            log.track_buffer(symbol_ctx.context_symbol.buffer.clone(), cx);
                         }
-                        AssistantContext::Excerpt(excerpt_context) => {
-                            log.buffer_added_as_context(
-                                excerpt_context.context_buffer.buffer.clone(),
-                                cx,
-                            );
+                        AssistantContext::Selection(selection_context) => {
+                            log.track_buffer(selection_context.context_buffer.buffer.clone(), cx);
                         }
-                        AssistantContext::FetchedUrl(_) | AssistantContext::Thread(_) => {}
+                        AssistantContext::FetchedUrl(_)
+                        | AssistantContext::Thread(_)
+                        | AssistantContext::Rules(_)
+                        | AssistantContext::Image(_) => {}
                     }
                 }
             });
@@ -815,6 +817,7 @@ impl Thread {
             role,
             segments,
             context: String::new(),
+            images: Vec::new(),
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -942,7 +945,26 @@ impl Thread {
         })
     }
 
-    pub fn send_to_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+    pub fn remaining_turns(&self) -> u32 {
+        self.remaining_turns
+    }
+
+    pub fn set_remaining_turns(&mut self, remaining_turns: u32) {
+        self.remaining_turns = remaining_turns;
+    }
+
+    pub fn send_to_model(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.remaining_turns == 0 {
+            return;
+        }
+
+        self.remaining_turns -= 1;
+
         let mut request = self.to_completion_request(cx);
         if model.supports_tools() {
             request.tools = {
@@ -967,7 +989,7 @@ impl Thread {
             };
         }
 
-        self.stream_completion(request, model, cx);
+        self.stream_completion(request, model, window, cx);
     }
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
@@ -1036,6 +1058,21 @@ impl Thread {
                 request_message
                     .content
                     .push(MessageContent::Text(message.context.to_string()));
+            }
+
+            if !message.images.is_empty() {
+                // Some providers only support image parts after an initial text part
+                if request_message.content.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text("Images attached by user:".to_string()));
+                }
+
+                for image in &message.images {
+                    request_message
+                        .content
+                        .push(MessageContent::Image(image.clone()))
+                }
             }
 
             for segment in &message.segments {
@@ -1171,6 +1208,7 @@ impl Thread {
         &mut self,
         request: LanguageModelRequest,
         model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
@@ -1232,6 +1270,7 @@ impl Thread {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
+                                cx.emit(ThreadEvent::ReceivedTextChunk);
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
                                         last_message.push_text(&chunk);
@@ -1291,12 +1330,27 @@ impl Thread {
                                         thread.insert_message(Role::Assistant, vec![], cx)
                                     });
 
-                                thread.tool_use.request_tool_use(
+                                let tool_use_id = tool_use.id.clone();
+                                let streamed_input = if tool_use.is_input_complete {
+                                    None
+                                } else {
+                                    Some((&tool_use.input).clone())
+                                };
+
+                                let ui_text = thread.tool_use.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
                                     tool_use_metadata.clone(),
                                     cx,
                                 );
+
+                                if let Some(input) = streamed_input {
+                                    cx.emit(ThreadEvent::StreamedToolUse {
+                                        tool_use_id,
+                                        ui_text,
+                                        input,
+                                    });
+                                }
                             }
                         }
 
@@ -1336,7 +1390,7 @@ impl Thread {
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
-                                let tool_uses = thread.use_pending_tools(cx);
+                                let tool_uses = thread.use_pending_tools(window, cx);
                                 cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
                             StopReason::EndTurn => {}
@@ -1381,7 +1435,7 @@ impl Thread {
                                 }));
                             }
 
-                            thread.cancel_last_completion(cx);
+                            thread.cancel_last_completion(window, cx);
                         }
                     }
                     cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
@@ -1550,7 +1604,11 @@ impl Thread {
         )
     }
 
-    pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) -> Vec<PendingToolUse> {
+    pub fn use_pending_tools(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
         let request = self.to_completion_request(cx);
         let messages = Arc::new(request.messages);
@@ -1582,6 +1640,7 @@ impl Thread {
                         tool_use.input.clone(),
                         &messages,
                         tool,
+                        window,
                         cx,
                     );
                 }
@@ -1598,9 +1657,10 @@ impl Thread {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         tool: Arc<dyn Tool>,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
-        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
+        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, window, cx);
         self.tool_use
             .run_pending_tool(tool_use_id, ui_text.into(), task);
     }
@@ -1611,6 +1671,7 @@ impl Thread {
         messages: &[LanguageModelRequestMessage],
         input: serde_json::Value,
         tool: Arc<dyn Tool>,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
@@ -1623,6 +1684,7 @@ impl Thread {
                 messages,
                 self.project.clone(),
                 self.action_log.clone(),
+                window,
                 cx,
             )
         };
@@ -1645,7 +1707,7 @@ impl Thread {
                             output,
                             cx,
                         );
-                        thread.tool_finished(tool_use_id, pending_tool_use, false, cx);
+                        thread.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
                     })
                     .ok();
             }
@@ -1657,6 +1719,7 @@ impl Thread {
         tool_use_id: LanguageModelToolUseId,
         pending_tool_use: Option<PendingToolUse>,
         canceled: bool,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
         if self.all_tools_finished() {
@@ -1664,7 +1727,7 @@ impl Thread {
             if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
                 self.attach_tool_results(cx);
                 if !canceled {
-                    self.send_to_model(model, cx);
+                    self.send_to_model(model, window, cx);
                 }
             }
         }
@@ -1686,7 +1749,11 @@ impl Thread {
     /// Cancels the last pending completion, if there are any pending.
     ///
     /// Returns whether a completion was canceled.
-    pub fn cancel_last_completion(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn cancel_last_completion(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let canceled = if self.pending_completions.pop().is_some() {
             true
         } else {
@@ -1697,6 +1764,7 @@ impl Thread {
                     pending_tool_use.id.clone(),
                     Some(pending_tool_use),
                     true,
+                    window,
                     cx,
                 );
             }
@@ -1766,7 +1834,7 @@ impl Thread {
                 thread_data,
                 final_project_snapshot
             );
-            client.telemetry().flush_events();
+            client.telemetry().flush_events().await;
 
             Ok(())
         })
@@ -1811,7 +1879,7 @@ impl Thread {
                     thread_data,
                     final_project_snapshot
                 );
-                client.telemetry().flush_events();
+                client.telemetry().flush_events().await;
 
                 Ok(())
             })
@@ -2067,7 +2135,7 @@ impl Thread {
                             github_login = github_login
                         );
 
-                        client.telemetry().flush_events();
+                        client.telemetry().flush_events().await;
                     }
                 }
             })
@@ -2153,6 +2221,7 @@ impl Thread {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
         let err = Err(anyhow::anyhow!(
@@ -2161,7 +2230,7 @@ impl Thread {
 
         self.tool_use
             .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
-        self.tool_finished(tool_use_id.clone(), None, true, cx);
+        self.tool_finished(tool_use_id.clone(), None, true, window, cx);
     }
 }
 
@@ -2185,8 +2254,14 @@ pub enum ThreadEvent {
     ShowError(ThreadError),
     UsageUpdated(RequestUsage),
     StreamedCompletion,
+    ReceivedTextChunk,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
+    StreamedToolUse {
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: Arc<str>,
+        input: serde_json::Value,
+    },
     Stopped(Result<StopReason, Arc<anyhow::Error>>),
     MessageAdded(MessageId),
     MessageEdited(MessageId),

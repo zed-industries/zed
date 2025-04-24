@@ -1497,6 +1497,15 @@ impl Hash for Image {
 }
 
 impl Image {
+    /// An empty image containing no data
+    pub fn empty() -> Self {
+        Self {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+            id: 0,
+        }
+    }
+
     /// Get this image's ID
     pub fn id(&self) -> u64 {
         self.id
@@ -1509,7 +1518,7 @@ impl Image {
         cx: &mut App,
     ) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self)
-            .use_data(window, cx)
+            .use_data(None, window, cx)
             .and_then(|result| result.ok())
     }
 

@@ -760,7 +760,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     // The mutated view may contain more than the reference view as
     // we don't currently shrink excerpts when diagnostics were removed.
-    let mut ref_iter = reference_excerpts.lines();
+    let mut ref_iter = reference_excerpts.lines().filter(|line| *line != "§ -----");
     let mut next_ref_line = ref_iter.next();
     let mut skipped_block = false;
 
@@ -768,7 +768,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
         if let Some(ref_line) = next_ref_line {
             if mut_line == ref_line {
                 next_ref_line = ref_iter.next();
-            } else if mut_line.contains('§') {
+            } else if mut_line.contains('§') && mut_line != "§ -----" {
                 skipped_block = true;
             }
         }

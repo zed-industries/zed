@@ -6,7 +6,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use collections::IndexMap;
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{AnyWindowHandle, App, AsyncApp, Entity, Task};
 use language::{OutlineItem, ParseStatus, Point};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{Project, Symbol};
@@ -128,6 +128,7 @@ impl Tool for CodeSymbolsTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CodeSymbolsInput>(input) {
@@ -174,7 +175,7 @@ pub async fn file_outline(
     };
 
     action_log.update(cx, |action_log, cx| {
-        action_log.buffer_read(buffer.clone(), cx);
+        action_log.track_buffer(buffer.clone(), cx);
     })?;
 
     // Wait until the buffer has been fully parsed, so that we can read its outline.

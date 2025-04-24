@@ -25,12 +25,14 @@ mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git_store::{Repository, RepositoryId};
-use task::DebugTaskDefinition;
 pub mod search_history;
 mod yarn;
 
 use crate::git_store::GitStore;
-pub use git_store::git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal};
+pub use git_store::{
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
+    git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
+};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -39,15 +41,12 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{
-    adapters::{DebugAdapterBinary, TcpArguments},
-    client::DebugAdapterClient,
-};
+use dap::{DapRegistry, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
 use debugger::{
-    breakpoint_store::BreakpointStore,
+    breakpoint_store::{ActiveStackFrame, BreakpointStore},
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
@@ -65,7 +64,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
     AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
-    SharedString, Task, WeakEntity, Window,
+    SharedString, Task, WeakEntity, Window, prelude::FluentBuilder,
 };
 use itertools::Itertools;
 use language::{
@@ -97,7 +96,6 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    net::Ipv4Addr,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -107,7 +105,7 @@ use std::{
 };
 
 use task_store::TaskStore;
-use terminals::{SshCommand, Terminals, wrap_for_ssh};
+use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
@@ -1072,8 +1070,9 @@ impl Project {
             let dap_store = cx.new(|cx| {
                 DapStore::new_ssh(
                     SSH_PROJECT_ID,
-                    ssh_proto.clone(),
+                    ssh.clone(),
                     breakpoint_store.clone(),
+                    worktree_store.clone(),
                     cx,
                 )
             });
@@ -1258,6 +1257,7 @@ impl Project {
                 remote_id,
                 client.clone().into(),
                 breakpoint_store.clone(),
+                worktree_store.clone(),
                 cx,
             )
         })?;
@@ -1463,79 +1463,6 @@ impl Project {
         }
     }
 
-    pub fn start_debug_session(
-        &mut self,
-        definition: DebugTaskDefinition,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Session>>> {
-        let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
-        };
-
-        let ssh_client = self.ssh_client().clone();
-
-        let result = cx.spawn(async move |this, cx| {
-            let mut binary = this
-                .update(cx, |this, cx| {
-                    this.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.get_debug_adapter_binary(definition.clone(), cx)
-                    })
-                })?
-                .await?;
-
-            if let Some(ssh_client) = ssh_client {
-                let mut ssh_command = ssh_client.update(cx, |ssh, _| {
-                    anyhow::Ok(SshCommand {
-                        arguments: ssh
-                            .ssh_args()
-                            .ok_or_else(|| anyhow!("SSH arguments not found"))?,
-                    })
-                })??;
-
-                let mut connection = None;
-                if let Some(c) = binary.connection {
-                    let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
-                    let port = dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
-
-                    ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
-                    connection = Some(TcpArguments {
-                        port: c.port,
-                        host: local_bind_addr,
-                        timeout: c.timeout,
-                    })
-                }
-
-                let (program, args) = wrap_for_ssh(
-                    &ssh_command,
-                    Some((&binary.command, &binary.arguments)),
-                    binary.cwd.as_deref(),
-                    binary.envs,
-                    None,
-                );
-
-                binary = DebugAdapterBinary {
-                    command: program,
-                    arguments: args,
-                    envs: HashMap::default(),
-                    cwd: None,
-                    connection,
-                    request_args: binary.request_args,
-                }
-            };
-
-            let ret = this
-                .update(cx, |project, cx| {
-                    project.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.new_session(binary, definition, worktree.downgrade(), None, cx)
-                    })
-                })?
-                .1
-                .await;
-            ret
-        });
-        result
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1623,6 +1550,15 @@ impl Project {
 
     pub fn breakpoint_store(&self) -> Entity<BreakpointStore> {
         self.breakpoint_store.clone()
+    }
+
+    pub fn active_debug_session(&self, cx: &App) -> Option<(Entity<Session>, ActiveStackFrame)> {
+        let active_position = self.breakpoint_store.read(cx).active_position()?;
+        let session = self
+            .dap_store
+            .read(cx)
+            .session_by_id(active_position.session_id)?;
+        Some((session, active_position.clone()))
     }
 
     pub fn lsp_store(&self) -> Entity<LspStore> {
@@ -3558,6 +3494,69 @@ impl Project {
         })
     }
 
+    pub fn inline_values(
+        &mut self,
+        session: Entity<Session>,
+        active_stack_frame: ActiveStackFrame,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
+        let snapshot = buffer_handle.read(cx).snapshot();
+
+        let Some(inline_value_provider) = session
+            .read(cx)
+            .adapter_name()
+            .map(|adapter_name| DapRegistry::global(cx).adapter(&adapter_name))
+            .and_then(|adapter| adapter.inline_value_provider())
+        else {
+            return Task::ready(Err(anyhow::anyhow!("Inline value provider not found")));
+        };
+
+        let mut text_objects =
+            snapshot.text_object_ranges(range.end..range.end, Default::default());
+        let text_object_range = text_objects
+            .find(|(_, obj)| matches!(obj, language::TextObject::AroundFunction))
+            .map(|(range, _)| snapshot.anchor_before(range.start))
+            .unwrap_or(range.start);
+
+        let variable_ranges = snapshot
+            .debug_variable_ranges(
+                text_object_range.to_offset(&snapshot)..range.end.to_offset(&snapshot),
+            )
+            .filter_map(|range| {
+                let lsp_range = language::range_to_lsp(
+                    range.range.start.to_point_utf16(&snapshot)
+                        ..range.range.end.to_point_utf16(&snapshot),
+                )
+                .ok()?;
+
+                Some((
+                    snapshot.text_for_range(range.range).collect::<String>(),
+                    lsp_range,
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        let inline_values = inline_value_provider.provide(variable_ranges);
+
+        let stack_frame_id = active_stack_frame.stack_frame_id;
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |project, cx| {
+                project.dap_store().update(cx, |dap_store, cx| {
+                    dap_store.resolve_inline_values(
+                        session,
+                        stack_frame_id,
+                        buffer_handle,
+                        inline_values,
+                        cx,
+                    )
+                })
+            })?
+            .await
+        })
+    }
+
     pub fn inlay_hints<T: ToOffset>(
         &mut self,
         buffer_handle: Entity<Buffer>,
@@ -5083,7 +5082,7 @@ impl Completion {
     /// A key that can be used to sort completions when displaying
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
-        const DEFAULT_KIND_KEY: usize = 2;
+        const DEFAULT_KIND_KEY: usize = 3;
         let kind_key = self
             .source
             // `lsp::CompletionListItemDefaults` has no `kind` field
@@ -5092,6 +5091,7 @@ impl Completion {
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
                 lsp::CompletionItemKind::VARIABLE => Some(1),
+                lsp::CompletionItemKind::CONSTANT => Some(2),
                 _ => None,
             })
             .unwrap_or(DEFAULT_KIND_KEY);

@@ -384,7 +384,14 @@ pub fn into_google(
                     }
                 }
                 language_model::MessageContent::RedactedThinking(_) => None,
-                language_model::MessageContent::Image(_) => None,
+                language_model::MessageContent::Image(image) => {
+                    Some(Part::InlineDataPart(google_ai::InlineDataPart {
+                        inline_data: google_ai::GenerativeContentBlob {
+                            mime_type: "image/png".to_string(),
+                            data: image.source.to_string(),
+                        },
+                    }))
+                }
                 language_model::MessageContent::ToolUse(tool_use) => {
                     Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
@@ -529,6 +536,7 @@ pub fn map_to_language_model_completion_events(
                                                 LanguageModelToolUse {
                                                     id,
                                                     name,
+                                                    is_input_complete: true,
                                                     input: function_call_part.function_call.args,
                                                 },
                                             )));

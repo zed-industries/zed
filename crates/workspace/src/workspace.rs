@@ -96,7 +96,7 @@ use std::{
     sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
     time::Duration,
 };
-use task::SpawnInTerminal;
+use task::{DebugTaskDefinition, SpawnInTerminal};
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -137,6 +137,10 @@ pub trait TerminalProvider {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<ExitStatus>>;
+}
+
+pub trait DebuggerProvider {
+    fn start_session(&self, definition: DebugTaskDefinition, window: &mut Window, cx: &mut App);
 }
 
 actions!(
@@ -860,6 +864,7 @@ pub struct Workspace {
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
     terminal_provider: Option<Box<dyn TerminalProvider>>,
+    debugger_provider: Option<Box<dyn DebuggerProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
@@ -1186,6 +1191,7 @@ impl Workspace {
             on_prompt_for_new_path: None,
             on_prompt_for_open_path: None,
             terminal_provider: None,
+            debugger_provider: None,
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
@@ -1703,6 +1709,10 @@ impl Workspace {
 
     pub fn set_terminal_provider(&mut self, provider: impl TerminalProvider + 'static) {
         self.terminal_provider = Some(Box::new(provider));
+    }
+
+    pub fn set_debugger_provider(&mut self, provider: impl DebuggerProvider + 'static) {
+        self.debugger_provider = Some(Box::new(provider));
     }
 
     pub fn serialized_ssh_project(&self) -> Option<SerializedSshProject> {
@@ -5869,7 +5879,8 @@ fn resize_bottom_dock(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let size = new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE);
+    let size =
+        new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
         bottom_dock.resize_active_panel(Some(size), window, cx);
     });

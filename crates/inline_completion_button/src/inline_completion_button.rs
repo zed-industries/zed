@@ -34,7 +34,7 @@ use workspace::{
     notifications::NotificationId,
 };
 use zed_actions::OpenBrowser;
-use zed_llm_client::{Plan, UsageLimit};
+use zed_llm_client::UsageLimit;
 use zeta::RateCompletions;
 
 actions!(edit_prediction, [ToggleMenu]);
@@ -408,10 +408,7 @@ impl InlineCompletionButton {
                 menu = menu.header("Usage");
                 menu = menu.custom_entry(
                     move |_window, cx| {
-                        let plan = Plan::ZedProTrial;
-                        let edit_predictions_limit = plan.edit_predictions_limit();
-
-                        let used_percentage = match edit_predictions_limit {
+                        let used_percentage = match usage.limit {
                             UsageLimit::Limited(limit) => {
                                 Some((usage.amount as f32 / limit as f32) * 100.)
                             }
@@ -426,7 +423,7 @@ impl InlineCompletionButton {
                                     .map(|percent| ProgressBar::new("usage", percent, 100., cx)),
                             )
                             .child(
-                                Label::new(match edit_predictions_limit {
+                                Label::new(match usage.limit {
                                     UsageLimit::Limited(limit) => {
                                         format!("{} / {limit}", usage.amount)
                                     }
