@@ -12,7 +12,7 @@ use util::paths::PathMatcher;
 use worktree::Snapshot;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct PathSearchToolInput {
+pub struct FindPathToolInput {
     /// The glob to match against every path in the project.
     ///
     /// <example>
@@ -34,11 +34,11 @@ pub struct PathSearchToolInput {
 
 const RESULTS_PER_PAGE: usize = 50;
 
-pub struct PathSearchTool;
+pub struct FindPathTool;
 
-impl Tool for PathSearchTool {
+impl Tool for FindPathTool {
     fn name(&self) -> String {
-        "path_search".into()
+        "find_path".into()
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
@@ -46,7 +46,7 @@ impl Tool for PathSearchTool {
     }
 
     fn description(&self) -> String {
-        include_str!("./path_search_tool/description.md").into()
+        include_str!("./find_path_tool/description.md").into()
     }
 
     fn icon(&self) -> IconName {
@@ -54,11 +54,11 @@ impl Tool for PathSearchTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        json_schema_for::<PathSearchToolInput>(format)
+        json_schema_for::<FindPathToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<PathSearchToolInput>(input.clone()) {
+        match serde_json::from_value::<FindPathToolInput>(input.clone()) {
             Ok(input) => format!("Find paths matching “`{}`”", input.glob),
             Err(_) => "Search paths".to_string(),
         }
@@ -73,7 +73,7 @@ impl Tool for PathSearchTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
+        let (offset, glob) = match serde_json::from_value::<FindPathToolInput>(input) {
             Ok(input) => (input.offset, input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
@@ -144,7 +144,7 @@ mod test {
     use util::path;
 
     #[gpui::test]
-    async fn test_path_search_tool(cx: &mut TestAppContext) {
+    async fn test_find_path_tool(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());

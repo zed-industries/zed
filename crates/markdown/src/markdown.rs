@@ -215,11 +215,16 @@ impl Markdown {
     }
 
     pub fn escape(s: &str) -> Cow<str> {
-        let count = s.bytes().filter(|c| c.is_ascii_punctuation()).count();
+        let count = s
+            .bytes()
+            .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
+            .count();
         if count > 0 {
             let mut output = String::with_capacity(s.len() + count);
             for c in s.chars() {
-                if c.is_ascii_punctuation() {
+                if c == '\n' {
+                    output.push('\n')
+                } else if c.is_ascii_punctuation() {
                     output.push('\\')
                 }
                 output.push(c)
