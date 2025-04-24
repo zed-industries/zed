@@ -727,6 +727,7 @@ pub fn map_to_language_model_completion_events(
                                                     id: tool_use.id.clone().into(),
                                                     name: tool_use.name.clone().into(),
                                                     is_input_complete: false,
+                                                    raw_input: tool_use.input_json.clone(),
                                                     input,
                                                 },
                                             ))],
@@ -757,6 +758,7 @@ pub fn map_to_language_model_completion_events(
                                                     )
                                                     .map_err(|err| anyhow!("Error parsing tool call input JSON: {err:?} - JSON string was: {input_json:?}"))?
                                                 },
+                                                raw_input: tool_use.input_json.clone(),
                                             },
                                         ))
                                     })],
