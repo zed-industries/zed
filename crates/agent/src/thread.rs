@@ -1292,11 +1292,10 @@ impl Thread {
                                     window,
                                     cx,
                                 );
-                                return;
+                                return Ok(());
                             }
                             Err(LanguageModelCompletionError::Other(error)) => {
-                                log::error!("error in completion stream: {error}");
-                                return;
+                                return Err(error);
                             }
                         };
 
@@ -1412,7 +1411,8 @@ impl Thread {
                         cx.notify();
 
                         thread.auto_capture_telemetry(cx);
-                    })?;
+                        Ok(())
+                    })??;
 
                     smol::future::yield_now().await;
                 }
@@ -1712,14 +1712,12 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
+        log::error!("The model returned invalid input JSON: {invalid_json}");
+
         let pending_tool_use = self.tool_use.insert_tool_output(
             tool_use_id.clone(),
             tool_name,
-            Err(anyhow!(
-                "Error parsing input JSON: {} - JSON was {}",
-                error,
-                invalid_json
-            )),
+            Err(anyhow!("Error parsing input JSON: {error}")),
             cx,
         );
         self.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
