@@ -146,7 +146,7 @@ These commands open new panes or jump to specific panes.
 
 ### In insert mode
 
-The following commands help you bring up Zed's completion menu, request a suggestion from GitHub Copilot, or open the inline AI assistant without leaving insert mode.
+The following commands help you bring up Zed's completion menu, request a suggestion from GitHub Copilot, or open [Inline Assist](./agent/inline-assist.md) without leaving insert mode.
 
 | Command                                                                      | Default Shortcut |
 | ---------------------------------------------------------------------------- | ---------------- |

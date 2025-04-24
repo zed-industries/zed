@@ -6,7 +6,7 @@ This section covers various aspects of the Assistant:
 
 - [Assistant Panel](./assistant-panel.md): Create and collaboratively edit new chats, and manage interactions with language models.
 
-- [Inline Assistant](./inline-assistant.md): Discover how to use the Assistant to power inline transformations directly within your code editor and terminal.
+- [Inline Assist](./inline-assist.md): Discover how to use the Inline Assist feature to power inline transformations directly within your code editor and terminal.
 
 - [Providers & Configuration](./configuration.md): Configure the Assistant, and set up different language model providers like Anthropic, OpenAI, Ollama, LM Studio, Google Gemini, and GitHub Copilot Chat.
 

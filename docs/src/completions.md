@@ -298,4 +298,4 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 ## See also
 
-You may also use the Assistant Panel or the Inline Assistant to interact with language models, see [the assistant documentation](assistant/assistant.md) for more information.
+You may also use the Assistant Panel or Inline Assist to interact with language models, see [the assistant documentation](assistant/assistant.md) for more information.

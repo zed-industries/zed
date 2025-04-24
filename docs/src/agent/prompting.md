@@ -19,7 +19,7 @@ Here are some tips for using prompts effectively:
 
 The Prompt Library is an interface for writing and managing prompts. Like other text-driven UIs in Zed, it is a full editor with syntax highlighting, keyboard shortcuts, etc.
 
-You can use the inline assistant right in the prompt editor, allowing you to automate and rewrite prompts.
+You can use Inline Assist right in the prompt editor, allowing you to automate and rewrite prompts.
 
 ### Opening the Prompt Library
 
@@ -131,7 +131,7 @@ By using nested prompts, you can create modular and reusable prompt components t
 
 ### Prompt Templates
 
-Zed uses prompt templates to power internal assistant features, like the terminal assistant, or the content prompt used in the inline assistant.
+Zed uses prompt templates to power internal assistant features, like the terminal assistant, or the content prompt used in Inline Assist.
 
 Zed has the following internal prompt templates:
 

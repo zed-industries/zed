@@ -2,7 +2,7 @@
 
 Contexts are like conversations in most assistant-like tools. A context is a collaborative tool for sharing information between you, your project, and the assistant/model.
 
-The model can reference content from your active context in the assistant panel, but also elsewhere like the inline assistant.
+The model can reference content from your active context in the assistant panel, but also elsewhere like Inline Assist.
 
 ### Saving and Loading Contexts
 

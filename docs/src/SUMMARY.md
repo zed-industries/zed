@@ -48,7 +48,7 @@
   - [Custom API Keys](./agent/custom-api-keys.md)
 - [Product](./agent/product.md)
   - [Assistant Panel](./agent/assistant-panel.md)
-  - [Inline Assistant](./agent/inline-assistant.md)
+  - [Inline Assistant](./agent/inline-assist.md)
   - [Contexts](./agent/contexts.md)
   - [Commands](./agent/commands.md)
   - [Prompts](./agent/prompting.md)
