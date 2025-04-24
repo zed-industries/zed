@@ -92,7 +92,7 @@ impl CursorPosition {
                         match editor.mode() {
                             editor::EditorMode::AutoHeight { .. }
                             | editor::EditorMode::SingleLine { .. }
-                            | editor::EditorMode::Minimap => {
+                            | editor::EditorMode::Minimap { .. } => {
                                 cursor_position.position = None;
                                 cursor_position.context = None;
                             }

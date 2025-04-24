@@ -463,7 +463,7 @@ pub enum SelectMode {
     All,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum EditorMode {
     SingleLine {
         auto_width: bool,
@@ -479,7 +479,9 @@ pub enum EditorMode {
         /// When set to `true`, the editor's height will be determined by its content.
         sized_by_content: bool,
     },
-    Minimap,
+    Minimap {
+        parent: WeakEntity<Editor>,
+    },
 }
 
 impl EditorMode {
@@ -496,7 +498,7 @@ impl EditorMode {
     }
 
     fn is_minimap(&self) -> bool {
-        *self == Self::Minimap
+        matches!(self, Self::Minimap { .. })
     }
 }
 
@@ -1427,7 +1429,7 @@ impl Editor {
 
     pub fn clone(&self, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut clone = Self::new(
-            self.mode,
+            self.mode.clone(),
             self.buffer.clone(),
             self.project.clone(),
             window,
@@ -1616,7 +1618,7 @@ impl Editor {
             None
         };
 
-        let breakpoint_store = match (mode, project.as_ref()) {
+        let breakpoint_store = match (&mode, project.as_ref()) {
             (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store()),
             _ => None,
         };
@@ -1635,6 +1637,8 @@ impl Editor {
             );
             code_action_providers.push(Rc::new(project) as Rc<_>);
         }
+
+        let full_mode = mode.is_full();
 
         let mut this = Self {
             focus_handle,
@@ -1667,7 +1671,6 @@ impl Editor {
             show_local_selections: true,
             show_scrollbars: true,
             disable_scrolling: false,
-            mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
             show_line_numbers: None,
@@ -1810,6 +1813,7 @@ impl Editor {
                 .hide_mouse
                 .unwrap_or_default(),
             change_list: ChangeList::new(),
+            mode,
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -1895,7 +1899,7 @@ impl Editor {
         this.scroll_manager.show_scrollbars(window, cx);
         jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut this, &buffer, cx);
 
-        if mode.is_full() {
+        if full_mode {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
 
@@ -1959,7 +1963,7 @@ impl Editor {
         let mode = match self.mode {
             EditorMode::SingleLine { .. } => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
-            EditorMode::Minimap => "minimap",
+            EditorMode::Minimap { .. } => "minimap",
             EditorMode::Full { .. } => "full",
         };
 
@@ -2206,7 +2210,7 @@ impl Editor {
             .flatten();
 
         EditorSnapshot {
-            mode: self.mode,
+            mode: self.mode.clone(),
             show_gutter: self.show_gutter,
             show_line_numbers: self.show_line_numbers,
             show_git_diff_gutter: self.show_git_diff_gutter,
@@ -2243,8 +2247,8 @@ impl Editor {
             .excerpt_containing(self.selections.newest_anchor().head(), cx)
     }
 
-    pub fn mode(&self) -> EditorMode {
-        self.mode
+    pub fn mode(&self) -> &EditorMode {
+        &self.mode
     }
 
     pub fn set_mode(&mut self, mode: EditorMode) {
@@ -16135,7 +16139,9 @@ impl Editor {
 
     fn initialize_new_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Self> {
         let mut minimap = Editor::new_internal(
-            EditorMode::Minimap,
+            EditorMode::Minimap {
+                parent: cx.weak_entity(),
+            },
             self.buffer.clone(),
             self.project.clone(),
             Some(self.display_map.clone()),
@@ -20166,7 +20172,7 @@ impl Render for Editor {
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()
             },
-            EditorMode::Full { .. } | EditorMode::Minimap => TextStyle {
+            EditorMode::Full { .. } | EditorMode::Minimap { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
@@ -20184,7 +20190,9 @@ impl Render for Editor {
         let background = match self.mode {
             EditorMode::SingleLine { .. } => cx.theme().system().transparent,
             EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
-            EditorMode::Full { .. } | EditorMode::Minimap => cx.theme().colors().editor_background,
+            EditorMode::Full { .. } | EditorMode::Minimap { .. } => {
+                cx.theme().colors().editor_background
+            }
         };
 
         let show_underlines = !self.mode.is_minimap();
