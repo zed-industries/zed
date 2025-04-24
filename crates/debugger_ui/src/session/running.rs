@@ -416,7 +416,7 @@ impl RunningState {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
 
-        let debug_terminal = cx.new(|cx| DebugTerminal::empty(cx));
+        let debug_terminal = cx.new(DebugTerminal::empty);
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
