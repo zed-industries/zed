@@ -1846,59 +1846,113 @@ impl EditorElement {
             return;
         }
 
-        let Some((mut element, hover_state)) = self.editor.update(cx, |editor, cx| {
-            editor
-                .workspace()
-                .and_then(|workspace| Some(workspace.downgrade()))
-                .and_then(|workspace| {
-                    render_blame_entry_popover(blame_entry, workspace, &blame, cx)
-                        .map(|element| (element, editor.inline_blame_hover_state.clone()))
-                })
-        }) else {
-            return;
-        };
-
-        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-
+        let delay = EditorSettings::get_global(cx).hover_popover_delay;
         let mouse_position = window.mouse_position();
         let mouse_over_inline_blame = parent_bounds.contains(&mouse_position);
 
-        // let mouse_over_popover = Bounds::new(final_origin, size).contains(&mouse_position);
+        self.editor.update(cx, |editor, cx| {
+            let mouse_over_popover = editor
+                .inline_blame_hover_state
+                .as_ref()
+                .and_then(|state| state.popover_bounds)
+                .map_or(false, |bounds| bounds.contains(&mouse_position));
 
-        if mouse_over_inline_blame {
-            let target_point = if let Some(hover_state) = hover_state {
-                hover_state.position
-            } else {
-                self.editor.update(cx, |editor, _| {
+            if mouse_over_inline_blame || mouse_over_popover {
+                if let Some(state) = &mut editor.inline_blame_hover_state {
+                    state.hide_task.take();
+                } else {
+                    let show_task = cx.spawn(async move |editor, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(delay))
+                            .await;
+                        editor
+                            .update(cx, |editor, _| {
+                                if let Some(state) = &mut editor.inline_blame_hover_state {
+                                    state.show_task = None;
+                                }
+                            })
+                            .ok();
+                    });
                     editor.inline_blame_hover_state = Some(InlineBlameHoverState {
                         position: mouse_position,
+                        show_task: Some(show_task),
+                        hide_task: None,
+                        popover_bounds: None,
                     });
-                });
-                mouse_position
-            };
+                }
+            } else {
+                if let Some(state) = &mut editor.inline_blame_hover_state {
+                    if state.hide_task.is_none() {
+                        let hide_task = cx.spawn(async move |editor, cx| {
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(delay))
+                                .await;
+                            editor
+                                .update(cx, |editor, _| {
+                                    editor.inline_blame_hover_state = None;
+                                })
+                                .ok();
+                        });
+                        state.hide_task = Some(hide_task);
+                    }
+                }
+            }
+        });
 
-            let origin = {
-                let overall_height = size.height + HOVER_POPOVER_GAP;
-                let popover_origin = if target_point.y > overall_height {
-                    point(target_point.x, target_point.y - size.height)
-                } else {
-                    point(
-                        target_point.x,
-                        target_point.y + line_height + HOVER_POPOVER_GAP,
-                    )
-                };
-                let horizontal_offset = (text_hitbox.top_right().x
-                    - POPOVER_RIGHT_OFFSET
-                    - (popover_origin.x + size.width))
-                    .min(Pixels::ZERO);
-                point(popover_origin.x + horizontal_offset, popover_origin.y)
-            };
+        let should_draw = self.editor.update(cx, |editor, _| {
+            editor
+                .inline_blame_hover_state
+                .as_ref()
+                .map_or(false, |state| {
+                    state.show_task.is_none() && state.hide_task.is_none()
+                })
+        });
 
-            window.defer_draw(element, origin, 2);
-        } else {
-            self.editor.update(cx, |editor, _| {
-                editor.inline_blame_hover_state = None;
+        if should_draw {
+            let maybe_element = self.editor.update(cx, |editor, cx| {
+                editor
+                    .workspace()
+                    .and_then(|workspace| Some(workspace.downgrade()))
+                    .and_then(|workspace| {
+                        render_blame_entry_popover(blame_entry, workspace, &blame, cx)
+                    })
             });
+
+            if let Some(mut element) = maybe_element {
+                let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                let origin = self.editor.update(cx, |editor, _| {
+                    let target_point = editor
+                        .inline_blame_hover_state
+                        .as_ref()
+                        .map_or(mouse_position, |state| state.position);
+
+                    let overall_height = size.height + HOVER_POPOVER_GAP;
+                    let popover_origin = if target_point.y > overall_height {
+                        point(target_point.x, target_point.y - size.height)
+                    } else {
+                        point(
+                            target_point.x,
+                            target_point.y + line_height + HOVER_POPOVER_GAP,
+                        )
+                    };
+
+                    let horizontal_offset = (text_hitbox.top_right().x
+                        - POPOVER_RIGHT_OFFSET
+                        - (popover_origin.x + size.width))
+                        .min(Pixels::ZERO);
+
+                    point(popover_origin.x + horizontal_offset, popover_origin.y)
+                });
+
+                let popover_bounds = Bounds::new(origin, size);
+                self.editor.update(cx, |editor, _| {
+                    if let Some(state) = &mut editor.inline_blame_hover_state {
+                        state.popover_bounds = Some(popover_bounds);
+                    }
+                });
+
+                window.defer_draw(element, origin, 2);
+            }
         }
     }
 

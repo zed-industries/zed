@@ -798,9 +798,12 @@ impl ChangeList {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct InlineBlameHoverState {
     position: gpui::Point<Pixels>,
+    show_task: Option<Task<()>>,
+    hide_task: Option<Task<()>>,
+    popover_bounds: Option<Bounds<Pixels>>,
 }
 
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
