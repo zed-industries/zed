@@ -1198,10 +1198,11 @@ impl Thread {
                     thread.update(cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
-                                request_assistant_message_id = Some(thread.insert_assistant_message(
-                                    vec![MessageSegment::Text(String::new())],
-                                    cx,
-                                ));
+                                request_assistant_message_id =
+                                    Some(thread.insert_assistant_message(
+                                        vec![MessageSegment::Text(String::new())],
+                                        cx,
+                                    ));
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
@@ -1230,11 +1231,11 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        request_assistant_message_id = Some(thread.insert_assistant_message(
-                                            Role::Assistant,
-                                            vec![MessageSegment::Text(chunk.to_string())],
-                                            cx,
-                                        ));
+                                        request_assistant_message_id =
+                                            Some(thread.insert_assistant_message(
+                                                vec![MessageSegment::Text(chunk.to_string())],
+                                                cx,
+                                            ));
                                     };
                                 }
                             }
@@ -1257,13 +1258,14 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        request_assistant_message_id = Some(thread.insert_assistant_message(
-                                            vec![MessageSegment::Thinking {
-                                                text: chunk.to_string(),
-                                                signature,
-                                            }],
-                                            cx,
-                                        ));
+                                        request_assistant_message_id =
+                                            Some(thread.insert_assistant_message(
+                                                vec![MessageSegment::Thinking {
+                                                    text: chunk.to_string(),
+                                                    signature,
+                                                }],
+                                                cx,
+                                            ));
                                     };
                                 }
                             }
