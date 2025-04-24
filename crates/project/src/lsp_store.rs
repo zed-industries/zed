@@ -4,8 +4,9 @@ pub mod rust_analyzer_ext;
 
 use crate::{
     CodeAction, ColorPresentation, Completion, CompletionResponse, CompletionSource,
-    CoreCompletion, DocumentColor, Hover, InlayHint, LspAction, LspPullDiagnostics, ProjectItem,
-    ProjectPath, ProjectTransaction, PulledDiagnostics, ResolveState, Symbol, ToolchainStore,
+    CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction, LspPullDiagnostics,
+    ProjectItem, ProjectPath, ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
+    ToolchainStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -5257,6 +5258,361 @@ impl LspStore {
         })
     }
 
+    pub fn definition(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request_task = upstream_client.request(proto::MultiLspQuery {
+                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetDefinition(
+                    GetDefinition { position }.to_proto(project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(async move |weak_project, cx| {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let actions = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetDefinitionResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|definition_response| {
+                            GetDefinition { position }.response_from_proto(
+                                definition_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(actions
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let definition_task = self.request_multiple_lsp_locally(
+                buffer_handle,
+                Some(position),
+                GetDefinition { position },
+                cx,
+            );
+            cx.spawn(async move |_, _| {
+                Ok(definition_task
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, definition)| definition)
+                    .collect())
+            })
+        }
+    }
+
+    pub fn declaration(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request_task = upstream_client.request(proto::MultiLspQuery {
+                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetDeclaration(
+                    GetDeclaration { position }.to_proto(project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(async move |weak_project, cx| {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let actions = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetDeclarationResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|declaration_response| {
+                            GetDeclaration { position }.response_from_proto(
+                                declaration_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(actions
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let declaration_task = self.request_multiple_lsp_locally(
+                buffer_handle,
+                Some(position),
+                GetDeclaration { position },
+                cx,
+            );
+            cx.spawn(async move |_, _| {
+                Ok(declaration_task
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, declaration)| declaration)
+                    .collect())
+            })
+        }
+    }
+
+    pub fn type_definition(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request_task = upstream_client.request(proto::MultiLspQuery {
+                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetTypeDefinition(
+                    GetTypeDefinition { position }.to_proto(project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(async move |weak_project, cx| {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let actions = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetTypeDefinitionResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|type_definition_response| {
+                            GetTypeDefinition { position }.response_from_proto(
+                                type_definition_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(actions
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let type_definition_task = self.request_multiple_lsp_locally(
+                buffer_handle,
+                Some(position),
+                GetTypeDefinition { position },
+                cx,
+            );
+            cx.spawn(async move |_, _| {
+                Ok(type_definition_task
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, type_definition)| type_definition)
+                    .collect())
+            })
+        }
+    }
+
+    pub fn implementation(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<LocationLink>>> {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request_task = upstream_client.request(proto::MultiLspQuery {
+                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetImplementation(
+                    GetImplementation { position }.to_proto(project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(async move |weak_project, cx| {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let actions = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetImplementationResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|implementation_response| {
+                            GetImplementation { position }.response_from_proto(
+                                implementation_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(actions
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let implementation_task = self.request_multiple_lsp_locally(
+                buffer_handle,
+                Some(position),
+                GetImplementation { position },
+                cx,
+            );
+            cx.spawn(async move |_, _| {
+                Ok(implementation_task
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, implementation)| implementation)
+                    .collect())
+            })
+        }
+    }
+
+    pub fn references(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<Location>>> {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request_task = upstream_client.request(proto::MultiLspQuery {
+                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetReferences(
+                    GetReferences { position }.to_proto(project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(async move |weak_project, cx| {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let actions = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetReferencesResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|references_response| {
+                            GetReferences { position }.response_from_proto(
+                                references_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(actions
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let references_task = self.request_multiple_lsp_locally(
+                buffer_handle,
+                Some(position),
+                GetReferences { position },
+                cx,
+            );
+            cx.spawn(async move |_, _| {
+                Ok(references_task
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, references)| references)
+                    .collect())
+            })
+        }
+    }
+
     pub fn code_actions(
         &mut self,
         buffer_handle: &Entity<Buffer>,
@@ -7883,6 +8239,200 @@ impl LspStore {
                                     ),
                                 ),
                             ),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetDefinition(message)) => {
+                let get_definition = GetDefinition::from_proto(
+                    message,
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let definition = lsp_store
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_definition.position),
+                            get_definition,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: definition
+                        .map(|(server_id, definition)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
+                            response: Some(proto::lsp_response::Response::GetDefinitionResponse(
+                                GetDefinition::response_to_proto(
+                                    definition,
+                                    project,
+                                    sender_id,
+                                    &buffer_version,
+                                    cx,
+                                ),
+                            )),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetDeclaration(message)) => {
+                let get_declaration = GetDeclaration::from_proto(
+                    message,
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let declaration = lsp_store
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_declaration.position),
+                            get_declaration,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: declaration
+                        .map(|(server_id, declaration)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
+                            response: Some(proto::lsp_response::Response::GetDeclarationResponse(
+                                GetDeclaration::response_to_proto(
+                                    declaration,
+                                    project,
+                                    sender_id,
+                                    &buffer_version,
+                                    cx,
+                                ),
+                            )),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetTypeDefinition(message)) => {
+                let get_type_definition = GetTypeDefinition::from_proto(
+                    message,
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let type_definition = lsp_store
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_type_definition.position),
+                            get_type_definition,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: type_definition
+                        .map(|(server_id, type_definition)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
+                            response: Some(
+                                proto::lsp_response::Response::GetTypeDefinitionResponse(
+                                    GetTypeDefinition::response_to_proto(
+                                        type_definition,
+                                        project,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    ),
+                                ),
+                            ),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetImplementation(message)) => {
+                let get_implementation = GetImplementation::from_proto(
+                    message,
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let implementation = lsp_store
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_implementation.position),
+                            get_implementation,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: implementation
+                        .map(|(server_id, implementation)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
+                            response: Some(
+                                proto::lsp_response::Response::GetImplementationResponse(
+                                    GetImplementation::response_to_proto(
+                                        implementation,
+                                        project,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    ),
+                                ),
+                            ),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetReferences(message)) => {
+                let get_references = GetReferences::from_proto(
+                    message,
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let references = lsp_store
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_references.position),
+                            get_references,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: references
+                        .map(|(server_id, references)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
+                            response: Some(proto::lsp_response::Response::GetReferencesResponse(
+                                GetReferences::response_to_proto(
+                                    references,
+                                    project,
+                                    sender_id,
+                                    &buffer_version,
+                                    cx,
+                                ),
+                            )),
                         })
                         .collect(),
                 })

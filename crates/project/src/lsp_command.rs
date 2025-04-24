@@ -171,27 +171,27 @@ pub(crate) struct PerformRename {
     pub push_to_history: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct GetDefinition {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct GetDeclaration {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct GetTypeDefinition {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct GetImplementation {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct GetReferences {
     pub position: PointUtf16,
 }
