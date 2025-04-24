@@ -332,7 +332,7 @@ impl AssistantPanel {
 
         let watch_client_status = Self::watch_client_status(workspace.client().clone(), window, cx);
 
-        let mut this = Self {
+        Self {
             pane,
             workspace: workspace.weak_handle(),
             width: None,
@@ -348,9 +348,7 @@ impl AssistantPanel {
             client_status: None,
             watch_client_status: Some(watch_client_status),
             show_zed_ai_notice: false,
-        };
-        this.new_context(window, cx);
-        this
+        }
     }
 
     pub fn toggle_focus(
