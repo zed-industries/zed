@@ -12,19 +12,33 @@ pub trait PlatformKeyboardLayout {
     fn name(&self) -> &str;
 }
 
-/// A trait for platform-specific keyboard mappers, which map keystrokes to the platform's native format
-/// and convert them to Vim keystrokes, given the current keyboard layout.
+/// A trait for handling platform-specific keyboard mapping behaviors.
+///
+/// This trait provides functionality to translate keystrokes between different representations,
+/// handle platform-specific key equivalents, and convert keystrokes to Vim-compatible formats.
+/// Implementations should account for different keyboard layouts and platform conventions.
 pub trait PlatformKeyboardMapper {
-    /// This method maps a keystroke to the platform's native format.
-    /// For example, on macOS, when `use_key_equivalents` is true, it maps the keystroke to the equivalent key;
-    /// On Windows, it maps the keystroke to its virtual key conterpart.
+    /// Maps a keystroke according to platform-specific keyboard layout rules.
+    ///
+    /// On macOS when `use_key_equivalents` is true, this rearranges shortcuts
+    /// to ensure they remain accessible. When false, no processing occurs.
+    ///
+    /// On Windows when `use_key_equivalents` is true, this interprets keys as
+    /// Virtual Keys (e.g., `ctrl-[` becomes `VK_CTRL-VK_OEM_4`). On German
+    /// layouts, `VK_OEM_4` produces 'ẞ', resulting in `ctrl-ẞ`.
     fn map_keystroke(&self, keystroke: Keystroke, use_key_equivalents: bool) -> Keystroke;
 
-    /// This method converts a keystroke to the Vim format.
-    /// For example, it converts `ctrl-shift-a` to `ctrl-A`.
+    /// Converts a keystroke to Vim-style key notation.
+    ///
+    /// For example, converts `ctrl-shift-a` to `ctrl-A`. The return type uses
+    /// `Cow` to avoid unnecessary allocations when no conversion is needed.
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke>;
 
-    /// This method returns a map of key equivalents, macOS only for now.
+    /// Returns the keyboard layout's key equivalents mapping, if available.
+    ///
+    /// Currently only implemented and used on macOS. The HashMap contains
+    /// mappings between key representations (e.g., special characters to their
+    /// equivalent key combinations).
     fn get_equivalents(&self) -> Option<&HashMap<String, String>>;
 }
 
