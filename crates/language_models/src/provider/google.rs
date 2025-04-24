@@ -396,7 +396,6 @@ pub fn into_google(
                     Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
                             name: tool_use.name.to_string(),
-                            raw_args: tool_use.raw_input,
                             args: tool_use.input,
                         },
                     }))
@@ -540,8 +539,8 @@ pub fn map_to_language_model_completion_events(
                                                     is_input_complete: true,
                                                     raw_input: function_call_part
                                                         .function_call
-                                                        .raw_args
-                                                        .clone(),
+                                                        .args
+                                                        .to_string(),
                                                     input: function_call_part.function_call.args,
                                                 },
                                             )));
