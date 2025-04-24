@@ -44,7 +44,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
-use zed_actions::assistant::OpenPromptLibrary;
+use zed_actions::assistant::OpenRulesLibrary;
 
 use crate::context_store::ContextStore;
 
@@ -695,7 +695,7 @@ fn open_markdown_link(
         }),
         Some(MentionLink::Fetch(url)) => cx.open_url(&url),
         Some(MentionLink::Rules(prompt_id)) => window.dispatch_action(
-            Box::new(OpenPromptLibrary {
+            Box::new(OpenRulesLibrary {
                 prompt_to_select: Some(prompt_id.0),
             }),
             cx,
@@ -2944,11 +2944,11 @@ impl ActiveThread {
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
-                                // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
+                                // TODO: Figure out a way to pass focus handle here so we can display the `OpenRulesLibrary`  keybinding
                                 .tooltip(Tooltip::text("View User Rules"))
                                 .on_click(move |_event, window, cx| {
                                     window.dispatch_action(
-                                        Box::new(OpenPromptLibrary {
+                                        Box::new(OpenRulesLibrary {
                                             prompt_to_select: first_user_rules_id,
                                         }),
                                         cx,
@@ -3234,7 +3234,7 @@ pub(crate) fn open_context(
             })
         }
         AssistantContext::Rules(rules_context) => window.dispatch_action(
-            Box::new(OpenPromptLibrary {
+            Box::new(OpenRulesLibrary {
                 prompt_to_select: Some(rules_context.prompt_id.0),
             }),
             cx,
