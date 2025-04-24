@@ -33,7 +33,7 @@ use ui::{
     Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
     Styled, Tab, Tooltip, Window, div, h_flex, v_flex,
 };
-use util::{ResultExt, maybe};
+use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
     ActivePaneDecorator, DraggedTab, Item, Member, Pane, PaneGroup, Workspace,
@@ -55,7 +55,6 @@ pub struct RunningState {
     _console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
-    zoomed_pane: Option<Entity<Pane>>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     _schedule_serialize: Option<Task<()>>,
 }
@@ -300,8 +299,6 @@ pub(crate) fn new_debugger_pane(
         pane.set_should_display_tab_bar(|_, _| true);
         pane.set_render_tab_bar_buttons(cx, |_, _, _| (None, None));
         pane.set_render_tab_bar(cx, {
-            let weak_running = weak_running.clone();
-
             move |pane, window, cx| {
                 let active_pane_item = pane.active_item();
                 h_flex()
@@ -531,7 +528,6 @@ impl RunningState {
             stack_frame_list,
             session_id,
             panes,
-            zoomed_pane: None,
             module_list,
             _console: console,
             breakpoint_list,
