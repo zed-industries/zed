@@ -1485,38 +1485,12 @@ impl ActiveThread {
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
 
-        let show_feedback = (!is_generating && is_last_message && message.role != Role::User)
-            || self.messages.get(ix + 1).map_or(false, |next_id| {
-                self.thread
-                    .read(cx)
-                    .message(*next_id)
-                    .map_or(false, |next_message| {
-                        next_message.role == Role::User
-                            && thread.tool_uses_for_message(*next_id, cx).is_empty()
-                            && thread.tool_results_for_message(*next_id).is_empty()
-                    })
-            });
+        let show_feedback = thread.is_turn_end(ix);
 
         let needs_confirmation = tool_uses.iter().any(|tool_use| tool_use.needs_confirmation);
 
         let generating_label = (is_generating && is_last_message)
             .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
-
-        // Don't render user messages that are just there for returning tool results.
-        if message.role == Role::User && thread.message_has_tool_results(message_id) {
-            if let Some(generating_label) = generating_label {
-                return h_flex()
-                    .w_full()
-                    .h_10()
-                    .py_1p5()
-                    .pl_4()
-                    .pb_3()
-                    .child(generating_label)
-                    .into_any_element();
-            }
-
-            return Empty.into_any();
-        }
 
         let edit_message_editor = self
             .editing_message
