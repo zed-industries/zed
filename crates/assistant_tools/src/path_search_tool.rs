@@ -371,6 +371,7 @@ mod test {
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
+    use std::path::MAIN_SEPARATOR_STR;
     use util::path;
 
     #[gpui::test]
@@ -393,27 +394,21 @@ mod test {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let expected_paths = [
+            ["root", "apple", "banana", "carrot"].join(MAIN_SEPARATOR_STR),
+            ["root", "apple", "bandana", "carbonara"].join(MAIN_SEPARATOR_STR),
+        ];
+
         let matches = cx
             .update(|cx| search_paths("root/**/car*", project.clone(), cx))
             .unwrap();
-        assert_eq!(
-            matches,
-            &[
-                "root/apple/banana/carrot".to_string(),
-                "root/apple/bandana/carbonara".to_string()
-            ]
-        );
+        assert_eq!(matches, &expected_paths);
 
         let matches = cx
             .update(|cx| search_paths("**/car*", project.clone(), cx))
             .unwrap();
-        assert_eq!(
-            matches,
-            &[
-                "root/apple/banana/carrot".to_string(),
-                "root/apple/bandana/carbonara".to_string()
-            ]
-        );
+        assert_eq!(matches, &expected_paths);
     }
 
     fn init_test(cx: &mut TestAppContext) {
