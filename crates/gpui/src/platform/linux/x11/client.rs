@@ -1,4 +1,4 @@
-use crate::platform::scap_screen_capture::scap_screen_sources;
+use crate::platform::{linux::x11::clipboard::Clipboard, scap_screen_capture::scap_screen_sources};
 use core::str;
 use std::{
     cell::RefCell,
@@ -201,7 +201,7 @@ pub struct X11ClientState {
     pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
     pub(crate) common: LinuxCommon,
-    pub(crate) clipboard: x11_clipboard::Clipboard,
+    pub(crate) clipboard: Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
     pub(crate) xdnd_state: Xdnd,
 }
@@ -388,7 +388,7 @@ impl X11Client {
             .reply()
             .unwrap();
 
-        let clipboard = x11_clipboard::Clipboard::new().unwrap();
+        let clipboard = Clipboard::new().unwrap();
 
         let xcb_connection = Rc::new(xcb_connection);
 

@@ -487,19 +487,15 @@ pub(crate) struct PipeDropFds {
 }
 
 pub(crate) fn create_pipe_drop_fd() -> Result<PipeDropFds, Error> {
+    let pipe = filedescriptor::Pipe::new().map_err(|_| Error::EventFdCreate)?;
     let pipe_drop_fds = unsafe {
-        // Docs Linux: https://man7.org/linux/man-pages/man2/pipe.2.html
-        // Posix: https://pubs.opengroup.org/onlinepubs/9699919799/
-        // Safety: See above docs, api expects a 2-long array of file descriptors, and flags
-        let mut pipes: [libc::c_int; 2] = [0, 0];
-        let pipe_create_res = libc::pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC);
-        if pipe_create_res < 0 {
-            // Don't want to have to read from errno_location, just skip propagating errno.
-            return Err(Error::EventFdCreate);
-        }
         // Safety: Trusting the OS to give correct FDs
-        let read_pipe = OwnedFd::from_raw_fd(pipes[0]);
-        let write_pipe = OwnedFd::from_raw_fd(pipes[1]);
+        let read_pipe = OwnedFd::from_raw_fd(
+            filedescriptor::IntoRawFileDescriptor::into_raw_file_descriptor(pipe.read),
+        );
+        let write_pipe = OwnedFd::from_raw_fd(
+            filedescriptor::IntoRawFileDescriptor::into_raw_file_descriptor(pipe.write),
+        );
         PipeDropFds {
             read_pipe,
             write_pipe,
@@ -515,40 +511,36 @@ pub(crate) fn run(
     receiver: Receiver<Atom>,
     read_pipe: OwnedFd,
 ) {
+    use filedescriptor::{POLLHUP, POLLIN, pollfd};
+
     let mut incr_map = HashMap::<Atom, Atom>::new();
     let mut state_map = HashMap::<Atom, IncrState>::new();
 
     let stream_fd = context.connection.stream().as_fd();
     let borrowed_fd = read_pipe.as_fd();
     // Poll stream for new Read-ready events, check if the other side of the pipe has been dropped
-    let mut pollfds: [libc::pollfd; 2] = [
-        libc::pollfd {
+    let mut pollfds: [pollfd; 2] = [
+        pollfd {
             fd: stream_fd.as_raw_fd(),
-            events: libc::POLLIN,
+            events: POLLIN,
             revents: 0,
         },
-        libc::pollfd {
+        pollfd {
             fd: borrowed_fd.as_raw_fd(),
             // If the other end is dropped, this pipe will get a HUP on poll
-            events: libc::POLLHUP,
+            events: POLLHUP,
             revents: 0,
         },
     ];
-    let len = pollfds.len();
     loop {
-        unsafe {
-            // Docs Linux: https://man7.org/linux/man-pages/man2/poll.2.html
-            // Posix: https://pubs.opengroup.org/onlinepubs/9699919799/
-            // Safety: Passing in a mutable pointer that lives for the duration of the call, the length is
-            // set to the length of that pointer.
-            // Any negative value (-1 for example) means infinite timeout.
-            let poll_res = libc::poll(&mut pollfds as *mut libc::pollfd, len as libc::nfds_t, -1);
-            if poll_res < 0 {
-                // Error polling, can't continue
-                return;
-            }
-        }
-        if pollfds[1].revents & libc::POLLHUP != 0 {
+        // Docs Linux: https://man7.org/linux/man-pages/man2/poll.2.html
+        // Posix: https://pubs.opengroup.org/onlinepubs/9699919799/
+        let poll_timeout_infinite = None;
+        let Ok(_events_recieved) = filedescriptor::poll(&mut pollfds, poll_timeout_infinite) else {
+            // Error polling, can't continue
+            return;
+        };
+        if pollfds[1].revents & POLLHUP != 0 {
             // kill-signal on pollfd
             return;
         }
