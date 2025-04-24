@@ -790,6 +790,7 @@ impl DebugPanel {
 
     fn top_controls_strip(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let active_session = self.active_session.clone();
+        let focus_handle = self.focus_handle.clone();
 
         Some(
             h_flex()
@@ -821,8 +822,17 @@ impl DebugPanel {
                                                     this.pause_thread(cx);
                                                 },
                                             ))
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Pause program")(window, cx)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Pause program",
+                                                        &Pause,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
                                             }),
                                     )
                                 } else {
@@ -835,8 +845,17 @@ impl DebugPanel {
                                                 |this, _, _window, cx| this.continue_thread(cx),
                                             ))
                                             .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Continue program")(window, cx)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Continue program",
+                                                        &Continue,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
                                             }),
                                     )
                                 }
@@ -852,8 +871,17 @@ impl DebugPanel {
                                         },
                                     ))
                                     .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Step over")(window, cx)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Step over",
+                                                &StepOver,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
                                     }),
                             )
                             .child(
@@ -867,8 +895,17 @@ impl DebugPanel {
                                         },
                                     ))
                                     .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Step out")(window, cx)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Step out",
+                                                &StepOut,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
                                     }),
                             )
                             .child(
@@ -882,8 +919,17 @@ impl DebugPanel {
                                         },
                                     ))
                                     .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Step in")(window, cx)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Step in",
+                                                &StepInto,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
                                     }),
                             )
                             .child(Divider::vertical())
@@ -916,8 +962,17 @@ impl DebugPanel {
                                             this.toggle_ignore_breakpoints(cx);
                                         },
                                     ))
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Disable all breakpoints")(window, cx)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Disable all breakpoints",
+                                                &ToggleIgnoreBreakpoints,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
                                     }),
                             )
                             .child(Divider::vertical())
@@ -930,8 +985,17 @@ impl DebugPanel {
                                             this.restart_session(cx);
                                         },
                                     ))
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Restart")(window, cx)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Restart",
+                                                &Restart,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
                                     }),
                             )
                             .child(
@@ -948,15 +1012,24 @@ impl DebugPanel {
                                             && thread_status != ThreadStatus::Running,
                                     )
                                     .tooltip({
+                                        let focus_handle = focus_handle.clone();
                                         let label = if capabilities
                                             .supports_terminate_threads_request
                                             .unwrap_or_default()
                                         {
                                             "Terminate Thread"
                                         } else {
-                                            "Terminate all Threads"
+                                            "Terminate All Threads"
                                         };
-                                        move |window, cx| Tooltip::text(label)(window, cx)
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                label,
+                                                &Stop,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
                                     }),
                             )
                         },
@@ -1006,13 +1079,17 @@ impl DebugPanel {
                                         });
                                     }
                                 })
-                                .tooltip(|window, cx| {
-                                    Tooltip::for_action(
-                                        "New Debug Session",
-                                        &CreateDebuggingSession,
-                                        window,
-                                        cx,
-                                    )
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |window, cx| {
+                                        Tooltip::for_action_in(
+                                            "New Debug Session",
+                                            &CreateDebuggingSession,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    }
                                 }),
                         ),
                 ),
