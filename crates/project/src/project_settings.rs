@@ -733,7 +733,35 @@ impl SettingsObserver {
                     }
                 }
                 LocalSettingsKind::Debug => {
-                    todo!("Debug settings are not yet implemented")
+                    let result = task_store.update(cx, |task_store, cx| {
+                        task_store.update_user_debug_scenarios(
+                            TaskSettingsLocation::Worktree(SettingsLocation {
+                                worktree_id,
+                                path: directory.as_ref(),
+                            }),
+                            file_content.as_deref(),
+                            cx,
+                        )
+                    });
+
+                    match result {
+                        Err(InvalidSettingsError::Debug { path, message }) => {
+                            log::error!(
+                                "Failed to set local debug scenarios in {path:?}: {message:?}"
+                            );
+                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Err(
+                                InvalidSettingsError::Debug { path, message },
+                            )));
+                        }
+                        Err(e) => {
+                            log::error!("Failed to set local tasks: {e}");
+                        }
+                        Ok(()) => {
+                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(
+                                directory.join(task_file_name())
+                            )));
+                        }
+                    }
                 }
             };
 

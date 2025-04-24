@@ -17,7 +17,8 @@ use language::{
     language_settings::language_settings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
-use paths::task_file_name;
+use paths::{debug_task_file_name, task_file_name};
+use serde::Deserialize;
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
     DebugScenario, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables,
@@ -33,13 +34,23 @@ use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 #[derive(Debug, Default)]
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
-    templates_from_settings: ParsedTemplates,
+    templates_from_settings: InventoryFor<TaskTemplate>,
+    scenarios_from_settings: InventoryFor<DebugScenario>,
 }
 
-#[derive(Debug, Default)]
-struct ParsedTemplates {
-    global: HashMap<PathBuf, Vec<TaskTemplate>>,
-    worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<TaskTemplate>>>,
+#[derive(Debug)]
+struct InventoryFor<T> {
+    global: HashMap<PathBuf, Vec<T>>,
+    worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<T>>>,
+}
+
+impl<T> Default for InventoryFor<T> {
+    fn default() -> Self {
+        Self {
+            global: HashMap::new(),
+            worktree: HashMap::new(),
+        }
+    }
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
@@ -136,10 +147,15 @@ impl Inventory {
     }
 
     pub fn list_debug_tasks(&self) -> Vec<DebugScenario> {
-        self.templates_from_settings
+        self.scenarios_from_settings
             .worktree
             .values()
-            .flat_map(|_| std::iter::empty())
+            .flat_map(|values_for_path| {
+                values_for_path
+                    .values()
+                    .flat_map(|scenarios| scenarios.iter())
+            })
+            .cloned()
             .collect()
     }
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -366,6 +382,25 @@ impl Inventory {
             })
     }
 
+    fn global_debug_scenarios_from_settings(
+        &self,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, DebugScenario)> {
+        self.scenarios_from_settings
+            .global
+            .iter()
+            .flat_map(|(file_path, templates)| {
+                templates.into_iter().map(|template| {
+                    (
+                        TaskSourceKind::AbsPath {
+                            id_base: Cow::Borrowed("global debug.json"),
+                            abs_path: file_path.clone(),
+                        },
+                        template.clone(),
+                    )
+                })
+            })
+    }
+
     fn worktree_templates_from_settings(
         &self,
         worktree: Option<WorktreeId>,
@@ -441,6 +476,64 @@ impl Inventory {
                     }
                 } else {
                     parsed_templates
+                        .worktree
+                        .entry(location.worktree_id)
+                        .or_default()
+                        .insert(Arc::from(location.path), new_templates);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Updates in-memory task metadata from the JSON string given.
+    /// Will fail if the JSON is not a valid array of objects, but will continue if any object will not parse into a [`TaskTemplate`].
+    ///
+    /// Global tasks are updated for no worktree provided, otherwise the worktree metadata for a given path will be updated.
+    pub(crate) fn update_file_based_scenarios(
+        &mut self,
+        location: TaskSettingsLocation<'_>,
+        raw_tasks_json: Option<&str>,
+    ) -> Result<(), InvalidSettingsError> {
+        let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
+            raw_tasks_json.unwrap_or("[]"),
+        ) {
+            Ok(tasks) => tasks,
+            Err(e) => {
+                return Err(InvalidSettingsError::Debug {
+                    path: match location {
+                        TaskSettingsLocation::Global(path) => path.to_owned(),
+                        TaskSettingsLocation::Worktree(settings_location) => {
+                            settings_location.path.join(debug_task_file_name())
+                        }
+                    },
+                    message: format!("Failed to parse tasks file content as a JSON array: {e}"),
+                });
+            }
+        };
+        let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
+            serde_json::from_value::<DebugScenario>(raw_template).log_err()
+        });
+
+        let parsed_scenarios = &mut self.scenarios_from_settings;
+        match location {
+            TaskSettingsLocation::Global(path) => {
+                parsed_scenarios
+                    .global
+                    .entry(path.to_owned())
+                    .insert_entry(new_templates.collect());
+            }
+            TaskSettingsLocation::Worktree(location) => {
+                let new_templates = new_templates.collect::<Vec<_>>();
+                if new_templates.is_empty() {
+                    if let Some(worktree_tasks) =
+                        parsed_scenarios.worktree.get_mut(&location.worktree_id)
+                    {
+                        worktree_tasks.remove(location.path);
+                    }
+                } else {
+                    parsed_scenarios
                         .worktree
                         .entry(location.worktree_id)
                         .or_default()
