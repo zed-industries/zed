@@ -42,12 +42,9 @@ use std::{
 /// }
 /// register_action!(Paste);
 /// ```
-pub trait Action: 'static + Send {
+pub trait Action: Any + Send {
     /// Clone the action into a new box
     fn boxed_clone(&self) -> Box<dyn Action>;
-
-    /// Cast the action to the any type
-    fn as_any(&self) -> &dyn Any;
 
     /// Do a partial equality check on this action and the other
     fn partial_eq(&self, action: &dyn Action) -> bool;
@@ -94,9 +91,9 @@ impl std::fmt::Debug for dyn Action {
 }
 
 impl dyn Action {
-    /// Get the type id of this action
-    pub fn type_id(&self) -> TypeId {
-        self.as_any().type_id()
+    /// Type-erase Action type.
+    pub fn as_any(&self) -> &dyn Any {
+        self as &dyn Any
     }
 }
 
@@ -397,7 +394,10 @@ macro_rules! action_with_deprecated_aliases {
     };
 }
 
-/// Defines and registers a unit struct that can be used as an action, with some deprecated aliases.
+/// Registers the action and implements the Action trait for any struct that implements Clone,
+/// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
+///
+/// Similar to `impl_actions!`, but only handles one struct, and registers some deprecated aliases.
 #[macro_export]
 macro_rules! impl_action_with_deprecated_aliases {
     ($namespace:path, $name:ident, [$($alias:literal),* $(,)?]) => {
@@ -557,9 +557,6 @@ macro_rules! __impl_action {
                 ::std::boxed::Box::new(self.clone())
             }
 
-            fn as_any(&self) -> &dyn ::std::any::Any {
-                self
-            }
 
             $($items)*
         }

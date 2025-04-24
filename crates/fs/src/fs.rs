@@ -111,6 +111,7 @@ pub trait Fs: Send + Sync {
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
+    async fn write(&self, path: &Path, content: &[u8]) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
     async fn is_dir(&self, path: &Path) -> bool;
@@ -567,6 +568,14 @@ impl Fs for RealFs {
         Ok(())
     }
 
+    async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
+        smol::fs::write(path, content).await?;
+        Ok(())
+    }
+
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         Ok(smol::fs::canonicalize(path).await?)
     }
@@ -851,7 +860,7 @@ impl Watcher for RealWatcher {
 pub struct FakeFs {
     this: std::sync::Weak<Self>,
     // Use an unfair lock to ensure tests are deterministic.
-    state: Mutex<FakeFsState>,
+    state: Arc<Mutex<FakeFsState>>,
     executor: gpui::BackgroundExecutor,
 }
 
@@ -878,6 +887,8 @@ enum FakeFsEntry {
         mtime: MTime,
         len: u64,
         content: Vec<u8>,
+        // The path to the repository state directory, if this is a gitfile.
+        git_dir_path: Option<PathBuf>,
     },
     Dir {
         inode: u64,
@@ -1036,7 +1047,7 @@ impl FakeFs {
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
             executor: executor.clone(),
-            state: Mutex::new(FakeFsState {
+            state: Arc::new(Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
                     mtime: MTime(UNIX_EPOCH),
@@ -1054,7 +1065,7 @@ impl FakeFs {
                 metadata_call_count: 0,
                 moves: Default::default(),
                 home_dir: None,
-            }),
+            })),
         });
 
         executor.spawn({
@@ -1097,6 +1108,7 @@ impl FakeFs {
                             mtime: new_mtime,
                             content: Vec::new(),
                             len: 0,
+                            git_dir_path: None,
                         })));
                     }
                     btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut().lock() {
@@ -1154,6 +1166,7 @@ impl FakeFs {
                         mtime: new_mtime,
                         len: new_len,
                         content: new_content,
+                        git_dir_path: None,
                     })));
                 }
                 btree_map::Entry::Occupied(mut e) => {
@@ -1278,9 +1291,14 @@ impl FakeFs {
         .boxed()
     }
 
-    pub fn with_git_state<T, F>(&self, dot_git: &Path, emit_git_event: bool, f: F) -> Result<T>
+    pub fn with_git_state_and_paths<T, F>(
+        &self,
+        dot_git: &Path,
+        emit_git_event: bool,
+        f: F,
+    ) -> Result<T>
     where
-        F: FnOnce(&mut FakeGitRepositoryState) -> T,
+        F: FnOnce(&mut FakeGitRepositoryState, &Path, &Path) -> T,
     {
         let mut state = self.state.lock();
         let entry = state.read_path(dot_git).context("open .git")?;
@@ -1288,23 +1306,83 @@ impl FakeFs {
 
         if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
             let repo_state = git_repo_state.get_or_insert_with(|| {
+                log::debug!("insert git state for {dot_git:?}");
                 Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    dot_git.to_path_buf(),
                     state.git_event_tx.clone(),
                 )))
             });
             let mut repo_state = repo_state.lock();
 
-            let result = f(&mut repo_state);
+            let result = f(&mut repo_state, dot_git, dot_git);
 
             if emit_git_event {
                 state.emit_event([(dot_git, None)]);
             }
 
             Ok(result)
+        } else if let FakeFsEntry::File {
+            content,
+            git_dir_path,
+            ..
+        } = &mut *entry
+        {
+            let path = match git_dir_path {
+                Some(path) => path,
+                None => {
+                    let path = std::str::from_utf8(content)
+                        .ok()
+                        .and_then(|content| content.strip_prefix("gitdir:"))
+                        .ok_or_else(|| anyhow!("not a valid gitfile"))?
+                        .trim();
+                    git_dir_path.insert(normalize_path(&dot_git.parent().unwrap().join(path)))
+                }
+            }
+            .clone();
+            drop(entry);
+            let Some((git_dir_entry, canonical_path)) = state.try_read_path(&path, true) else {
+                anyhow::bail!("pointed-to git dir {path:?} not found")
+            };
+            let FakeFsEntry::Dir {
+                git_repo_state,
+                entries,
+                ..
+            } = &mut *git_dir_entry.lock()
+            else {
+                anyhow::bail!("gitfile points to a non-directory")
+            };
+            let common_dir = if let Some(child) = entries.get("commondir") {
+                Path::new(
+                    std::str::from_utf8(child.lock().file_content("commondir".as_ref())?)
+                        .context("commondir content")?,
+                )
+                .to_owned()
+            } else {
+                canonical_path.clone()
+            };
+            let repo_state = git_repo_state.get_or_insert_with(|| {
+                Arc::new(Mutex::new(FakeGitRepositoryState::new(
+                    state.git_event_tx.clone(),
+                )))
+            });
+            let mut repo_state = repo_state.lock();
+
+            let result = f(&mut repo_state, &canonical_path, &common_dir);
+
+            if emit_git_event {
+                state.emit_event([(canonical_path, None)]);
+            }
+
+            Ok(result)
         } else {
-            Err(anyhow!("not a directory"))
+            Err(anyhow!("not a valid git repository"))
         }
+    }
+
+    pub fn with_git_state<T, F>(&self, dot_git: &Path, emit_git_event: bool, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut FakeGitRepositoryState) -> T,
+    {
+        self.with_git_state_and_paths(dot_git, emit_git_event, |state, _, _| f(state))
     }
 
     pub fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
@@ -1663,11 +1741,25 @@ impl FakeFsEntry {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-struct FakeWatcher {}
+struct FakeWatcher {
+    tx: smol::channel::Sender<Vec<PathEvent>>,
+    original_path: PathBuf,
+    fs_state: Arc<Mutex<FakeFsState>>,
+    prefixes: Mutex<Vec<PathBuf>>,
+}
 
 #[cfg(any(test, feature = "test-support"))]
 impl Watcher for FakeWatcher {
-    fn add(&self, _: &Path) -> Result<()> {
+    fn add(&self, path: &Path) -> Result<()> {
+        if path.starts_with(&self.original_path) {
+            return Ok(());
+        }
+        self.fs_state
+            .try_lock()
+            .unwrap()
+            .event_txs
+            .push((path.to_owned(), self.tx.clone()));
+        self.prefixes.lock().push(path.to_owned());
         Ok(())
     }
 
@@ -1745,6 +1837,7 @@ impl Fs for FakeFs {
             mtime,
             len: 0,
             content: Vec::new(),
+            git_dir_path: None,
         }));
         let mut kind = Some(PathEventKind::Created);
         state.write_path(path, |entry| {
@@ -1901,6 +1994,7 @@ impl Fs for FakeFs {
                     mtime,
                     len: content.len() as u64,
                     content,
+                    git_dir_path: None,
                 })))
                 .clone(),
             )),
@@ -2017,6 +2111,16 @@ impl Fs for FakeFs {
             self.create_dir(path).await?;
         }
         self.write_file_internal(path, content.into_bytes(), false)?;
+        Ok(())
+    }
+
+    async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
+        self.simulate_random_delay().await;
+        let path = normalize_path(path);
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
+        self.write_file_internal(path, content.to_vec(), false)?;
         Ok(())
     }
 
@@ -2137,42 +2241,54 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let (tx, rx) = smol::channel::unbounded();
         let path = path.to_path_buf();
-        self.state.lock().event_txs.push((path.clone(), tx));
+        self.state.lock().event_txs.push((path.clone(), tx.clone()));
         let executor = self.executor.clone();
+        let watcher = Arc::new(FakeWatcher {
+            tx,
+            original_path: path.to_owned(),
+            fs_state: self.state.clone(),
+            prefixes: Mutex::new(vec![path.to_owned()]),
+        });
         (
-            Box::pin(futures::StreamExt::filter(rx, move |events| {
-                let result = events
-                    .iter()
-                    .any(|evt_path| evt_path.path.starts_with(&path));
-                let executor = executor.clone();
-                async move {
-                    executor.simulate_random_delay().await;
-                    result
+            Box::pin(futures::StreamExt::filter(rx, {
+                let watcher = watcher.clone();
+                move |events| {
+                    let result = events.iter().any(|evt_path| {
+                        let result = watcher
+                            .prefixes
+                            .lock()
+                            .iter()
+                            .any(|prefix| evt_path.path.starts_with(prefix));
+                        result
+                    });
+                    let executor = executor.clone();
+                    async move {
+                        executor.simulate_random_delay().await;
+                        result
+                    }
                 }
             })),
-            Arc::new(FakeWatcher {}),
+            watcher,
         )
     }
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
-        let state = self.state.lock();
-        let entry = state.read_path(abs_dot_git).unwrap();
-        let mut entry = entry.lock();
-        if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
-            git_repo_state.get_or_insert_with(|| {
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    abs_dot_git.to_path_buf(),
-                    state.git_event_tx.clone(),
-                )))
-            });
-            Some(Arc::new(fake_git_repo::FakeGitRepository {
-                fs: self.this.upgrade().unwrap(),
-                executor: self.executor.clone(),
-                dot_git_path: abs_dot_git.to_path_buf(),
-            }))
-        } else {
-            None
-        }
+        use util::ResultExt as _;
+
+        self.with_git_state_and_paths(
+            abs_dot_git,
+            false,
+            |_, repository_dir_path, common_dir_path| {
+                Arc::new(fake_git_repo::FakeGitRepository {
+                    fs: self.this.upgrade().unwrap(),
+                    executor: self.executor.clone(),
+                    dot_git_path: abs_dot_git.to_path_buf(),
+                    repository_dir_path: repository_dir_path.to_owned(),
+                    common_dir_path: common_dir_path.to_owned(),
+                }) as _
+            },
+        )
+        .log_err()
     }
 
     fn git_init(
@@ -2249,7 +2365,7 @@ pub async fn copy_recursive<'a>(
     target: &'a Path,
     options: CopyOptions,
 ) -> Result<()> {
-    for (is_dir, item) in read_dir_items(fs, source).await? {
+    for (item, is_dir) in read_dir_items(fs, source).await? {
         let Ok(item_relative_path) = item.strip_prefix(source) else {
             continue;
         };
@@ -2283,7 +2399,10 @@ pub async fn copy_recursive<'a>(
     Ok(())
 }
 
-async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(bool, PathBuf)>> {
+/// Recursively reads all of the paths in the given directory.
+///
+/// Returns a vector of tuples of (path, is_dir).
+pub async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(PathBuf, bool)>> {
     let mut items = Vec::new();
     read_recursive(fs, source, &mut items).await?;
     Ok(items)
@@ -2292,7 +2411,7 @@ async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(boo
 fn read_recursive<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
-    output: &'a mut Vec<(bool, PathBuf)>,
+    output: &'a mut Vec<(PathBuf, bool)>,
 ) -> BoxFuture<'a, Result<()>> {
     use futures::future::FutureExt;
 
@@ -2303,7 +2422,7 @@ fn read_recursive<'a>(
             .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
 
         if metadata.is_dir {
-            output.push((true, source.to_path_buf()));
+            output.push((source.to_path_buf(), true));
             let mut children = fs.read_dir(source).await?;
             while let Some(child_path) = children.next().await {
                 if let Ok(child_path) = child_path {
@@ -2311,7 +2430,7 @@ fn read_recursive<'a>(
                 }
             }
         } else {
-            output.push((false, source.to_path_buf()));
+            output.push((source.to_path_buf(), false));
         }
         Ok(())
     }

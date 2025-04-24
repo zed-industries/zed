@@ -1,0 +1,36 @@
+name: Bug Report (Agent Panel)
+description: Zed Agent Panel Bugs
+type: "Bug"
+labels: ["agent", "ai"]
+title: "Agent Panel: <a short description of the Agent Panel bug>"
+body:
+  - type: textarea
+    attributes:
+      label: Summary
+      description: Describe the bug with a one line summary, and provide detailed reproduction steps
+      value: |
+        <!-- Please insert a one line summary of the issue below -->
+        SUMMARY_SENTENCE_HERE
+
+        ### Description
+        <!--  Describe with sufficient detail to reproduce from a clean Zed install. -->
+        <!--  Please include the LLM provider and model name you are using -->
+        Steps to trigger the problem:
+        1.
+        2.
+        3.
+
+        Actual Behavior:
+        Expected Behavior:
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Zed Version and System Specs
+      description: 'Open Zed, and in the command palette select "zed: Copy System Specs Into Clipboard"'
+      placeholder: |
+        Output of "zed: Copy System Specs Into Clipboard"
+    validations:
+      required: true

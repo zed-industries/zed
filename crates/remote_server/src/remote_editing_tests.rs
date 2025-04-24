@@ -4,7 +4,7 @@
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
-use dap::DapRegistry;
+
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
@@ -200,6 +200,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
                     false,
                     Default::default(),
                     Default::default(),
+                    false,
                     None,
                 )
                 .unwrap(),
@@ -1204,6 +1205,116 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 }
 
+#[gpui::test]
+async fn test_copy_file_into_remote_project(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "project1": {
+                    ".git": {},
+                    "README.md": "# project 1",
+                    "src": {
+                        "main.rs": ""
+                    }
+                },
+            }),
+        )
+        .await;
+
+    let (project, _) = init_test(&remote_fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let local_fs = project
+        .read_with(cx, |project, _| project.fs().clone())
+        .as_fake();
+    local_fs
+        .insert_tree(
+            path!("/local-code"),
+            json!({
+                "dir1": {
+                    "file1": "file 1 content",
+                    "dir2": {
+                        "file2": "file 2 content",
+                        "dir3": {
+                            "file3": ""
+                        },
+                        "dir4": {}
+                    },
+                    "dir5": {}
+                },
+                "file4": "file 4 content"
+            }),
+        )
+        .await;
+
+    worktree
+        .update(cx, |worktree, cx| {
+            worktree.copy_external_entries(
+                Path::new("src").into(),
+                vec![
+                    Path::new(path!("/local-code/dir1/file1")).into(),
+                    Path::new(path!("/local-code/dir1/dir2")).into(),
+                ],
+                local_fs.clone(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        remote_fs.paths(true),
+        vec![
+            PathBuf::from(path!("/")),
+            PathBuf::from(path!("/code")),
+            PathBuf::from(path!("/code/project1")),
+            PathBuf::from(path!("/code/project1/.git")),
+            PathBuf::from(path!("/code/project1/README.md")),
+            PathBuf::from(path!("/code/project1/src")),
+            PathBuf::from(path!("/code/project1/src/dir2")),
+            PathBuf::from(path!("/code/project1/src/file1")),
+            PathBuf::from(path!("/code/project1/src/main.rs")),
+            PathBuf::from(path!("/code/project1/src/dir2/dir3")),
+            PathBuf::from(path!("/code/project1/src/dir2/dir4")),
+            PathBuf::from(path!("/code/project1/src/dir2/file2")),
+            PathBuf::from(path!("/code/project1/src/dir2/dir3/file3")),
+        ]
+    );
+    assert_eq!(
+        remote_fs
+            .load(path!("/code/project1/src/file1").as_ref())
+            .await
+            .unwrap(),
+        "file 1 content"
+    );
+    assert_eq!(
+        remote_fs
+            .load(path!("/code/project1/src/dir2/file2").as_ref())
+            .await
+            .unwrap(),
+        "file 2 content"
+    );
+    assert_eq!(
+        remote_fs
+            .load(path!("/code/project1/src/dir2/dir3/file3").as_ref())
+            .await
+            .unwrap(),
+        ""
+    );
+}
+
 // TODO: this test fails on Windows.
 #[cfg(not(windows))]
 #[gpui::test]
@@ -1366,10 +1477,14 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     assert_eq!(&remote_branches, &branches_set);
 
-    cx.update(|cx| repository.read(cx).change_branch(new_branch.to_string()))
-        .await
-        .unwrap()
-        .unwrap();
+    cx.update(|cx| {
+        repository.update(cx, |repository, _cx| {
+            repository.change_branch(new_branch.to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
     cx.run_until_parked();
 
@@ -1394,18 +1509,18 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     // Also try creating a new branch
     cx.update(|cx| {
-        repository
-            .read(cx)
-            .create_branch("totally-new-branch".to_string())
+        repository.update(cx, |repo, _cx| {
+            repo.create_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
     .unwrap();
 
     cx.update(|cx| {
-        repository
-            .read(cx)
-            .change_branch("totally-new-branch".to_string())
+        repository.update(cx, |repo, _cx| {
+            repo.change_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
@@ -1451,7 +1566,6 @@ pub async fn init_test(
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
-    let debug_adapters = DapRegistry::default().into();
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
@@ -1464,7 +1578,6 @@ pub async fn init_test(
                 http_client,
                 node_runtime,
                 languages,
-                debug_adapters,
                 extension_host_proxy: proxy,
             },
             cx,

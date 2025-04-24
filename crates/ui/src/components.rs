@@ -22,6 +22,7 @@ mod notification;
 mod numeric_stepper;
 mod popover;
 mod popover_menu;
+mod progress;
 mod radio;
 mod right_click_menu;
 mod scrollbar;
@@ -61,6 +62,7 @@ pub use notification::*;
 pub use numeric_stepper::*;
 pub use popover::*;
 pub use popover_menu::*;
+pub use progress::*;
 pub use radio::*;
 pub use right_click_menu::*;
 pub use scrollbar::*;
@@ -73,7 +75,5 @@ pub use table::*;
 pub use toggle::*;
 pub use tooltip::*;
 
-#[cfg(feature = "stories")]
-pub use image::story::*;
 #[cfg(feature = "stories")]
 pub use stories::*;

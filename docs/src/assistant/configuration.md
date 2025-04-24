@@ -316,8 +316,8 @@ Where `some-provider` can be any of the following values: `anthropic`, `google`,
 
 ### Configuring Models {#default-model}
 
-The default model can be set via the model dropdown in the assistant panel's top-right corner. Selecting a model saves it as the default.
-You can also manually edit the `default_model` object in your settings:
+Zed's hosted LLM service sets `claude-3-7-sonnet-latest` as the default model.
+However, you can change it either via the model dropdown in the Assistant Panel's bottom-left corner or by manually editing the `default_model` object in your settings:
 
 ```json
 {
@@ -325,7 +325,7 @@ You can also manually edit the `default_model` object in your settings:
     "version": "2",
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-3-5-sonnet"
+      "model": "gpt-4o"
     }
   }
 }

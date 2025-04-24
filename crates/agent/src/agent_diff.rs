@@ -1,15 +1,15 @@
-use crate::{Keep, Reject, Thread, ThreadEvent};
+use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{
     Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Subscription, Task, WeakEntity, Window, prelude::*,
+    Action, AnyElement, AnyView, App, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 use language::{Capability, DiskState, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
@@ -307,6 +307,10 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.thread.read(cx).is_generating() {
+            return;
+        }
+
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
         let diff_hunks_in_ranges = self
             .editor
@@ -339,6 +343,10 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.thread.read(cx).is_generating() {
+            return;
+        }
+
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
         let diff_hunks_in_ranges = self
             .editor
@@ -355,15 +363,23 @@ impl AgentDiff {
             self.update_selection(&diff_hunks_in_ranges, window, cx);
         }
 
+        let mut ranges_by_buffer = HashMap::default();
         for hunk in &diff_hunks_in_ranges {
             let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
             if let Some(buffer) = buffer {
-                self.thread
-                    .update(cx, |thread, cx| {
-                        thread.reject_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
-                    })
-                    .detach_and_log_err(cx);
+                ranges_by_buffer
+                    .entry(buffer.clone())
+                    .or_insert_with(Vec::new)
+                    .push(hunk.buffer_range.clone());
             }
+        }
+
+        for (buffer, ranges) in ranges_by_buffer {
+            self.thread
+                .update(cx, |thread, cx| {
+                    thread.reject_edits_in_ranges(buffer, ranges, cx)
+                })
+                .detach_and_log_err(cx);
         }
     }
 
@@ -642,6 +658,11 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
+
+    if agent_diff.read(cx).thread.read(cx).is_generating() {
+        return Empty.into_any();
+    }
+
     h_flex()
         .h(line_height)
         .mr_0p5()
@@ -792,15 +813,11 @@ impl editor::Addon for AgentDiffAddon {
 
 pub struct AgentDiffToolbar {
     agent_diff: Option<WeakEntity<AgentDiff>>,
-    _workspace: WeakEntity<Workspace>,
 }
 
 impl AgentDiffToolbar {
-    pub fn new(workspace: &Workspace, _: &mut Context<Self>) -> Self {
-        Self {
-            agent_diff: None,
-            _workspace: workspace.weak_handle(),
-        }
+    pub fn new() -> Self {
+        Self { agent_diff: None }
     }
 
     fn agent_diff(&self, _: &App) -> Option<Entity<AgentDiff>> {
@@ -847,17 +864,25 @@ impl ToolbarItemView for AgentDiffToolbar {
 }
 
 impl Render for AgentDiffToolbar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_diff = match self.agent_diff(cx) {
             Some(ad) => ad,
             None => return div(),
         };
 
-        let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
+        let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
+        if is_generating {
+            return div()
+                .w(rems(6.5625)) // Arbitrary 105px size—so the label doesn't dance around
+                .child(AnimatedLabel::new("Generating"));
+        }
 
+        let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
         if is_empty {
             return div();
         }
+
+        let focus_handle = agent_diff.focus_handle(cx);
 
         h_group_xl()
             .my_neg_1()
@@ -868,15 +893,25 @@ impl Render for AgentDiffToolbar {
             .child(
                 h_group_sm()
                     .child(
-                        Button::new("reject-all", "Reject All").on_click(cx.listener(
-                            |this, _, window, cx| {
-                                this.dispatch_action(&crate::RejectAll, window, cx)
-                            },
-                        )),
+                        Button::new("reject-all", "Reject All")
+                            .key_binding({
+                                KeyBinding::for_action_in(&RejectAll, &focus_handle, window, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.)))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&RejectAll, window, cx)
+                            })),
                     )
-                    .child(Button::new("keep-all", "Keep All").on_click(cx.listener(
-                        |this, _, window, cx| this.dispatch_action(&crate::KeepAll, window, cx),
-                    ))),
+                    .child(
+                        Button::new("keep-all", "Keep All")
+                            .key_binding({
+                                KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.)))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&KeepAll, window, cx)
+                            })),
+                    ),
             )
     }
 }
@@ -886,6 +921,7 @@ mod tests {
     use super::*;
     use crate::{ThreadStore, thread_store};
     use assistant_settings::AssistantSettings;
+    use assistant_tool::ToolWorkingSet;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::TestAppContext;
@@ -905,6 +941,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             AssistantSettings::register(cx);
+            prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
@@ -925,15 +962,17 @@ mod tests {
             })
             .unwrap();
 
-        let thread_store = cx.update(|cx| {
-            ThreadStore::new(
-                project.clone(),
-                Arc::default(),
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-            .unwrap()
-        });
+        let thread_store = cx
+            .update(|cx| {
+                ThreadStore::load(
+                    project.clone(),
+                    cx.new(|_| ToolWorkingSet::default()),
+                    Arc::new(PromptBuilder::new(None).unwrap()),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
@@ -949,7 +988,7 @@ mod tests {
             .await
             .unwrap();
         cx.update(|_, cx| {
-            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit(

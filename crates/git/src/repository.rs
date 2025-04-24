@@ -74,6 +74,11 @@ impl Upstream {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct CommitOptions {
+    pub amend: bool,
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum UpstreamTracking {
     /// Remote ref not present in local repository.
@@ -128,7 +133,7 @@ pub struct CommitSummary {
     pub has_parent: bool,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
 pub struct CommitDetails {
     pub sha: SharedString,
     pub message: SharedString,
@@ -229,12 +234,6 @@ pub trait GitRepository: Send + Sync {
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
     fn path(&self) -> PathBuf;
 
-    /// Returns the absolute path to the ".git" dir for the main repository, typically a `.git`
-    /// folder. For worktrees, this will be the path to the repository the worktree was created
-    /// from. Otherwise, this is the same value as `path()`.
-    ///
-    /// Git documentation calls this the "commondir", and for git CLI is overridden by
-    /// `GIT_COMMON_DIR`.
     fn main_repository_path(&self) -> PathBuf;
 
     /// Updates the index to match the worktree at the given paths.
@@ -258,6 +257,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
+        options: CommitOptions,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
 
@@ -313,9 +313,6 @@ pub trait GitRepository: Send + Sync {
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
     ) -> BoxFuture<Result<bool>>;
-
-    /// Deletes a previously-created checkpoint.
-    fn delete_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>>;
 
     /// Computes a diff between two checkpoints.
     fn diff_checkpoints(
@@ -374,8 +371,7 @@ impl RealGitRepository {
 
 #[derive(Clone, Debug)]
 pub struct GitRepositoryCheckpoint {
-    ref_name: String,
-    commit_sha: Oid,
+    pub commit_sha: Oid,
 }
 
 impl GitRepository for RealGitRepository {
@@ -606,7 +602,7 @@ impl GitRepository for RealGitRepository {
                     };
 
                     let content = repo.find_blob(oid)?.content().to_owned();
-                    Ok(Some(String::from_utf8(content)?))
+                    Ok(String::from_utf8(content).ok())
                 }
 
                 match logic(&repo.lock(), &path) {
@@ -629,8 +625,7 @@ impl GitRepository for RealGitRepository {
                     return None;
                 }
                 let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
-                let content = String::from_utf8(content).log_err()?;
-                Some(content)
+                String::from_utf8(content).ok()
             })
             .boxed()
     }
@@ -773,7 +768,13 @@ impl GitRepository for RealGitRepository {
                 "%(contents:subject)",
             ]
             .join("%00");
-            let args = vec!["for-each-ref", "refs/heads/**/*", "--format", &fields];
+            let args = vec![
+                "for-each-ref",
+                "refs/heads/**/*",
+                "refs/remotes/**/*",
+                "--format",
+                &fields,
+            ];
             let working_directory = working_directory?;
             let output = new_smol_command(&git_binary_path)
                 .current_dir(&working_directory)
@@ -824,8 +825,21 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let repo = repo.lock();
-                let revision = repo.find_branch(&name, BranchType::Local)?;
-                let revision = revision.get();
+                let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
+                    branch
+                } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
+                    let (_, branch_name) =
+                        name.split_once("/").context("Unexpected branch format")?;
+                    let revision = revision.get();
+                    let branch_commit = revision.peel_to_commit()?;
+                    let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
+                    branch.set_upstream(Some(&name))?;
+                    branch
+                } else {
+                    return Err(anyhow!("Branch not found"));
+                };
+
+                let revision = branch.get();
                 let as_tree = revision.peel_to_tree()?;
                 repo.checkout_tree(as_tree.as_object(), None)?;
                 repo.set_head(
@@ -964,6 +978,7 @@ impl GitRepository for RealGitRepository {
         &self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
+        options: CommitOptions,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
@@ -975,6 +990,10 @@ impl GitRepository for RealGitRepository {
                     .args(["commit", "--quiet", "-m"])
                     .arg(&message.to_string())
                     .arg("--cleanup=strip");
+
+                if options.amend {
+                    cmd.arg("--amend");
+                }
 
                 if let Some((name, email)) = name_and_email {
                     cmd.arg("--author").arg(&format!("{name} <{email}>"));
@@ -1009,7 +1028,6 @@ impl GitRepository for RealGitRepository {
             let mut command = new_smol_command("git");
             command
                 .envs(env.iter())
-                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory)
                 .args(["push"])
                 .args(options.map(|option| match option {
@@ -1041,7 +1059,6 @@ impl GitRepository for RealGitRepository {
             let mut command = new_smol_command("git");
             command
                 .envs(env.iter())
-                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["pull"])
                 .arg(remote_name)
@@ -1066,7 +1083,6 @@ impl GitRepository for RealGitRepository {
             let mut command = new_smol_command("git");
             command
                 .envs(env.iter())
-                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["fetch", "--all"])
                 .stdout(smol::process::Stdio::piped())
@@ -1205,11 +1221,8 @@ impl GitRepository for RealGitRepository {
                     } else {
                         git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
                     };
-                    let ref_name = format!("refs/zed/{}", Uuid::new_v4());
-                    git.run(&["update-ref", &ref_name, &checkpoint_sha]).await?;
 
                     Ok(GitRepositoryCheckpoint {
-                        ref_name,
                         commit_sha: checkpoint_sha.parse()?,
                     })
                 })
@@ -1288,21 +1301,6 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn delete_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>> {
-        let working_directory = self.working_directory();
-        let git_binary_path = self.git_binary_path.clone();
-
-        let executor = self.executor.clone();
-        self.executor
-            .spawn(async move {
-                let working_directory = working_directory?;
-                let git = GitBinary::new(git_binary_path, working_directory, executor);
-                git.run(&["update-ref", "-d", &checkpoint.ref_name]).await?;
-                Ok(())
-            })
-            .boxed()
-    }
-
     fn diff_checkpoints(
         &self,
         base_checkpoint: GitRepositoryCheckpoint,
@@ -1320,8 +1318,8 @@ impl GitRepository for RealGitRepository {
                     "diff",
                     "--find-renames",
                     "--patch",
-                    &base_checkpoint.ref_name,
-                    &target_checkpoint.ref_name,
+                    &base_checkpoint.commit_sha.to_string(),
+                    &target_checkpoint.commit_sha.to_string(),
                 ])
                 .await
             })
@@ -1393,6 +1391,15 @@ impl GitBinary {
                     .detach();
             }
         });
+
+        // Copy the default index file so that Git doesn't have to rebuild the
+        // whole index from scratch. This might fail if this is an empty repository.
+        smol::fs::copy(
+            self.working_directory.join(".git").join("index"),
+            &index_file_path,
+        )
+        .await
+        .ok();
 
         self.index_file_path = Some(index_file_path.clone());
         let result = f(self).await;
@@ -1636,13 +1643,15 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
         let is_current_branch = fields.next().context("no HEAD")? == "*";
         let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
         let parent_sha: SharedString = fields.next().context("no parent")?.to_string().into();
-        let ref_name: SharedString = fields
-            .next()
-            .context("no refname")?
-            .strip_prefix("refs/heads/")
-            .context("unexpected format for refname")?
-            .to_string()
-            .into();
+        let raw_ref_name = fields.next().context("no refname")?;
+        let ref_name: SharedString =
+            if let Some(ref_name) = raw_ref_name.strip_prefix("refs/heads/") {
+                ref_name.to_string().into()
+            } else if let Some(ref_name) = raw_ref_name.strip_prefix("refs/remotes/") {
+                ref_name.to_string().into()
+            } else {
+                return Err(anyhow!("unexpected format for refname"));
+            };
         let upstream_name = fields.next().context("no upstream")?.to_string();
         let upstream_tracking = parse_upstream_track(fields.next().context("no upstream:track")?)?;
         let commiterdate = fields.next().context("no committerdate")?.parse::<i64>()?;
@@ -1772,6 +1781,7 @@ mod tests {
         repo.commit(
             "Initial commit".into(),
             None,
+            CommitOptions::default(),
             Arc::new(checkpoint_author_envs()),
         )
         .await
@@ -1800,6 +1810,7 @@ mod tests {
         repo.commit(
             "Commit after checkpoint".into(),
             None,
+            CommitOptions::default(),
             Arc::new(checkpoint_author_envs()),
         )
         .await
@@ -1832,13 +1843,6 @@ mod tests {
                 .ok(),
             None
         );
-
-        // Garbage collecting after deleting a checkpoint makes it unreachable.
-        repo.delete_checkpoint(checkpoint.clone()).await.unwrap();
-        repo.gc().await.unwrap();
-        repo.restore_checkpoint(checkpoint.clone())
-            .await
-            .unwrap_err();
     }
 
     #[gpui::test]
@@ -1951,7 +1955,7 @@ mod tests {
                     let git_binary_path = git_binary_path.clone();
                     let working_directory = working_directory?;
                     let git = GitBinary::new(git_binary_path, working_directory, executor);
-                    git.run(&["gc", "--prune=now"]).await?;
+                    git.run(&["gc", "--prune"]).await?;
                     Ok(())
                 })
                 .boxed()

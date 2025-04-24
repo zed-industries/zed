@@ -8,9 +8,9 @@ use assistant_slash_commands::{
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
-    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
-    ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
-    actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
+    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, MultiBuffer, MultiBufferSnapshot,
+    ProposedChangeLocation, ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
+    actions::{MoveToEndOfLine, Newline, ShowCompletions},
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
         CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
@@ -39,7 +39,7 @@ use language_model::{
     Role,
 };
 use language_model_selector::{
-    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ModelType, ToggleModelSelector,
 };
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
@@ -155,7 +155,8 @@ pub trait AssistantPanelDelegate {
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
-        creases: Vec<(String, String)>,
+        selection_ranges: Vec<Range<Anchor>>,
+        buffer: Entity<MultiBuffer>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
@@ -297,6 +298,7 @@ impl ContextEditor {
                             move |settings, _| settings.set_model(model.clone()),
                         );
                     },
+                    ModelType::Default,
                     window,
                     cx,
                 )
@@ -1053,7 +1055,7 @@ impl ContextEditor {
             let creases = editor.insert_creases(creases, cx);
 
             for buffer_row in buffer_rows_to_fold.into_iter().rev() {
-                editor.fold_at(&FoldAt { buffer_row }, window, cx);
+                editor.fold_at(buffer_row, window, cx);
             }
 
             creases
@@ -1109,7 +1111,7 @@ impl ContextEditor {
                 buffer_rows_to_fold.clear();
             }
             for buffer_row in buffer_rows_to_fold.into_iter().rev() {
-                editor.fold_at(&FoldAt { buffer_row }, window, cx);
+                editor.fold_at(buffer_row, window, cx);
             }
         });
     }
@@ -1800,23 +1802,45 @@ impl ContextEditor {
             return;
         };
 
-        let Some(creases) = selections_creases(workspace, cx) else {
+        let Some((selections, buffer)) = maybe!({
+            let editor = workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))?;
+
+            let buffer = editor.read(cx).buffer().clone();
+            let snapshot = buffer.read(cx).snapshot(cx);
+            let selections = editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .all_adjusted(cx)
+                    .into_iter()
+                    .filter_map(|s| {
+                        (!s.is_empty())
+                            .then(|| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            Some((selections, buffer))
+        }) else {
             return;
         };
 
-        if creases.is_empty() {
+        if selections.is_empty() {
             return;
         }
 
-        assistant_panel_delegate.quote_selection(workspace, creases, window, cx);
+        assistant_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
     }
 
-    pub fn quote_creases(
+    pub fn quote_ranges(
         &mut self,
-        creases: Vec<(String, String)>,
+        ranges: Vec<Range<Point>>,
+        snapshot: MultiBufferSnapshot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let creases = selections_creases(ranges, snapshot, cx);
+
         self.editor.update(cx, |editor, cx| {
             editor.insert("\n", window, cx);
             for (text, crease_title) in creases {
@@ -1844,13 +1868,7 @@ impl ContextEditor {
                     |_, _, _, _| Empty.into_any(),
                 );
                 editor.insert_creases(vec![crease], cx);
-                editor.fold_at(
-                    &FoldAt {
-                        buffer_row: start_row,
-                    },
-                    window,
-                    cx,
-                );
+                editor.fold_at(start_row, window, cx);
             }
         })
     }
@@ -2042,7 +2060,7 @@ impl ContextEditor {
                         cx,
                     );
                     for buffer_row in buffer_rows_to_fold.into_iter().rev() {
-                        editor.fold_at(&FoldAt { buffer_row }, window, cx);
+                        editor.fold_at(buffer_row, window, cx);
                     }
                 }
             });
@@ -2071,7 +2089,7 @@ impl ContextEditor {
                         continue;
                     };
                     let image_id = image.id();
-                    let image_task = LanguageModelImage::from_image(image, cx).shared();
+                    let image_task = LanguageModelImage::from_image(Arc::new(image), cx).shared();
 
                     for image_position in image_positions.iter() {
                         context.insert_content(
@@ -2793,7 +2811,7 @@ fn render_thought_process_fold_icon_button(
         let button = match status {
             ThoughtProcessStatus::Pending => button
                 .child(
-                    Icon::new(IconName::Brain)
+                    Icon::new(IconName::LightBulb)
                         .size(IconSize::Small)
                         .color(Color::Muted),
                 )
@@ -2808,7 +2826,7 @@ fn render_thought_process_fold_icon_button(
                 ),
             ThoughtProcessStatus::Completed => button
                 .style(ButtonStyle::Filled)
-                .child(Icon::new(IconName::Brain).size(IconSize::Small))
+                .child(Icon::new(IconName::LightBulb).size(IconSize::Small))
                 .child(Label::new("Thought Process").single_line()),
         };
 
@@ -2820,7 +2838,7 @@ fn render_thought_process_fold_icon_button(
                             .start
                             .to_point(&editor.buffer().read(cx).read(cx));
                         let buffer_row = MultiBufferRow(buffer_start.row);
-                        editor.unfold_at(&UnfoldAt { buffer_row }, window, cx);
+                        editor.unfold_at(buffer_row, window, cx);
                     })
                     .ok();
             })
@@ -2847,7 +2865,7 @@ fn render_fold_icon_button(
                             .start
                             .to_point(&editor.buffer().read(cx).read(cx));
                         let buffer_row = MultiBufferRow(buffer_start.row);
-                        editor.unfold_at(&UnfoldAt { buffer_row }, window, cx);
+                        editor.unfold_at(buffer_row, window, cx);
                     })
                     .ok();
             })
@@ -2907,7 +2925,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakEntity<Editor>) -
                                     .start
                                     .to_point(&editor.buffer().read(cx).read(cx));
                                 let buffer_row = MultiBufferRow(buffer_start.row);
-                                editor.unfold_at(&UnfoldAt { buffer_row }, window, cx);
+                                editor.unfold_at(buffer_row, window, cx);
                             })
                             .ok();
                     })

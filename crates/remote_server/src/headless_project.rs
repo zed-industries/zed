@@ -1,6 +1,6 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{Result, anyhow};
-use dap::DapRegistry;
+
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
@@ -9,7 +9,8 @@ use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
-    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectEnvironment, ProjectPath, ToolchainStore,
+    WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
@@ -40,6 +41,7 @@ pub struct HeadlessProject {
     pub buffer_store: Entity<BufferStore>,
     pub lsp_store: Entity<LspStore>,
     pub task_store: Entity<TaskStore>,
+    pub dap_store: Entity<DapStore>,
     pub settings_observer: Entity<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
@@ -53,7 +55,6 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
-    pub debug_adapters: Arc<DapRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
@@ -71,7 +72,6 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
-            debug_adapters,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut Context<Self>,
@@ -85,7 +85,7 @@ impl HeadlessProject {
             store
         });
 
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let environment = cx.new(|_| ProjectEnvironment::new(None));
 
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
@@ -111,11 +111,10 @@ impl HeadlessProject {
                 node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
-                debug_adapters.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
-                breakpoint_store.clone(),
                 worktree_store.clone(),
+                breakpoint_store.clone(),
                 cx,
             )
         });
@@ -259,6 +258,7 @@ impl HeadlessProject {
             buffer_store,
             lsp_store,
             task_store,
+            dap_store,
             next_entry_id: Default::default(),
             languages,
             extensions,

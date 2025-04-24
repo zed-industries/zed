@@ -16,6 +16,7 @@ use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     Role, report_assistant_event,
 };
+use project::Project;
 use prompt_store::PromptBuilder;
 use std::sync::Arc;
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
@@ -67,6 +68,7 @@ impl TerminalInlineAssistant {
         &mut self,
         terminal_view: &Entity<TerminalView>,
         workspace: WeakEntity<Workspace>,
+        project: WeakEntity<Project>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
         cx: &mut App,
@@ -75,8 +77,7 @@ impl TerminalInlineAssistant {
         let assist_id = self.next_assist_id.post_inc();
         let prompt_buffer =
             cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
-        let context_store =
-            cx.new(|_cx| ContextStore::new(workspace.clone(), thread_store.clone()));
+        let context_store = cx.new(|_cx| ContextStore::new(project, thread_store.clone()));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {
@@ -260,6 +261,8 @@ impl TerminalInlineAssistant {
         request_message.content.push(prompt.into());
 
         Ok(LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages: vec![request_message],
             tools: Vec::new(),
             stop: Vec::new(),

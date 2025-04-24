@@ -372,12 +372,20 @@ message Envelope {
         GetDocumentSymbolsResponse get_document_symbols_response = 331;
 
         LanguageServerIdForName language_server_id_for_name = 332;
-        LanguageServerIdForNameResponse language_server_id_for_name_response = 333; // current max
+        LanguageServerIdForNameResponse language_server_id_for_name_response = 333;
 
         LoadCommitDiff load_commit_diff = 334;
         LoadCommitDiffResponse load_commit_diff_response = 335;
 
-        StopLanguageServers stop_language_servers = 336; // current max
+        StopLanguageServers stop_language_servers = 336;
+
+        LspExtRunnables lsp_ext_runnables = 337;
+        LspExtRunnablesResponse lsp_ext_runnables_response = 338;
+
+        GetDebugAdapterBinary get_debug_adapter_binary = 339;
+        DebugAdapterBinary debug_adapter_binary = 340;
+        RunDebugLocator run_debug_locator = 341;
+        DebugTaskDefinition debug_task_definition = 342; // current max
     }
 
     reserved 87 to 88;

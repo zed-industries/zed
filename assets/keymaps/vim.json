@@ -44,6 +44,12 @@
       "[ /": "vim::PreviousComment",
       "] *": "vim::NextComment",
       "] /": "vim::NextComment",
+      "[ -": "vim::PreviousLesserIndent",
+      "[ +": "vim::PreviousGreaterIndent",
+      "[ =": "vim::PreviousSameIndent",
+      "] -": "vim::NextLesserIndent",
+      "] +": "vim::NextGreaterIndent",
+      "] =": "vim::NextSameIndent",
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
@@ -184,7 +190,8 @@
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
-      "ctrl-6": "pane::AlternateFile"
+      "ctrl-6": "pane::AlternateFile",
+      "ctrl-^": "pane::AlternateFile"
     }
   },
   {
@@ -197,6 +204,7 @@
       "c": "vim::PushChange",
       "shift-c": "vim::ChangeToEndOfLine",
       "d": "vim::PushDelete",
+      "delete": "vim::DeleteRight",
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "g shift-j": "vim::JoinLinesNoWhitespace",
@@ -532,6 +540,7 @@
     "bindings": {
       "d": "vim::CurrentLine",
       "s": "vim::PushDeleteSurrounds",
+      "v": "vim::PushForcedMotion", // "d v"
       "o": "editor::ToggleSelectedDiffHunks", // "d o"
       "shift-o": "git::ToggleStaged",
       "p": "git::Restore", // "d p"
@@ -580,6 +589,7 @@
     "context": "vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine",
+      "v": "vim::PushForcedMotion",
       "s": ["vim::PushAddSurrounds", {}]
     }
   },
@@ -777,8 +787,7 @@
       "{": "project_panel::SelectPrevDirectory",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
-      "-": "project_panel::SelectParent",
-      "ctrl-6": "pane::AlternateFile"
+      "-": "project_panel::SelectParent"
     }
   },
   {
@@ -820,6 +829,14 @@
       // is because alt-tab may not be available, as it is often used for window switching on Linux
       // and Windows.
       "alt-l": "editor::AcceptEditPrediction"
+    }
+  },
+  {
+    // Fixes https://github.com/zed-industries/zed/issues/29095 by ensuring that
+    // the last binding for editor::ToggleComments is not ctrl-c.
+    "context": "hack_to_fix_ctrl-c",
+    "bindings": {
+      "g c": "editor::ToggleComments"
     }
   }
 ]

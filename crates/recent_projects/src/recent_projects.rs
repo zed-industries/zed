@@ -24,8 +24,8 @@ use std::{
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace,
-    WorkspaceId,
+    CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB,
+    Workspace, WorkspaceId,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -553,7 +553,13 @@ impl RecentProjectsDelegate {
                         .delegate
                         .set_selected_index(ix.saturating_sub(1), window, cx);
                     picker.delegate.reset_selected_match_index = false;
-                    picker.update_matches(picker.query(cx), window, cx)
+                    picker.update_matches(picker.query(cx), window, cx);
+                    // After deleting a project, we want to update the history manager to reflect the change.
+                    // But we do not emit a update event when user opens a project, because it's handled in `workspace::load_workspace`.
+                    if let Some(history_manager) = HistoryManager::global(cx) {
+                        history_manager
+                            .update(cx, |this, cx| this.delete_history(workspace_id, cx));
+                    }
                 })
             })
             .detach();

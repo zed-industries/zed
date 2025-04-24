@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Ok, Result, anyhow};
 use dap::{
-    Capabilities, ContinueArguments, InitializeRequestArguments,
+    Capabilities, ContinueArguments, ExceptionFilterOptions, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
     StepInArguments, StepOutArguments, SteppingGranularity, ValueFormat, Variable,
     VariablesArgumentsFilter,
@@ -1479,7 +1479,7 @@ impl LocalDapCommand for ThreadsCommand {
     type DapRequest = dap::requests::Threads;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        ()
+        dap::ThreadsArgument {}
     }
 
     fn response_from_dap(
@@ -1568,7 +1568,7 @@ impl LocalDapCommand for Initialize {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq)]
-pub(super) struct ConfigurationDone;
+pub(super) struct ConfigurationDone {}
 
 impl LocalDapCommand for ConfigurationDone {
     type Response = ();
@@ -1581,7 +1581,7 @@ impl LocalDapCommand for ConfigurationDone {
     }
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        dap::ConfigurationDoneArguments
+        dap::ConfigurationDoneArguments {}
     }
 
     fn response_from_dap(
@@ -1663,6 +1663,44 @@ impl LocalDapCommand for SetBreakpoints {
         message: <Self::DapRequest as dap::requests::Request>::Response,
     ) -> Result<Self::Response> {
         Ok(message.breakpoints)
+    }
+}
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(super) enum SetExceptionBreakpoints {
+    Plain {
+        filters: Vec<String>,
+    },
+    WithOptions {
+        filters: Vec<ExceptionFilterOptions>,
+    },
+}
+
+impl LocalDapCommand for SetExceptionBreakpoints {
+    type Response = Vec<dap::Breakpoint>;
+    type DapRequest = dap::requests::SetExceptionBreakpoints;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        match self {
+            SetExceptionBreakpoints::Plain { filters } => dap::SetExceptionBreakpointsArguments {
+                filters: filters.clone(),
+                exception_options: None,
+                filter_options: None,
+            },
+            SetExceptionBreakpoints::WithOptions { filters } => {
+                dap::SetExceptionBreakpointsArguments {
+                    filters: vec![],
+                    filter_options: Some(filters.clone()),
+                    exception_options: None,
+                }
+            }
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.breakpoints.unwrap_or_default())
     }
 }
 

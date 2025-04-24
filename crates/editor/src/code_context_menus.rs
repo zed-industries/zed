@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::Buffer;
 use language::CodeLabel;
-use markdown::Markdown;
+use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::CompletionSource;
@@ -27,8 +27,8 @@ use util::ResultExt;
 
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
-    CodeActionProvider, CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle,
-    ResolvedTasks,
+    CodeActionProvider, CompletionId, CompletionItemKind, CompletionProvider, DisplayRow, Editor,
+    EditorStyle, ResolvedTasks,
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
@@ -230,7 +230,7 @@ impl CompletionsMenu {
         let completions = choices
             .iter()
             .map(|choice| Completion {
-                old_range: selection.start.text_anchor..selection.end.text_anchor,
+                replace_range: selection.start.text_anchor..selection.end.text_anchor,
                 new_text: choice.to_string(),
                 label: CodeLabel {
                     text: choice.to_string(),
@@ -240,6 +240,7 @@ impl CompletionsMenu {
                 icon_path: None,
                 documentation: None,
                 confirm: None,
+                insert_text_mode: None,
                 source: CompletionSource::Custom,
             })
             .collect();
@@ -621,21 +622,20 @@ impl CompletionsMenu {
                         let language = editor
                             .language_at(self.initial_position, cx)
                             .map(|l| l.name().to_proto());
-                        Markdown::new(
-                            SharedString::default(),
-                            hover_markdown_style(window, cx),
-                            languages,
-                            language,
-                            cx,
-                        )
-                        .copy_code_block_buttons(false)
-                        .open_url(open_markdown_url)
+                        Markdown::new(SharedString::default(), languages, language, cx)
                     })
                 });
                 markdown.update(cx, |markdown, cx| {
                     markdown.reset(parsed.clone(), cx);
                 });
-                div().child(markdown.clone())
+                div().child(
+                    MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
+                        .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                            copy_button: false,
+                            border: false,
+                        })
+                        .on_url_click(open_markdown_url),
+                )
             }
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
             CompletionDocumentation::SingleLine(_) => return None,
@@ -655,6 +655,63 @@ impl CompletionsMenu {
                 )
                 .into_any_element(),
         )
+    }
+
+    pub fn sort_matches(matches: &mut Vec<SortableMatch<'_>>, query: Option<&str>) {
+        #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+        enum MatchTier<'a> {
+            WordStartMatch {
+                sort_score_int: Reverse<i32>,
+                sort_snippet: Reverse<i32>,
+                sort_text: Option<&'a str>,
+                sort_key: (usize, &'a str),
+            },
+            OtherMatch {
+                sort_score: Reverse<OrderedFloat<f64>>,
+            },
+        }
+
+        // Our goal here is to intelligently sort completion suggestions. We want to
+        // balance the raw fuzzy match score with hints from the language server
+        //
+        // We first primary sort using fuzzy score by putting matches into two buckets
+        // strong one and weak one. Among these buckets matches are then compared by
+        // various criteria like snippet, LSP hints, kind, label text etc.
+        //
+        const FUZZY_THRESHOLD: f64 = 0.1317;
+
+        let query_start_lower = query
+            .and_then(|q| q.chars().next())
+            .and_then(|c| c.to_lowercase().next());
+
+        matches.sort_unstable_by_key(|mat| {
+            let score = mat.string_match.score;
+
+            let is_other_match = query_start_lower
+                .map(|query_char| {
+                    !split_words(&mat.string_match.string).any(|word| {
+                        word.chars()
+                            .next()
+                            .and_then(|c| c.to_lowercase().next())
+                            .map_or(false, |word_char| word_char == query_char)
+                    })
+                })
+                .unwrap_or(false);
+
+            if is_other_match {
+                let sort_score = Reverse(OrderedFloat(score));
+                MatchTier::OtherMatch { sort_score }
+            } else {
+                let sort_score_int = Reverse(if score >= FUZZY_THRESHOLD { 1 } else { 0 });
+                let sort_snippet = Reverse(if mat.is_snippet { 1 } else { 0 });
+                MatchTier::WordStartMatch {
+                    sort_score_int,
+                    sort_snippet,
+                    sort_text: mat.sort_text,
+                    sort_key: mat.sort_key,
+                }
+            }
+        });
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
@@ -681,91 +738,59 @@ impl CompletionsMenu {
                 .collect()
         };
 
-        let mut additional_matches = Vec::new();
-        // Deprioritize all candidates where the query's start does not match the start of any word in the candidate
-        if let Some(query) = query {
-            if let Some(query_start) = query.chars().next() {
-                let (primary, secondary) = matches.into_iter().partition(|string_match| {
-                    split_words(&string_match.string).any(|word| {
-                        // Check that the first codepoint of the word as lowercase matches the first
-                        // codepoint of the query as lowercase
-                        word.chars()
-                            .flat_map(|codepoint| codepoint.to_lowercase())
-                            .zip(query_start.to_lowercase())
-                            .all(|(word_cp, query_cp)| word_cp == query_cp)
-                    })
-                });
-                matches = primary;
-                additional_matches = secondary;
-            }
-        }
-
-        let completions = self.completions.borrow_mut();
         if self.sort_completions {
-            matches.sort_unstable_by_key(|mat| {
-                // We do want to strike a balance here between what the language server tells us
-                // to sort by (the sort_text) and what are "obvious" good matches (i.e. when you type
-                // `Creat` and there is a local variable called `CreateComponent`).
-                // So what we do is: we bucket all matches into two buckets
-                // - Strong matches
-                // - Weak matches
-                // Strong matches are the ones with a high fuzzy-matcher score (the "obvious" matches)
-                // and the Weak matches are the rest.
-                //
-                // For the strong matches, we sort by our fuzzy-finder score first and for the weak
-                // matches, we prefer language-server sort_text first.
-                //
-                // The thinking behind that: we want to show strong matches first in order of relevance(fuzzy score).
-                // Rest of the matches(weak) can be sorted as language-server expects.
+            let completions = self.completions.borrow();
 
-                #[derive(PartialEq, Eq, PartialOrd, Ord)]
-                enum MatchScore<'a> {
-                    Strong {
-                        score: Reverse<OrderedFloat<f64>>,
-                        sort_text: Option<&'a str>,
-                        sort_key: (usize, &'a str),
-                    },
-                    Weak {
-                        sort_text: Option<&'a str>,
-                        score: Reverse<OrderedFloat<f64>>,
-                        sort_key: (usize, &'a str),
-                    },
-                }
+            let mut sortable_items: Vec<SortableMatch<'_>> = matches
+                .into_iter()
+                .map(|string_match| {
+                    let completion = &completions[string_match.candidate_id];
 
-                let completion = &completions[mat.candidate_id];
-                let sort_key = completion.sort_key();
-                let sort_text =
-                    if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
-                        lsp_completion.sort_text.as_deref()
-                    } else {
-                        None
-                    };
-                let score = Reverse(OrderedFloat(mat.score));
+                    let is_snippet = matches!(
+                        &completion.source,
+                        CompletionSource::Lsp { lsp_completion, .. }
+                        if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
+                    );
 
-                if mat.score >= 0.2 {
-                    MatchScore::Strong {
-                        score,
+                    let sort_text =
+                        if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
+                            lsp_completion.sort_text.as_deref()
+                        } else {
+                            None
+                        };
+
+                    let sort_key = completion.sort_key();
+
+                    SortableMatch {
+                        string_match,
+                        is_snippet,
                         sort_text,
                         sort_key,
                     }
-                } else {
-                    MatchScore::Weak {
-                        sort_text,
-                        score,
-                        sort_key,
-                    }
-                }
-            });
+                })
+                .collect();
+
+            Self::sort_matches(&mut sortable_items, query);
+
+            matches = sortable_items
+                .into_iter()
+                .map(|sortable| sortable.string_match)
+                .collect();
         }
-        drop(completions);
-
-        matches.extend(additional_matches);
 
         *self.entries.borrow_mut() = matches;
         self.selected_item = 0;
         // This keeps the display consistent when y_flipped.
         self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
     }
+}
+
+#[derive(Debug)]
+pub struct SortableMatch<'a> {
+    pub string_match: StringMatch,
+    pub is_snippet: bool,
+    pub sort_text: Option<&'a str>,
+    pub sort_key: (usize, &'a str),
 }
 
 #[derive(Clone)]
@@ -777,11 +802,34 @@ pub struct AvailableCodeAction {
 
 #[derive(Clone)]
 pub struct CodeActionContents {
-    pub tasks: Option<Rc<ResolvedTasks>>,
-    pub actions: Option<Rc<[AvailableCodeAction]>>,
+    tasks: Option<Rc<ResolvedTasks>>,
+    actions: Option<Rc<[AvailableCodeAction]>>,
 }
 
 impl CodeActionContents {
+    pub fn new(
+        mut tasks: Option<ResolvedTasks>,
+        actions: Option<Rc<[AvailableCodeAction]>>,
+        cx: &App,
+    ) -> Self {
+        if !cx.has_flag::<Debugger>() {
+            if let Some(tasks) = &mut tasks {
+                tasks
+                    .templates
+                    .retain(|(_, task)| !matches!(task.task_type(), task::TaskType::Debug(_)));
+            }
+        }
+
+        Self {
+            tasks: tasks.map(Rc::new),
+            actions,
+        }
+    }
+
+    pub fn tasks(&self) -> Option<&ResolvedTasks> {
+        self.tasks.as_deref()
+    }
+
     fn len(&self) -> usize {
         match (&self.tasks, &self.actions) {
             (Some(tasks), Some(actions)) => actions.len() + tasks.templates.len(),
@@ -989,17 +1037,6 @@ impl CodeActionsMenu {
                     .iter()
                     .skip(range.start)
                     .take(range.end - range.start)
-                    .filter(|action| {
-                        if action
-                            .as_task()
-                            .map(|task| matches!(task.task_type(), task::TaskType::Debug(_)))
-                            .unwrap_or(false)
-                        {
-                            cx.has_flag::<Debugger>()
-                        } else {
-                            true
-                        }
-                    })
                     .enumerate()
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;

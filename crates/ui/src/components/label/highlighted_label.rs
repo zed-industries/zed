@@ -4,7 +4,7 @@ use gpui::{FontWeight, HighlightStyle, StyledText};
 
 use crate::{LabelCommon, LabelLike, LabelSize, LineHeightStyle, prelude::*};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct HighlightedLabel {
     base: LabelLike,
     label: SharedString,
@@ -127,5 +127,101 @@ impl RenderOnce for HighlightedLabel {
 
         self.base
             .child(StyledText::new(self.label).with_default_highlights(&text_style, highlights))
+    }
+}
+
+impl Component for HighlightedLabel {
+    fn scope() -> ComponentScope {
+        ComponentScope::Typography
+    }
+
+    fn name() -> &'static str {
+        "HighlightedLabel"
+    }
+
+    fn description() -> Option<&'static str> {
+        Some("A label with highlighted characters based on specified indices.")
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic Usage",
+                        vec![
+                            single_example(
+                                "Default",
+                                HighlightedLabel::new("Highlighted Text", vec![0, 1, 2, 3]).into_any_element(),
+                            ),
+                            single_example(
+                                "Custom Color",
+                                HighlightedLabel::new("Colored Highlight", vec![0, 1, 7, 8, 9])
+                                    .color(Color::Accent)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Styles",
+                        vec![
+                            single_example(
+                                "Bold",
+                                HighlightedLabel::new("Bold Highlight", vec![0, 1, 2, 3])
+                                    .weight(FontWeight::BOLD)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Italic",
+                                HighlightedLabel::new("Italic Highlight", vec![0, 1, 6, 7, 8])
+                                    .italic()
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Underline",
+                                HighlightedLabel::new("Underlined Highlight", vec![0, 1, 10, 11, 12])
+                                    .underline()
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Sizes",
+                        vec![
+                            single_example(
+                                "Small",
+                                HighlightedLabel::new("Small Highlight", vec![0, 1, 5, 6, 7])
+                                    .size(LabelSize::Small)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Large",
+                                HighlightedLabel::new("Large Highlight", vec![0, 1, 5, 6, 7])
+                                    .size(LabelSize::Large)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Special Cases",
+                        vec![
+                            single_example(
+                                "Single Line",
+                                HighlightedLabel::new("Single Line Highlight\nWith Newline", vec![0, 1, 7, 8, 9])
+                                    .single_line()
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Truncate",
+                                HighlightedLabel::new("This is a very long text that should be truncated with highlights", vec![0, 1, 2, 3, 4, 5])
+                                    .truncate()
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element()
+        )
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
-use collections::{HashMap, HashSet};
+use collections::{FxHashMap, HashMap, HashSet};
 use core::slice;
 use ec4rs::{
     Properties as EditorconfigProperties,
@@ -63,7 +63,7 @@ pub struct AllLanguageSettings {
     pub edit_predictions: EditPredictionSettings,
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
-    pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
+    pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
 }
 
 /// The settings for a particular language.
@@ -370,7 +370,7 @@ fn default_words_completion_mode() -> WordsCompletionMode {
 }
 
 fn default_lsp_insert_mode() -> LspInsertMode {
-    LspInsertMode::Insert
+    LspInsertMode::ReplaceSuffix
 }
 
 fn default_lsp_fetch_timeout_ms() -> u64 {
@@ -1029,7 +1029,10 @@ fn scroll_debounce_ms() -> u64 {
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
 pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
+    #[serde(default)]
     pub variables: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 impl InlayHintSettings {
@@ -1214,7 +1217,7 @@ impl settings::Settings for AllLanguageSettings {
             .map(|settings| settings.enabled_in_assistant)
             .unwrap_or(true);
 
-        let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
+        let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
 
         for (language, suffixes) in &default_value.file_types {
             let mut builder = GlobSetBuilder::new();

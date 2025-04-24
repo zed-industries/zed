@@ -3,14 +3,16 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
-use google_ai::{FunctionDeclaration, GenerateContentResponse, Part, UsageMetadata};
+use google_ai::{
+    FunctionDeclaration, GenerateContentResponse, Part, SystemInstruction, UsageMetadata,
+};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionEvent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, StopReason,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -148,6 +150,16 @@ impl GoogleLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: google_ai::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(GoogleLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for GoogleLanguageModelProvider {
@@ -172,14 +184,11 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = google_ai::Model::default();
-        Some(Arc::new(GoogleLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(google_ai::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(google_ai::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -359,48 +368,74 @@ impl LanguageModel for GoogleLanguageModel {
 }
 
 pub fn into_google(
-    request: LanguageModelRequest,
+    mut request: LanguageModelRequest,
     model: String,
 ) -> google_ai::GenerateContentRequest {
+    fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
+        content
+            .into_iter()
+            .filter_map(|content| match content {
+                language_model::MessageContent::Text(text)
+                | language_model::MessageContent::Thinking { text, .. } => {
+                    if !text.is_empty() {
+                        Some(Part::TextPart(google_ai::TextPart { text }))
+                    } else {
+                        None
+                    }
+                }
+                language_model::MessageContent::RedactedThinking(_) => None,
+                language_model::MessageContent::Image(image) => {
+                    Some(Part::InlineDataPart(google_ai::InlineDataPart {
+                        inline_data: google_ai::GenerativeContentBlob {
+                            mime_type: "image/png".to_string(),
+                            data: image.source.to_string(),
+                        },
+                    }))
+                }
+                language_model::MessageContent::ToolUse(tool_use) => {
+                    Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
+                        function_call: google_ai::FunctionCall {
+                            name: tool_use.name.to_string(),
+                            args: tool_use.input,
+                        },
+                    }))
+                }
+                language_model::MessageContent::ToolResult(tool_result) => Some(
+                    Part::FunctionResponsePart(google_ai::FunctionResponsePart {
+                        function_response: google_ai::FunctionResponse {
+                            name: tool_result.tool_name.to_string(),
+                            // The API expects a valid JSON object
+                            response: serde_json::json!({
+                                "output": tool_result.content
+                            }),
+                        },
+                    }),
+                ),
+            })
+            .collect()
+    }
+
+    let system_instructions = if request
+        .messages
+        .first()
+        .map_or(false, |msg| matches!(msg.role, Role::System))
+    {
+        let message = request.messages.remove(0);
+        Some(SystemInstruction {
+            parts: map_content(message.content),
+        })
+    } else {
+        None
+    };
+
     google_ai::GenerateContentRequest {
         model,
+        system_instruction: system_instructions,
         contents: request
             .messages
             .into_iter()
             .map(|message| google_ai::Content {
-                parts: message
-                    .content
-                    .into_iter()
-                    .filter_map(|content| match content {
-                        language_model::MessageContent::Text(text) => {
-                            if !text.is_empty() {
-                                Some(Part::TextPart(google_ai::TextPart { text }))
-                            } else {
-                                None
-                            }
-                        }
-                        language_model::MessageContent::Image(_) => None,
-                        language_model::MessageContent::ToolUse(tool_use) => {
-                            Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
-                                function_call: google_ai::FunctionCall {
-                                    name: tool_use.name.to_string(),
-                                    args: tool_use.input,
-                                },
-                            }))
-                        }
-                        language_model::MessageContent::ToolResult(tool_result) => Some(
-                            Part::FunctionResponsePart(google_ai::FunctionResponsePart {
-                                function_response: google_ai::FunctionResponse {
-                                    name: tool_result.tool_name.to_string(),
-                                    // The API expects a valid JSON object
-                                    response: serde_json::json!({
-                                        "output": tool_result.content
-                                    }),
-                                },
-                            }),
-                        ),
-                    })
-                    .collect(),
+                parts: map_content(message.content),
                 role: match message.role {
                     Role::User => google_ai::Role::User,
                     Role::Assistant => google_ai::Role::Model,
@@ -417,17 +452,19 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: Some(vec![google_ai::Tool {
-            function_declarations: request
-                .tools
-                .into_iter()
-                .map(|tool| FunctionDeclaration {
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.input_schema,
-                })
-                .collect(),
-        }]),
+        tools: (request.tools.len() > 0).then(|| {
+            vec![google_ai::Tool {
+                function_declarations: request
+                    .tools
+                    .into_iter()
+                    .map(|tool| FunctionDeclaration {
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: tool.input_schema,
+                    })
+                    .collect(),
+            }]
+        }),
         tool_config: None,
     }
 }
@@ -499,6 +536,7 @@ pub fn map_to_language_model_completion_events(
                                                 LanguageModelToolUse {
                                                     id,
                                                     name,
+                                                    is_input_complete: true,
                                                     input: function_call_part.function_call.args,
                                                 },
                                             )));
@@ -719,7 +757,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(cx.theme().colors().border)
                         .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
@@ -732,8 +770,13 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -745,7 +788,8 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
+                        .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
