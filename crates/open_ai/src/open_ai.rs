@@ -1,5 +1,3 @@
-mod supported_countries;
-
 use anyhow::{Context as _, Result, anyhow};
 use futures::{
     AsyncBufReadExt, AsyncReadExt, StreamExt,
@@ -14,8 +12,6 @@ use std::{
     future::{self, Future},
 };
 use strum::EnumIter;
-
-pub use supported_countries::*;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 

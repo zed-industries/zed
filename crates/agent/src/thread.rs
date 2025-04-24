@@ -386,8 +386,7 @@ impl Thread {
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use =
-            ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |_| true);
+        let tool_use = ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages);
 
         Self {
             id,
@@ -520,7 +519,12 @@ impl Thread {
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
-        self.messages.iter().find(|message| message.id == id)
+        let index = self
+            .messages
+            .binary_search_by(|message| message.id.cmp(&id))
+            .ok()?;
+
+        self.messages.get(index)
     }
 
     pub fn messages(&self) -> impl ExactSizeIterator<Item = &Message> {
@@ -665,6 +669,32 @@ impl Thread {
             .flat_map(|message| message.loaded_context.contexts.iter())
     }
 
+    pub fn is_turn_end(&self, ix: usize) -> bool {
+        if self.messages.is_empty() {
+            return false;
+        }
+
+        if !self.is_generating() && ix == self.messages.len() - 1 {
+            return true;
+        }
+
+        let Some(message) = self.messages.get(ix) else {
+            return false;
+        };
+
+        if message.role != Role::Assistant {
+            return false;
+        }
+
+        self.messages
+            .get(ix + 1)
+            .and_then(|message| {
+                self.message(message.id)
+                    .map(|next_message| next_message.role == Role::User)
+            })
+            .unwrap_or(false)
+    }
+
     /// Returns whether all of the tool uses have finished running.
     pub fn all_tools_finished(&self) -> bool {
         // If the only pending tool uses left are the ones with errors, then
@@ -679,8 +709,11 @@ impl Thread {
         self.tool_use.tool_uses_for_message(id, cx)
     }
 
-    pub fn tool_results_for_message(&self, id: MessageId) -> Vec<&LanguageModelToolResult> {
-        self.tool_use.tool_results_for_message(id)
+    pub fn tool_results_for_message(
+        &self,
+        assistant_message_id: MessageId,
+    ) -> Vec<&LanguageModelToolResult> {
+        self.tool_use.tool_results_for_message(assistant_message_id)
     }
 
     pub fn tool_result(&self, id: &LanguageModelToolUseId) -> Option<&LanguageModelToolResult> {
@@ -693,10 +726,6 @@ impl Thread {
 
     pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<AnyToolCard> {
         self.tool_use.tool_result_card(id).cloned()
-    }
-
-    pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
-        self.tool_use.message_has_tool_results(message_id)
     }
 
     pub fn insert_user_message(
@@ -986,9 +1015,6 @@ impl Thread {
                 cache: false,
             };
 
-            self.tool_use
-                .attach_tool_results(message.id, &mut request_message);
-
             message
                 .loaded_context
                 .add_to_request_message(&mut request_message);
@@ -1022,6 +1048,10 @@ impl Thread {
                 .attach_tool_uses(message.id, &mut request_message);
 
             request.messages.push(request_message);
+
+            if let Some(tool_results_message) = self.tool_use.tool_results_message(message.id) {
+                request.messages.push(tool_results_message);
+            }
         }
 
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
@@ -1050,11 +1080,6 @@ impl Thread {
                 content: Vec::new(),
                 cache: false,
             };
-
-            // Skip tool results during summarization.
-            if self.tool_use.message_has_tool_results(message.id) {
-                continue;
-            }
 
             for segment in &message.segments {
                 match segment {
@@ -1160,6 +1185,8 @@ impl Thread {
                         .ok();
                 }
 
+                let mut request_assistant_message_id = None;
+
                 while let Some(event) = events.next().await {
                     if let Some((_, response_events)) = request_callback_parameters.as_mut() {
                         response_events
@@ -1171,10 +1198,10 @@ impl Thread {
                     thread.update(cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
-                                thread.insert_assistant_message(
+                                request_assistant_message_id = Some(thread.insert_assistant_message(
                                     vec![MessageSegment::Text(String::new())],
                                     cx,
-                                );
+                                ));
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
@@ -1189,7 +1216,9 @@ impl Thread {
                             LanguageModelCompletionEvent::Text(chunk) => {
                                 cx.emit(ThreadEvent::ReceivedTextChunk);
                                 if let Some(last_message) = thread.messages.last_mut() {
-                                    if last_message.role == Role::Assistant {
+                                    if last_message.role == Role::Assistant
+                                        && !thread.tool_use.has_tool_results(last_message.id)
+                                    {
                                         last_message.push_text(&chunk);
                                         cx.emit(ThreadEvent::StreamedAssistantText(
                                             last_message.id,
@@ -1201,10 +1230,11 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_assistant_message(
+                                        request_assistant_message_id = Some(thread.insert_assistant_message(
+                                            Role::Assistant,
                                             vec![MessageSegment::Text(chunk.to_string())],
                                             cx,
-                                        );
+                                        ));
                                     };
                                 }
                             }
@@ -1213,7 +1243,9 @@ impl Thread {
                                 signature,
                             } => {
                                 if let Some(last_message) = thread.messages.last_mut() {
-                                    if last_message.role == Role::Assistant {
+                                    if last_message.role == Role::Assistant
+                                        && !thread.tool_use.has_tool_results(last_message.id)
+                                    {
                                         last_message.push_thinking(&chunk, signature);
                                         cx.emit(ThreadEvent::StreamedAssistantThinking(
                                             last_message.id,
@@ -1225,23 +1257,25 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_assistant_message(
+                                        request_assistant_message_id = Some(thread.insert_assistant_message(
                                             vec![MessageSegment::Thinking {
                                                 text: chunk.to_string(),
                                                 signature,
                                             }],
                                             cx,
-                                        );
+                                        ));
                                     };
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                let last_assistant_message_id = thread
-                                    .messages
-                                    .iter_mut()
-                                    .rfind(|message| message.role == Role::Assistant)
-                                    .map(|message| message.id)
-                                    .unwrap_or_else(|| thread.insert_assistant_message(vec![], cx));
+                                let last_assistant_message_id = request_assistant_message_id
+                                    .unwrap_or_else(|| {
+                                        let new_assistant_message_id =
+                                            thread.insert_assistant_message(vec![], cx);
+                                        request_assistant_message_id =
+                                            Some(new_assistant_message_id);
+                                        new_assistant_message_id
+                                    });
 
                                 let tool_use_id = tool_use.id.clone();
                                 let streamed_input = if tool_use.is_input_complete {
@@ -1638,10 +1672,10 @@ impl Thread {
         if self.all_tools_finished() {
             let model_registry = LanguageModelRegistry::read_global(cx);
             if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
-                self.attach_tool_results(cx);
                 if !canceled {
                     self.send_to_model(model, window, cx);
                 }
+                self.auto_capture_telemetry(cx);
             }
         }
 
@@ -1649,14 +1683,6 @@ impl Thread {
             tool_use_id,
             pending_tool_use,
         });
-    }
-
-    /// Insert an empty message to be populated with tool results upon send.
-    pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
-        // Tool results are assumed to be waiting on the next message id, so they will populate
-        // this empty message before sending to model. Would prefer this to be more straightforward.
-        self.insert_message(Role::User, vec![], LoadedContext::default(), cx);
-        self.auto_capture_telemetry(cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.
@@ -1667,22 +1693,19 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let canceled = if self.pending_completions.pop().is_some() {
-            true
-        } else {
-            let mut canceled = false;
-            for pending_tool_use in self.tool_use.cancel_pending() {
-                canceled = true;
-                self.tool_finished(
-                    pending_tool_use.id.clone(),
-                    Some(pending_tool_use),
-                    true,
-                    window,
-                    cx,
-                );
-            }
-            canceled
-        };
+        let mut canceled = self.pending_completions.pop().is_some();
+
+        for pending_tool_use in self.tool_use.cancel_pending() {
+            canceled = true;
+            self.tool_finished(
+                pending_tool_use.id.clone(),
+                Some(pending_tool_use),
+                true,
+                window,
+                cx,
+            );
+        }
+
         self.finalize_pending_checkpoint(cx);
         canceled
     }
@@ -1971,7 +1994,7 @@ impl Thread {
             }
 
             for tool_result in self.tool_results_for_message(message.id) {
-                write!(markdown, "**Tool Results: {}", tool_result.tool_use_id)?;
+                write!(markdown, "\n**Tool Results: {}", tool_result.tool_use_id)?;
                 if tool_result.is_error {
                     write!(markdown, " (Error)")?;
                 }
