@@ -16,7 +16,7 @@ use fs::Fs;
 use futures::{
     FutureExt, StreamExt as _,
     channel::{mpsc, oneshot},
-    future::{self, Shared, try_join_all},
+    future::{self, Shared},
 };
 use git::{
     BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
@@ -233,11 +233,7 @@ pub struct RepositoryId(pub u64);
 pub struct MergeDetails {
     pub conflicted_paths: TreeSet<RepoPath>,
     pub message: Option<SharedString>,
-    pub apply_head: Option<CommitDetails>,
-    pub cherry_pick_head: Option<CommitDetails>,
-    pub merge_heads: Vec<CommitDetails>,
-    pub rebase_head: Option<CommitDetails>,
-    pub revert_head: Option<CommitDetails>,
+    pub heads: Vec<SharedString>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1005,6 +1001,7 @@ impl GitStore {
 
                         let sha = backend
                             .head_sha()
+                            .await
                             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
                         let provider_registry =
@@ -2695,43 +2692,22 @@ impl MergeDetails {
         status: &SumTree<StatusEntry>,
         prev_snapshot: &RepositorySnapshot,
     ) -> Result<(MergeDetails, bool)> {
-        fn sha_eq<'a>(
-            l: impl IntoIterator<Item = &'a CommitDetails>,
-            r: impl IntoIterator<Item = &'a CommitDetails>,
-        ) -> bool {
-            l.into_iter()
-                .map(|commit| &commit.sha)
-                .eq(r.into_iter().map(|commit| &commit.sha))
-        }
-
-        let merge_heads = try_join_all(
-            backend
-                .merge_head_shas()
-                .into_iter()
-                .map(|sha| backend.show(sha)),
-        )
-        .await?;
-        let cherry_pick_head = backend.show("CHERRY_PICK_HEAD".into()).await.ok();
-        let rebase_head = backend.show("REBASE_HEAD".into()).await.ok();
-        let revert_head = backend.show("REVERT_HEAD".into()).await.ok();
-        let apply_head = backend.show("APPLY_HEAD".into()).await.ok();
-        let message = backend.merge_message().await.map(SharedString::from);
-        let merge_heads_changed = !sha_eq(
-            merge_heads.as_slice(),
-            prev_snapshot.merge.merge_heads.as_slice(),
-        ) || !sha_eq(
-            cherry_pick_head.as_ref(),
-            prev_snapshot.merge.cherry_pick_head.as_ref(),
-        ) || !sha_eq(
-            apply_head.as_ref(),
-            prev_snapshot.merge.apply_head.as_ref(),
-        ) || !sha_eq(
-            rebase_head.as_ref(),
-            prev_snapshot.merge.rebase_head.as_ref(),
-        ) || !sha_eq(
-            revert_head.as_ref(),
-            prev_snapshot.merge.revert_head.as_ref(),
-        );
+        let message = backend.merge_message().await;
+        let heads = backend
+            .revparse_batch(vec![
+                "MERGE_HEAD".into(),
+                "CHERRY_PICK_HEAD".into(),
+                "REBASE_HEAD".into(),
+                "REVERT_HEAD".into(),
+                "APPLY_HEAD".into(),
+            ])
+            .await
+            .log_err()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|opt| Some(SharedString::from(opt?)))
+            .collect::<Vec<_>>();
+        let merge_heads_changed = heads != prev_snapshot.merge.heads;
         let conflicted_paths = if merge_heads_changed {
             TreeSet::from_ordered_entries(
                 status
@@ -2744,12 +2720,8 @@ impl MergeDetails {
         };
         let details = MergeDetails {
             conflicted_paths,
-            message,
-            apply_head,
-            cherry_pick_head,
-            merge_heads,
-            rebase_head,
-            revert_head,
+            message: message.map(SharedString::from),
+            heads,
         };
         Ok((details, merge_heads_changed))
     }
@@ -4578,7 +4550,7 @@ async fn compute_snapshot(
     }
 
     // Useful when branch is None in detached head state
-    let head_commit = match backend.head_sha() {
+    let head_commit = match backend.head_sha().await {
         Some(head_sha) => backend.show(head_sha).await.log_err(),
         None => None,
     };
