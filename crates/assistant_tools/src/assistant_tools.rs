@@ -59,6 +59,7 @@ use crate::thinking_tool::ThinkingTool;
 pub use create_file_tool::CreateFileToolInput;
 pub use edit_file_tool::EditFileToolInput;
 pub use find_path_tool::FindPathToolInput;
+pub use list_directory_tool::ListDirectoryToolInput;
 pub use read_file_tool::ReadFileToolInput;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {

@@ -450,6 +450,7 @@ impl ToolUseState {
         message_id: MessageId,
         request_message: &mut LanguageModelRequestMessage,
     ) {
+        dbg!(&self.tool_uses_by_assistant_message, &message_id);
         if let Some(tool_uses) = self.tool_uses_by_assistant_message.get(&message_id) {
             for tool_use in tool_uses {
                 if self.tool_results.contains_key(&tool_use.id) {
@@ -472,6 +473,7 @@ impl ToolUseState {
         message_id: MessageId,
         request_message: &mut LanguageModelRequestMessage,
     ) {
+        dbg!(&self.tool_uses_by_user_message, &message_id);
         if let Some(tool_uses) = self.tool_uses_by_user_message.get(&message_id) {
             for tool_use_id in tool_uses {
                 if let Some(tool_result) = self.tool_results.get(tool_use_id) {

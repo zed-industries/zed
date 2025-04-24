@@ -13,11 +13,13 @@ use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
 
 mod add_arg_to_trait_method;
 mod file_search;
+mod no_empty_messages;
 
 pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
     let mut threads: Vec<Rc<dyn Example>> = vec![
         Rc::new(file_search::FileSearchExample),
         Rc::new(add_arg_to_trait_method::AddArgToTraitMethod),
+        Rc::new(no_empty_messages::NoEmptyMessagesExample),
     ];
 
     for example_path in list_declarative_examples(examples_dir).unwrap() {

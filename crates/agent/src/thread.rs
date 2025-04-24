@@ -1103,7 +1103,10 @@ impl Thread {
             self.tool_use
                 .attach_tool_uses(message.id, &mut request_message);
 
+            // Skip empty messages to avoid sending them to the LLM model
+            // if !request_message.content.is_empty() {
             request.messages.push(request_message);
+            // }
         }
 
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
@@ -1723,8 +1726,10 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         if self.all_tools_finished() {
+            dbg!("All tools finished");
             let model_registry = LanguageModelRegistry::read_global(cx);
             if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
+                dbg!("Attach tool results");
                 self.attach_tool_results(cx);
                 if !canceled {
                     self.send_to_model(model, window, cx);
@@ -1732,6 +1737,7 @@ impl Thread {
             }
         }
 
+        println!("ToolFinished {}", tool_use_id);
         cx.emit(ThreadEvent::ToolFinished {
             tool_use_id,
             pending_tool_use,
