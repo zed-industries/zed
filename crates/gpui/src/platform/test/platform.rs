@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformTextSystem,
-    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task, TestDisplay,
-    TestWindow, WindowAppearance, WindowParams, size,
+    ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task,
+    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -223,8 +223,8 @@ impl Platform for TestPlatform {
         self.text_system.clone()
     }
 
-    fn keyboard_layout(&self) -> String {
-        "zed.keyboard.example".to_string()
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+        Box::new(TestKeyboardLayout)
     }
 
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
@@ -429,5 +429,17 @@ impl Drop for TestPlatform {
             std::mem::ManuallyDrop::drop(&mut self.bitmap_factory);
             windows::Win32::System::Ole::OleUninitialize();
         }
+    }
+}
+
+struct TestKeyboardLayout;
+
+impl PlatformKeyboardLayout for TestKeyboardLayout {
+    fn id(&self) -> &str {
+        "zed.keyboard.example"
+    }
+
+    fn name(&self) -> &str {
+        "zed.keyboard.example"
     }
 }

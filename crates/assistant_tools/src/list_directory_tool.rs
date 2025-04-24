@@ -1,7 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -12,7 +12,7 @@ use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
-    /// The relative path of the directory to list.
+    /// The fully-qualified path of the directory to list in the project.
     ///
     /// This path should never be absolute, and the first component
     /// of the path should always be a root directory in a project.
@@ -76,6 +76,7 @@ impl Tool for ListDirectoryTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<ListDirectoryToolInput>(input) {

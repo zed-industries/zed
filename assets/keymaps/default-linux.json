@@ -50,15 +50,6 @@
     }
   },
   {
-    "context": "Prompt",
-    "bindings": {
-      "left": "menu::SelectPrevious",
-      "right": "menu::SelectNext",
-      "h": "menu::SelectPrevious",
-      "l": "menu::SelectNext"
-    }
-  },
-  {
     "context": "Editor",
     "bindings": {
       "escape": "editor::Cancel",
@@ -140,24 +131,6 @@
     }
   },
   {
-    "context": "Editor && !agent_diff",
-    "bindings": {
-      "ctrl-k ctrl-r": "git::Restore",
-      "ctrl-alt-y": "git::ToggleStaged",
-      "alt-y": "git::StageAndNext",
-      "alt-shift-y": "git::UnstageAndNext"
-    }
-  },
-  {
-    "context": "AgentDiff",
-    "bindings": {
-      "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll"
-    }
-  },
-  {
     "context": "Editor && mode == full",
     "bindings": {
       "shift-enter": "editor::Newline",
@@ -206,6 +179,31 @@
     }
   },
   {
+    "context": "Editor && jupyter && !ContextEditor",
+    "bindings": {
+      "ctrl-shift-enter": "repl::Run",
+      "ctrl-alt-enter": "repl::RunInPlace"
+    }
+  },
+  {
+    "context": "Editor && !agent_diff",
+    "bindings": {
+      "ctrl-k ctrl-r": "git::Restore",
+      "ctrl-alt-y": "git::ToggleStaged",
+      "alt-y": "git::StageAndNext",
+      "alt-shift-y": "git::UnstageAndNext"
+    }
+  },
+  {
+    "context": "AgentDiff",
+    "bindings": {
+      "ctrl-y": "agent::Keep",
+      "ctrl-n": "agent::Reject",
+      "ctrl-shift-y": "agent::KeepAll",
+      "ctrl-shift-n": "agent::RejectAll"
+    }
+  },
+  {
     "context": "AssistantPanel",
     "bindings": {
       "ctrl-k c": "assistant::CopyCode",
@@ -218,6 +216,93 @@
       "new": "assistant::NewChat",
       "ctrl-t": "assistant::NewChat",
       "ctrl-n": "assistant::NewChat"
+    }
+  },
+  {
+    "context": "ContextEditor > Editor",
+    "bindings": {
+      "ctrl-enter": "assistant::Assist",
+      "ctrl-shift-enter": "assistant::Edit",
+      "ctrl-s": "workspace::Save",
+      "save": "workspace::Save",
+      "ctrl->": "assistant::QuoteSelection",
+      "ctrl-<": "assistant::InsertIntoEditor",
+      "ctrl-alt-/": "assistant::ToggleModelSelector",
+      "shift-enter": "assistant::Split",
+      "ctrl-r": "assistant::CycleMessageRole",
+      "enter": "assistant::ConfirmCommand",
+      "alt-enter": "editor::Newline"
+    }
+  },
+  {
+    "context": "AgentPanel",
+    "bindings": {
+      "ctrl-n": "agent::NewThread",
+      "ctrl-alt-n": "agent::NewTextThread",
+      "ctrl-shift-h": "agent::OpenHistory",
+      "ctrl-alt-c": "agent::OpenConfiguration",
+      "ctrl-alt-p": "assistant::OpenPromptLibrary",
+      "ctrl-i": "agent::ToggleProfileSelector",
+      "ctrl-alt-/": "assistant::ToggleModelSelector",
+      "ctrl-shift-a": "agent::ToggleContextPicker",
+      "shift-escape": "agent::ExpandMessageEditor",
+      "ctrl-e": "agent::ChatMode",
+      "ctrl-alt-e": "agent::RemoveAllContext"
+    }
+  },
+  {
+    "context": "AgentPanel > Markdown",
+    "bindings": {
+      "copy": "markdown::CopyAsMarkdown",
+      "ctrl-c": "markdown::CopyAsMarkdown"
+    }
+  },
+  {
+    "context": "AgentPanel && prompt_editor",
+    "bindings": {
+      "cmd-n": "agent::NewTextThread",
+      "cmd-alt-t": "agent::NewThread"
+    }
+  },
+  {
+    "context": "MessageEditor > Editor",
+    "bindings": {
+      "enter": "agent::Chat",
+      "ctrl-i": "agent::ToggleProfileSelector",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
+    }
+  },
+  {
+    "context": "EditMessageEditor > Editor",
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline"
+    }
+  },
+  {
+    "context": "AgentFeedbackMessageEditor > Editor",
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline"
+    }
+  },
+  {
+    "context": "ContextStrip",
+    "bindings": {
+      "up": "agent::FocusUp",
+      "right": "agent::FocusRight",
+      "left": "agent::FocusLeft",
+      "down": "agent::FocusDown",
+      "backspace": "agent::RemoveFocusedContext",
+      "enter": "agent::AcceptSuggestedContext"
+    }
+  },
+  {
+    "context": "ThreadHistory",
+    "bindings": {
+      "backspace": "agent::RemoveSelectedThread"
     }
   },
   {
@@ -590,7 +675,7 @@
     }
   },
   {
-    "context": "Editor && mode == full",
+    "context": "!ContextEditor > Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
@@ -603,105 +688,20 @@
     }
   },
   {
-    "context": "Editor && jupyter && !ContextEditor",
-    "bindings": {
-      "ctrl-shift-enter": "repl::Run",
-      "ctrl-alt-enter": "repl::RunInPlace"
-    }
-  },
-  {
-    "context": "ContextEditor > Editor",
-    "bindings": {
-      "ctrl-enter": "assistant::Assist",
-      "ctrl-shift-enter": "assistant::Edit",
-      "ctrl-s": "workspace::Save",
-      "save": "workspace::Save",
-      "ctrl->": "assistant::QuoteSelection",
-      "ctrl-<": "assistant::InsertIntoEditor",
-      "ctrl-alt-/": "assistant::ToggleModelSelector",
-      "shift-enter": "assistant::Split",
-      "ctrl-r": "assistant::CycleMessageRole",
-      "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline"
-    }
-  },
-  {
-    "context": "AgentPanel",
-    "bindings": {
-      "ctrl-n": "agent::NewThread",
-      "ctrl-alt-n": "agent::NewTextThread",
-      "ctrl-shift-h": "agent::OpenHistory",
-      "ctrl-alt-c": "agent::OpenConfiguration",
-      "ctrl-alt-p": "assistant::OpenPromptLibrary",
-      "ctrl-i": "agent::ToggleProfileSelector",
-      "ctrl-alt-/": "assistant::ToggleModelSelector",
-      "ctrl-shift-a": "agent::ToggleContextPicker",
-      "shift-escape": "agent::ExpandMessageEditor",
-      "ctrl-e": "agent::ChatMode",
-      "ctrl-alt-e": "agent::RemoveAllContext"
-    }
-  },
-  {
-    "context": "AgentPanel > Markdown",
-    "bindings": {
-      "copy": "markdown::CopyAsMarkdown",
-      "ctrl-c": "markdown::CopyAsMarkdown"
-    }
-  },
-  {
-    "context": "AgentPanel && prompt_editor",
-    "bindings": {
-      "cmd-n": "agent::NewTextThread",
-      "cmd-alt-t": "agent::NewThread"
-    }
-  },
-  {
-    "context": "MessageEditor > Editor",
-    "bindings": {
-      "enter": "agent::Chat",
-      "ctrl-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAgentDiff"
-    }
-  },
-  {
-    "context": "EditMessageEditor > Editor",
-    "bindings": {
-      "escape": "menu::Cancel",
-      "enter": "menu::Confirm",
-      "alt-enter": "editor::Newline"
-    }
-  },
-  {
-    "context": "AgentFeedbackMessageEditor > Editor",
-    "bindings": {
-      "escape": "menu::Cancel",
-      "enter": "menu::Confirm",
-      "alt-enter": "editor::Newline"
-    }
-  },
-  {
-    "context": "ContextStrip",
-    "bindings": {
-      "up": "agent::FocusUp",
-      "right": "agent::FocusRight",
-      "left": "agent::FocusLeft",
-      "down": "agent::FocusDown",
-      "backspace": "agent::RemoveFocusedContext",
-      "enter": "agent::AcceptSuggestedContext"
-    }
-  },
-  {
-    "context": "ThreadHistory",
-    "bindings": {
-      "backspace": "agent::RemoveSelectedThread"
-    }
-  },
-  {
     "context": "PromptEditor",
     "bindings": {
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist",
       "ctrl-alt-e": "agent::RemoveAllContext"
+    }
+  },
+  {
+    "context": "Prompt",
+    "bindings": {
+      "left": "menu::SelectPrevious",
+      "right": "menu::SelectNext",
+      "h": "menu::SelectPrevious",
+      "l": "menu::SelectNext"
     }
   },
   {
@@ -920,6 +920,7 @@
       "ctrl-enter": "assistant::InlineAssist",
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
+      "alt-.": ["terminal::SendText", "\u001b."],
       // Overrides for conflicting keybindings
       "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],

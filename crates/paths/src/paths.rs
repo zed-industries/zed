@@ -74,10 +74,9 @@ pub fn config_dir() -> &'static PathBuf {
             if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
             } else {
-                dirs::config_dir()
-                    .expect("failed to determine XDG_CONFIG_HOME directory")
-                    .join("zed")
+                dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
             }
+            .join("zed")
         } else {
             home_dir().join(".config").join("zed")
         }
@@ -95,10 +94,9 @@ pub fn data_dir() -> &'static PathBuf {
             if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
                 flatpak_xdg_data.into()
             } else {
-                dirs::data_local_dir()
-                    .expect("failed to determine XDG_DATA_HOME directory")
-                    .join("zed")
+                dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
             }
+            .join("zed")
         } else if cfg!(target_os = "windows") {
             dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
@@ -403,7 +401,7 @@ pub fn task_file_name() -> &'static str {
     "tasks.json"
 }
 
-/// Returns the relative path to a `launch.json` file within a project.
+/// Returns the relative path to a `debug.json` file within a project.
 pub fn local_debug_file_relative_path() -> &'static Path {
     Path::new(".zed/debug.json")
 }
@@ -411,4 +409,19 @@ pub fn local_debug_file_relative_path() -> &'static Path {
 /// Returns the relative path to a `.vscode/launch.json` file within a project.
 pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
+}
+
+/// Returns the path to the vscode user settings file
+pub fn vscode_settings_file() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    let rel_path = "Code/User/Settings.json";
+    LOGS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            home_dir()
+                .join("Library/Application Support")
+                .join(rel_path)
+        } else {
+            config_dir().join(rel_path)
+        }
+    })
 }

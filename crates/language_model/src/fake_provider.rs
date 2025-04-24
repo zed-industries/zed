@@ -49,6 +49,10 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         Some(Arc::new(FakeLanguageModel::default()))
     }
 
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(Arc::new(FakeLanguageModel::default()))
+    }
+
     fn provided_models(&self, _: &App) -> Vec<Arc<dyn LanguageModel>> {
         vec![Arc::new(FakeLanguageModel::default())]
     }

@@ -117,6 +117,7 @@ CREATE TABLE "project_repositories" (
     "is_deleted" BOOL NOT NULL,
     "current_merge_conflicts" VARCHAR,
     "branch_summary" VARCHAR,
+    "head_commit_details" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 
@@ -491,7 +492,8 @@ CREATE TABLE IF NOT EXISTS billing_customers (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     user_id INTEGER NOT NULL REFERENCES users (id),
     has_overdue_invoices BOOLEAN NOT NULL DEFAULT FALSE,
-    stripe_customer_id TEXT NOT NULL
+    stripe_customer_id TEXT NOT NULL,
+    trial_started_at TIMESTAMP
 );
 
 CREATE UNIQUE INDEX "uix_billing_customers_on_user_id" ON billing_customers (user_id);

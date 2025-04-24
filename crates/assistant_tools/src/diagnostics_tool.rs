@@ -1,7 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -82,6 +82,7 @@ impl Tool for DiagnosticsTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         match serde_json::from_value::<DiagnosticsToolInput>(input)

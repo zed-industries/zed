@@ -7,13 +7,13 @@ use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, Entity, SharedString, Task};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModel, LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolResult,
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
 };
 use ui::IconName;
 use util::truncate_lines_to_byte_limit;
 
-use crate::thread::MessageId;
+use crate::thread::{MessageId, PromptId, ThreadId};
 use crate::thread_store::SerializedMessage;
 
 #[derive(Debug)]
@@ -27,8 +27,6 @@ pub struct ToolUse {
     pub needs_confirmation: bool,
 }
 
-pub const USING_TOOL_MARKER: &str = "<using_tool>";
-
 pub struct ToolUseState {
     tools: Entity<ToolWorkingSet>,
     tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
@@ -36,6 +34,7 @@ pub struct ToolUseState {
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
     tool_result_cards: HashMap<LanguageModelToolUseId, AnyToolCard>,
+    tool_use_metadata_by_id: HashMap<LanguageModelToolUseId, ToolUseMetadata>,
 }
 
 impl ToolUseState {
@@ -47,6 +46,7 @@ impl ToolUseState {
             tool_results: HashMap::default(),
             pending_tool_uses_by_id: HashMap::default(),
             tool_result_cards: HashMap::default(),
+            tool_use_metadata_by_id: HashMap::default(),
         }
     }
 
@@ -72,7 +72,9 @@ impl ToolUseState {
                             .map(|tool_use| LanguageModelToolUse {
                                 id: tool_use.id.clone(),
                                 name: tool_use.name.clone().into(),
+                                raw_input: tool_use.input.to_string(),
                                 input: tool_use.input.clone(),
+                                is_input_complete: true,
                             })
                             .collect::<Vec<_>>();
 
@@ -174,6 +176,9 @@ impl ToolUseState {
                         PendingToolUseStatus::Error(ref err) => {
                             ToolUseStatus::Error(err.clone().into())
                         }
+                        PendingToolUseStatus::InputStillStreaming => {
+                            ToolUseStatus::InputStillStreaming
+                        }
                     }
                 } else {
                     ToolUseStatus::Pending
@@ -190,7 +195,12 @@ impl ToolUseState {
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
                 name: tool_use.name.clone().into(),
-                ui_text: self.tool_ui_label(&tool_use.name, &tool_use.input, cx),
+                ui_text: self.tool_ui_label(
+                    &tool_use.name,
+                    &tool_use.input,
+                    tool_use.is_input_complete,
+                    cx,
+                ),
                 input: tool_use.input.clone(),
                 status,
                 icon,
@@ -205,10 +215,15 @@ impl ToolUseState {
         &self,
         tool_name: &str,
         input: &serde_json::Value,
+        is_input_complete: bool,
         cx: &App,
     ) -> SharedString {
         if let Some(tool) = self.tools.read(cx).tool(tool_name, cx) {
-            tool.ui_text(input).into()
+            if is_input_complete {
+                tool.ui_text(input).into()
+            } else {
+                tool.still_streaming_ui_text(input).into()
+            }
         } else {
             format!("Unknown tool {tool_name:?}").into()
         }
@@ -254,20 +269,52 @@ impl ToolUseState {
         &mut self,
         assistant_message_id: MessageId,
         tool_use: LanguageModelToolUse,
+        metadata: ToolUseMetadata,
         cx: &App,
-    ) {
-        self.tool_uses_by_assistant_message
+    ) -> Arc<str> {
+        let tool_uses = self
+            .tool_uses_by_assistant_message
             .entry(assistant_message_id)
-            .or_default()
-            .push(tool_use.clone());
+            .or_default();
 
-        // The tool use is being requested by the Assistant, so we want to
-        // attach the tool results to the next user message.
-        let next_user_message_id = MessageId(assistant_message_id.0 + 1);
-        self.tool_uses_by_user_message
-            .entry(next_user_message_id)
-            .or_default()
-            .push(tool_use.id.clone());
+        let mut existing_tool_use_found = false;
+
+        for existing_tool_use in tool_uses.iter_mut() {
+            if existing_tool_use.id == tool_use.id {
+                *existing_tool_use = tool_use.clone();
+                existing_tool_use_found = true;
+            }
+        }
+
+        if !existing_tool_use_found {
+            tool_uses.push(tool_use.clone());
+        }
+
+        let status = if tool_use.is_input_complete {
+            self.tool_use_metadata_by_id
+                .insert(tool_use.id.clone(), metadata);
+
+            // The tool use is being requested by the Assistant, so we want to
+            // attach the tool results to the next user message.
+            let next_user_message_id = MessageId(assistant_message_id.0 + 1);
+            self.tool_uses_by_user_message
+                .entry(next_user_message_id)
+                .or_default()
+                .push(tool_use.id.clone());
+
+            PendingToolUseStatus::Idle
+        } else {
+            PendingToolUseStatus::InputStillStreaming
+        };
+
+        let ui_text: Arc<str> = self
+            .tool_ui_label(
+                &tool_use.name,
+                &tool_use.input,
+                tool_use.is_input_complete,
+                cx,
+            )
+            .into();
 
         self.pending_tool_uses_by_id.insert(
             tool_use.id.clone(),
@@ -275,13 +322,13 @@ impl ToolUseState {
                 assistant_message_id,
                 id: tool_use.id,
                 name: tool_use.name.clone(),
-                ui_text: self
-                    .tool_ui_label(&tool_use.name, &tool_use.input, cx)
-                    .into(),
+                ui_text: ui_text.clone(),
                 input: tool_use.input,
-                status: PendingToolUseStatus::Idle,
+                status,
             },
         );
+
+        ui_text
     }
 
     pub fn run_pending_tool(
@@ -327,7 +374,21 @@ impl ToolUseState {
         output: Result<String>,
         cx: &App,
     ) -> Option<PendingToolUse> {
-        telemetry::event!("Agent Tool Finished", tool_name, success = output.is_ok());
+        let metadata = self.tool_use_metadata_by_id.remove(&tool_use_id);
+
+        telemetry::event!(
+            "Agent Tool Finished",
+            model = metadata
+                .as_ref()
+                .map(|metadata| metadata.model.telemetry_id()),
+            model_provider = metadata
+                .as_ref()
+                .map(|metadata| metadata.model.provider_id().to_string()),
+            thread_id = metadata.as_ref().map(|metadata| metadata.thread_id.clone()),
+            prompt_id = metadata.as_ref().map(|metadata| metadata.prompt_id.clone()),
+            tool_name,
+            success = output.is_ok()
+        );
 
         match output {
             Ok(tool_result) => {
@@ -390,28 +451,8 @@ impl ToolUseState {
         request_message: &mut LanguageModelRequestMessage,
     ) {
         if let Some(tool_uses) = self.tool_uses_by_assistant_message.get(&message_id) {
-            let mut found_tool_use = false;
-
             for tool_use in tool_uses {
                 if self.tool_results.contains_key(&tool_use.id) {
-                    if !found_tool_use {
-                        // The API fails if a message contains a tool use without any (non-whitespace) text around it
-                        match request_message.content.last_mut() {
-                            Some(MessageContent::Text(txt)) => {
-                                if txt.is_empty() {
-                                    txt.push_str(USING_TOOL_MARKER);
-                                }
-                            }
-                            None | Some(_) => {
-                                request_message
-                                    .content
-                                    .push(MessageContent::Text(USING_TOOL_MARKER.into()));
-                            }
-                        };
-                    }
-
-                    found_tool_use = true;
-
                     // Do not send tool uses until they are completed
                     request_message
                         .content
@@ -477,6 +518,7 @@ pub struct Confirmation {
 
 #[derive(Debug, Clone)]
 pub enum PendingToolUseStatus {
+    InputStillStreaming,
     Idle,
     NeedsConfirmation(Arc<Confirmation>),
     Running { _task: Shared<Task<()>> },
@@ -495,4 +537,11 @@ impl PendingToolUseStatus {
     pub fn needs_confirmation(&self) -> bool {
         matches!(self, PendingToolUseStatus::NeedsConfirmation { .. })
     }
+}
+
+#[derive(Clone)]
+pub struct ToolUseMetadata {
+    pub model: Arc<dyn LanguageModel>,
+    pub thread_id: ThreadId,
+    pub prompt_id: PromptId,
 }
