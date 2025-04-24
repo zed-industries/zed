@@ -136,7 +136,7 @@ impl FileContext {
         })
     }
 
-    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
+    fn load(self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("file context missing path");
@@ -144,7 +144,7 @@ impl FileContext {
         };
         let full_path = file.full_path(cx);
         let rope = buffer_ref.as_rope().clone();
-        let buffer = self.buffer.clone();
+        let buffer = self.buffer;
         Some(
             cx.background_spawn(
                 async move { (to_fenced_codeblock(&full_path, rope, None), buffer) },
@@ -172,7 +172,7 @@ impl DirectoryContext {
     }
 
     fn load(
-        &self,
+        self,
         project: Entity<Project>,
         cx: &mut App,
     ) -> Option<Task<Vec<(String, Entity<Buffer>)>>> {
@@ -219,7 +219,7 @@ impl SymbolContext {
         self.range.hash(state);
     }
 
-    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
+    fn load(self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("symbol context's file has no path");
@@ -230,7 +230,7 @@ impl SymbolContext {
             .text_for_range(self.enclosing_range.clone())
             .collect::<Rope>();
         let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
-        let buffer = self.buffer.clone();
+        let buffer = self.buffer;
         Some(cx.background_spawn(async move {
             (
                 to_fenced_codeblock(&full_path, rope, Some(line_range)),
@@ -257,7 +257,7 @@ impl SelectionContext {
         self.range.hash(state);
     }
 
-    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
+    fn load(self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("selection context's file has no path");
@@ -268,7 +268,7 @@ impl SelectionContext {
             .text_for_range(self.range.clone())
             .collect::<Rope>();
         let line_range = self.range.to_point(&buffer_ref.snapshot());
-        let buffer = self.buffer.clone();
+        let buffer = self.buffer;
         Some(cx.background_spawn(async move {
             (
                 to_fenced_codeblock(&full_path, rope, Some(line_range)),
@@ -321,7 +321,7 @@ impl ThreadContext {
             .unwrap_or_else(|| "New thread".into())
     }
 
-    pub fn load(&self, cx: &App) -> String {
+    pub fn load(self, cx: &App) -> String {
         let name = self.name(cx);
         let contents = self.thread.read(cx).latest_detailed_summary_or_text();
         // todo! better format
@@ -350,7 +350,7 @@ impl RulesContext {
     }
 
     pub fn load(
-        &self,
+        self,
         prompt_store: &Option<Entity<PromptStore>>,
         cx: &App,
     ) -> Task<Option<String>> {
@@ -410,7 +410,6 @@ impl ImageContext {
 
 /// Loads and formats a collection of contexts.
 pub fn load_context(
-    // todo! Why does it complain about taking this as a reference?
     contexts: Vec<AssistantContext>,
     project: &Entity<Project>,
     prompt_store: &Option<Entity<PromptStore>>,
@@ -452,7 +451,7 @@ pub fn load_context(
                 future::join_all(rules_context_tasks),
             );
 
-        let directory_context = directory_context.into_iter().flat_map(|context| context).collect::<Vec<_>>();
+        let directory_context = directory_context.into_iter().flatten().collect::<Vec<_>>();
         let rules_context = rules_context.into_iter().flatten().collect::<Vec<_>>();
 
         if file_context.is_empty()

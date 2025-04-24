@@ -53,10 +53,6 @@ impl ContextStore {
         self.context_set.iter().map(|entry| entry.as_ref())
     }
 
-    pub fn context_set(&self) -> &IndexSet<ContextSetEntry> {
-        &self.context_set
-    }
-
     pub fn clear(&mut self) {
         self.context_set.clear();
         self.context_thread_ids.clear();
@@ -429,20 +425,6 @@ impl ContextStore {
         })
     }
 
-    /*
-    pub fn included_symbol(&self, symbol_id: &ContextSymbolId) -> Option<ContextId> {
-        self.symbols.get(symbol_id).copied()
-    }
-
-    pub fn included_symbols_by_path(&self) -> &HashMap<ProjectPath, Vec<ContextSymbolId>> {
-        &self.symbols_by_path
-    }
-
-    pub fn buffer_for_symbol(&self, symbol_id: &ContextSymbolId) -> Option<Entity<Buffer>> {
-        self.symbol_buffers.get(symbol_id).cloned()
-    }
-    */
-
     pub fn includes_thread(&self, thread_id: &ThreadId) -> bool {
         self.context_thread_ids.contains(thread_id)
     }
@@ -465,19 +447,6 @@ impl ContextStore {
         self.context_set
             .contains(ContextSetEntry::ref_cast(&context_query))
     }
-
-    /*
-    /// Replaces the context that matches the ID of the new context, if any match.
-    fn replace_context(&mut self, new_context: AssistantContext) {
-        let id = new_context.id();
-        for context in self.context.iter_mut() {
-            if context.id() == id {
-                *context = new_context;
-                break;
-            }
-        }
-    }
-    */
 
     pub fn file_paths(&self, cx: &App) -> HashSet<ProjectPath> {
         self.context()

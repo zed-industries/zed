@@ -14,7 +14,7 @@ use agent::ThreadEvent;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
@@ -115,7 +115,17 @@ impl ExampleContext {
     pub fn push_user_message(&mut self, text: impl ToString) {
         self.app
             .update_entity(&self.agent_thread, |thread, cx| {
-                thread.insert_user_message(text.to_string(), vec![], None, cx);
+                let context = vec![];
+                let context_text = String::new();
+                let context_buffers = HashSet::default();
+                thread.insert_user_message(
+                    text.to_string(),
+                    context,
+                    context_text,
+                    context_buffers,
+                    None,
+                    cx,
+                );
             })
             .unwrap();
     }

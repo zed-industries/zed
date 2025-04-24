@@ -1223,7 +1223,6 @@ impl ActiveThread {
     }
 
     fn update_editing_message_token_count(&mut self, debounce: bool, cx: &mut Context<Self>) {
-        /* todo!
         let Some((message_id, state)) = self.editing_message.as_mut() else {
             return;
         };
@@ -1248,13 +1247,13 @@ impl ActiveThread {
             }
 
             let token_count = if let Some(task) = cx.update(|cx| {
-                let context = thread.read(cx).context_for_message(message_id);
-                let new_context = thread.read(cx).filter_new_context(context);
-                let context_text =
-                    format_context_as_string(new_context, cx).unwrap_or(String::new());
+                let Some(message) = thread.read(cx).message(message_id) else {
+                    log::error!("Message that was being edited no longer exists");
+                    return None;
+                };
                 let message_text = editor.read(cx).text(cx);
 
-                let content = context_text + &message_text;
+                let content = message.context_text.to_string() + &message_text;
 
                 if content.is_empty() {
                     return None;
@@ -1289,7 +1288,6 @@ impl ActiveThread {
                 cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
             })
         }));
-        */
     }
 
     fn cancel_editing_message(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
