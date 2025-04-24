@@ -819,6 +819,9 @@ impl EditorElement {
 
         if editor.drag_selection_head.is_some() {
             cx.stop_propagation();
+            if editor.is_intersect_drag_selection(*display_point, window, cx) {
+                return;
+            }
             let is_cut = !event.modifiers.control;
             editor.drop_selection(*display_point, is_cut, window, cx);
             return;
