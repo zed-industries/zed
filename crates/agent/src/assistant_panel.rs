@@ -24,9 +24,9 @@ use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
-use prompt_library::{PromptLibrary, open_prompt_library};
 use prompt_store::{PromptBuilder, PromptId, UserPromptId};
 use proto::Plan;
+use rules_library::{RulesLibrary, open_rules_library};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
@@ -36,7 +36,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::agent::OpenConfiguration;
-use zed_actions::assistant::{OpenPromptLibrary, ToggleFocus};
+use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
@@ -79,11 +79,11 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
-                .register_action(|workspace, action: &OpenPromptLibrary, window, cx| {
+                .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(action, window, cx)
+                            panel.deploy_rules_library(action, window, cx)
                         });
                     }
                 })
@@ -484,13 +484,13 @@ impl AssistantPanel {
         context_editor.focus_handle(cx).focus(window);
     }
 
-    fn deploy_prompt_library(
+    fn deploy_rules_library(
         &mut self,
-        action: &OpenPromptLibrary,
+        action: &OpenRulesLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        open_prompt_library(
+        open_rules_library(
             self.language_registry.clone(),
             Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
             Arc::new(|| {
@@ -1120,7 +1120,7 @@ impl AssistantPanel {
                                                     "New Text Thread",
                                                     NewTextThread.boxed_clone(),
                                                 )
-                                                .action("Prompt Library", Box::new(OpenPromptLibrary::default()))
+                                                .action("Rules Library", Box::new(OpenRulesLibrary::default()))
                                                 .action("Settings", Box::new(OpenConfiguration))
                                                 .separator()
                                                 .header("MCPs")
@@ -1833,7 +1833,7 @@ impl Render for AssistantPanel {
                 this.open_configuration(window, cx);
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
-            .on_action(cx.listener(Self::deploy_prompt_library))
+            .on_action(cx.listener(Self::deploy_rules_library))
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::go_back))
             .child(self.render_toolbar(window, cx))
@@ -1860,13 +1860,13 @@ impl PromptLibraryInlineAssist {
     }
 }
 
-impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
+impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     fn assist(
         &self,
         prompt_editor: &Entity<Editor>,
         _initial_prompt: Option<String>,
         window: &mut Window,
-        cx: &mut Context<PromptLibrary>,
+        cx: &mut Context<RulesLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
             let Some(project) = self

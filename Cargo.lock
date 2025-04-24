@@ -96,12 +96,12 @@ dependencies = [
  "paths",
  "picker",
  "project",
- "prompt_library",
  "prompt_store",
  "proto",
  "rand 0.8.5",
  "release_channel",
  "rope",
+ "rules_library",
  "schemars",
  "serde",
  "serde_json",
@@ -498,11 +498,11 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
- "prompt_library",
  "prompt_store",
  "proto",
  "rand 0.8.5",
  "rope",
+ "rules_library",
  "schemars",
  "search",
  "serde",
@@ -11084,32 +11084,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prompt_library"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "editor",
- "gpui",
- "language",
- "language_model",
- "log",
- "menu",
- "picker",
- "prompt_store",
- "release_channel",
- "rope",
- "serde",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
- "workspace-hack",
- "zed_actions",
-]
-
-[[package]]
 name = "prompt_store"
 version = "0.1.0"
 dependencies = [
@@ -12269,6 +12243,32 @@ dependencies = [
  "spki 0.7.3",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rules_library"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "gpui",
+ "language",
+ "language_model",
+ "log",
+ "menu",
+ "picker",
+ "prompt_store",
+ "release_channel",
+ "rope",
+ "serde",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
