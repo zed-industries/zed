@@ -4,7 +4,6 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
 use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
-use task::DebugScenario;
 
 use std::sync::Arc;
 use sysinfo::System;

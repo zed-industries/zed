@@ -112,22 +112,7 @@ impl NewSessionModal {
         let config = self.debug_config(cx, debugger);
         let debug_panel = self.debug_panel.clone();
 
-        let task_contexts = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                tasks_ui::task_contexts(workspace, window, cx)
-            })
-            .ok();
-
         cx.spawn_in(window, async move |this, cx| {
-            let task_context = if let Some(task) = task_contexts {
-                task.await
-                    .active_worktree_context
-                    .map_or(task::TaskContext::default(), |context| context.1)
-            } else {
-                task::TaskContext::default()
-            };
-
             debug_panel.update_in(cx, |debug_panel, window, cx| {
                 debug_panel.start_session(config, window, cx)
             })?;

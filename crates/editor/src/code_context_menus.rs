@@ -808,7 +808,7 @@ pub struct CodeActionContents {
 
 impl CodeActionContents {
     pub fn new(
-        mut tasks: Option<ResolvedTasks>,
+        tasks: Option<ResolvedTasks>,
         actions: Option<Rc<[AvailableCodeAction]>>,
         cx: &App,
     ) -> Self {

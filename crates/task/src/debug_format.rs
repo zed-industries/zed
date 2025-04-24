@@ -1,12 +1,9 @@
 use anyhow::Result;
 use gpui::SharedString;
-use proto::DebugTaskDefinition;
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{net::Ipv4Addr, path::Path};
-
-use crate::TaskTemplate;
 
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]

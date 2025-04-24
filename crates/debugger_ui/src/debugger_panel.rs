@@ -39,7 +39,6 @@ use task::{
     DebugScenario, HideStrategy, RevealStrategy, RevealTarget, TaskContext, TaskId, TaskTemplate,
 };
 use terminal_view::TerminalView;
-use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
     Workspace,
@@ -86,8 +85,6 @@ impl DebugPanel {
         cx.new(|cx| {
             let project = workspace.project().clone();
             let dap_store = project.read(cx).dap_store();
-
-            let weak = cx.weak_entity();
 
             let _subscriptions =
                 vec![cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event)];
@@ -488,7 +485,7 @@ impl DebugPanel {
         let dap_store = project.dap_store().downgrade();
         let task_store = project.task_store().downgrade();
         let workspace = self.workspace.clone();
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |_, cx| {
             let DebugScenario {
                 adapter,
                 label,
@@ -500,7 +497,7 @@ impl DebugPanel {
             } = scenario;
             let request = if let Some(mut request) = request {
                 // Resolve task variables within the request.
-                if let DebugRequest::Launch(request) = &mut request {}
+                if let DebugRequest::Launch(_) = &mut request {}
 
                 request
             } else if let Some(build) = build {
