@@ -97,7 +97,7 @@ pub struct BatchToolInput {
     ///       }
     ///     },
     ///     {
-    ///       "name": "path_search",
+    ///       "name": "find_path",
     ///       "input": {
     ///         "glob": "**/*test*.rs"
     ///       }

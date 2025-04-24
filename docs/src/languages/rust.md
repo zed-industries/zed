@@ -95,6 +95,30 @@ If you want to use a binary in a custom location, you can specify a `path` and o
 
 This `"path"` has to be an absolute path.
 
+## Alternate Targets
+
+If want rust-analyzer to provide diagnostics for a target other than you current platform (e.g. for windows when running on macOS) you can use the following Zed lsp settings:
+
+```json
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "cargo": {
+          "target": "x86_64-pc-windows-msvc"
+        }
+      }
+    }
+  }
+}
+```
+
+If you are using `rustup` and you can find a list of available target triples (`aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, etc) by running:
+
+```sh
+rustup target list --installed
+```
+
 ## More server configuration
 
 <!--

@@ -545,6 +545,10 @@ pub fn map_to_language_model_completion_events(
                                                     id,
                                                     name,
                                                     is_input_complete: true,
+                                                    raw_input: function_call_part
+                                                        .function_call
+                                                        .args
+                                                        .to_string(),
                                                     input: function_call_part.function_call.args,
                                                 },
                                             )));

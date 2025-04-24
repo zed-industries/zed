@@ -500,6 +500,7 @@ pub fn map_to_language_model_completion_events(
                                                 name: tool_call.name.as_str().into(),
                                                 is_input_complete: true,
                                                 input,
+                                                raw_input: tool_call.arguments.clone(),
                                             },
                                         )),
                                         Err(error) => {

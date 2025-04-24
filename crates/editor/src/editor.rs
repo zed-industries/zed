@@ -121,8 +121,11 @@ use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
     ProjectPath,
-    debugger::breakpoint_store::{
-        BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
+    debugger::{
+        breakpoint_store::{
+            BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
+        },
+        session::{Session, SessionEvent},
     },
 };
 
@@ -248,10 +251,27 @@ const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
     function: false,
 };
 
+struct InlineValueCache {
+    enabled: bool,
+    inlays: Vec<InlayId>,
+    refresh_task: Task<Option<()>>,
+}
+
+impl InlineValueCache {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            inlays: Vec::new(),
+            refresh_task: Task::ready(None),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {
     InlineCompletion(usize),
     Hint(usize),
+    DebuggerValue(usize),
 }
 
 impl InlayId {
@@ -259,6 +279,7 @@ impl InlayId {
         match self {
             Self::InlineCompletion(id) => *id,
             Self::Hint(id) => *id,
+            Self::DebuggerValue(id) => *id,
         }
     }
 }
@@ -373,9 +394,31 @@ pub trait DiagnosticRenderer {
         editor: WeakEntity<Editor>,
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>>;
+
+    fn render_hover(
+        &self,
+        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        range: Range<Point>,
+        buffer_id: BufferId,
+        cx: &mut App,
+    ) -> Option<Entity<markdown::Markdown>>;
+
+    fn open_link(
+        &self,
+        editor: &mut Editor,
+        link: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    );
 }
 
 pub(crate) struct GlobalDiagnosticRenderer(pub Arc<dyn DiagnosticRenderer>);
+
+impl GlobalDiagnosticRenderer {
+    fn global(cx: &App) -> Option<Arc<dyn DiagnosticRenderer>> {
+        cx.try_global::<Self>().map(|g| g.0.clone())
+    }
+}
 
 impl gpui::Global for GlobalDiagnosticRenderer {}
 pub fn set_diagnostic_renderer(renderer: impl DiagnosticRenderer + 'static, cx: &mut App) {
@@ -846,7 +889,7 @@ pub struct Editor {
     read_only: bool,
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
-    hover_state: HoverState,
+    pub hover_state: HoverState,
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
@@ -923,6 +966,7 @@ pub struct Editor {
     mouse_cursor_hidden: bool,
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
+    inline_value_cache: InlineValueCache,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1517,6 +1561,8 @@ impl Editor {
                             if editor.go_to_active_debug_line(window, cx) {
                                 cx.stop_propagation();
                             }
+
+                            editor.refresh_inline_values(cx);
                         }
                         _ => {}
                     },
@@ -1594,7 +1640,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             show_scrollbars: true,
-            disable_scrolling: true,
+            disable_scrolling: false,
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
@@ -1659,6 +1705,7 @@ impl Editor {
                 released_too_fast: false,
             },
             inline_diagnostics_enabled: mode.is_full(),
+            inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -1787,6 +1834,33 @@ impl Editor {
                 _ => (),
             },
         ));
+
+        if let Some(dap_store) = this
+            .project
+            .as_ref()
+            .map(|project| project.read(cx).dap_store())
+        {
+            let weak_editor = cx.weak_entity();
+
+            this._subscriptions
+                .push(
+                    cx.observe_new::<project::debugger::session::Session>(move |_, _, cx| {
+                        let session_entity = cx.entity();
+                        weak_editor
+                            .update(cx, |editor, cx| {
+                                editor._subscriptions.push(
+                                    cx.subscribe(&session_entity, Self::on_debug_session_event),
+                                );
+                            })
+                            .ok();
+                    }),
+                );
+
+            for session in dap_store.read(cx).sessions().cloned().collect::<Vec<_>>() {
+                this._subscriptions
+                    .push(cx.subscribe(&session, Self::on_debug_session_event));
+            }
+        }
 
         this.end_selection(window, cx);
         this.scroll_manager.show_scrollbars(window, cx);
@@ -4195,6 +4269,17 @@ impl Editor {
         }
     }
 
+    pub fn toggle_inline_values(
+        &mut self,
+        _: &ToggleInlineValues,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.inline_value_cache.enabled = !self.inline_value_cache.enabled;
+
+        self.refresh_inline_values(cx);
+    }
+
     pub fn toggle_inlay_hints(
         &mut self,
         _: &ToggleInlayHints,
@@ -4209,6 +4294,10 @@ impl Editor {
 
     pub fn inlay_hints_enabled(&self) -> bool {
         self.inlay_hint_cache.enabled
+    }
+
+    pub fn inline_values_enabled(&self) -> bool {
+        self.inline_value_cache.enabled
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
@@ -14721,25 +14810,17 @@ impl Editor {
         }
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
-        let Some(diagnostic_renderer) = cx
-            .try_global::<GlobalDiagnosticRenderer>()
-            .map(|g| g.0.clone())
-        else {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let Some(renderer) = GlobalDiagnosticRenderer::global(cx) else {
             return;
         };
-        let buffer = self.buffer.read(cx).snapshot(cx);
 
         let diagnostic_group = buffer
             .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
             .collect::<Vec<_>>();
 
-        let blocks = diagnostic_renderer.render_group(
-            diagnostic_group,
-            buffer_id,
-            snapshot,
-            cx.weak_entity(),
-            cx,
-        );
+        let blocks =
+            renderer.render_group(diagnostic_group, buffer_id, snapshot, cx.weak_entity(), cx);
 
         let blocks = self.display_map.update(cx, |display_map, cx| {
             display_map.insert_blocks(blocks, cx).into_iter().collect()
@@ -16343,34 +16424,33 @@ impl Editor {
         maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
 
-            let Some((_, _, active_position)) =
-                breakpoint_store.read(cx).active_position().cloned()
+            let Some(active_stack_frame) = breakpoint_store.read(cx).active_position().cloned()
             else {
                 self.clear_row_highlights::<DebugCurrentRowHighlight>();
                 return None;
             };
 
+            let position = active_stack_frame.position;
+            let buffer_id = position.buffer_id?;
             let snapshot = self
                 .project
                 .as_ref()?
                 .read(cx)
-                .buffer_for_id(active_position.buffer_id?, cx)?
+                .buffer_for_id(buffer_id, cx)?
                 .read(cx)
                 .snapshot();
 
             let mut handled = false;
-            for (id, ExcerptRange { context, .. }) in self
-                .buffer
-                .read(cx)
-                .excerpts_for_buffer(active_position.buffer_id?, cx)
+            for (id, ExcerptRange { context, .. }) in
+                self.buffer.read(cx).excerpts_for_buffer(buffer_id, cx)
             {
-                if context.start.cmp(&active_position, &snapshot).is_ge()
-                    || context.end.cmp(&active_position, &snapshot).is_lt()
+                if context.start.cmp(&position, &snapshot).is_ge()
+                    || context.end.cmp(&position, &snapshot).is_lt()
                 {
                     continue;
                 }
                 let snapshot = self.buffer.read(cx).snapshot(cx);
-                let multibuffer_anchor = snapshot.anchor_in_excerpt(id, active_position)?;
+                let multibuffer_anchor = snapshot.anchor_in_excerpt(id, position)?;
 
                 handled = true;
                 self.clear_row_highlights::<DebugCurrentRowHighlight>();
@@ -16383,6 +16463,7 @@ impl Editor {
 
                 cx.notify();
             }
+
             handled.then_some(())
         })
         .is_some()
@@ -17372,6 +17453,87 @@ impl Editor {
 
     fn on_buffer_changed(&mut self, _: Entity<MultiBuffer>, cx: &mut Context<Self>) {
         cx.notify();
+    }
+
+    fn on_debug_session_event(
+        &mut self,
+        _session: Entity<Session>,
+        event: &SessionEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            SessionEvent::InvalidateInlineValue => {
+                self.refresh_inline_values(cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+            return;
+        };
+        if !self.inline_value_cache.enabled {
+            let inlays = std::mem::take(&mut self.inline_value_cache.inlays);
+            self.splice_inlays(&inlays, Vec::new(), cx);
+            return;
+        }
+
+        let current_execution_position = self
+            .highlighted_rows
+            .get(&TypeId::of::<DebugCurrentRowHighlight>())
+            .and_then(|lines| lines.last().map(|line| line.range.start));
+
+        self.inline_value_cache.refresh_task = cx.spawn(async move |editor, cx| {
+            let snapshot = editor
+                .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                .ok()?;
+
+            let inline_values = editor
+                .update(cx, |_, cx| {
+                    let Some(current_execution_position) = current_execution_position else {
+                        return Some(Task::ready(Ok(Vec::new())));
+                    };
+
+                    // todo(debugger) when introducing multi buffer inline values check execution position's buffer id to make sure the text
+                    // anchor is in the same buffer
+                    let range =
+                        buffer.read(cx).anchor_before(0)..current_execution_position.text_anchor;
+                    project.inline_values(buffer, range, cx)
+                })
+                .ok()
+                .flatten()?
+                .await
+                .context("refreshing debugger inlays")
+                .log_err()?;
+
+            let (excerpt_id, buffer_id) = snapshot
+                .excerpts()
+                .next()
+                .map(|excerpt| (excerpt.0, excerpt.1.remote_id()))?;
+            editor
+                .update(cx, |editor, cx| {
+                    let new_inlays = inline_values
+                        .into_iter()
+                        .map(|debugger_value| {
+                            Inlay::debugger_hint(
+                                post_inc(&mut editor.next_inlay_id),
+                                Anchor::in_buffer(excerpt_id, buffer_id, debugger_value.position),
+                                debugger_value.text(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let mut inlay_ids = new_inlays.iter().map(|inlay| inlay.id).collect();
+                    std::mem::swap(&mut editor.inline_value_cache.inlays, &mut inlay_ids);
+
+                    editor.splice_inlays(&inlay_ids, new_inlays, cx);
+                })
+                .ok()?;
+            Some(())
+        });
     }
 
     fn on_buffer_event(
@@ -18909,6 +19071,13 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<Vec<project::Hover>>>;
 
+    fn inline_values(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>>;
+
     fn inlay_hints(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -19366,10 +19535,30 @@ impl SemanticsProvider for Entity<Project> {
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         // TODO: make this work for remote projects
-        self.update(cx, |this, cx| {
+        self.update(cx, |project, cx| {
+            if project
+                .active_debug_session(cx)
+                .is_some_and(|(session, _)| session.read(cx).any_stopped_thread())
+            {
+                return true;
+            }
+
             buffer.update(cx, |buffer, cx| {
-                this.any_language_server_supports_inlay_hints(buffer, cx)
+                project.any_language_server_supports_inlay_hints(buffer, cx)
             })
+        })
+    }
+
+    fn inline_values(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
+        self.update(cx, |project, cx| {
+            let (session, active_stack_frame) = project.active_debug_session(cx)?;
+
+            Some(project.inline_values(session, active_stack_frame, buffer_handle, range, cx))
         })
     }
 

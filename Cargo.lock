@@ -2998,7 +2998,6 @@ dependencies = [
  "git",
  "git_hosting_providers",
  "git_ui",
- "google_ai",
  "gpui",
  "gpui_tokio",
  "hex",
@@ -3017,7 +3016,6 @@ dependencies = [
  "nanoid",
  "node_runtime",
  "notifications",
- "open_ai",
  "parking_lot",
  "pretty_assertions",
  "project",
@@ -4039,6 +4037,7 @@ dependencies = [
  "http_client",
  "language",
  "log",
+ "lsp-types",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -4073,6 +4072,7 @@ dependencies = [
  "dap",
  "gpui",
  "language",
+ "lsp-types",
  "paths",
  "serde",
  "serde_json",
@@ -8363,7 +8363,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=1fff0dd12e2071c5667327394cfec163d2a466ab#1fff0dd12e2071c5667327394cfec163d2a466ab"
+source = "git+https://github.com/zed-industries/lsp-types?rev=c9c189f1c5dd53c624a419ce35bc77ad6a908d18#c9c189f1c5dd53c624a419ce35bc77ad6a908d18"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -13167,7 +13167,12 @@ dependencies = [
  "command_palette_hooks",
  "editor",
  "feature_flags",
+ "fs",
  "gpui",
+ "log",
+ "paths",
+ "schemars",
+ "serde",
  "settings",
  "theme",
  "ui",
@@ -18531,9 +18536,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c1666cd923c5eb4635f3743e69c6920d0ed71f29b26920616a5d220607df7c4"
+checksum = "cc9ec491b7112cb8c2fba3c17d9a349d8ab695fb1a4ef6c5c4b9fd8d7aa975c1"
 dependencies = [
  "anyhow",
  "serde",

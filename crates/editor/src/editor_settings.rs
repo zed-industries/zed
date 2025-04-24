@@ -2,7 +2,7 @@ use gpui::App;
 use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, VsCodeSettings};
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
@@ -388,7 +388,7 @@ pub struct ToolbarContent {
 }
 
 /// Scrollbar related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
     ///
@@ -423,7 +423,7 @@ pub struct ScrollbarContent {
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct ScrollbarAxesContent {
     /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
     ///
@@ -474,5 +474,165 @@ impl Settings for EditorSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
+    }
+
+    fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.enum_setting(
+            "editor.cursorBlinking",
+            &mut current.cursor_blink,
+            |s| match s {
+                "blink" | "phase" | "expand" | "smooth" => Some(true),
+                "solid" => Some(false),
+                _ => None,
+            },
+        );
+        vscode.enum_setting(
+            "editor.cursorStyle",
+            &mut current.cursor_shape,
+            |s| match s {
+                "block" => Some(CursorShape::Block),
+                "block-outline" => Some(CursorShape::Hollow),
+                "line" | "line-thin" => Some(CursorShape::Bar),
+                "underline" | "underline-thin" => Some(CursorShape::Underline),
+                _ => None,
+            },
+        );
+
+        vscode.enum_setting(
+            "editor.renderLineHighlight",
+            &mut current.current_line_highlight,
+            |s| match s {
+                "gutter" => Some(CurrentLineHighlight::Gutter),
+                "line" => Some(CurrentLineHighlight::Line),
+                "all" => Some(CurrentLineHighlight::All),
+                _ => None,
+            },
+        );
+
+        vscode.bool_setting(
+            "editor.selectionHighlight",
+            &mut current.selection_highlight,
+        );
+        vscode.bool_setting("editor.hover.enabled", &mut current.hover_popover_enabled);
+        vscode.u64_setting("editor.hover.delay", &mut current.hover_popover_delay);
+
+        let mut gutter = GutterContent::default();
+        vscode.enum_setting(
+            "editor.showFoldingControls",
+            &mut gutter.folds,
+            |s| match s {
+                "always" | "mouseover" => Some(true),
+                "never" => Some(false),
+                _ => None,
+            },
+        );
+        vscode.enum_setting(
+            "editor.lineNumbers",
+            &mut gutter.line_numbers,
+            |s| match s {
+                "on" | "relative" => Some(true),
+                "off" => Some(false),
+                _ => None,
+            },
+        );
+        if let Some(old_gutter) = current.gutter.as_mut() {
+            if gutter.folds.is_some() {
+                old_gutter.folds = gutter.folds
+            }
+            if gutter.line_numbers.is_some() {
+                old_gutter.line_numbers = gutter.line_numbers
+            }
+        } else {
+            if gutter != GutterContent::default() {
+                current.gutter = Some(gutter)
+            }
+        }
+        if let Some(b) = vscode.read_bool("editor.scrollBeyondLastLine") {
+            current.scroll_beyond_last_line = Some(if b {
+                ScrollBeyondLastLine::OnePage
+            } else {
+                ScrollBeyondLastLine::Off
+            })
+        }
+
+        let mut scrollbar_axes = ScrollbarAxesContent::default();
+        vscode.enum_setting(
+            "editor.scrollbar.horizontal",
+            &mut scrollbar_axes.horizontal,
+            |s| match s {
+                "auto" | "visible" => Some(true),
+                "hidden" => Some(false),
+                _ => None,
+            },
+        );
+        vscode.enum_setting(
+            "editor.scrollbar.vertical",
+            &mut scrollbar_axes.horizontal,
+            |s| match s {
+                "auto" | "visible" => Some(true),
+                "hidden" => Some(false),
+                _ => None,
+            },
+        );
+
+        if scrollbar_axes != ScrollbarAxesContent::default() {
+            let scrollbar_settings = current.scrollbar.get_or_insert_default();
+            let axes_settings = scrollbar_settings.axes.get_or_insert_default();
+
+            if let Some(vertical) = scrollbar_axes.vertical {
+                axes_settings.vertical = Some(vertical);
+            }
+            if let Some(horizontal) = scrollbar_axes.horizontal {
+                axes_settings.horizontal = Some(horizontal);
+            }
+        }
+
+        // TODO: check if this does the int->float conversion?
+        vscode.f32_setting(
+            "editor.cursorSurroundingLines",
+            &mut current.vertical_scroll_margin,
+        );
+        vscode.f32_setting(
+            "editor.mouseWheelScrollSensitivity",
+            &mut current.scroll_sensitivity,
+        );
+        if Some("relative") == vscode.read_string("editor.lineNumbers") {
+            current.relative_line_numbers = Some(true);
+        }
+
+        vscode.enum_setting(
+            "editor.find.seedSearchStringFromSelection",
+            &mut current.seed_search_query_from_cursor,
+            |s| match s {
+                "always" => Some(SeedQuerySetting::Always),
+                "selection" => Some(SeedQuerySetting::Selection),
+                "never" => Some(SeedQuerySetting::Never),
+                _ => None,
+            },
+        );
+        vscode.bool_setting("search.smartCase", &mut current.use_smartcase_search);
+        vscode.enum_setting(
+            "editor.multiCursorModifier",
+            &mut current.multi_cursor_modifier,
+            |s| match s {
+                "ctrlCmd" => Some(MultiCursorModifier::CmdOrCtrl),
+                "alt" => Some(MultiCursorModifier::Alt),
+                _ => None,
+            },
+        );
+
+        vscode.bool_setting(
+            "editor.parameterHints.enabled",
+            &mut current.auto_signature_help,
+        );
+        vscode.bool_setting(
+            "editor.parameterHints.enabled",
+            &mut current.show_signature_help_after_edits,
+        );
+
+        if let Some(use_ignored) = vscode.read_bool("search.useIgnoreFiles") {
+            let search = current.search.get_or_insert_default();
+            search.include_ignored = use_ignored;
+        }
     }
 }
