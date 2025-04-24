@@ -491,6 +491,7 @@ pub fn map_to_language_model_completion_events(
                                                     id: tool_call.id.into(),
                                                     name: tool_call.name.as_str().into(),
                                                     is_input_complete: true,
+                                                    raw_input: tool_call.arguments.clone(),
                                                     input: serde_json::Value::from_str(
                                                         &tool_call.arguments,
                                                     )?,

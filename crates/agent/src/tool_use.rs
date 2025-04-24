@@ -72,6 +72,7 @@ impl ToolUseState {
                             .map(|tool_use| LanguageModelToolUse {
                                 id: tool_use.id.clone(),
                                 name: tool_use.name.clone().into(),
+                                raw_input: tool_use.input.to_string(),
                                 input: tool_use.input.clone(),
                                 is_input_complete: true,
                             })
