@@ -11,7 +11,7 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     // Env overrides for the command, will be appended to the terminal's environment from the settings.
     "env": { "foo": "bar" },
     // Current working directory to spawn the command into, defaults to current project root.
-    //"cwd": "/path/to/working/directory",
+    "cwd": "/path/to/working/directory",
     // Whether to use a new terminal tab or reuse the existing one to spawn the process, defaults to `false`.
     "use_new_terminal": false,
     // Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish, defaults to `false`.
