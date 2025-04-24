@@ -12,17 +12,23 @@ pub trait PlatformKeyboardLayout {
     fn name(&self) -> &str;
 }
 
-/// TODO:
+/// A trait for platform-specific keyboard mappers, which map keystrokes to the platform's native format
+/// and convert them to Vim keystrokes, given the current keyboard layout.
 pub trait PlatformKeyboardMapper {
-    /// TODO:
+    /// This method maps a keystroke to the platform's native format.
+    /// For example, on macOS, when `use_key_equivalents` is true, it maps the keystroke to the equivalent key;
+    /// On Windows, it maps the keystroke to its virtual key conterpart.
     fn map_keystroke(&self, keystroke: Keystroke, use_key_equivalents: bool) -> Keystroke;
-    /// TODO:
+
+    /// This method converts a keystroke to the Vim format.
+    /// For example, it converts `ctrl-shift-a` to `ctrl-A`.
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke>;
-    /// TODO:
+
+    /// This method returns a map of key equivalents, macOS only for now.
     fn get_equivalents(&self) -> Option<&HashMap<String, String>>;
 }
 
-/// TODO:
+/// An empty keyboard mapper that does nothing.
 pub struct EmptyKeyboardMapper;
 
 impl PlatformKeyboardMapper for EmptyKeyboardMapper {
@@ -39,7 +45,7 @@ impl PlatformKeyboardMapper for EmptyKeyboardMapper {
     }
 }
 
-/// TODO:
+/// A test keyboard mapper that uses the platform-specific keyboard mappers.
 pub struct TestKeyboardMapper {
     #[cfg(target_os = "windows")]
     mapper: super::WindowsKeyboardMapper,
@@ -52,7 +58,7 @@ pub struct TestKeyboardMapper {
 }
 
 impl TestKeyboardMapper {
-    /// TODO:
+    /// Construct a new test keyboard mapper.
     pub fn new() -> Self {
         Self {
             #[cfg(target_os = "windows")]
