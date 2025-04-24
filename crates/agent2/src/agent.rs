@@ -93,10 +93,10 @@ impl Agent {
                     let request =
                         thread.update(cx, |thread, _cx| thread.build_completion_request())?;
 
-                    println!(
-                        "request: {}",
-                        serde_json::to_string_pretty(&request).unwrap()
-                    );
+                    // println!(
+                    //     "request: {}",
+                    //     serde_json::to_string_pretty(&request).unwrap()
+                    // );
 
                     // Stream events, appending to messages and collecting up tool uses.
                     let mut events = model.stream_completion(request, cx).await?;

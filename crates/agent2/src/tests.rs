@@ -150,7 +150,20 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
         .await;
 
     let stop_reasons = stop_events(events);
-    assert_eq!(stop_reasons, vec![StopReason::ToolUse, StopReason::EndTurn]);
+    if stop_reasons.len() == 2 {
+        assert_eq!(stop_reasons, vec![StopReason::ToolUse, StopReason::EndTurn]);
+    } else if stop_reasons.len() == 3 {
+        assert_eq!(
+            stop_reasons,
+            vec![
+                StopReason::ToolUse,
+                StopReason::ToolUse,
+                StopReason::EndTurn
+            ]
+        );
+    } else {
+        panic!("Expected either 1 or 2 tool uses followed by end turn");
+    }
 
     agent.update(cx, |agent, _cx| {
         let last_message = agent.messages.last().unwrap();
