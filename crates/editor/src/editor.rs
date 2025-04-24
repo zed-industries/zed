@@ -5510,6 +5510,7 @@ impl Editor {
     ) {
         if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
+            cx.notify();
         } else {
             let delay = EditorSettings::get_global(cx).hover_popover_delay;
             let show_task = cx.spawn(async move |editor, cx| {
@@ -5517,9 +5518,10 @@ impl Editor {
                     .timer(std::time::Duration::from_millis(delay))
                     .await;
                 editor
-                    .update(cx, |editor, _| {
+                    .update(cx, |editor, cx| {
                         if let Some(state) = &mut editor.inline_blame_popover {
                             state.show_task = None;
+                            cx.notify();
                         }
                     })
                     .ok();
@@ -5558,14 +5560,16 @@ impl Editor {
         if let Some(state) = &mut self.inline_blame_popover {
             if state.show_task.is_some() {
                 self.inline_blame_popover.take();
+                cx.notify();
             } else {
                 let hide_task = cx.spawn(async move |editor, cx| {
                     cx.background_executor()
-                        .timer(std::time::Duration::from_millis(50))
+                        .timer(std::time::Duration::from_millis(100))
                         .await;
                     editor
-                        .update(cx, |editor, _| {
+                        .update(cx, |editor, cx| {
                             editor.inline_blame_popover.take();
+                            cx.notify();
                         })
                         .ok();
                 });

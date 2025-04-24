@@ -235,6 +235,7 @@ impl BlameRenderer for GitBlameRenderer {
         let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
         // padding to avoid tooltip appearing right below the mouse cursor
+        // TODO: use tooltip_container here
         Some(
             div()
                 .pl_2()

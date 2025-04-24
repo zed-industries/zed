@@ -1846,10 +1846,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if !self.editor.focus_handle(cx).is_focused(window) {
-            return;
-        }
-
         let mouse_position = window.mouse_position();
         let mouse_over_inline_blame = parent_bounds.contains(&mouse_position);
         let mouse_over_popover = self.editor.update(cx, |editor, _| {
