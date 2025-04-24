@@ -11,7 +11,7 @@ use rpc::proto::{self, PeerId};
 use running::RunningState;
 use ui::{Indicator, prelude::*};
 use workspace::{
-    FollowableItem, ViewId, Workspace,
+    FollowableItem, Pane, ViewId, Workspace,
     item::{self, Item},
 };
 

@@ -28,11 +28,12 @@ use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use ui::{
-    ActiveTheme, AnyElement, App, Context, ContextMenu, DropdownMenu, FluentBuilder,
-    InteractiveElement, IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Tab, Window, div, h_flex, v_flex,
+    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
+    DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
+    Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
+    Styled, Tab, Tooltip, Window, div, h_flex, v_flex,
 };
-use util::ResultExt;
+use util::{ResultExt, maybe};
 use variable_list::VariableList;
 use workspace::{
     ActivePaneDecorator, DraggedTab, Item, Member, Pane, PaneGroup, Workspace,
@@ -54,14 +55,23 @@ pub struct RunningState {
     _console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
+    zoomed_pane: Option<Entity<Pane>>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     _schedule_serialize: Option<Task<()>>,
 }
 
 impl Render for RunningState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let zoomed_pane = self
+            .panes
+            .panes()
+            .into_iter()
+            .find(|pane| pane.read(cx).is_zoomed());
+
         let active = self.panes.panes().into_iter().next();
-        let x = if let Some(active) = active {
+        let x = if let Some(ref zoomed_pane) = zoomed_pane {
+            zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
+        } else if let Some(active) = active {
             self.panes
                 .render(
                     None,
@@ -255,109 +265,141 @@ pub(crate) fn new_debugger_pane(
             window,
             cx,
         );
-        pane.set_can_split(Some(Arc::new(move |pane, dragged_item, _window, cx| {
-            if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
-                let is_current_pane = tab.pane == cx.entity();
-                let Some(can_drag_away) = weak_running
-                    .update(cx, |running_state, _| {
-                        let current_panes = running_state.panes.panes();
-                        !current_panes.contains(&&tab.pane)
-                            || current_panes.len() > 1
-                            || (!is_current_pane || pane.items_len() > 1)
-                    })
-                    .ok()
-                else {
-                    return false;
-                };
-                if can_drag_away {
-                    let item = if is_current_pane {
-                        pane.item_for_index(tab.ix)
-                    } else {
-                        tab.pane.read(cx).item_for_index(tab.ix)
+        pane.set_can_split(Some(Arc::new({
+            let weak_running = weak_running.clone();
+            move |pane, dragged_item, _window, cx| {
+                if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
+                    let is_current_pane = tab.pane == cx.entity();
+                    let Some(can_drag_away) = weak_running
+                        .update(cx, |running_state, _| {
+                            let current_panes = running_state.panes.panes();
+                            !current_panes.contains(&&tab.pane)
+                                || current_panes.len() > 1
+                                || (!is_current_pane || pane.items_len() > 1)
+                        })
+                        .ok()
+                    else {
+                        return false;
                     };
-                    if let Some(item) = item {
-                        return item.downcast::<SubView>().is_some();
+                    if can_drag_away {
+                        let item = if is_current_pane {
+                            pane.item_for_index(tab.ix)
+                        } else {
+                            tab.pane.read(cx).item_for_index(tab.ix)
+                        };
+                        if let Some(item) = item {
+                            return item.downcast::<SubView>().is_some();
+                        }
                     }
                 }
+                false
             }
-            false
         })));
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane.set_should_display_tab_bar(|_, _| true);
         pane.set_render_tab_bar_buttons(cx, |_, _, _| (None, None));
-        pane.set_render_tab_bar(cx, |pane, window, cx| {
-            let active_pane_item = pane.active_item();
-            h_flex()
-                .w_full()
-                .px_2()
-                .gap_1()
-                .h(Tab::container_height(cx))
-                .drag_over::<DraggedTab>(|bar, _, _, cx| {
-                    bar.bg(cx.theme().colors().drop_target_background)
-                })
-                .on_drop(
-                    cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_tab_drop(dragged_tab, this.items_len(), window, cx)
-                    }),
-                )
-                .bg(cx.theme().colors().tab_bar_background)
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .children(pane.items().enumerate().map(|(ix, item)| {
-                    let selected = active_pane_item
-                        .as_ref()
-                        .map_or(false, |active| active.item_id() == item.item_id());
-                    let item_ = item.boxed_clone();
-                    div()
-                        .id(SharedString::from(format!(
-                            "debugger_tab_{}",
-                            item.item_id().as_u64()
-                        )))
-                        .p_1()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .map(|this| {
-                            if selected {
-                                this.bg(cx.theme().colors().tab_active_background)
+        pane.set_render_tab_bar(cx, {
+            let weak_running = weak_running.clone();
+
+            move |pane, window, cx| {
+                let active_pane_item = pane.active_item();
+                h_flex()
+                    .justify_between()
+                    .bg(cx.theme().colors().tab_bar_background)
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px_2()
+                            .gap_1()
+                            .h(Tab::container_height(cx))
+                            .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                                bar.bg(cx.theme().colors().drop_target_background)
+                            })
+                            .on_drop(cx.listener(
+                                move |this, dragged_tab: &DraggedTab, window, cx| {
+                                    this.drag_split_direction = None;
+                                    this.handle_tab_drop(dragged_tab, this.items_len(), window, cx)
+                                },
+                            ))
+                            .children(pane.items().enumerate().map(|(ix, item)| {
+                                let selected = active_pane_item
+                                    .as_ref()
+                                    .map_or(false, |active| active.item_id() == item.item_id());
+                                let item_ = item.boxed_clone();
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "debugger_tab_{}",
+                                        item.item_id().as_u64()
+                                    )))
+                                    .p_1()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .map(|this| {
+                                        if selected {
+                                            this.bg(cx.theme().colors().tab_active_background)
+                                        } else {
+                                            let hover_color = cx.theme().colors().element_hover;
+                                            this.hover(|style| style.bg(hover_color))
+                                        }
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        let index = this.index_for_item(&*item_);
+                                        if let Some(index) = index {
+                                            this.activate_item(index, true, true, window, cx);
+                                        }
+                                    }))
+                                    .child(item.tab_content(
+                                        TabContentParams {
+                                            selected,
+                                            ..Default::default()
+                                        },
+                                        window,
+                                        cx,
+                                    ))
+                                    .on_drop(cx.listener(
+                                        move |this, dragged_tab: &DraggedTab, window, cx| {
+                                            this.drag_split_direction = None;
+                                            this.handle_tab_drop(dragged_tab, ix, window, cx)
+                                        },
+                                    ))
+                                    .on_drag(
+                                        DraggedTab {
+                                            item: item.boxed_clone(),
+                                            pane: cx.entity().clone(),
+                                            detail: 0,
+                                            is_active: selected,
+                                            ix,
+                                        },
+                                        |tab, _, _, cx| cx.new(|_| tab.clone()),
+                                    )
+                            })),
+                    )
+                    .child({
+                        let zoomed = pane.is_zoomed();
+                        IconButton::new(
+                            "debug-toggle-zoom",
+                            if zoomed {
+                                IconName::Minimize
                             } else {
-                                let hover_color = cx.theme().colors().element_hover;
-                                this.hover(|style| style.bg(hover_color))
-                            }
-                        })
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let index = this.index_for_item(&*item_);
-                            if let Some(index) = index {
-                                this.activate_item(index, true, true, window, cx);
+                                IconName::Maximize
+                            },
+                        )
+                        .icon_size(IconSize::Small)
+                        .on_click(cx.listener({
+                            move |pane, _, _, cx| {
+                                pane.set_zoomed(!pane.is_zoomed(), cx);
                             }
                         }))
-                        .child(item.tab_content(
-                            TabContentParams {
-                                selected,
-                                ..Default::default()
-                            },
-                            window,
-                            cx,
-                        ))
-                        .on_drop(
-                            cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
-                                this.drag_split_direction = None;
-                                this.handle_tab_drop(dragged_tab, ix, window, cx)
-                            }),
-                        )
-                        .on_drag(
-                            DraggedTab {
-                                item: item.boxed_clone(),
-                                pane: cx.entity().clone(),
-                                detail: 0,
-                                is_active: selected,
-                                ix,
-                            },
-                            |tab, _, _, cx| cx.new(|_| tab.clone()),
-                        )
-                }))
-                .into_any_element()
+                        .tooltip(move |_window, cx| {
+                            let zoomed_text = if zoomed { "Zoom Out" } else { "Zoom In" };
+                            Tooltip::simple(zoomed_text, cx)
+                        })
+                    })
+                    .into_any_element()
+            }
         });
         pane
     });
@@ -489,6 +531,7 @@ impl RunningState {
             stack_frame_list,
             session_id,
             panes,
+            zoomed_pane: None,
             module_list,
             _console: console,
             breakpoint_list,
@@ -497,6 +540,19 @@ impl RunningState {
             _schedule_serialize: None,
         }
     }
+
+    // pub(crate) fn is_zoomed(&self) -> bool {
+    //     self.zoomed_pane.is_some()
+    // }
+
+    // pub(crate) fn set_zoom(&mut self, zoomed: bool, cx: &mut Context<Self>) {
+    //     if zoomed {
+    //         self.zoomed_pane = Some(self.panes.first_pane());
+    //     } else {
+    //         self.zoomed_pane.take();
+    //     }
+    //     cx.notify();
+    // }
 
     pub(crate) fn remove_pane_item(
         &mut self,
