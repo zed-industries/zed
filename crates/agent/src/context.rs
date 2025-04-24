@@ -393,6 +393,8 @@ impl RulesContext {
 #[derive(Debug, Clone)]
 pub struct ImageContext {
     pub original_image: Arc<gpui::Image>,
+    // TODO: handle this elsewhere and remove `ignore-interior-mutability` opt-out in clippy.toml
+    // needed due to a false positive of `clippy::mutable_key_type`.
     pub image_task: Shared<Task<Option<LanguageModelImage>>>,
     pub context_id: ContextId,
 }
