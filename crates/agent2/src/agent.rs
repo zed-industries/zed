@@ -106,7 +106,7 @@ impl Agent {
                             Ok(event) => {
                                 thread
                                     .update(cx, |thread, cx| {
-                                        tool_uses.extend(thread.handle_response_event(
+                                        tool_uses.extend(thread.handle_streamed_completion_event(
                                             event,
                                             events_tx.clone(),
                                             cx,
@@ -168,7 +168,10 @@ impl Agent {
         (!system_message.content.is_empty()).then_some(system_message)
     }
 
-    fn handle_response_event(
+    /// A helper method that's called on every streamed completion event.
+    /// Returns an optional tool result task, which the main agentic loop in
+    /// send will send back to the model when it resolves.
+    fn handle_streamed_completion_event(
         &mut self,
         event: LanguageModelCompletionEvent,
         events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent>>,
