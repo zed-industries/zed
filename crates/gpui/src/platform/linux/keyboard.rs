@@ -2,7 +2,27 @@ use std::borrow::Cow;
 
 use collections::HashMap;
 
-use crate::{Keystroke, Modifiers, PlatformKeyboardMapper};
+use crate::{Keystroke, Modifiers, PlatformKeyboardLayout, PlatformKeyboardMapper};
+
+pub(crate) struct LinuxKeyboardLayout {
+    id: String,
+}
+
+impl PlatformKeyboardLayout for LinuxKeyboardLayout {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.id
+    }
+}
+
+impl LinuxKeyboardLayout {
+    pub(crate) fn new(id: String) -> Self {
+        Self { id }
+    }
+}
 
 pub(crate) struct LinuxKeyboardMapper;
 

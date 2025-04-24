@@ -2,7 +2,7 @@ use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task,
-    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    TestDisplay, TestKeyboardMapper, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -221,6 +221,10 @@ impl Platform for TestPlatform {
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         self.text_system.clone()
+    }
+
+    fn keyboard_mapper(&self) -> Box<dyn crate::PlatformKeyboardMapper> {
+        Box::new(TestKeyboardMapper::new())
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {

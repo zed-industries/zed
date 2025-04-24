@@ -825,6 +825,10 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
+        Box::new(MacKeyboardMapper::new())
+    }
+
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(MacKeyboardLayout::new())
     }
@@ -1175,10 +1179,6 @@ impl Platform for MacPlatform {
             }
             Ok(())
         })
-    }
-
-    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
-        Box::new(MacKeyboardMapper::new())
     }
 }
 

@@ -24,10 +24,10 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxKeyboardMapper, Menu, MenuItem, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, Result, ScreenCaptureSource,
-    Task, WindowAppearance, WindowParams, px,
+    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxKeyboardLayout, LinuxKeyboardMapper, Menu,
+    MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point,
+    Result, ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -860,26 +860,6 @@ impl crate::Modifiers {
             platform,
             function: false,
         }
-    }
-}
-
-pub(crate) struct LinuxKeyboardLayout {
-    id: String,
-}
-
-impl PlatformKeyboardLayout for LinuxKeyboardLayout {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn name(&self) -> &str {
-        &self.id
-    }
-}
-
-impl LinuxKeyboardLayout {
-    pub(crate) fn new(id: String) -> Self {
-        Self { id }
     }
 }
 

@@ -233,10 +233,8 @@ pub(crate) trait Platform: 'static {
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
 
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper>;
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
-    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
-        Box::new(EmptyKeyboardMapper)
-    }
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 }
 
