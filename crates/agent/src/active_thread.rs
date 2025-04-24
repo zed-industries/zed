@@ -43,6 +43,7 @@ use ui::{
     Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, TextSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
+use util::markdown::MarkdownString;
 use workspace::{OpenOptions, Workspace};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -769,7 +770,7 @@ impl ActiveThread {
                 this.render_tool_use_markdown(
                     tool_use.id.clone(),
                     tool_use.ui_text.clone(),
-                    &tool_use.input,
+                    &serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
                     tool_use.status.text(),
                     cx,
                 );
@@ -870,7 +871,7 @@ impl ActiveThread {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         tool_label: impl Into<SharedString>,
-        tool_input: &serde_json::Value,
+        tool_input: &str,
         tool_output: SharedString,
         cx: &mut Context<Self>,
     ) {
@@ -893,11 +894,10 @@ impl ActiveThread {
             this.replace(tool_label, cx);
         });
         rendered.input.update(cx, |this, cx| {
-            let input = format!(
-                "```json\n{}\n```",
-                serde_json::to_string_pretty(tool_input).unwrap_or_default()
+            this.replace(
+                MarkdownString::code_block("json", tool_input).to_string(),
+                cx,
             );
-            this.replace(input, cx);
         });
         rendered.output.update(cx, |this, cx| {
             this.replace(tool_output, cx);
@@ -988,7 +988,7 @@ impl ActiveThread {
                     self.render_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
-                        &tool_use.input,
+                        &serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
                         "".into(),
                         cx,
                     );
@@ -1002,7 +1002,7 @@ impl ActiveThread {
                 self.render_tool_use_markdown(
                     tool_use_id.clone(),
                     ui_text.clone(),
-                    input,
+                    &serde_json::to_string_pretty(&input).unwrap_or_default(),
                     "".into(),
                     cx,
                 );
@@ -1014,7 +1014,7 @@ impl ActiveThread {
                     self.render_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
-                        &tool_use.input,
+                        &serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
                         self.thread
                             .read(cx)
                             .output_for_tool(&tool_use.id)
@@ -1026,6 +1026,23 @@ impl ActiveThread {
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
             ThreadEvent::ReceivedTextChunk => {}
+            ThreadEvent::InvalidToolInput {
+                tool_use_id,
+                ui_text,
+                invalid_input_json,
+            } => {
+                self.render_tool_use_markdown(
+                    tool_use_id.clone(),
+                    ui_text,
+                    invalid_input_json,
+                    self.thread
+                        .read(cx)
+                        .output_for_tool(tool_use_id)
+                        .map(|output| output.clone().into())
+                        .unwrap_or("".into()),
+                    cx,
+                );
+            }
         }
     }
 
