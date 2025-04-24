@@ -61,7 +61,6 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "client",
- "clock",
  "collections",
  "command_palette_hooks",
  "component",
