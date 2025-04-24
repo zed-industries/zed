@@ -437,8 +437,12 @@ impl PaneAxis {
     }
 
     pub fn load(axis: Axis, members: Vec<Member>, flexes: Option<Vec<f32>>) -> Self {
-        let flexes = flexes.unwrap_or_else(|| vec![1.; members.len()]);
-        // debug_assert!(members.len() == flexes.len());
+        let mut flexes = flexes.unwrap_or_else(|| vec![1.; members.len()]);
+        if flexes.len() != members.len()
+            || (flexes.iter().copied().sum::<f32>() - flexes.len() as f32).abs() >= 0.001
+        {
+            flexes = vec![1.; members.len()];
+        }
 
         let flexes = Arc::new(Mutex::new(flexes));
         let bounding_boxes = Arc::new(Mutex::new(vec![None; members.len()]));
