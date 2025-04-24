@@ -31,14 +31,6 @@ pub enum TerminalKind {
     Shell(Option<PathBuf>),
     /// Run a task.
     Task(SpawnInTerminal),
-    /// Run a debug terminal.
-    Debug {
-        command: Option<String>,
-        args: Vec<String>,
-        envs: HashMap<String, String>,
-        cwd: Option<Arc<Path>>,
-        title: Option<String>,
-    },
 }
 
 /// SshCommand describes how to connect to a remote server
@@ -105,7 +97,6 @@ impl Project {
                     self.active_project_directory(cx)
                 }
             }
-            TerminalKind::Debug { cwd, .. } => cwd.clone(),
         };
 
         let mut settings_location = None;
@@ -209,7 +200,6 @@ impl Project {
                     this.active_project_directory(cx)
                 }
             }
-            TerminalKind::Debug { cwd, .. } => cwd.clone(),
         };
         let ssh_details = this.ssh_details(cx);
 
@@ -243,7 +233,6 @@ impl Project {
         };
 
         let mut python_venv_activate_command = None;
-        let debug_terminal = matches!(kind, TerminalKind::Debug { .. });
 
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
@@ -339,27 +328,6 @@ impl Project {
                     }
                 }
             }
-            TerminalKind::Debug {
-                command,
-                args,
-                envs,
-                title,
-                ..
-            } => {
-                env.extend(envs);
-
-                let shell = if let Some(program) = command {
-                    Shell::WithArguments {
-                        program,
-                        args,
-                        title_override: Some(title.unwrap_or("Debug Terminal".into()).into()),
-                    }
-                } else {
-                    settings.shell.clone()
-                };
-
-                (None, shell)
-            }
         };
         TerminalBuilder::new(
             local_path.map(|path| path.to_path_buf()),
@@ -373,7 +341,6 @@ impl Project {
             ssh_details.is_some(),
             window,
             completion_tx,
-            debug_terminal,
             cx,
         )
         .map(|builder| {

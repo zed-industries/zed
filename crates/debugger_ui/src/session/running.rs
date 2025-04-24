@@ -36,7 +36,7 @@ use ui::{
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, Member, Pane, PaneGroup, Workspace,
+    ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, Workspace,
     item::TabContentParams, move_item, pane::Event,
 };
 
@@ -416,7 +416,7 @@ impl RunningState {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
 
-        let terminal = cx.new(|cx| DebugTerminal::empty(cx));
+        let debug_terminal = cx.new(|cx| DebugTerminal::empty(cx));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -490,7 +490,7 @@ impl RunningState {
                 &console,
                 &breakpoint_list,
                 &loaded_source_list,
-                &terminal,
+                &debug_terminal,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -533,7 +533,7 @@ impl RunningState {
             breakpoint_list,
             loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
-            debug_terminal: cx.new(DebugTerminal::empty),
+            debug_terminal,
             _schedule_serialize: None,
         }
     }
@@ -565,6 +565,90 @@ impl RunningState {
         self.panes.pane_at_pixel_position(position).is_some()
     }
 
+    fn create_sub_view(
+        &self,
+        item_kind: DebuggerPaneItem,
+        pane: &Entity<Pane>,
+        cx: &mut Context<Self>,
+    ) -> Box<dyn ItemHandle> {
+        match item_kind {
+            DebuggerPaneItem::Console => {
+                let weak_console = self._console.clone().downgrade();
+
+                Box::new(SubView::new(
+                    pane.focus_handle(cx),
+                    self._console.clone().into(),
+                    item_kind,
+                    Some(Box::new(move |cx| {
+                        weak_console
+                            .read_with(cx, |console, cx| console.show_indicator(cx))
+                            .unwrap_or_default()
+                    })),
+                    cx,
+                ))
+            }
+            DebuggerPaneItem::Variables => Box::new(SubView::new(
+                self.variable_list.focus_handle(cx),
+                self.variable_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
+                self.breakpoint_list.focus_handle(cx),
+                self.breakpoint_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::Frames => Box::new(SubView::new(
+                self.stack_frame_list.focus_handle(cx),
+                self.stack_frame_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::Modules => Box::new(SubView::new(
+                self.module_list.focus_handle(cx),
+                self.module_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
+                self.loaded_sources_list.focus_handle(cx),
+                self.loaded_sources_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::Terminal => Box::new(SubView::new(
+                self.debug_terminal.focus_handle(cx),
+                self.debug_terminal.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+        }
+    }
+
+    pub(crate) fn ensure_pane_item(
+        &mut self,
+        item_kind: DebuggerPaneItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pane_items_status(cx).get(&item_kind) == Some(&true) {
+            return;
+        };
+        let pane = self.panes.last_pane();
+        let sub_view = self.create_sub_view(item_kind, &pane, cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.add_item_inner(sub_view, false, false, false, None, window, cx);
+        })
+    }
+
     pub(crate) fn add_pane_item(
         &mut self,
         item_kind: DebuggerPaneItem,
@@ -578,65 +662,7 @@ impl RunningState {
         );
 
         if let Some(pane) = self.panes.pane_at_pixel_position(position) {
-            let sub_view = match item_kind {
-                DebuggerPaneItem::Console => {
-                    let weak_console = self._console.clone().downgrade();
-
-                    Box::new(SubView::new(
-                        pane.focus_handle(cx),
-                        self._console.clone().into(),
-                        item_kind,
-                        Some(Box::new(move |cx| {
-                            weak_console
-                                .read_with(cx, |console, cx| console.show_indicator(cx))
-                                .unwrap_or_default()
-                        })),
-                        cx,
-                    ))
-                }
-                DebuggerPaneItem::Variables => Box::new(SubView::new(
-                    self.variable_list.focus_handle(cx),
-                    self.variable_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-                DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
-                    self.breakpoint_list.focus_handle(cx),
-                    self.breakpoint_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-                DebuggerPaneItem::Frames => Box::new(SubView::new(
-                    self.stack_frame_list.focus_handle(cx),
-                    self.stack_frame_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-                DebuggerPaneItem::Modules => Box::new(SubView::new(
-                    self.module_list.focus_handle(cx),
-                    self.module_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-                DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
-                    self.loaded_sources_list.focus_handle(cx),
-                    self.loaded_sources_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-                DebuggerPaneItem::Terminal => Box::new(SubView::new(
-                    self.debug_terminal.focus_handle(cx),
-                    self.debug_terminal.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-            };
+            let sub_view = self.create_sub_view(item_kind, pane, cx);
 
             pane.update(cx, |pane, cx| {
                 pane.add_item(sub_view, false, false, None, window, cx);

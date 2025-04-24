@@ -1,3 +1,4 @@
+use crate::persistence::DebuggerPaneItem;
 use crate::{
     ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, Pause, Restart, StepBack,
     StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
@@ -32,7 +33,9 @@ use settings::Settings;
 use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
-use task::{DebugTaskDefinition, DebugTaskTemplate};
+use task::{
+    DebugTaskDefinition, DebugTaskTemplate, HideStrategy, RevealStrategy, RevealTarget, TaskId,
+};
 use terminal_view::TerminalView;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
@@ -293,23 +296,21 @@ impl DebugPanel {
 
                 (session.clone(), dap_store.boot_session(session, cx))
             })?;
+            Self::register_session(this.clone(), session.clone(), cx).await?;
 
-            match task.await {
-                Err(e) => {
-                    this.update(cx, |this, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.show_error(&e, cx);
-                            })
-                            .ok();
-                    })
-                    .ok();
+            if let Err(e) = task.await {
+                this.update(cx, |this, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_error(&e, cx);
+                        })
+                        .ok();
+                })
+                .ok();
 
-                    session
-                        .update(cx, |session, cx| session.shutdown(cx))?
-                        .await;
-                }
-                Ok(_) => Self::register_session(this, session, cx).await?,
+                session
+                    .update(cx, |session, cx| session.shutdown(cx))?
+                    .await;
             }
 
             anyhow::Ok(())
@@ -519,13 +520,36 @@ impl DebugPanel {
             return Task::ready(Err(anyhow!("no session {:?} found", session_id)));
         };
         let running = session.read(cx).running_state();
-        let terminal = running.read(cx).debug_terminal.clone();
-        let kind = TerminalKind::Debug {
-            command,
-            args,
-            envs,
-            cwd,
-            title,
+        let cwd = cwd.map(|p| p.to_path_buf());
+        let shell = self
+            .project
+            .read(cx)
+            .terminal_settings(&cwd, cx)
+            .shell
+            .clone();
+        let kind = if let Some(command) = command {
+            let title = title.clone().unwrap_or(command.clone());
+            TerminalKind::Task(task::SpawnInTerminal {
+                id: TaskId("debug".to_string()),
+                full_label: title.clone(),
+                label: title.clone(),
+                command: command.clone(),
+                args,
+                command_label: title.clone(),
+                cwd,
+                env: envs,
+                use_new_terminal: true,
+                allow_concurrent_runs: true,
+                reveal: RevealStrategy::NoFocus,
+                reveal_target: RevealTarget::Dock,
+                hide: HideStrategy::Never,
+                shell,
+                show_summary: false,
+                show_command: false,
+                show_rerun: false,
+            })
+        } else {
+            TerminalKind::Shell(cwd.map(|c| c.to_path_buf()))
         };
 
         let workspace = self.workspace.clone();
@@ -534,25 +558,19 @@ impl DebugPanel {
         let terminal_task = self.project.update(cx, |project, cx| {
             project.create_terminal(kind, window.window_handle(), cx)
         });
-        let terminal_task = cx.spawn_in(window, async move |this, cx| {
+        let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 
             let terminal_view = cx.new_window_entity(|window, cx| {
-                TerminalView::new(
-                    terminal.clone(),
-                    workspace,
-                    None, // todo!()
-                    project,
-                    window,
-                    cx,
-                )
+                TerminalView::new(terminal.clone(), workspace, None, project, window, cx)
             })?;
 
-            running.update_in(cx, |running, _window, cx| {
+            running.update_in(cx, |running, window, cx| {
+                running.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
                 running.debug_terminal.update(cx, |debug_terminal, cx| {
                     debug_terminal.terminal = Some(terminal_view);
                     cx.notify();
-                })
+                });
             })?;
 
             anyhow::Ok(terminal.read_with(cx, |terminal, _| terminal.pty_info.pid())?)

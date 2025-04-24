@@ -142,6 +142,10 @@ impl PaneGroup {
         self.root.first_pane()
     }
 
+    pub fn last_pane(&self) -> Entity<Pane> {
+        self.root.last_pane()
+    }
+
     pub fn find_pane_in_direction(
         &mut self,
         active_pane: &Entity<Pane>,
@@ -356,6 +360,13 @@ impl Member {
     fn first_pane(&self) -> Entity<Pane> {
         match self {
             Member::Axis(axis) => axis.members[0].first_pane(),
+            Member::Pane(pane) => pane.clone(),
+        }
+    }
+
+    fn last_pane(&self) -> Entity<Pane> {
+        match self {
+            Member::Axis(axis) => axis.members.last().unwrap().last_pane(),
             Member::Pane(pane) => pane.clone(),
         }
     }
