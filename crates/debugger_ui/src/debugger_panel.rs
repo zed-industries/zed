@@ -988,19 +988,6 @@ impl DebugPanel {
         )
     }
 
-    // pub fn toggle_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-    //     let is_zoomed = self.is_zoomed(window, cx);
-    //     self.set_zoomed(!is_zoomed, window, cx);
-    // }
-
-    // fn is_zoomed(&self, _window: &Window, cx: &App) -> bool {
-    //     self.active_session
-    //         .as_ref()
-    //         .and_then(|session| session.read(cx).mode().as_running().clone())
-    //         .map(|running| running.read(cx).is_zoomed())
-    //         .unwrap_or(false)
-    // }
-
     fn activate_session(
         &mut self,
         session_item: Entity<DebugSession>,
@@ -1082,17 +1069,6 @@ impl Panel for DebugPanel {
     fn pane(&self) -> Option<Entity<Pane>> {
         None
     }
-
-    // fn set_zoomed(&mut self, zoomed: bool, _window: &mut Window, cx: &mut Context<Self>) {
-    //     if let Some(active_session) = &self.active_session {
-    //         active_session.update(cx, |session, cx| {
-    //             session
-    //                 .mode()
-    //                 .as_running()
-    //                 .map(|running| running.update(cx, |running, cx| running.set_zoom(zoomed, cx)));
-    //         })
-    //     }
-    // }
 
     fn activation_priority(&self) -> u32 {
         9

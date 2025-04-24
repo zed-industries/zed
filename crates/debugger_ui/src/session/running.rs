@@ -264,6 +264,7 @@ pub(crate) fn new_debugger_pane(
             window,
             cx,
         );
+        let focus_handle = pane.focus_handle(cx);
         pane.set_can_split(Some(Arc::new({
             let weak_running = weak_running.clone();
             move |pane, dragged_item, _window, cx| {
@@ -306,6 +307,7 @@ pub(crate) fn new_debugger_pane(
                     .bg(cx.theme().colors().tab_bar_background)
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
+                    .track_focus(&focus_handle)
                     .child(
                         h_flex()
                             .w_full()
@@ -385,14 +387,21 @@ pub(crate) fn new_debugger_pane(
                             },
                         )
                         .icon_size(IconSize::Small)
-                        .on_click(cx.listener({
-                            move |pane, _, _, cx| {
-                                pane.set_zoomed(!pane.is_zoomed(), cx);
-                            }
+                        .on_click(cx.listener(move |pane, _, window, cx| {
+                            pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
                         }))
-                        .tooltip(move |_window, cx| {
-                            let zoomed_text = if zoomed { "Zoom Out" } else { "Zoom In" };
-                            Tooltip::simple(zoomed_text, cx)
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                let zoomed_text = if zoomed { "Zoom Out" } else { "Zoom In" };
+                                Tooltip::for_action_in(
+                                    zoomed_text,
+                                    &workspace::ToggleZoom,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
                         })
                     })
                     .into_any_element()
@@ -536,19 +545,6 @@ impl RunningState {
             _schedule_serialize: None,
         }
     }
-
-    // pub(crate) fn is_zoomed(&self) -> bool {
-    //     self.zoomed_pane.is_some()
-    // }
-
-    // pub(crate) fn set_zoom(&mut self, zoomed: bool, cx: &mut Context<Self>) {
-    //     if zoomed {
-    //         self.zoomed_pane = Some(self.panes.first_pane());
-    //     } else {
-    //         self.zoomed_pane.take();
-    //     }
-    //     cx.notify();
-    // }
 
     pub(crate) fn remove_pane_item(
         &mut self,
@@ -709,10 +705,25 @@ impl RunningState {
         cx: &mut Context<RunningState>,
     ) {
         this.serialize_layout(window, cx);
-        if let Event::Remove { .. } = event {
-            let _did_find_pane = this.panes.remove(&source_pane).is_ok();
-            debug_assert!(_did_find_pane);
-            cx.notify();
+        match event {
+            Event::Remove { .. } => {
+                let _did_find_pane = this.panes.remove(&source_pane).is_ok();
+                debug_assert!(_did_find_pane);
+                cx.notify();
+            }
+            Event::ZoomIn => {
+                source_pane.update(cx, |pane, cx| {
+                    pane.set_zoomed(true, cx);
+                });
+                cx.notify();
+            }
+            Event::ZoomOut => {
+                source_pane.update(cx, |pane, cx| {
+                    pane.set_zoomed(false, cx);
+                });
+                cx.notify();
+            }
+            _ => {}
         }
     }
 
