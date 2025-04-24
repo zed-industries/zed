@@ -32,15 +32,19 @@ use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use file_icons::FileIcons;
-use git::{Oid, blame::BlameEntry, status::FileStatus};
+use git::{
+    Oid,
+    blame::{BlameEntry, ParsedCommitMessage},
+    status::FileStatus,
+};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
     Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
     InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
+    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
+    Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
     linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
     transparent_black,
 };
@@ -49,6 +53,7 @@ use language::language_settings::{
     IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
 };
 use lsp::DiagnosticSeverity;
+use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
     MultiBufferRow, RowInfo,
@@ -1857,7 +1862,7 @@ impl EditorElement {
 
         self.editor.update(cx, |editor, cx| {
             if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(mouse_position, cx);
+                editor.show_blame_popover(&blame_entry, mouse_position, cx);
             } else {
                 editor.hide_blame_popover(cx);
             }
@@ -1875,8 +1880,23 @@ impl EditorElement {
                 editor
                     .workspace()
                     .map(|workspace| workspace.downgrade())
-                    .and_then(|workspace| {
-                        render_blame_entry_popover(blame_entry, workspace, &blame, cx)
+                    .zip(
+                        editor
+                            .inline_blame_popover
+                            .as_ref()
+                            .map(|p| p.popover_state.clone()),
+                    )
+                    .and_then(|(workspace, popover_state)| {
+                        render_blame_entry_popover(
+                            blame_entry,
+                            popover_state.scroll_handle,
+                            popover_state.commit_message,
+                            popover_state.markdown,
+                            workspace,
+                            &blame,
+                            window,
+                            cx,
+                        )
                     })
             });
 
@@ -5954,15 +5974,27 @@ fn render_inline_blame_entry(
 
 fn render_blame_entry_popover(
     blame_entry: BlameEntry,
+    scroll_handle: ScrollHandle,
+    commit_message: Option<ParsedCommitMessage>,
+    markdown: Entity<Markdown>,
     workspace: WeakEntity<Workspace>,
     blame: &Entity<GitBlame>,
+    window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
     let blame = blame.read(cx);
-    let details = blame.details_for_entry(&blame_entry);
     let repository = blame.repository(cx)?.clone();
-    renderer.render_blame_entry_popover(blame_entry, details, repository, workspace, cx)
+    renderer.render_blame_entry_popover(
+        blame_entry,
+        scroll_handle,
+        commit_message,
+        markdown,
+        repository,
+        workspace,
+        window,
+        cx,
+    )
 }
 
 fn render_blame_entry(

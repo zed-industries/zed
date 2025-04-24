@@ -78,7 +78,8 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 
-use ::git::Restore;
+use ::git::blame::BlameEntry;
+use ::git::{Restore, blame::ParsedCommitMessage};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
@@ -89,10 +90,10 @@ use gpui::{
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
-    Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection,
-    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div,
-    impl_actions, point, prelude::*, pulsating_between, px, relative, size,
+    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
+    SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
+    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
@@ -117,6 +118,7 @@ use language::{
 };
 use language::{BufferRow, CharClassifier, Runnable, RunnableRange, point_to_lsp};
 use linked_editing_ranges::refresh_linked_ranges;
+use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
@@ -798,12 +800,19 @@ impl ChangeList {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
+struct InlineBlamePopoverState {
+    scroll_handle: ScrollHandle,
+    commit_message: Option<ParsedCommitMessage>,
+    markdown: Entity<Markdown>,
+}
+
 struct InlineBlamePopover {
     position: gpui::Point<Pixels>,
     show_task: Option<Task<()>>,
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
+    popover_state: InlineBlamePopoverState,
 }
 
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
@@ -5493,7 +5502,12 @@ impl Editor {
         }
     }
 
-    fn show_blame_popover(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+    fn show_blame_popover(
+        &mut self,
+        blame_entry: &BlameEntry,
+        position: gpui::Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
         } else {
@@ -5510,11 +5524,32 @@ impl Editor {
                     })
                     .ok();
             });
+            let Some(blame) = self.blame.as_ref() else {
+                return;
+            };
+            let blame = blame.read(cx);
+            let details = blame.details_for_entry(&blame_entry);
+            let markdown = cx.new(|cx| {
+                Markdown::new(
+                    details
+                        .as_ref()
+                        .map(|message| message.message.clone())
+                        .unwrap_or_default(),
+                    None,
+                    None,
+                    cx,
+                )
+            });
             self.inline_blame_popover = Some(InlineBlamePopover {
                 position,
                 show_task: Some(show_task),
                 hide_task: None,
                 popover_bounds: None,
+                popover_state: InlineBlamePopoverState {
+                    scroll_handle: ScrollHandle::new(),
+                    commit_message: details,
+                    markdown,
+                },
             });
         }
     }

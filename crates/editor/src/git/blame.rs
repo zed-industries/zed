@@ -7,10 +7,11 @@ use git::{
     parse_git_remote_url,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, Hsla, Subscription, Task, TextStyle,
-    WeakEntity, Window,
+    AnyElement, App, AppContext as _, Context, Entity, Hsla, ScrollHandle, Subscription, Task,
+    TextStyle, WeakEntity, Window,
 };
 use language::{Bias, Buffer, BufferSnapshot, Edit};
+use markdown::Markdown;
 use multi_buffer::RowInfo;
 use project::{
     Project, ProjectItem,
@@ -104,9 +105,12 @@ pub trait BlameRenderer {
     fn render_blame_entry_popover(
         &self,
         _: BlameEntry,
+        _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
+        _: Entity<Markdown>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
+        _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement>;
 
@@ -152,9 +156,12 @@ impl BlameRenderer for () {
     fn render_blame_entry_popover(
         &self,
         _: BlameEntry,
+        _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
+        _: Entity<Markdown>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
+        _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement> {
         None
