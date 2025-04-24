@@ -1103,7 +1103,10 @@ impl Thread {
             self.tool_use
                 .attach_tool_uses(message.id, &mut request_message);
 
-            request.messages.push(request_message);
+            // Skip empty messages to avoid sending them to the LLM model
+            if !request_message.content.is_empty() {
+                request.messages.push(request_message);
+            }
         }
 
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
