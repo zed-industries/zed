@@ -14610,6 +14610,10 @@ impl Editor {
     }
 
     fn refresh_active_diagnostics(&mut self, cx: &mut Context<Editor>) {
+        if self.mode.is_minimap() {
+            return;
+        }
+
         if let ActiveDiagnostic::Group(active_diagnostics) = &mut self.active_diagnostics {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let primary_range_start = active_diagnostics.active_range.start.to_offset(&buffer);
@@ -14731,7 +14735,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.inline_diagnostics_enabled || !self.show_inline_diagnostics {
+        if self.mode.is_minimap()
+            || !self.inline_diagnostics_enabled
+            || !self.show_inline_diagnostics
+        {
             self.inline_diagnostics_update = Task::ready(());
             self.inline_diagnostics.clear();
             return;
@@ -15963,12 +15970,8 @@ impl Editor {
         });
     }
 
-    pub fn minimap(&self) -> Option<Entity<Self>> {
-        self.minimap.clone()
-    }
-
-    pub fn has_minimap(&self) -> bool {
-        self.minimap.is_some()
+    pub fn minimap(&self) -> Option<&Entity<Self>> {
+        self.minimap.as_ref()
     }
 
     pub fn wrap_guides(&self, cx: &App) -> SmallVec<[(usize, bool); 2]> {
@@ -17534,7 +17537,7 @@ impl Editor {
             let old_minimap_settings = self.minimap_settings;
             self.minimap_settings = EditorSettings::get_global(cx).minimap;
             if self.minimap_settings != old_minimap_settings {
-                if self.has_minimap() != self.minimap_settings.minimap_enabled() {
+                if self.minimap().is_some() != self.minimap_settings.minimap_enabled() {
                     self.minimap = self.create_minimap(window, cx);
                 } else if let Some(minimap_entity) = self.minimap.as_ref().filter(|_| {
                     self.minimap_settings

@@ -1169,6 +1169,9 @@ impl SerializableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.mode.is_minimap() {
+            return None;
+        }
         let mut serialize_dirty_buffers = self.serialize_dirty_buffers;
 
         let project = self.project.clone()?;
@@ -1325,7 +1328,7 @@ impl Editor {
         cx: &mut Context<Self>,
         write: impl for<'a> FnOnce(&'a mut RestorationData) + 'static,
     ) {
-        if !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
+        if self.mode.is_minimap() || !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
             return;
         }
 

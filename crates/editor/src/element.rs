@@ -1476,7 +1476,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<MinimapLayout> {
-        let minimap_editor = self.editor.read_with(cx, |editor, _| editor.minimap())?;
+        let minimap_editor = self
+            .editor
+            .read_with(cx, |editor, _| editor.minimap().cloned())?;
 
         let minimap_settings = self
             .editor
@@ -1509,8 +1511,11 @@ impl EditorElement {
             }),
         };
 
-        let minimap_bounds =
-            Self::get_minimap_bounds(minimap_width, top_right_anchor, &editor_bounds);
+        let minimap_bounds = Bounds::from_corner_and_size(
+            Corner::TopRight,
+            top_right_anchor,
+            size(minimap_width, editor_bounds.size.height),
+        );
         let minimap_line_height = self.get_minimap_line_height(window, &minimap_settings, cx);
         let minimap_height = minimap_bounds.size.height;
 
@@ -1539,16 +1544,16 @@ impl EditorElement {
             editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
         });
 
-        let mut minimap_elem = minimap_editor.update(cx, |editor, cx| {
+        let mut minimap = minimap_editor.update(cx, |editor, cx| {
             editor.render(window, cx).into_any_element()
         });
-        _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
+        minimap.layout_as_root(minimap_bounds.size.into(), window, cx);
         window.with_absolute_element_offset(minimap_bounds.origin, |window| {
-            minimap_elem.prepaint(window, cx)
+            minimap.prepaint(window, cx)
         });
 
         Some(MinimapLayout {
-            minimap: minimap_elem,
+            minimap,
             thumb_layout: layout,
             show_thumb,
             minimap_line_height,
@@ -1568,18 +1573,6 @@ impl EditorElement {
                 ShowMinimap::Never => false,
                 ShowMinimap::Auto => scrollbar_layout.is_some_and(|layout| layout.visible),
             }
-    }
-
-    fn get_minimap_bounds(
-        minimap_width: Pixels,
-        top_right_anchor: gpui::Point<Pixels>,
-        editor_bounds: &Bounds<Pixels>,
-    ) -> Bounds<Pixels> {
-        Bounds::from_corner_and_size(
-            Corner::TopRight,
-            top_right_anchor,
-            size(minimap_width, editor_bounds.size.height),
-        )
     }
 
     fn get_minimap_line_height(
@@ -6899,7 +6892,7 @@ impl Element for EditorElement {
                         .unwrap_or_default();
                     let minimap_width = self
                         .editor
-                        .read_with(cx, |editor, _| editor.has_minimap())
+                        .read_with(cx, |editor, _| editor.minimap().is_some())
                         .then(|| match settings.minimap.show {
                             ShowMinimap::Never => None,
                             ShowMinimap::Always => Some(px(settings.minimap.width)),
