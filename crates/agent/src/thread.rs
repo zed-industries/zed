@@ -2071,7 +2071,7 @@ impl Thread {
             }
 
             for tool_result in self.tool_results_for_message(message.id) {
-                write!(markdown, "**Tool Results: {}", tool_result.tool_use_id)?;
+                write!(markdown, "\n**Tool Results: {}", tool_result.tool_use_id)?;
                 if tool_result.is_error {
                     write!(markdown, " (Error)")?;
                 }
