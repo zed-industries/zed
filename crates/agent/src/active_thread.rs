@@ -1270,7 +1270,7 @@ impl ActiveThread {
                 if !message_text.is_empty() {
                     request_message
                         .content
-                        .push(MessageContent::Text(message_text.into()));
+                        .push(MessageContent::Text(message_text));
                 }
 
                 let request = language_model::LanguageModelRequest {

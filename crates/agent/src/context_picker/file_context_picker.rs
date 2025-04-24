@@ -134,9 +134,9 @@ impl PickerDelegate for FileContextPickerDelegate {
             .context_store
             .update(cx, |context_store, cx| {
                 if is_directory {
-                    Task::ready(context_store.add_directory(project_path, true, cx))
+                    Task::ready(context_store.add_directory(&project_path, true, cx))
                 } else {
-                    context_store.add_file_from_path(project_path, true, cx)
+                    context_store.add_file_from_path(project_path.clone(), true, cx)
                 }
             })
             .ok()

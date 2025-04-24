@@ -262,7 +262,9 @@ pub enum ContextStatus {
     Error { message: SharedString },
 }
 
-#[derive(RegisterComponent)]
+// TODO: Component commented out due to new dependency on `Project`.
+//
+// #[derive(RegisterComponent)]
 pub struct AddedContext {
     pub context: AssistantContext,
     pub kind: ContextKind,
@@ -379,7 +381,8 @@ impl AddedContext {
                     icon_path: FileIcons::get_icon(&full_path, cx),
                     status: ContextStatus::Ready,
                     render_preview: None,
-                    /* todo! render_preview: Some(Rc::new({
+                    /*
+                    render_preview: Some(Rc::new({
                         let content = selection_context.text.clone();
                         move |_, cx| {
                             div()
@@ -491,6 +494,8 @@ impl Render for ContextPillPreview {
     }
 }
 
+// TODO: Component commented out due to new dependency on `Project`.
+/*
 impl Component for AddedContext {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
@@ -500,13 +505,13 @@ impl Component for AddedContext {
         "AddedContext"
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        /* todo!
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        let next_context_id = ContextId::zero();
         let image_ready = (
             "Ready",
             AddedContext::new(
-                &AssistantContext::Image(ImageContext {
-                    id: ContextId(0),
+                AssistantContext::Image(ImageContext {
+                    context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
                 }),
@@ -517,8 +522,8 @@ impl Component for AddedContext {
         let image_loading = (
             "Loading",
             AddedContext::new(
-                &AssistantContext::Image(ImageContext {
-                    id: ContextId(1),
+                AssistantContext::Image(ImageContext {
+                    context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: cx
                         .background_spawn(async move {
@@ -534,8 +539,8 @@ impl Component for AddedContext {
         let image_error = (
             "Error",
             AddedContext::new(
-                &AssistantContext::Image(ImageContext {
-                    id: ContextId(2),
+                AssistantContext::Image(ImageContext {
+                    context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(None).shared(),
                 }),
@@ -558,8 +563,8 @@ impl Component for AddedContext {
                 )
                 .into_any(),
         )
-        */
 
         None
     }
 }
+*/

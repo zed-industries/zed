@@ -580,11 +580,7 @@ impl ContextPickerCompletionProvider {
                 move |cx| {
                     context_store.update(cx, |context_store, cx| {
                         let task = if is_directory {
-                            Task::ready(context_store.add_directory(
-                                project_path.clone(),
-                                false,
-                                cx,
-                            ))
+                            Task::ready(context_store.add_directory(&project_path, false, cx))
                         } else {
                             context_store.add_file_from_path(project_path.clone(), false, cx)
                         };

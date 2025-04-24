@@ -701,7 +701,7 @@ impl Thread {
 
     pub fn insert_user_message(
         &mut self,
-        text: String,
+        text: impl Into<String>,
         loaded_context: ContextLoadResult,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
@@ -716,7 +716,7 @@ impl Thread {
 
         let message_id = self.insert_message(
             Role::User,
-            vec![MessageSegment::Text(text)],
+            vec![MessageSegment::Text(text.into())],
             loaded_context.loaded_context,
             cx,
         );
@@ -2209,11 +2209,10 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-/* todo!
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ThreadStore, context_store::ContextStore, thread_store};
+    use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
     use assistant_settings::AssistantSettings;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
@@ -2244,12 +2243,14 @@ mod tests {
             .await
             .unwrap();
 
-        let context =
-            context_store.update(cx, |store, _| store.context().first().cloned().unwrap());
+        let context = context_store.update(cx, |store, _| store.context().next().cloned().unwrap());
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
 
         // Insert user message with context
         let message_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Please explain this code", vec![context], None, cx)
+            thread.insert_user_message("Please explain this code", loaded_context, None, cx)
         });
 
         // Check content and context in message object
@@ -2283,7 +2284,7 @@ fn main() {{
             message.segments[0],
             MessageSegment::Text("Please explain this code".to_string())
         );
-        assert_eq!(message.context_text, expected_context);
+        assert_eq!(message.loaded_context.text, expected_context);
 
         // Check message in request
         let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
@@ -2310,48 +2311,50 @@ fn main() {{
         let (_, _thread_store, thread, context_store) =
             setup_test_environment(cx, project.clone()).await;
 
-        // Open files individually
+        // First message with context 1
         add_file_to_context(&project, &context_store, "test/file1.rs", cx)
             .await
             .unwrap();
-        add_file_to_context(&project, &context_store, "test/file2.rs", cx)
-            .await
-            .unwrap();
-        add_file_to_context(&project, &context_store, "test/file3.rs", cx)
-            .await
-            .unwrap();
-
-        // Get the context objects
-        let contexts = context_store.update(cx, |store, _| store.context().clone());
-        assert_eq!(contexts.len(), 3);
-
-        // First message with context 1
+        let new_contexts = context_store.update(cx, |store, cx| {
+            store.new_context_for_thread(thread.read(cx))
+        });
+        assert_eq!(new_contexts.len(), 1);
+        let loaded_context = cx
+            .update(|cx| load_context(new_contexts, &project, &None, cx))
+            .await;
         let message1_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Message 1", vec![contexts[0].clone()], None, cx)
+            thread.insert_user_message("Message 1", loaded_context, None, cx)
         });
 
         // Second message with contexts 1 and 2 (context 1 should be skipped as it's already included)
+        add_file_to_context(&project, &context_store, "test/file2.rs", cx)
+            .await
+            .unwrap();
+        let new_contexts = context_store.update(cx, |store, cx| {
+            store.new_context_for_thread(thread.read(cx))
+        });
+        assert_eq!(new_contexts.len(), 1);
+        let loaded_context = cx
+            .update(|cx| load_context(new_contexts, &project, &None, cx))
+            .await;
         let message2_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "Message 2",
-                vec![contexts[0].clone(), contexts[1].clone()],
-                None,
-                cx,
-            )
+            thread.insert_user_message("Message 2", loaded_context, None, cx)
         });
 
         // Third message with all three contexts (contexts 1 and 2 should be skipped)
+        //
+        add_file_to_context(&project, &context_store, "test/file3.rs", cx)
+            .await
+            .unwrap();
+        let new_contexts = context_store.update(cx, |store, cx| {
+            store.new_context_for_thread(thread.read(cx))
+        });
+        assert_eq!(new_contexts.len(), 1);
+        let loaded_context = cx
+            .update(|cx| load_context(new_contexts, &project, &None, cx))
+            .await;
         let message3_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "Message 3",
-                vec![
-                    contexts[0].clone(),
-                    contexts[1].clone(),
-                    contexts[2].clone(),
-                ],
-                None,
-                cx,
-            )
+            thread.insert_user_message("Message 3", loaded_context, None, cx)
         });
 
         // Check what contexts are included in each message
@@ -2364,16 +2367,16 @@ fn main() {{
         });
 
         // First message should include context 1
-        assert!(message1.context_text.contains("file1.rs"));
+        assert!(message1.loaded_context.text.contains("file1.rs"));
 
         // Second message should include only context 2 (not 1)
-        assert!(!message2.context_text.contains("file1.rs"));
-        assert!(message2.context_text.contains("file2.rs"));
+        assert!(!message2.loaded_context.text.contains("file1.rs"));
+        assert!(message2.loaded_context.text.contains("file2.rs"));
 
         // Third message should include only context 3 (not 1 or 2)
-        assert!(!message3.context_text.contains("file1.rs"));
-        assert!(!message3.context_text.contains("file2.rs"));
-        assert!(message3.context_text.contains("file3.rs"));
+        assert!(!message3.loaded_context.text.contains("file1.rs"));
+        assert!(!message3.loaded_context.text.contains("file2.rs"));
+        assert!(message3.loaded_context.text.contains("file3.rs"));
 
         // Check entire request to make sure all contexts are properly included
         let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
@@ -2410,7 +2413,12 @@ fn main() {{
 
         // Insert user message without any context (empty context vector)
         let message_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("What is the best way to learn Rust?", vec![], None, cx)
+            thread.insert_user_message(
+                "What is the best way to learn Rust?",
+                ContextLoadResult::default(),
+                None,
+                cx,
+            )
         });
 
         // Check content and context in message object
@@ -2423,7 +2431,7 @@ fn main() {{
             message.segments[0],
             MessageSegment::Text("What is the best way to learn Rust?".to_string())
         );
-        assert_eq!(message.context_text, "");
+        assert_eq!(message.loaded_context.text, "");
 
         // Check message in request
         let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
@@ -2436,12 +2444,17 @@ fn main() {{
 
         // Add second message, also without context
         let message2_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Are there any good books?", vec![], None, cx)
+            thread.insert_user_message(
+                "Are there any good books?",
+                ContextLoadResult::default(),
+                None,
+                cx,
+            )
         });
 
         let message2 =
             thread.read_with(cx, |thread, _| thread.message(message2_id).unwrap().clone());
-        assert_eq!(message2.context_text, "");
+        assert_eq!(message2.loaded_context.text, "");
 
         // Check that both messages appear in the request
         let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
@@ -2475,12 +2488,14 @@ fn main() {{
             .await
             .unwrap();
 
-        let context =
-            context_store.update(cx, |store, _| store.context().first().cloned().unwrap());
+        let context = context_store.update(cx, |store, _| store.context().next().cloned().unwrap());
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
 
         // Insert user message with the buffer as context
         thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Explain this code", vec![context], None, cx)
+            thread.insert_user_message("Explain this code", loaded_context, None, cx)
         });
 
         // Create a request and check that it doesn't have a stale buffer warning yet
@@ -2508,7 +2523,12 @@ fn main() {{
 
         // Insert another user message without context
         thread.update(cx, |thread, cx| {
-            thread.insert_user_message("What does the code do now?", vec![], None, cx)
+            thread.insert_user_message(
+                "What does the code do now?",
+                ContextLoadResult::default(),
+                None,
+                cx,
+            )
         });
 
         // Create a new request and check for the stale buffer warning
@@ -2575,6 +2595,7 @@ fn main() {{
                 ThreadStore::load(
                     project.clone(),
                     cx.new(|_| ToolWorkingSet::default()),
+                    None,
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )
@@ -2599,17 +2620,16 @@ fn main() {{
             .unwrap();
 
         let buffer = project
-            .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
+            .update(cx, |project, cx| {
+                project.open_buffer(buffer_path.clone(), cx)
+            })
             .await
             .unwrap();
 
-        context_store
-            .update(cx, |store, cx| {
-                store.add_file_from_buffer(buffer.clone(), cx)
-            })
-            .await?;
+        context_store.update(cx, |context_store, cx| {
+            context_store.add_file_from_buffer(&buffer_path, buffer.clone(), false, cx);
+        });
 
         Ok(buffer)
     }
 }
-*/

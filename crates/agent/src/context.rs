@@ -297,7 +297,7 @@ impl FetchedUrlContext {
 
     pub fn new_context_set_query(url: SharedString) -> ContextSetEntry {
         ContextSetEntry(AssistantContext::FetchedUrl(FetchedUrlContext {
-            url: url.into(),
+            url,
             text: "".into(),
             context_id: ContextId::for_query(),
         }))

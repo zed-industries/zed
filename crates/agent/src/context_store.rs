@@ -79,40 +79,44 @@ impl ContextStore {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
-        let context_id = self.next_context_id.post_inc();
-
         cx.spawn(async move |this, cx| {
             let open_buffer_task = project.update(cx, |project, cx| {
                 project.open_buffer(project_path.clone(), cx)
             })?;
-
             let buffer = open_buffer_task.await?;
-            let context = AssistantContext::File(FileContext { buffer, context_id });
-
-            let already_included = this.update(cx, |this, cx| {
-                if this.has_context(&context) {
-                    if remove_if_exists {
-                        this.remove_context(&context, cx);
-                    }
-                    true
-                } else {
-                    this.path_included_in_directory(&project_path, cx).is_some()
-                }
-            })?;
-
-            if !already_included {
-                this.update(cx, |this, cx| {
-                    this.insert_context(context, cx);
-                })?;
-            }
-
-            anyhow::Ok(())
+            this.update(cx, |this, cx| {
+                this.add_file_from_buffer(&project_path, buffer, remove_if_exists, cx)
+            })
         })
+    }
+
+    pub fn add_file_from_buffer(
+        &mut self,
+        project_path: &ProjectPath,
+        buffer: Entity<Buffer>,
+        remove_if_exists: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let context_id = self.next_context_id.post_inc();
+        let context = AssistantContext::File(FileContext { buffer, context_id });
+
+        let already_included = if self.has_context(&context) {
+            if remove_if_exists {
+                self.remove_context(&context, cx);
+            }
+            true
+        } else {
+            self.path_included_in_directory(project_path, cx).is_some()
+        };
+
+        if !already_included {
+            self.insert_context(context, cx);
+        }
     }
 
     pub fn add_directory(
         &mut self,
-        project_path: ProjectPath,
+        project_path: &ProjectPath,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -122,7 +126,7 @@ impl ContextStore {
 
         let Some(entry_id) = project
             .read(cx)
-            .entry_for_path(&project_path, cx)
+            .entry_for_path(project_path, cx)
             .map(|entry| entry.id)
         else {
             return Err(anyhow!("no entry found for directory context"));
@@ -138,7 +142,7 @@ impl ContextStore {
             if remove_if_exists {
                 self.remove_context(&context, cx);
             }
-        } else if !self.path_included_in_directory(&project_path, cx).is_some() {
+        } else if self.path_included_in_directory(project_path, cx).is_none() {
             self.insert_context(context, cx);
         }
 

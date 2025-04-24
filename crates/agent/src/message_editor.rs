@@ -1071,7 +1071,7 @@ impl MessageEditor {
                 let loaded_context = this
                     .last_loaded_context
                     .as_ref()
-                    .map(|loaded_context_and_buffers| &loaded_context_and_buffers.loaded_context);
+                    .map(|context_load_result| &context_load_result.loaded_context);
                 let message_text = editor.read(cx).text(cx);
 
                 if message_text.is_empty()

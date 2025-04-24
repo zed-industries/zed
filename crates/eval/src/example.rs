@@ -10,7 +10,7 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent::ThreadEvent;
+use agent::{ContextLoadResult, ThreadEvent};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
@@ -115,12 +115,9 @@ impl ExampleContext {
     pub fn push_user_message(&mut self, text: impl ToString) {
         self.app
             .update_entity(&self.agent_thread, |thread, cx| {
-                let context = vec![];
-                let context_text = String::new();
-                let context_buffers = HashSet::default();
                 thread.insert_user_message(
                     text.to_string(),
-                    LoadedContextAndBuffers::default(),
+                    ContextLoadResult::default(),
                     None,
                     cx,
                 );
