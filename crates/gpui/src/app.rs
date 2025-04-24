@@ -271,6 +271,7 @@ pub struct App {
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    quitting: bool,
 }
 
 impl App {
@@ -332,6 +333,7 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+                quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -375,6 +377,7 @@ impl App {
         self.windows.clear();
         self.window_handles.clear();
         self.flush_effects();
+        self.quitting = true;
 
         let futures = futures::future::join_all(futures);
         if self
@@ -1049,6 +1052,9 @@ impl App {
 
     /// Obtains a reference to the executor, which can be used to spawn futures.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
+        if self.quitting {
+            panic!("Can't spawn on main thread after on_app_quit")
+        };
         &self.foreground_executor
     }
 
@@ -1060,7 +1066,12 @@ impl App {
         AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
         R: 'static,
     {
+        if self.quitting {
+            panic!("Can't spawn on main thread after on_app_quit")
+        };
+
         let mut cx = self.to_async();
+
         self.foreground_executor
             .spawn(async move { f(&mut cx).await })
     }
