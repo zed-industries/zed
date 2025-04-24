@@ -1,5 +1,5 @@
 use super::*;
-use client::{Client, UserStore};
+use client::{proto::language_server_prompt_request, Client, UserStore};
 use fs::FakeFs;
 use gpui::{AppContext, TestAppContext};
 use language_model::LanguageModelRegistry;
@@ -8,8 +8,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-mod tools;
-use tools::*;
+mod test_tools;
+use test_tools::*;
 
 #[gpui::test]
 async fn test_echo(cx: &mut TestAppContext) {
@@ -31,10 +31,10 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_tool_calls(cx: &mut TestAppContext) {
+async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     let AgentTest { model, agent, .. } = setup(cx).await;
 
-    // Test a tool calls that's likely to complete before streaming stops.
+    // Test a tool call that's likely to complete *before* streaming stops.
     let events = agent
         .update(cx, |agent, cx| {
             agent.add_tool(EchoTool);
@@ -51,7 +51,7 @@ async fn test_tool_calls(cx: &mut TestAppContext) {
         vec![StopReason::ToolUse, StopReason::EndTurn]
     );
 
-    // Test a tool calls that's likely to complete after streaming stops.
+    // Test a tool calls that's likely to complete *after* streaming stops.
     let events = agent
         .update(cx, |agent, cx| {
             agent.remove_tool(&Tool::name(&EchoTool));
@@ -86,6 +86,53 @@ async fn test_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
+    let AgentTest { model, agent, .. } = setup(cx).await;
+
+    // Test a tool call that's likely to complete *before* streaming stops.
+    let mut events = agent.update(cx, |agent, cx| {
+        agent.add_tool(WordListTool);
+        agent.send(model.clone(), "Test the word_list tool.", cx)
+    });
+
+    let mut saw_partial_tool_use = false;
+    while let Some(event) = events.next().await {
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use_event)) = event {
+            agent.update(cx, |agent, _cx| {
+                // Look for a tool use in the agent's last message
+                let last_content = agent.messages().last().unwrap().content.last().unwrap();
+                if let MessageContent::ToolUse(last_tool_use) = last_content {
+                    assert_eq!(last_tool_use.name.as_ref(), "word_list");
+                    if tool_use_event.is_input_complete {
+                        last_tool_use
+                            .input
+                            .get("a")
+                            .expect("'a' has streamed because input is now complete");
+                        last_tool_use
+                            .input
+                            .get("g")
+                            .expect("'g' has streamed because input is now complete");
+                    } else {
+                        if !last_tool_use.is_input_complete
+                            && last_tool_use.input.get("g").is_none()
+                        {
+                            saw_partial_tool_use = true;
+                        }
+                    }
+                } else {
+                    panic!("last content should be a tool use");
+                }
+            });
+        }
+    }
+
+    assert!(
+        saw_partial_tool_use,
+        "should see at least one partially streamed tool use in the history"
+    );
+}
+
+#[gpui::test]
 async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     let AgentTest { model, agent, .. } = setup(cx).await;
 
@@ -99,7 +146,6 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
                 cx,
             )
         })
-        .map(|event| dbg!(event))
         .collect()
         .await;
 

@@ -47,3 +47,37 @@ impl Tool for DelayTool {
         })
     }
 }
+
+/// A tool that takes an object with map from letters to random words starting with that letter.
+/// All fiealds are required! Pass a word for every letter!
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct WordListInput {
+    /// Provide a random word that starts with A.
+    a: Option<String>,
+    /// Provide a random word that starts with B.
+    b: Option<String>,
+    /// Provide a random word that starts with C.
+    c: Option<String>,
+    /// Provide a random word that starts with D.
+    d: Option<String>,
+    /// Provide a random word that starts with E.
+    e: Option<String>,
+    /// Provide a random word that starts with F.
+    f: Option<String>,
+    /// Provide a random word that starts with G.
+    g: Option<String>,
+}
+
+pub struct WordListTool;
+
+impl Tool for WordListTool {
+    type Input = WordListInput;
+
+    fn name(&self) -> SharedString {
+        "word_list".into()
+    }
+
+    fn run(self: Arc<Self>, _input: Self::Input, _cx: &mut App) -> Task<Result<String>> {
+        Task::ready(Ok("ok".to_string()))
+    }
+}

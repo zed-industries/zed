@@ -3,7 +3,7 @@ mod templates;
 #[cfg(test)]
 mod tests;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use futures::{channel::mpsc, future};
 use gpui::{App, Context, Entity, SharedString, Task};
 use language_model::{
@@ -12,7 +12,7 @@ use language_model::{
     LanguageModelToolUse, MessageContent, Role, StopReason,
 };
 use project::Project;
-use schemars::{JsonSchema, schema::RootSchema};
+use schemars::{schema::RootSchema, JsonSchema};
 use serde::Deserialize;
 use smol::stream::StreamExt;
 use std::{collections::BTreeMap, sync::Arc};
@@ -53,6 +53,10 @@ impl Agent {
             tools: BTreeMap::default(),
             templates,
         }
+    }
+
+    pub fn messages(&self) -> &[AgentMessage] {
+        &self.messages
     }
 
     pub fn add_tool(&mut self, tool: impl Tool) {
@@ -177,9 +181,7 @@ impl Agent {
             Text(new_text) => self.handle_text_event(new_text, cx),
             Thinking { .. } => {}
             ToolUse(tool_use) => {
-                if dbg!(tool_use.is_input_complete) {
-                    return self.handle_tool_use_event(tool_use, cx);
-                }
+                return self.handle_tool_use_event(tool_use, cx);
             }
             StartMessage { role, .. } => {
                 self.messages.push(AgentMessage {
@@ -217,10 +219,26 @@ impl Agent {
         tool_use: LanguageModelToolUse,
         cx: &mut Context<Self>,
     ) -> Option<Task<LanguageModelToolResult>> {
-        let last_message = self.last_assistant_message();
-        debug_assert!(last_message.role == Role::Assistant);
-        last_message.content.push(tool_use.clone().into());
         cx.notify();
+
+        let last_message = self.last_assistant_message();
+
+        // Ensure the last message ends in the current tool use
+        let push_new_tool_use = last_message.content.last_mut().map_or(true, |content| {
+            if let MessageContent::ToolUse(last_tool_use) = content {
+                if last_tool_use.id == tool_use.id {
+                    *last_tool_use = tool_use.clone();
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
+        });
+        if push_new_tool_use {
+            last_message.content.push(tool_use.clone().into());
+        }
 
         if !tool_use.is_input_complete {
             return None;
