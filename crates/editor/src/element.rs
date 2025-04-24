@@ -32,15 +32,19 @@ use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use file_icons::FileIcons;
-use git::{Oid, blame::BlameEntry, status::FileStatus};
+use git::{
+    Oid,
+    blame::{BlameEntry, ParsedCommitMessage},
+    status::FileStatus,
+};
 use gpui::{
-    Action, Along, AnyElement, App, AvailableSpace, Axis as ScrollbarAxis, BorderStyle, Bounds,
-    ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
+    Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
+    Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
+    Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
     InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
+    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
+    Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
     linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
     transparent_black,
 };
@@ -49,6 +53,7 @@ use language::language_settings::{
     IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
 };
 use lsp::DiagnosticSeverity;
+use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
     MultiBufferRow, RowInfo,
@@ -1749,6 +1754,7 @@ impl EditorElement {
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
+        text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -1780,21 +1786,13 @@ impl EditorElement {
             padding * em_width
         };
 
-        let workspace = editor.workspace()?.downgrade();
         let blame_entry = blame
             .update(cx, |blame, cx| {
                 blame.blame_for_rows(&[*row_info], cx).next()
             })
             .flatten()?;
 
-        let mut element = render_inline_blame_entry(
-            self.editor.clone(),
-            workspace,
-            &blame,
-            blame_entry,
-            &self.style,
-            cx,
-        )?;
+        let mut element = render_inline_blame_entry(blame_entry.clone(), &self.style, cx)?;
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -1820,9 +1818,120 @@ impl EditorElement {
         };
 
         let absolute_offset = point(start_x, start_y);
+        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+        let bounds = Bounds::new(absolute_offset, size);
+
+        self.layout_blame_entry_popover(
+            bounds,
+            blame_entry,
+            blame,
+            line_height,
+            text_hitbox,
+            window,
+            cx,
+        );
+
         element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
 
         Some(element)
+    }
+
+    fn layout_blame_entry_popover(
+        &self,
+        parent_bounds: Bounds<Pixels>,
+        blame_entry: BlameEntry,
+        blame: Entity<GitBlame>,
+        line_height: Pixels,
+        text_hitbox: &Hitbox,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let mouse_position = window.mouse_position();
+        let mouse_over_inline_blame = parent_bounds.contains(&mouse_position);
+        let mouse_over_popover = self.editor.update(cx, |editor, _| {
+            editor
+                .inline_blame_popover
+                .as_ref()
+                .and_then(|state| state.popover_bounds)
+                .map_or(false, |bounds| bounds.contains(&mouse_position))
+        });
+
+        self.editor.update(cx, |editor, cx| {
+            if mouse_over_inline_blame || mouse_over_popover {
+                editor.show_blame_popover(&blame_entry, mouse_position, cx);
+            } else {
+                editor.hide_blame_popover(cx);
+            }
+        });
+
+        let should_draw = self.editor.update(cx, |editor, _| {
+            editor
+                .inline_blame_popover
+                .as_ref()
+                .map_or(false, |state| state.show_task.is_none())
+        });
+
+        if should_draw {
+            let maybe_element = self.editor.update(cx, |editor, cx| {
+                editor
+                    .workspace()
+                    .map(|workspace| workspace.downgrade())
+                    .zip(
+                        editor
+                            .inline_blame_popover
+                            .as_ref()
+                            .map(|p| p.popover_state.clone()),
+                    )
+                    .and_then(|(workspace, popover_state)| {
+                        render_blame_entry_popover(
+                            blame_entry,
+                            popover_state.scroll_handle,
+                            popover_state.commit_message,
+                            popover_state.markdown,
+                            workspace,
+                            &blame,
+                            window,
+                            cx,
+                        )
+                    })
+            });
+
+            if let Some(mut element) = maybe_element {
+                let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                let origin = self.editor.update(cx, |editor, _| {
+                    let target_point = editor
+                        .inline_blame_popover
+                        .as_ref()
+                        .map_or(mouse_position, |state| state.position);
+
+                    let overall_height = size.height + HOVER_POPOVER_GAP;
+                    let popover_origin = if target_point.y > overall_height {
+                        point(target_point.x, target_point.y - size.height)
+                    } else {
+                        point(
+                            target_point.x,
+                            target_point.y + line_height + HOVER_POPOVER_GAP,
+                        )
+                    };
+
+                    let horizontal_offset = (text_hitbox.top_right().x
+                        - POPOVER_RIGHT_OFFSET
+                        - (popover_origin.x + size.width))
+                        .min(Pixels::ZERO);
+
+                    point(popover_origin.x + horizontal_offset, popover_origin.y)
+                });
+
+                let popover_bounds = Bounds::new(origin, size);
+                self.editor.update(cx, |editor, _| {
+                    if let Some(state) = &mut editor.inline_blame_popover {
+                        state.popover_bounds = Some(popover_bounds);
+                    }
+                });
+
+                window.defer_draw(element, origin, 2);
+            }
+        }
     }
 
     fn layout_blame_entries(
@@ -5851,24 +5960,35 @@ fn prepaint_gutter_button(
 }
 
 fn render_inline_blame_entry(
-    editor: Entity<Editor>,
-    workspace: WeakEntity<Workspace>,
-    blame: &Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
     cx: &mut App,
 ) -> Option<AnyElement> {
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+    renderer.render_inline_blame_entry(&style.text, blame_entry, cx)
+}
+
+fn render_blame_entry_popover(
+    blame_entry: BlameEntry,
+    scroll_handle: ScrollHandle,
+    commit_message: Option<ParsedCommitMessage>,
+    markdown: Entity<Markdown>,
+    workspace: WeakEntity<Workspace>,
+    blame: &Entity<GitBlame>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
+    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
     let blame = blame.read(cx);
-    let details = blame.details_for_entry(&blame_entry);
     let repository = blame.repository(cx)?.clone();
-    renderer.render_inline_blame_entry(
-        &style.text,
+    renderer.render_blame_entry_popover(
         blame_entry,
-        details,
+        scroll_handle,
+        commit_message,
+        markdown,
         repository,
         workspace,
-        editor,
+        window,
         cx,
     )
 }
@@ -7046,14 +7166,7 @@ impl Element for EditorElement {
                                     blame.blame_for_rows(&[row_infos], cx).next()
                                 })
                                 .flatten()?;
-                            let mut element = render_inline_blame_entry(
-                                self.editor.clone(),
-                                editor.workspace()?.downgrade(),
-                                blame,
-                                blame_entry,
-                                &style,
-                                cx,
-                            )?;
+                            let mut element = render_inline_blame_entry(blame_entry, &style, cx)?;
                             let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
                             Some(
                                 element
@@ -7262,6 +7375,7 @@ impl Element for EditorElement {
                                 content_origin,
                                 scroll_pixel_position,
                                 line_height,
+                                &text_hitbox,
                                 window,
                                 cx,
                             );

@@ -44,7 +44,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
-use zed_actions::assistant::OpenPromptLibrary;
+use zed_actions::assistant::OpenRulesLibrary;
 
 use crate::context_store::ContextStore;
 
@@ -695,7 +695,7 @@ fn open_markdown_link(
         }),
         Some(MentionLink::Fetch(url)) => cx.open_url(&url),
         Some(MentionLink::Rules(prompt_id)) => window.dispatch_action(
-            Box::new(OpenPromptLibrary {
+            Box::new(OpenRulesLibrary {
                 prompt_to_select: Some(prompt_id.0),
             }),
             cx,
@@ -1485,40 +1485,12 @@ impl ActiveThread {
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
 
-        let show_feedback = (!is_generating && is_last_message && message.role != Role::User)
-            || self.messages.get(ix + 1).map_or(false, |next_id| {
-                self.thread
-                    .read(cx)
-                    .message(*next_id)
-                    .map_or(false, |next_message| {
-                        next_message.role == Role::User
-                            && thread.tool_uses_for_message(*next_id, cx).is_empty()
-                            && thread.tool_results_for_message(*next_id).is_empty()
-                    })
-            });
+        let show_feedback = thread.is_turn_end(ix);
 
         let needs_confirmation = tool_uses.iter().any(|tool_use| tool_use.needs_confirmation);
 
         let generating_label = (is_generating && is_last_message)
             .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
-
-        // Don't render user messages that are just there for returning tool results.
-        if message.role == Role::User && thread.message_has_tool_results(message_id) {
-            if let Some(generating_label) = generating_label {
-                return h_flex()
-                    .w_full()
-                    .h_10()
-                    .py_1p5()
-                    .pl_4()
-                    .pb_3()
-                    .child(generating_label)
-                    .into_any_element();
-            }
-
-            return Empty.into_any();
-        }
-
-        let allow_editing_message = message.role == Role::User;
 
         let edit_message_editor = self
             .editing_message
@@ -1752,93 +1724,70 @@ impl ActiveThread {
                 .pb_4()
                 .child(
                     v_flex()
+                        .id(("user-message", ix))
                         .bg(editor_bg_color)
                         .rounded_lg()
+                        .shadow_md()
                         .border_1()
                         .border_color(colors.border)
-                        .shadow_md()
-                        .child(div().p_2().children(message_content))
-                        .child(
-                            h_flex()
-                                .p_1()
-                                .border_t_1()
-                                .border_color(colors.border_variant)
-                                .justify_end()
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .when_some(
-                                            edit_message_editor.clone(),
-                                            |this, edit_message_editor| {
-                                                let focus_handle =
-                                                    edit_message_editor.focus_handle(cx);
-                                                this.child(
-                                                    Button::new("cancel-edit-message", "Cancel")
-                                                        .label_size(LabelSize::Small)
-                                                        .key_binding(
-                                                            KeyBinding::for_action_in(
-                                                                &menu::Cancel,
-                                                                &focus_handle,
-                                                                window,
-                                                                cx,
-                                                            )
-                                                            .map(|kb| kb.size(rems_from_px(12.))),
-                                                        )
-                                                        .on_click(
-                                                            cx.listener(Self::handle_cancel_click),
-                                                        ),
+                        .hover(|hover| hover.border_color(colors.text_accent.opacity(0.5)))
+                        .cursor_pointer()
+                        .child(div().p_2().pt_2p5().children(message_content))
+                        .when_some(edit_message_editor.clone(), |this, edit_editor| {
+                            let focus_handle = edit_editor.focus_handle(cx);
+
+                            this.child(
+                                h_flex()
+                                    .p_1()
+                                    .border_t_1()
+                                    .border_color(colors.border_variant)
+                                    .gap_1()
+                                    .justify_end()
+                                    .child(
+                                        Button::new("cancel-edit-message", "Cancel")
+                                            .label_size(LabelSize::Small)
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Cancel,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
                                                 )
-                                                .child(
-                                                    Button::new(
-                                                        "confirm-edit-message",
-                                                        "Regenerate",
-                                                    )
-                                                    .disabled(
-                                                        edit_message_editor.read(cx).is_empty(cx),
-                                                    )
-                                                    .label_size(LabelSize::Small)
-                                                    .key_binding(
-                                                        KeyBinding::for_action_in(
-                                                            &menu::Confirm,
-                                                            &focus_handle,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                                    )
-                                                    .on_click(
-                                                        cx.listener(Self::handle_regenerate_click),
-                                                    ),
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(cx.listener(Self::handle_cancel_click)),
+                                    )
+                                    .child(
+                                        Button::new("confirm-edit-message", "Regenerate")
+                                            .disabled(edit_editor.read(cx).is_empty(cx))
+                                            .label_size(LabelSize::Small)
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Confirm,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
                                                 )
-                                            },
-                                        )
-                                        .when(
-                                            edit_message_editor.is_none() && allow_editing_message,
-                                            |this| {
-                                                this.child(
-                                                    Button::new("edit-message", "Edit Message")
-                                                        .label_size(LabelSize::Small)
-                                                        .icon(IconName::Pencil)
-                                                        .icon_size(IconSize::XSmall)
-                                                        .icon_color(Color::Muted)
-                                                        .icon_position(IconPosition::Start)
-                                                        .on_click(cx.listener({
-                                                            let message_segments =
-                                                                message.segments.clone();
-                                                            move |this, _, window, cx| {
-                                                                this.start_editing_message(
-                                                                    message_id,
-                                                                    &message_segments,
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            }
-                                                        })),
-                                                )
-                                            },
-                                        ),
-                                ),
-                        ),
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(cx.listener(Self::handle_regenerate_click)),
+                                    ),
+                            )
+                        })
+                        .when(edit_message_editor.is_none(), |this| {
+                            this.tooltip(Tooltip::text("Click To Edit"))
+                        })
+                        .on_click(cx.listener({
+                            let message_segments = message.segments.clone();
+                            move |this, _, window, cx| {
+                                this.start_editing_message(
+                                    message_id,
+                                    &message_segments,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })),
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
@@ -2995,11 +2944,11 @@ impl ActiveThread {
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
-                                // TODO: Figure out a way to pass focus handle here so we can display the `OpenPromptLibrary`  keybinding
+                                // TODO: Figure out a way to pass focus handle here so we can display the `OpenRulesLibrary`  keybinding
                                 .tooltip(Tooltip::text("View User Rules"))
                                 .on_click(move |_event, window, cx| {
                                     window.dispatch_action(
-                                        Box::new(OpenPromptLibrary {
+                                        Box::new(OpenRulesLibrary {
                                             prompt_to_select: first_user_rules_id,
                                         }),
                                         cx,
@@ -3285,7 +3234,7 @@ pub(crate) fn open_context(
             })
         }
         AssistantContext::Rules(rules_context) => window.dispatch_action(
-            Box::new(OpenPromptLibrary {
+            Box::new(OpenRulesLibrary {
                 prompt_to_select: Some(rules_context.prompt_id.0),
             }),
             cx,

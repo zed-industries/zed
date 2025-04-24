@@ -1,3 +1,4 @@
+use crate::persistence::DebuggerPaneItem;
 use crate::{
     ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, Pause, Restart, StepBack,
     StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
@@ -34,7 +35,8 @@ use settings::Settings;
 use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
-use task::{DebugScenario, TaskContext};
+use task::{DebugScenario, RevealStrategy, RevealTarget, TaskContext, TaskId};
+use terminal_view::TerminalView;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
@@ -255,23 +257,21 @@ impl DebugPanel {
 
                 (session.clone(), dap_store.boot_session(session, cx))
             })?;
+            Self::register_session(this.clone(), session.clone(), cx).await?;
 
-            match task.await {
-                Err(e) => {
-                    this.update(cx, |this, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.show_error(&e, cx);
-                            })
-                            .ok();
-                    })
-                    .ok();
+            if let Err(e) = task.await {
+                this.update(cx, |this, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_error(&e, cx);
+                        })
+                        .ok();
+                })
+                .ok();
 
-                    session
-                        .update(cx, |session, cx| session.shutdown(cx))?
-                        .await;
-                }
-                Ok(_) => Self::register_session(this, session, cx).await?,
+                session
+                    .update(cx, |session, cx| session.shutdown(cx))?
+                    .await;
             }
 
             anyhow::Ok(())
@@ -429,6 +429,7 @@ impl DebugPanel {
     ) {
         match event {
             dap_store::DapStoreEvent::RunInTerminal {
+                session_id,
                 title,
                 cwd,
                 command,
@@ -438,6 +439,7 @@ impl DebugPanel {
                 ..
             } => {
                 self.handle_run_in_terminal_request(
+                    *session_id,
                     title.clone(),
                     cwd.clone(),
                     command.clone(),
@@ -531,6 +533,7 @@ impl DebugPanel {
 
     fn handle_run_in_terminal_request(
         &self,
+        session_id: SessionId,
         title: Option<String>,
         cwd: Option<Arc<Path>>,
         command: Option<String>,
@@ -538,56 +541,83 @@ impl DebugPanel {
         envs: HashMap<String, String>,
         mut sender: mpsc::Sender<Result<u32>>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let terminal_task = self.workspace.update(cx, |workspace, cx| {
-            let terminal_panel = workspace.panel::<TerminalPanel>(cx).ok_or_else(|| {
-                anyhow!("RunInTerminal DAP request failed because TerminalPanel wasn't found")
-            });
-
-            let terminal_panel = match terminal_panel {
-                Ok(panel) => panel,
-                Err(err) => return Task::ready(Err(err)),
-            };
-
-            terminal_panel.update(cx, |terminal_panel, cx| {
-                let terminal_task = terminal_panel.add_terminal(
-                    TerminalKind::Debug {
-                        command,
-                        args,
-                        envs,
-                        cwd,
-                        title,
-                    },
-                    task::RevealStrategy::Never,
-                    window,
-                    cx,
-                );
-
-                cx.spawn(async move |_, cx| {
-                    let pid_task = async move {
-                        let terminal = terminal_task.await?;
-
-                        terminal.read_with(cx, |terminal, _| terminal.pty_info.pid())
-                    };
-
-                    pid_task.await
-                })
+        let Some(session) = self
+            .sessions
+            .iter()
+            .find(|s| s.read(cx).session_id(cx) == session_id)
+        else {
+            return Task::ready(Err(anyhow!("no session {:?} found", session_id)));
+        };
+        let running = session.read(cx).running_state();
+        let cwd = cwd.map(|p| p.to_path_buf());
+        let shell = self
+            .project
+            .read(cx)
+            .terminal_settings(&cwd, cx)
+            .shell
+            .clone();
+        let kind = if let Some(command) = command {
+            let title = title.clone().unwrap_or(command.clone());
+            TerminalKind::Task(task::SpawnInTerminal {
+                id: TaskId("debug".to_string()),
+                full_label: title.clone(),
+                label: title.clone(),
+                command: command.clone(),
+                args,
+                command_label: title.clone(),
+                cwd,
+                env: envs,
+                use_new_terminal: true,
+                allow_concurrent_runs: true,
+                reveal: RevealStrategy::NoFocus,
+                reveal_target: RevealTarget::Dock,
+                hide: HideStrategy::Never,
+                shell,
+                show_summary: false,
+                show_command: false,
+                show_rerun: false,
             })
+        } else {
+            TerminalKind::Shell(cwd.map(|c| c.to_path_buf()))
+        };
+
+        let workspace = self.workspace.clone();
+        let project = self.project.downgrade();
+
+        let terminal_task = self.project.update(cx, |project, cx| {
+            project.create_terminal(kind, window.window_handle(), cx)
+        });
+        let terminal_task = cx.spawn_in(window, async move |_, cx| {
+            let terminal = terminal_task.await?;
+
+            let terminal_view = cx.new_window_entity(|window, cx| {
+                TerminalView::new(terminal.clone(), workspace, None, project, window, cx)
+            })?;
+
+            running.update_in(cx, |running, window, cx| {
+                running.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
+                running.debug_terminal.update(cx, |debug_terminal, cx| {
+                    debug_terminal.terminal = Some(terminal_view);
+                    cx.notify();
+                });
+            })?;
+
+            anyhow::Ok(terminal.read_with(cx, |terminal, _| terminal.pty_info.pid())?)
         });
 
         cx.background_spawn(async move {
-            match terminal_task {
-                Ok(pid_task) => match pid_task.await {
-                    Ok(Some(pid)) => sender.send(Ok(pid.as_u32())).await?,
-                    Ok(None) => {
+            match terminal_task.await {
+                Ok(pid_task) => match pid_task {
+                    Some(pid) => sender.send(Ok(pid.as_u32())).await?,
+                    None => {
                         sender
                             .send(Err(anyhow!(
                                 "Terminal was spawned but PID was not available"
                             )))
                             .await?
                     }
-                    Err(error) => sender.send(Err(anyhow!(error))).await?,
                 },
                 Err(error) => sender.send(Err(anyhow!(error))).await?,
             };
