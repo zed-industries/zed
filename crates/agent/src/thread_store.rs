@@ -639,12 +639,17 @@ pub struct SerializedThread {
 }
 
 impl SerializedThread {
-    pub const VERSION: &'static str = "0.1.0";
+    pub const VERSION: &'static str = "0.2.0";
 
     pub fn from_json(json: &[u8]) -> Result<Self> {
         let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
         match saved_thread_json.get("version") {
             Some(serde_json::Value::String(version)) => match version.as_str() {
+                SerializedThreadV0_1_0::VERSION => {
+                    let saved_thread =
+                        serde_json::from_value::<SerializedThreadV0_1_0>(saved_thread_json)?;
+                    Ok(saved_thread.upgrade())
+                }
                 SerializedThread::VERSION => Ok(serde_json::from_value::<SerializedThread>(
                     saved_thread_json,
                 )?),
@@ -663,6 +668,38 @@ impl SerializedThread {
                 version
             )),
         }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SerializedThreadV0_1_0(
+    // The structure did not change, so we are reusing the latest SerializedThread.
+    // When making the next version, make sure this points to SerializedThreadV0_2_0
+    SerializedThread,
+);
+
+impl SerializedThreadV0_1_0 {
+    pub const VERSION: &'static str = "0.1.0";
+
+    pub fn upgrade(self) -> SerializedThread {
+        debug_assert_eq!(SerializedThread::VERSION, "0.2.0");
+
+        let mut messages: Vec<SerializedMessage> = Vec::with_capacity(self.0.messages.len());
+
+        for message in self.0.messages {
+            if message.role == Role::User && !message.tool_results.is_empty() {
+                if let Some(last_message) = messages.last_mut() {
+                    debug_assert!(last_message.role == Role::Assistant);
+
+                    last_message.tool_results = message.tool_results;
+                    continue;
+                }
+            }
+
+            messages.push(message);
+        }
+
+        SerializedThread { messages, ..self.0 }
     }
 }
 
