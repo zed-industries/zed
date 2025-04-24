@@ -33,12 +33,12 @@ use util::ResultExt;
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator, current_platform, hash, init_app_menus,
+    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
+    Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator, current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -1859,6 +1859,9 @@ pub struct KeystrokeEvent {
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
+
+    /// The context stack at the time
+    pub context_stack: Vec<KeyContext>,
 }
 
 struct NullHttpClient;
