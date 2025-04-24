@@ -1,6 +1,7 @@
 use crate::{
     ActiveDiagnostic, BlockId, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
-    ChunkRendererContext, ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId,
+    ChunkRendererContext, ChunkReplacement, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
+    ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
     DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
     EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
@@ -2183,6 +2184,10 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Option<(AnyElement, gpui::Point<Pixels>)>> {
+        if self.editor.read(cx).disable_expand_excerpt_buttons {
+            return vec![];
+        }
+
         let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
 
         let scroll_top = scroll_position.y * line_height;
@@ -4036,6 +4041,7 @@ impl EditorElement {
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        highlighted_rows: &BTreeMap<DisplayRow, LineHighlight>,
         editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
@@ -4061,6 +4067,22 @@ impl EditorElement {
             {
                 if display_row_range.start < row_range.start
                     || display_row_range.start >= row_range.end
+                {
+                    continue;
+                }
+                if highlighted_rows
+                    .get(&display_row_range.start)
+                    .and_then(|highlight| highlight.type_id)
+                    .is_some_and(|type_id| {
+                        [
+                            TypeId::of::<ConflictsOuter>(),
+                            TypeId::of::<ConflictsOursMarker>(),
+                            TypeId::of::<ConflictsOurs>(),
+                            TypeId::of::<ConflictsTheirs>(),
+                            TypeId::of::<ConflictsTheirsMarker>(),
+                        ]
+                        .contains(&type_id)
+                    })
                 {
                     continue;
                 }
@@ -4258,14 +4280,21 @@ impl EditorElement {
                                            highlight_row_end: DisplayRow,
                                            highlight: crate::LineHighlight,
                                            edges| {
+                    let mut origin_x = layout.hitbox.left();
+                    let mut width = layout.hitbox.size.width;
+                    if !highlight.include_gutter {
+                        origin_x += layout.gutter_hitbox.size.width;
+                        width -= layout.gutter_hitbox.size.width;
+                    }
+
                     let origin = point(
-                        layout.hitbox.origin.x,
+                        origin_x,
                         layout.hitbox.origin.y
                             + (highlight_row_start.as_f32() - scroll_top)
                                 * layout.position_map.line_height,
                     );
                     let size = size(
-                        layout.hitbox.size.width,
+                        width,
                         layout.position_map.line_height
                             * highlight_row_end.next_row().minus(highlight_row_start) as f32,
                     );
@@ -5512,7 +5541,9 @@ impl EditorElement {
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
-        self.paint_scroll_wheel_listener(layout, window, cx);
+        if !self.editor.read(cx).disable_scrolling {
+            self.paint_scroll_wheel_listener(layout, window, cx);
+        }
 
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
@@ -6563,10 +6594,21 @@ impl Element for EditorElement {
                             },
                         )
                     }
-                    EditorMode::Full { .. } => {
+                    EditorMode::Full {
+                        sized_by_content, ..
+                    } => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
-                        style.size.height = relative(1.).into();
+                        if sized_by_content {
+                            let snapshot = editor.snapshot(window, cx);
+                            let line_height =
+                                self.style.text.line_height_in_pixels(window.rem_size());
+                            let scroll_height =
+                                (snapshot.max_point().row().next_row().0 as f32) * line_height;
+                            style.size.height = scroll_height.into();
+                        } else {
+                            style.size.height = relative(1.).into();
+                        }
                         window.request_layout(style, None, cx)
                     }
                 };
@@ -6789,10 +6831,16 @@ impl Element for EditorElement {
                             } else {
                                 background_color.opacity(0.36)
                             }),
+                            include_gutter: true,
+                            type_id: None,
                         };
 
-                        let filled_highlight =
-                            solid_background(background_color.opacity(hunk_opacity)).into();
+                        let filled_highlight = LineHighlight {
+                            background: solid_background(background_color.opacity(hunk_opacity)),
+                            border: None,
+                            include_gutter: true,
+                            type_id: None,
+                        };
 
                         let background = if Self::diff_hunk_hollow(diff_status, cx) {
                             hollow_highlight
@@ -7551,6 +7599,7 @@ impl Element for EditorElement {
                             line_height,
                             scroll_pixel_position,
                             &display_hunks,
+                            &highlighted_rows,
                             self.editor.clone(),
                             window,
                             cx,

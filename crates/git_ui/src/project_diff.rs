@@ -1,4 +1,5 @@
 use crate::{
+    conflict_view::ConflictAddon,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     remote_button::{render_publish_button, render_push_button},
 };
@@ -26,7 +27,10 @@ use project::{
     Project, ProjectPath,
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    ops::Range,
+};
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;
@@ -48,7 +52,6 @@ pub struct ProjectDiff {
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
     pending_scroll: Option<PathKey>,
-    current_branch: Option<Branch>,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -61,9 +64,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u32 = 0;
-const TRACKED_NAMESPACE: u32 = 1;
-const NEW_NAMESPACE: u32 = 2;
+const CONFLICT_NAMESPACE: u32 = 1;
+const TRACKED_NAMESPACE: u32 = 2;
+const NEW_NAMESPACE: u32 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -154,7 +157,8 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, _window, _cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true) => {
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true)
+                | GitStoreEvent::ConflictsUpdated => {
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
@@ -178,7 +182,6 @@ impl ProjectDiff {
             multibuffer,
             pending_scroll: None,
             update_needed: send,
-            current_branch: None,
             _task: worker,
             _subscription: git_store_subscription,
         }
@@ -395,11 +398,25 @@ impl ProjectDiff {
         let buffer = diff_buffer.buffer;
         let diff = diff_buffer.diff;
 
+        let conflict_addon = self
+            .editor
+            .read(cx)
+            .addon::<ConflictAddon>()
+            .expect("project diff editor should have a conflict addon");
+
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
         let diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+            .map(|diff_hunk| diff_hunk.buffer_range.clone());
+        let conflicts = conflict_addon
+            .conflict_set(snapshot.remote_id())
+            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts.clone())
+            .unwrap_or_default();
+        let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
+
+        let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
+            .map(|range| range.to_point(&snapshot))
             .collect::<Vec<_>>();
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
@@ -407,7 +424,7 @@ impl ProjectDiff {
             let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
-                diff_hunk_ranges,
+                excerpt_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
             );
@@ -450,18 +467,6 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
-            this.update(cx, |this, cx| {
-                let new_branch = this
-                    .git_store
-                    .read(cx)
-                    .active_repository()
-                    .and_then(|active_repository| active_repository.read(cx).branch.clone());
-                if new_branch != this.current_branch {
-                    this.current_branch = new_branch;
-                    cx.notify();
-                }
-            })?;
-
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
@@ -1127,47 +1132,6 @@ impl RenderOnce for ProjectDiffEmptyState {
     }
 }
 
-// .when(self.can_push_and_pull, |this| {
-//     let remote_button = crate::render_remote_button(
-//         "project-diff-remote-button",
-//         &branch,
-//         self.focus_handle.clone(),
-//         false,
-//     );
-
-//     match remote_button {
-//         Some(button) => {
-//             this.child(h_flex().justify_around().child(button))
-//         }
-//         None => this.child(
-//             h_flex()
-//                 .justify_around()
-//                 .child(Label::new("Remote up to date")),
-//         ),
-//     }
-// }),
-//
-// // .map(|this| {
-//     this.child(h_flex().justify_around().mt_1().child(
-//         Button::new("project-diff-close-button", "Close").when_some(
-//             self.focus_handle.clone(),
-//             |this, focus_handle| {
-//                 this.key_binding(KeyBinding::for_action_in(
-//                     &CloseActiveItem::default(),
-//                     &focus_handle,
-//                     window,
-//                     cx,
-//                 ))
-//                 .on_click(move |_, window, cx| {
-//                     window.focus(&focus_handle);
-//                     window
-//                         .dispatch_action(Box::new(CloseActiveItem::default()), cx);
-//                 })
-//             },
-//         ),
-//     ))
-// }),
-
 mod preview {
     use git::repository::{
         Branch, CommitSummary, Upstream, UpstreamTracking, UpstreamTrackingStatus,
@@ -1291,6 +1255,53 @@ mod preview {
             )
         }
     }
+}
+
+fn merge_anchor_ranges<'a>(
+    left: impl 'a + Iterator<Item = Range<Anchor>>,
+    right: impl 'a + Iterator<Item = Range<Anchor>>,
+    snapshot: &'a language::BufferSnapshot,
+) -> impl 'a + Iterator<Item = Range<Anchor>> {
+    let mut left = left.fuse().peekable();
+    let mut right = right.fuse().peekable();
+
+    std::iter::from_fn(move || {
+        let Some(left_range) = left.peek() else {
+            return right.next();
+        };
+        let Some(right_range) = right.peek() else {
+            return left.next();
+        };
+
+        let mut next_range = if left_range.start.cmp(&right_range.start, snapshot).is_lt() {
+            left.next().unwrap()
+        } else {
+            right.next().unwrap()
+        };
+
+        // Extend the basic range while there's overlap with a range from either stream.
+        loop {
+            if let Some(left_range) = left
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                left.next();
+                next_range.end = left_range.end;
+            } else if let Some(right_range) = right
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                right.next();
+                next_range.end = right_range.end;
+            } else {
+                break;
+            }
+        }
+
+        Some(next_range)
+    })
 }
 
 #[cfg(not(target_os = "windows"))]

@@ -15,7 +15,7 @@ use std::{
     num::NonZeroU64,
     sync::{
         Arc, Weak,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
     thread::panicking,
 };
@@ -572,6 +572,30 @@ impl AnyWeakEntity {
             )
         }
     }
+
+    /// Creates a weak entity that can never be upgraded.
+    pub fn new_invalid() -> Self {
+        /// To hold the invariant that all ids are unique, and considering that slotmap
+        /// increases their IDs from `0`, we can decrease ours from `u64::MAX` so these
+        /// two will never conflict (u64 is way too large).
+        static UNIQUE_NON_CONFLICTING_ID_GENERATOR: AtomicU64 = AtomicU64::new(u64::MAX);
+        let entity_id = UNIQUE_NON_CONFLICTING_ID_GENERATOR.fetch_sub(1, SeqCst);
+
+        Self {
+            // Safety:
+            //   Docs say this is safe but can be unspecified if slotmap changes the representation
+            //   after `1.0.7`, that said, providing a valid entity_id here is not necessary as long
+            //   as we guarantee that that `entity_id` is never used if `entity_ref_counts` equals
+            //   to `Weak::new()` (that is, it's unable to upgrade), that is the invariant that
+            //   actually needs to be hold true.
+            //
+            //   And there is no sane reason to read an entity slot if `entity_ref_counts` can't be
+            //   read in the first place, so we're good!
+            entity_id: entity_id.into(),
+            entity_type: TypeId::of::<()>(),
+            entity_ref_counts: Weak::new(),
+        }
+    }
 }
 
 impl std::fmt::Debug for AnyWeakEntity {
@@ -706,6 +730,14 @@ impl<T: 'static> WeakEntity<T> {
                 .ok_or_else(|| anyhow!("entity release"))
                 .map(|this| cx.read_entity(&this, read)),
         )
+    }
+
+    /// Create a new weak entity that can never be upgraded.
+    pub fn new_invalid() -> Self {
+        Self {
+            any_entity: AnyWeakEntity::new_invalid(),
+            entity_type: PhantomData,
+        }
     }
 }
 

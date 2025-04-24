@@ -1,7 +1,8 @@
 use crate::{code_symbols_tool::file_outline, schema::json_schema_for};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
+
 use indoc::formatdoc;
 use itertools::Itertools;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -87,6 +88,7 @@ impl Tool for ReadFileTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
@@ -134,7 +136,7 @@ impl Tool for ReadFileTool {
                 })?;
 
                 action_log.update(cx, |log, cx| {
-                    log.buffer_read(buffer, cx);
+                    log.track_buffer(buffer, cx);
                 })?;
 
                 Ok(result)
@@ -147,7 +149,7 @@ impl Tool for ReadFileTool {
                     let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                     action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer, cx);
+                        log.track_buffer(buffer, cx);
                     })?;
 
                     Ok(result)
@@ -193,7 +195,7 @@ mod test {
                     "path": "root/nonexistent_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, cx)
+                    .run(input, &[], project.clone(), action_log, None, cx)
                     .output
             })
             .await;
@@ -223,7 +225,7 @@ mod test {
                     "path": "root/small_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, cx)
+                    .run(input, &[], project.clone(), action_log, None, cx)
                     .output
             })
             .await;
@@ -253,7 +255,7 @@ mod test {
                     "path": "root/large_file.rs"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), cx)
+                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
                     .output
             })
             .await;
@@ -277,7 +279,7 @@ mod test {
                     "offset": 1
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, cx)
+                    .run(input, &[], project.clone(), action_log, None, cx)
                     .output
             })
             .await;
@@ -323,7 +325,7 @@ mod test {
                     "end_line": 4
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, cx)
+                    .run(input, &[], project.clone(), action_log, None, cx)
                     .output
             })
             .await;

@@ -84,7 +84,7 @@ pub struct NodeBinarySettings {
     pub path: Option<String>,
     /// The path to the npm binary Zed should use (defaults to `.path/../npm`).
     pub npm_path: Option<String>,
-    /// If disabled, Zed will download its own copy of Node.
+    /// If enabled, Zed will download its own copy of Node.
     #[serde(default)]
     pub ignore_system_version: Option<bool>,
 }
@@ -329,6 +329,32 @@ impl Settings for ProjectSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        // this just sets the binary name instead of a full path so it relies on path lookup
+        // resolving to the one you want
+        vscode.enum_setting(
+            "npm.packageManager",
+            &mut current.node.npm_path,
+            |s| match s {
+                v @ ("npm" | "yarn" | "bun" | "pnpm") => Some(v.to_owned()),
+                _ => None,
+            },
+        );
+
+        if let Some(b) = vscode.read_bool("git.blame.editorDecoration.enabled") {
+            if let Some(blame) = current.git.inline_blame.as_mut() {
+                blame.enabled = b
+            } else {
+                current.git.inline_blame = Some(InlineBlameSettings {
+                    enabled: b,
+                    ..Default::default()
+                })
+            }
+        }
+
+        // TODO: translate lsp settings for rust-analyzer and other popular ones to old.lsp
     }
 }
 

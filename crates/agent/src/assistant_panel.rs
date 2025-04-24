@@ -12,13 +12,13 @@ use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
-use client::zed_urls;
+use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, Corner, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task,
-    UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
+    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
+    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -180,6 +180,7 @@ impl ActiveView {
 
 pub struct AssistantPanel {
     workspace: WeakEntity<Workspace>,
+    user_store: Entity<UserStore>,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
@@ -265,6 +266,7 @@ impl AssistantPanel {
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
+        let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
         let workspace = workspace.weak_handle();
@@ -329,6 +331,7 @@ impl AssistantPanel {
         Self {
             active_view,
             workspace,
+            user_store,
             project: project.clone(),
             fs: fs.clone(),
             language_registry,
@@ -383,14 +386,9 @@ impl AssistantPanel {
         &self.thread_store
     }
 
-    fn cancel(
-        &mut self,
-        _: &editor::actions::Cancel,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.thread
-            .update(cx, |thread, cx| thread.cancel_last_completion(cx));
+            .update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
     }
 
     fn new_thread(&mut self, action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
@@ -1575,9 +1573,19 @@ impl AssistantPanel {
     }
 
     fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let plan = self
+            .user_store
+            .read(cx)
+            .current_plan()
+            .map(|plan| match plan {
+                Plan::Free => zed_llm_client::Plan::Free,
+                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
+                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+            })
+            .unwrap_or(zed_llm_client::Plan::Free);
         let usage = self.thread.read(cx).last_usage()?;
 
-        Some(UsageBanner::new(zed_llm_client::Plan::ZedProTrial, usage).into_any_element())
+        Some(UsageBanner::new(plan, usage).into_any_element())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1632,6 +1640,8 @@ impl AssistantPanel {
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(ERROR_MESSAGE))
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
@@ -1678,6 +1688,8 @@ impl AssistantPanel {
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(ERROR_MESSAGE))
                     .child(
                         Button::new("subscribe", "Update Monthly Spend Limit").on_click(
                             cx.listener(|this, _, _, cx| {
@@ -1743,6 +1755,8 @@ impl AssistantPanel {
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(error_message))
                     .child(
                         Button::new("subscribe", call_to_action).on_click(cx.listener(
                             |this, _, _, cx| {
@@ -1774,6 +1788,7 @@ impl AssistantPanel {
         message: SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let message_with_header = format!("{}\n{}", header, message);
         v_flex()
             .gap_0p5()
             .child(
@@ -1788,12 +1803,14 @@ impl AssistantPanel {
                     .id("error-message")
                     .max_h_32()
                     .overflow_y_scroll()
-                    .child(Label::new(message)),
+                    .child(Label::new(message.clone())),
             )
             .child(
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(message_with_header))
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
@@ -1805,6 +1822,15 @@ impl AssistantPanel {
                     ))),
             )
             .into_any()
+    }
+
+    fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
+        let message = message.into();
+        IconButton::new("copy", IconName::Copy)
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
+            })
+            .tooltip(Tooltip::text("Copy Error Message"))
     }
 
     fn key_context(&self) -> KeyContext {

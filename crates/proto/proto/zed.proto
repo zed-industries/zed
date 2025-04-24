@@ -206,13 +206,6 @@ message Envelope {
         GetImplementation get_implementation = 162;
         GetImplementationResponse get_implementation_response = 163;
 
-        CountLanguageModelTokens count_language_model_tokens = 230;
-        CountLanguageModelTokensResponse count_language_model_tokens_response = 231;
-        GetCachedEmbeddings get_cached_embeddings = 189;
-        GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
-        ComputeEmbeddings compute_embeddings = 191;
-        ComputeEmbeddingsResponse compute_embeddings_response = 192;
-
         UpdateChannelMessage update_channel_message = 170;
         ChannelMessageUpdate channel_message_update = 171;
 
@@ -394,12 +387,14 @@ message Envelope {
     reserved 166 to 169;
     reserved 177 to 185;
     reserved 188;
+    reserved 189 to 192;
     reserved 193 to 195;
     reserved 197;
     reserved 200 to 202;
     reserved 205 to 206;
     reserved 221;
     reserved 224 to 229;
+    reserved 230 to 231;
     reserved 246;
     reserved 270;
     reserved 247 to 254;

@@ -61,4 +61,11 @@ impl WebSearchRegistry {
             self.active_provider = Some(provider);
         }
     }
+
+    pub fn unregister_provider(&mut self, id: WebSearchProviderId) {
+        self.providers.remove(&id);
+        if self.active_provider.as_ref().map(|provider| provider.id()) == Some(id) {
+            self.active_provider = None;
+        }
+    }
 }

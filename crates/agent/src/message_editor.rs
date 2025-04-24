@@ -204,6 +204,7 @@ impl MessageEditor {
                 editor.set_mode(EditorMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
+                    sized_by_content: false,
                 })
             } else {
                 editor.set_mode(EditorMode::AutoHeight {
@@ -304,6 +305,7 @@ impl MessageEditor {
         let thread = self.thread.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
+        let window_handle = window.window_handle();
 
         cx.spawn(async move |_this, cx| {
             // todo! wait in parallel
@@ -329,7 +331,7 @@ impl MessageEditor {
             thread
                 .update(cx, |thread, cx| {
                     thread.advance_prompt_id();
-                    thread.send_to_model(model, cx);
+                    thread.send_to_model(model, Some(window_handle), cx);
                 })
                 .log_err();
         })
@@ -361,9 +363,9 @@ impl MessageEditor {
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let cancelled = self
-            .thread
-            .update(cx, |thread, cx| thread.cancel_last_completion(cx));
+        let cancelled = self.thread.update(cx, |thread, cx| {
+            thread.cancel_last_completion(Some(window.window_handle()), cx)
+        });
 
         if cancelled {
             self.set_editor_is_expanded(false, cx);

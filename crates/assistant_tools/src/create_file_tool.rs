@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
+use gpui::AnyWindowHandle;
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -23,6 +24,9 @@ pub struct CreateFileToolInput {
     ///
     /// You can create a new file by providing a path of "directory1/new_file.txt"
     /// </example>
+    ///
+    /// Make sure to include this field before the `contents` field in the input object
+    /// so that we can display it immediately.
     pub path: String,
 
     /// The text contents of the file to create.
@@ -89,6 +93,7 @@ impl Tool for CreateFileTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CreateFileToolInput>(input) {
@@ -112,9 +117,12 @@ impl Tool for CreateFileTool {
                 .await
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
             cx.update(|cx| {
+                action_log.update(cx, |action_log, cx| {
+                    action_log.track_buffer(buffer.clone(), cx)
+                });
                 buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
                 action_log.update(cx, |action_log, cx| {
-                    action_log.will_create_buffer(buffer.clone(), cx)
+                    action_log.buffer_edited(buffer.clone(), cx)
                 });
             })?;
 

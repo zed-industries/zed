@@ -990,7 +990,7 @@ mod tests {
             .await
             .unwrap();
         cx.update(|_, cx| {
-            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit(
