@@ -36,8 +36,8 @@ use ui::{
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, Workspace,
-    item::TabContentParams, move_item, pane::Event,
+    ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
+    Workspace, item::TabContentParams, move_item, pane::Event,
 };
 
 pub struct RunningState {
@@ -56,6 +56,7 @@ pub struct RunningState {
     _console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
+    active_pane: Option<Entity<Pane>>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     _schedule_serialize: Option<Task<()>>,
 }
@@ -158,8 +159,14 @@ impl Item for SubView {
 }
 
 impl Render for SubView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        v_flex().size_full().child(self.inner.clone())
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
+                // FIXME
+                el.border_1().border_color(gpui::red())
+            })
+            .child(self.inner.clone())
     }
 }
 
@@ -528,6 +535,7 @@ impl RunningState {
             stack_frame_list,
             session_id,
             panes,
+            active_pane: None,
             module_list,
             _console: console,
             breakpoint_list,
@@ -730,10 +738,37 @@ impl RunningState {
         cx: &mut Context<RunningState>,
     ) {
         this.serialize_layout(window, cx);
-        if let Event::Remove { .. } = event {
-            let _did_find_pane = this.panes.remove(&source_pane).is_ok();
-            debug_assert!(_did_find_pane);
-            cx.notify();
+        match event {
+            Event::Remove { .. } => {
+                let _did_find_pane = this.panes.remove(&source_pane).is_ok();
+                debug_assert!(_did_find_pane);
+                cx.notify();
+            }
+            Event::Focus => {
+                this.active_pane = Some(source_pane.clone());
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn activate_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pane) = self
+            .active_pane
+            .as_ref()
+            .and_then(|pane| self.panes.find_pane_in_direction(pane, direction, cx))
+        {
+            window.focus(&pane.focus_handle(cx));
+        } else {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.activate_pane_in_direction(direction, window, cx)
+                })
+                .ok();
         }
     }
 

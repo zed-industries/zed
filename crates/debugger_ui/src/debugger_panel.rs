@@ -38,6 +38,7 @@ use task::{
 };
 use terminal_view::TerminalView;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
+use workspace::SplitDirection;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -1096,6 +1097,23 @@ impl DebugPanel {
         )
     }
 
+    fn activate_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(session) = self.active_session() {
+            session.update(cx, |session, cx| {
+                if let Some(running) = session.mode().as_running() {
+                    running.update(cx, |running, cx| {
+                        running.activate_pane_in_direction(direction, window, cx);
+                    })
+                }
+            })
+        }
+    }
+
     fn activate_session(
         &mut self,
         session_item: Entity<DebugSession>,
@@ -1183,6 +1201,7 @@ impl Panel for DebugPanel {
 impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_sessions = self.sessions.len() > 0;
+        let this = cx.weak_entity();
         debug_assert_eq!(has_sessions, self.active_session.is_some());
 
         if self
@@ -1200,6 +1219,42 @@ impl Render for DebugPanel {
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
             .track_focus(&self.focus_handle(cx))
+            .on_action({
+                let this = this.clone();
+                move |_: &workspace::ActivatePaneLeft, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_pane_in_direction(SplitDirection::Left, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &workspace::ActivatePaneRight, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_pane_in_direction(SplitDirection::Right, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &workspace::ActivatePaneUp, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_pane_in_direction(SplitDirection::Up, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &workspace::ActivatePaneDown, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_pane_in_direction(SplitDirection::Down, window, cx);
+                    })
+                    .ok();
+                }
+            })
             .when(self.active_session.is_some(), |this| {
                 this.on_mouse_down(
                     MouseButton::Right,
