@@ -1520,16 +1520,9 @@ impl LinuxClient for X11Client {
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
-        if let Ok(image) = state
-            .clipboard
-            .get_image(super::clipboard2::LinuxClipboardKind::Primary)
-        {
-            return Some(crate::ClipboardItem::new_image(&image));
-        }
         return state
             .clipboard
-            .get_text(super::clipboard2::LinuxClipboardKind::Primary)
-            .map(|text| crate::ClipboardItem::new_string(text))
+            .get_any(super::clipboard2::LinuxClipboardKind::Primary)
             .ok();
     }
 
@@ -1551,16 +1544,9 @@ impl LinuxClient for X11Client {
         // {
         //     return state.clipboard_item.clone();
         // }
-        if let Ok(image) = state
-            .clipboard
-            .get_image(super::clipboard2::LinuxClipboardKind::Clipboard)
-        {
-            return Some(crate::ClipboardItem::new_image(&image));
-        }
         return state
             .clipboard
-            .get_text(super::clipboard2::LinuxClipboardKind::Primary)
-            .map(|text| crate::ClipboardItem::new_string(text))
+            .get_any(super::clipboard2::LinuxClipboardKind::Clipboard)
             .ok();
     }
 

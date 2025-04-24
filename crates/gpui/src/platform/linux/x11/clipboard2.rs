@@ -22,7 +22,6 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     collections::{HashMap, hash_map::Entry},
-    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -48,7 +47,7 @@ use x11rb::{
     wrapper::ConnectionExt as _,
 };
 
-use crate::{Image, ImageFormat, hash};
+use crate::{ClipboardItem, Image, ImageFormat, hash};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -77,10 +76,16 @@ x11rb::atom_manager! {
         TEXT,
         TEXT_MIME_UNKNOWN: b"text/plain",
 
-        HTML: b"text/html",
-        URI_LIST: b"text/uri-list",
+        // HTML: b"text/html",
+        // URI_LIST: b"text/uri-list",
 
-        PNG_MIME: b"image/png",
+        PNG__MIME: ImageFormat::mime_type(ImageFormat::Png ).as_bytes(),
+        JPEG_MIME: ImageFormat::mime_type(ImageFormat::Jpeg).as_bytes(),
+        WEBP_MIME: ImageFormat::mime_type(ImageFormat::Webp).as_bytes(),
+        GIF__MIME: ImageFormat::mime_type(ImageFormat::Gif ).as_bytes(),
+        SVG__MIME: ImageFormat::mime_type(ImageFormat::Svg ).as_bytes(),
+        BMP__MIME: ImageFormat::mime_type(ImageFormat::Bmp ).as_bytes(),
+        TIFF_MIME: ImageFormat::mime_type(ImageFormat::Tiff).as_bytes(),
 
         // This is just some random name for the property on our window, into which
         // the clipboard owner writes the data we requested.
@@ -263,7 +268,6 @@ impl Inner {
                 drop(data_guard);
                 selection.data_changed.wait(&mut guard);
             }
-
             WaitConfig::Until(deadline) => {
                 drop(data_guard);
                 selection.data_changed.wait_until(&mut guard, deadline);
@@ -291,9 +295,6 @@ impl Inner {
             }
             return Err(Error::ContentNotAvailable);
         }
-        // if let Some(data) = self.data.read().clone() {
-        //     return Ok(data)
-        // }
         let reader = XContext::new()?;
 
         log::trace!("Trying to get the clipboard data.");
@@ -937,35 +938,8 @@ impl Clipboard {
         self.inner.write(data, selection, wait)
     }
 
-    pub(crate) fn get_html(&self, selection: LinuxClipboardKind) -> Result<String> {
-        let formats = [self.inner.atoms.HTML];
-        let result = self.inner.read(&formats, selection)?;
-        String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)
-    }
-
-    pub(crate) fn set_html(
-        &self,
-        html: Cow<'_, str>,
-        alt: Option<Cow<'_, str>>,
-        selection: LinuxClipboardKind,
-        wait: WaitConfig,
-    ) -> Result<()> {
-        let mut data = vec![];
-        if let Some(alt_text) = alt {
-            data.push(ClipboardData {
-                bytes: alt_text.into_owned().into_bytes(),
-                format: self.inner.atoms.UTF8_STRING,
-            });
-        }
-        data.push(ClipboardData {
-            bytes: html.into_owned().into_bytes(),
-            format: self.inner.atoms.HTML,
-        });
-        self.inner.write(data, selection, wait)
-    }
-
     pub(crate) fn get_image(&self, selection: LinuxClipboardKind) -> Result<Image> {
-        let formats = [self.inner.atoms.PNG_MIME];
+        let formats = [self.inner.atoms.PNG__MIME];
         let bytes = self.inner.read(&formats, selection)?.bytes;
         // todo!: remove
         assert_eq!(
@@ -980,6 +954,7 @@ impl Clipboard {
         });
     }
 
+    #[allow(unused)]
     pub(crate) fn set_image(
         &self,
         image: Image,
@@ -990,17 +965,76 @@ impl Clipboard {
         assert_eq!(image.format, ImageFormat::Png);
         let data = vec![ClipboardData {
             bytes: image.bytes,
-            format: self.inner.atoms.PNG_MIME,
+            format: self.inner.atoms.PNG__MIME,
         }];
         self.inner.write(data, selection, wait)
     }
 
-    pub(crate) fn get_file_list(&self, selection: LinuxClipboardKind) -> Result<Vec<PathBuf>> {
-        let result = self.inner.read(&[self.inner.atoms.URI_LIST], selection)?;
+    pub(crate) fn get_any(&self, selection: LinuxClipboardKind) -> Result<ClipboardItem> {
+        const IMAGE_FORMAT_COUNT: usize = 7;
+        let image_format_atoms: [Atom; IMAGE_FORMAT_COUNT] = [
+            self.inner.atoms.PNG__MIME,
+            self.inner.atoms.JPEG_MIME,
+            self.inner.atoms.WEBP_MIME,
+            self.inner.atoms.GIF__MIME,
+            self.inner.atoms.SVG__MIME,
+            self.inner.atoms.BMP__MIME,
+            self.inner.atoms.TIFF_MIME,
+        ];
+        let image_formats: [ImageFormat; IMAGE_FORMAT_COUNT] = [
+            ImageFormat::Png,
+            ImageFormat::Jpeg,
+            ImageFormat::Webp,
+            ImageFormat::Gif,
+            ImageFormat::Svg,
+            ImageFormat::Bmp,
+            ImageFormat::Tiff,
+        ];
 
-        String::from_utf8(result.bytes)
-            .map_err(|_| Error::ConversionFailure)
-            .map(paths_from_uri_list)
+        const TEXT_FORMAT_COUNT: usize = 6;
+        let text_format_atoms: [Atom; TEXT_FORMAT_COUNT] = [
+            self.inner.atoms.UTF8_STRING,
+            self.inner.atoms.UTF8_MIME_0,
+            self.inner.atoms.UTF8_MIME_1,
+            self.inner.atoms.STRING,
+            self.inner.atoms.TEXT,
+            self.inner.atoms.TEXT_MIME_UNKNOWN,
+        ];
+
+        let atom_none: Atom = AtomEnum::NONE.into();
+
+        const FORMAT_ATOM_COUNT: usize = TEXT_FORMAT_COUNT + IMAGE_FORMAT_COUNT;
+
+        let mut format_atoms: [Atom; FORMAT_ATOM_COUNT] = [atom_none; FORMAT_ATOM_COUNT];
+
+        // image formats first, as they are more specific, and read will return the first
+        // format that the contents can be converted to
+        format_atoms[0..IMAGE_FORMAT_COUNT].copy_from_slice(&image_format_atoms);
+        format_atoms[IMAGE_FORMAT_COUNT..].copy_from_slice(&text_format_atoms);
+        debug_assert!(!format_atoms.iter().any(|&a| a == atom_none));
+
+        let result = self.inner.read(&format_atoms, selection)?;
+
+        for (format_atom, image_format) in image_format_atoms.into_iter().zip(image_formats) {
+            if result.format == format_atom {
+                let bytes = result.bytes;
+                let id = hash(&bytes);
+                return Ok(ClipboardItem::new_image(&Image {
+                    id,
+                    format: image_format,
+                    bytes,
+                }));
+            }
+        }
+
+        let text = if result.format == self.inner.atoms.STRING {
+            // ISO Latin-1
+            // See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
+            result.bytes.into_iter().map(|c| c as char).collect()
+        } else {
+            String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)?
+        };
+        return Ok(ClipboardItem::new_string(text));
     }
 }
 
@@ -1069,16 +1103,6 @@ fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
     }
 }
 
-fn paths_from_uri_list(uri_list: String) -> Vec<PathBuf> {
-    uri_list
-        .lines()
-        .filter_map(|s| s.strip_prefix("file://"))
-        // todo! keep?
-        // .filter_map(|s| percent_decode_str(s).decode_utf8().ok())
-        .map(|decoded| PathBuf::from(decoded))
-        .collect()
-}
-
 /// Clipboard selection
 ///
 /// Linux has a concept of clipboard "selections" which tend to be used in different contexts. This
@@ -1104,9 +1128,18 @@ pub enum LinuxClipboardKind {
 #[derive(Default)]
 pub(crate) enum WaitConfig {
     /// Waits until the given [`Instant`] has reached.
+    #[allow(
+        unused,
+        reason = "Right now we don't wait for clipboard contents to sync on app close, but we may in the future"
+    )]
     Until(Instant),
 
     /// Waits forever until a new event is reached.
+    #[allow(unused)]
+    #[allow(
+        unused,
+        reason = "Right now we don't wait for clipboard contents to sync on app close, but we may in the future"
+    )]
     Forever,
 
     /// It shouldn't wait.
@@ -1120,13 +1153,6 @@ pub enum Error {
     /// This could either be due to the clipboard being empty or the clipboard contents having
     /// an incompatible format to the requested one (eg when calling `get_image` on text)
     ContentNotAvailable,
-
-    /// The selected clipboard is not supported by the current configuration (system and/or environment).
-    ///
-    /// This can be caused by a few conditions:
-    /// - Using the Primary clipboard with an older Wayland compositor (that doesn't support version 2)
-    /// - Using the Secondary clipboard on Wayland
-    ClipboardNotSupported,
 
     /// The native clipboard is not accessible due to being held by an other party.
     ///
@@ -1154,7 +1180,6 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
 			Error::ContentNotAvailable => f.write_str("The clipboard contents were not available in the requested format or the clipboard is empty."),
-			Error::ClipboardNotSupported => f.write_str("The selected clipboard is not supported with the current system configuration."),
 			Error::ClipboardOccupied => f.write_str("The native clipboard is not accessible due to being held by an other party."),
 			Error::ConversionFailure => f.write_str("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format."),
 			Error::Unknown { description } => f.write_fmt(format_args!("Unknown error while interacting with the clipboard: {description}")),
@@ -1178,7 +1203,6 @@ impl std::fmt::Debug for Error {
 		}
         let name = kind_to_str!(
             ContentNotAvailable,
-            ClipboardNotSupported,
             ClipboardOccupied,
             ConversionFailure,
             Unknown { .. }
@@ -1192,30 +1216,5 @@ impl Error {
         Error::Unknown {
             description: message.into(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_decoding_uri_list() {
-        // Test that paths_from_uri_list correctly decodes
-        // differents percent encoded characters
-        let file_list = vec![
-            "file:///tmp/bar.log",
-            "file:///tmp/test%5C.txt",
-            "file:///tmp/foo%3F.png",
-            "file:///tmp/white%20space.txt",
-        ];
-
-        let paths = vec![
-            PathBuf::from("/tmp/bar.log"),
-            PathBuf::from("/tmp/test\\.txt"),
-            PathBuf::from("/tmp/foo?.png"),
-            PathBuf::from("/tmp/white space.txt"),
-        ];
-        assert_eq!(paths_from_uri_list(file_list.join("\n")), paths);
     }
 }
