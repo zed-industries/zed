@@ -3,7 +3,7 @@ mod templates;
 #[cfg(test)]
 mod tests;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::{channel::mpsc, future};
 use gpui::{App, Context, Entity, SharedString, Task};
 use language_model::{
@@ -12,7 +12,7 @@ use language_model::{
     LanguageModelToolUse, MessageContent, Role, StopReason,
 };
 use project::Project;
-use schemars::{schema::RootSchema, JsonSchema};
+use schemars::{JsonSchema, schema::RootSchema};
 use serde::Deserialize;
 use smol::stream::StreamExt;
 use std::{collections::BTreeMap, sync::Arc};
@@ -173,12 +173,12 @@ impl Agent {
         use LanguageModelCompletionEvent::*;
         events_tx.unbounded_send(Ok(event.clone())).ok();
 
-        match dbg!(event) {
+        match event {
             Text(new_text) => self.handle_text_event(new_text, cx),
             Thinking { .. } => {}
             ToolUse(tool_use) => {
                 if dbg!(tool_use.is_input_complete) {
-                    return Some(self.handle_tool_use_event(tool_use, cx));
+                    return self.handle_tool_use_event(tool_use, cx);
                 }
             }
             StartMessage { role, .. } => {
@@ -202,37 +202,34 @@ impl Agent {
     }
 
     fn handle_text_event(&mut self, new_text: String, cx: &mut Context<Self>) {
-        if let Some(last_message) = self.messages.last_mut() {
-            debug_assert!(last_message.role == Role::Assistant);
-            if let Some(MessageContent::Text(text)) = last_message.content.last_mut() {
-                text.push_str(&new_text);
-            } else {
-                last_message.content.push(MessageContent::Text(new_text));
-            }
-
-            cx.notify();
+        let last_message = self.last_assistant_message();
+        if let Some(MessageContent::Text(text)) = last_message.content.last_mut() {
+            text.push_str(&new_text);
         } else {
-            todo!("does this happen in practice?");
+            last_message.content.push(MessageContent::Text(new_text));
         }
+
+        cx.notify();
     }
 
     fn handle_tool_use_event(
         &mut self,
         tool_use: LanguageModelToolUse,
         cx: &mut Context<Self>,
-    ) -> Task<LanguageModelToolResult> {
-        if let Some(last_message) = self.messages.last_mut() {
-            debug_assert!(last_message.role == Role::Assistant);
-            last_message.content.push(tool_use.clone().into());
-            cx.notify();
-        } else {
-            todo!("does this happen in practice?");
+    ) -> Option<Task<LanguageModelToolResult>> {
+        let last_message = self.last_assistant_message();
+        debug_assert!(last_message.role == Role::Assistant);
+        last_message.content.push(tool_use.clone().into());
+        cx.notify();
+
+        if !tool_use.is_input_complete {
+            return None;
         }
 
         if let Some(tool) = self.tools.get(tool_use.name.as_ref()) {
             let pending_tool_result = tool.clone().run(tool_use.input, cx);
 
-            cx.foreground_executor().spawn(async move {
+            Some(cx.foreground_executor().spawn(async move {
                 match pending_tool_result.await {
                     Ok(tool_output) => LanguageModelToolResult {
                         tool_use_id: tool_use.id,
@@ -247,15 +244,30 @@ impl Agent {
                         content: Arc::from(error.to_string()),
                     },
                 }
-            })
+            }))
         } else {
-            Task::ready(LanguageModelToolResult {
+            Some(Task::ready(LanguageModelToolResult {
                 content: Arc::from(format!("No tool named {} exists", tool_use.name)),
                 tool_use_id: tool_use.id,
                 tool_name: tool_use.name,
                 is_error: true,
-            })
+            }))
         }
+    }
+
+    /// Guarantees the last message is from the assistant and returns a mutable reference.
+    fn last_assistant_message(&mut self) -> &mut AgentMessage {
+        if self
+            .messages
+            .last()
+            .map_or(true, |m| m.role != Role::Assistant)
+        {
+            self.messages.push(AgentMessage {
+                role: Role::Assistant,
+                content: Vec::new(),
+            });
+        }
+        self.messages.last_mut().unwrap()
     }
 
     fn build_completion_request(&self) -> LanguageModelRequest {
