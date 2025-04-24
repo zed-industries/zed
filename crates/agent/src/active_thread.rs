@@ -1800,7 +1800,9 @@ impl ActiveThread {
                                     ),
                             )
                         })
-                        .tooltip(Tooltip::text("Click To Edit"))
+                        .when(edit_message_editor.is_none(), |this| {
+                            this.tooltip(Tooltip::text("Click To Edit"))
+                        })
                         .on_click(cx.listener({
                             let message_segments = message.segments.clone();
                             move |this, _, window, cx| {
