@@ -1,7 +1,9 @@
 use super::*;
 
+/// A tool that echoes its input
 #[derive(JsonSchema, Serialize, Deserialize)]
 pub struct EchoToolInput {
+    /// The text to echo.
     text: String,
 }
 
@@ -14,17 +16,15 @@ impl Tool for EchoTool {
         "echo".into()
     }
 
-    fn description(&self) -> SharedString {
-        "A tool that echoes its input".into()
-    }
-
     fn run(self: Arc<Self>, input: Self::Input, _cx: &mut App) -> Task<Result<String>> {
         Task::ready(Ok(input.text))
     }
 }
 
+/// A tool that waits for a specified delay
 #[derive(JsonSchema, Serialize, Deserialize)]
 pub struct DelayToolInput {
+    /// The delay in milliseconds.
     ms: u64,
 }
 
@@ -35,10 +35,6 @@ impl Tool for DelayTool {
 
     fn name(&self) -> SharedString {
         "delay".into()
-    }
-
-    fn description(&self) -> SharedString {
-        "A tool that waits for a specified delay".into()
     }
 
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>

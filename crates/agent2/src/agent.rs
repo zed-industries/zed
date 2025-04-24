@@ -173,19 +173,21 @@ impl Agent {
         use LanguageModelCompletionEvent::*;
         events_tx.unbounded_send(Ok(event.clone())).ok();
 
-        match event {
+        match dbg!(event) {
             Text(new_text) => self.handle_text_event(new_text, cx),
-            Thinking { text, signature } => {}
+            Thinking { .. } => {}
             ToolUse(tool_use) => {
-                return Some(self.handle_tool_use_event(tool_use, cx));
+                if dbg!(tool_use.is_input_complete) {
+                    return Some(self.handle_tool_use_event(tool_use, cx));
+                }
             }
-            StartMessage { message_id, role } => {
+            StartMessage { role, .. } => {
                 self.messages.push(AgentMessage {
                     role,
                     content: Vec::new(),
                 });
             }
-            UsageUpdate(token_usage) => {}
+            UsageUpdate(_) => {}
             Stop(stop_reason) => self.handle_stop_event(stop_reason),
         }
 
@@ -298,7 +300,14 @@ where
     type Input: for<'de> Deserialize<'de> + JsonSchema;
 
     fn name(&self) -> SharedString;
-    fn description(&self) -> SharedString;
+    fn description(&self) -> SharedString {
+        let schema = schemars::schema_for!(Self::Input);
+        schema
+            .schema
+            .metadata
+            .and_then(|md| md.description.map(Into::into))
+            .unwrap_or_default()
+    }
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> RootSchema {
