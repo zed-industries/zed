@@ -279,12 +279,26 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
-        let new_context = self
-            .context_store
-            .read(cx)
-            .new_context_for_thread(self.thread.read(cx));
-        let context_text_task =
-            load_context(new_context.clone(), &self.project, &self.prompt_store, cx);
+        let summaries_task = self.wait_for_summaries(cx);
+        let context_task = cx.spawn(async move |this, cx| {
+            // Need to wait for detailed summaries before `load_context` as it directly reads from
+            // the thread.
+            //
+            // TODO: Would be cleaner to have context loading await on summarization.
+            summaries_task.await;
+            let (load_task, new_context) = this
+                .update(cx, |this, cx| {
+                    let new_context = this.context_store.read_with(cx, |context_store, cx| {
+                        context_store.new_context_for_thread(this.thread.read(cx))
+                    });
+                    let load_task =
+                        load_context(new_context.clone(), &this.project, &this.prompt_store, cx);
+                    (load_task, new_context)
+                })
+                .ok()?;
+            Some((load_task.await, new_context))
+        });
+
         // todo! let wait_for_images = self.context_store.read(cx).wait_for_images(cx);
 
         let thread = self.thread.clone();
@@ -294,7 +308,9 @@ impl MessageEditor {
         cx.spawn(async move |_this, cx| {
             // todo! wait in parallel
             let checkpoint = checkpoint.await.ok();
-            let (context_text, context_buffers) = context_text_task.await;
+            let Some(((context_text, context_buffers), new_context)) = context_task.await else {
+                return;
+            };
             // todo! wait_for_images.await;
 
             thread
@@ -310,48 +326,6 @@ impl MessageEditor {
                 })
                 .log_err();
 
-            /* todo!
-            context_store
-                .update(cx, |context_store, cx| {
-                    let excerpt_ids = context_store
-                        .context()
-                        .iter()
-                        .filter(|ctx| {
-                            matches!(
-                                ctx,
-                                AssistantContext::Selection(_) | AssistantContext::Image(_)
-                            )
-                        })
-                        .map(|ctx| ctx.id())
-                        .collect::<Vec<_>>();
-
-                    for id in excerpt_ids {
-                        context_store.remove_context(id, cx);
-                    }
-                })
-                .log_err();
-
-            if let Some(wait_for_summaries) = context_store
-                .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
-                .log_err()
-            {
-                this.update(cx, |this, cx| {
-                    this.waiting_for_summaries_to_send = true;
-                    cx.notify();
-                })
-                .log_err();
-
-                wait_for_summaries.await;
-
-                this.update(cx, |this, cx| {
-                    this.waiting_for_summaries_to_send = false;
-                    cx.notify();
-                })
-                .log_err();
-            }
-            */
-
-            // Send to model after summaries are done
             thread
                 .update(cx, |thread, cx| {
                     thread.advance_prompt_id();
@@ -360,6 +334,30 @@ impl MessageEditor {
                 .log_err();
         })
         .detach();
+    }
+
+    fn wait_for_summaries(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let context_store = self.context_store.clone();
+        cx.spawn(async move |this, cx| {
+            if let Some(wait_for_summaries) = context_store
+                .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
+                .ok()
+            {
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries_to_send = true;
+                    cx.notify();
+                })
+                .ok();
+
+                wait_for_summaries.await;
+
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries_to_send = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {

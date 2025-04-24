@@ -194,20 +194,14 @@ impl ContextStore {
             }
         } else {
             self.insert_context(context, cx);
-            // todo! handle summaries tasks
         }
     }
 
-    /*
-    pub fn wait_for_summaries(&mut self, cx: &App) -> Task<()> {
-        let tasks = std::mem::take(&mut self.thread_summary_tasks);
-
-        cx.spawn(async move |_cx| {
-            join_all(tasks).await;
-        })
-    }
-
-    fn insert_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
+    fn start_summarizing_thread_if_needed(
+        &mut self,
+        thread: &Entity<Thread>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(summary_task) =
             thread.update(cx, |thread, cx| thread.generate_detailed_summary(cx))
         {
@@ -228,17 +222,15 @@ impl ContextStore {
                 }
             }));
         }
-
-        let id = self.next_context_id.post_inc();
-
-        let text = thread.read(cx).latest_detailed_summary_or_text();
-
-        self.threads.insert(thread.read(cx).id().clone(), id);
-        self.context
-            .push(AssistantContext::Thread(ThreadContext { id, thread, text }));
-        cx.notify();
     }
-    */
+
+    pub fn wait_for_summaries(&mut self, cx: &App) -> Task<()> {
+        let tasks = std::mem::take(&mut self.thread_summary_tasks);
+
+        cx.spawn(async move |_cx| {
+            join_all(tasks).await;
+        })
+    }
 
     pub fn add_rules(
         &mut self,
@@ -355,6 +347,7 @@ impl ContextStore {
             AssistantContext::Thread(thread_context) => {
                 self.context_thread_ids
                     .insert(thread_context.thread.read(cx).id().clone());
+                self.start_summarizing_thread_if_needed(&thread_context.thread, cx);
             }
             _ => {}
         }
