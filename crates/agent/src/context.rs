@@ -329,7 +329,6 @@ impl ThreadContext {
     pub fn load(&self, cx: &App) -> String {
         let name = self.name(cx);
         let contents = self.thread.read(cx).latest_detailed_summary_or_text();
-        // todo! better format
         let mut text = String::new();
         text.push_str(&name);
         text.push('\n');
@@ -366,7 +365,6 @@ impl RulesContext {
         prompt_store: &Option<Entity<PromptStore>>,
         cx: &App,
     ) -> Task<Option<String>> {
-        // todo! better error handling
         let Some(prompt_store) = prompt_store.as_ref() else {
             return Task::ready(None);
         };
@@ -377,7 +375,6 @@ impl RulesContext {
         };
         let contents_task = prompt_store.load(prompt_id, cx);
         cx.background_spawn(async move {
-            // todo! better error handling
             let contents = contents_task.await.ok()?;
             let mut text = String::new();
             if let Some(title) = metadata.title {
@@ -592,7 +589,6 @@ pub fn load_context(
         if !fetch_context.is_empty() {
             text.push_str("<fetched_urls>");
             for context in fetch_context {
-                // todo! Better formatting
                 text.push('\n');
                 text.push_str(&context.url);
                 text.push('\n');
