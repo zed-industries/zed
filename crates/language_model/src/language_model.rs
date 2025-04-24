@@ -82,7 +82,7 @@ pub enum LanguageModelCompletionError {
     BadInputJson {
         id: LanguageModelToolUseId,
         tool_name: Arc<str>,
-        invalid_input_json: Arc<str>,
+        raw_input: Arc<str>,
         json_parse_error: String,
     },
     #[error(transparent)]

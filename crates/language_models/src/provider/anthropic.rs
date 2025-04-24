@@ -764,7 +764,7 @@ pub fn map_to_language_model_completion_events(
                                         Err(LanguageModelCompletionError::BadInputJson {
                                             id: tool_use.id.into(),
                                             tool_name: tool_use.name.into(),
-                                            invalid_input_json: input_json.into(),
+                                            raw_input: input_json.into(),
                                             json_parse_error: json_parse_err.to_string(),
                                         })
                                     }

@@ -1281,7 +1281,7 @@ impl Thread {
                             Err(LanguageModelCompletionError::BadInputJson {
                                 id,
                                 tool_name,
-                                invalid_input_json,
+                                raw_input: invalid_input_json,
                                 json_parse_error,
                             }) => {
                                 thread.receive_invalid_tool_json(
