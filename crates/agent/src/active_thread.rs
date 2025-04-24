@@ -1492,8 +1492,6 @@ impl ActiveThread {
         let generating_label = (is_generating && is_last_message)
             .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
 
-        let allow_editing_message = message.role == Role::User;
-
         let edit_message_editor = self
             .editing_message
             .as_ref()
