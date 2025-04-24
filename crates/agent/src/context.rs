@@ -428,9 +428,8 @@ impl ImageContext {
     }
 }
 
-// TODO: Better name for this?
 #[derive(Debug, Clone, Default)]
-pub struct LoadedContextAndBuffers {
+pub struct ContextLoadResult {
     pub loaded_context: LoadedContext,
     pub referenced_buffers: HashSet<Entity<Buffer>>,
 }
@@ -477,7 +476,7 @@ pub fn load_context(
     project: &Entity<Project>,
     prompt_store: &Option<Entity<PromptStore>>,
     cx: &mut App,
-) -> Task<LoadedContextAndBuffers> {
+) -> Task<ContextLoadResult> {
     let mut file_tasks = Vec::new();
     let mut directory_tasks = Vec::new();
     let mut symbol_tasks = Vec::new();
@@ -534,7 +533,7 @@ pub fn load_context(
             && thread_context.is_empty()
             && rules_context.is_empty()
         {
-            return LoadedContextAndBuffers {
+            return ContextLoadResult {
                 loaded_context: LoadedContext {
                     contexts,
                     text,
@@ -625,7 +624,7 @@ pub fn load_context(
 
         text.push_str("</context>\n");
 
-        LoadedContextAndBuffers {
+        ContextLoadResult {
             loaded_context: LoadedContext {
                 contexts,
                 text,

@@ -1,4 +1,4 @@
-use crate::context::LoadedContextAndBuffers;
+use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
 use crate::{context::load_context, context_store::ContextStore};
 use anyhow::Result;
@@ -435,7 +435,7 @@ impl CodegenAlternative {
                     .collect::<Vec<_>>();
                 load_context(context, &project, &self.prompt_store, cx)
             } else {
-                Task::ready(LoadedContextAndBuffers::default())
+                Task::ready(ContextLoadResult::default())
             }
         });
 

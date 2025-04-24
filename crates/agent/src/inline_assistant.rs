@@ -275,6 +275,7 @@ impl InlineAssistant {
                             &active_terminal,
                             cx.entity().downgrade(),
                             workspace.project().downgrade(),
+                            prompt_store,
                             thread_store,
                             window,
                             cx,

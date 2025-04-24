@@ -3,14 +3,13 @@ use std::sync::atomic::AtomicBool;
 
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
-use prompt_store::{PromptId, UserPromptId};
+use prompt_store::{PromptId, PromptStore, UserPromptId};
 use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 
 use crate::context::RULES_ICON;
 use crate::context_picker::ContextPicker;
 use crate::context_store::{self, ContextStore};
-use crate::thread_store::ThreadStore;
 
 pub struct RulesContextPicker {
     picker: Entity<Picker<RulesContextPickerDelegate>>,
@@ -18,13 +17,13 @@ pub struct RulesContextPicker {
 
 impl RulesContextPicker {
     pub fn new(
-        thread_store: WeakEntity<ThreadStore>,
+        prompt_store: Entity<PromptStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = RulesContextPickerDelegate::new(thread_store, context_picker, context_store);
+        let delegate = RulesContextPickerDelegate::new(prompt_store, context_picker, context_store);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         RulesContextPicker { picker }
@@ -50,7 +49,7 @@ pub struct RulesContextEntry {
 }
 
 pub struct RulesContextPickerDelegate {
-    thread_store: WeakEntity<ThreadStore>,
+    prompt_store: Entity<PromptStore>,
     context_picker: WeakEntity<ContextPicker>,
     context_store: WeakEntity<context_store::ContextStore>,
     matches: Vec<RulesContextEntry>,
@@ -59,12 +58,12 @@ pub struct RulesContextPickerDelegate {
 
 impl RulesContextPickerDelegate {
     pub fn new(
-        thread_store: WeakEntity<ThreadStore>,
+        prompt_store: Entity<PromptStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
     ) -> Self {
         RulesContextPickerDelegate {
-            thread_store,
+            prompt_store,
             context_picker,
             context_store,
             matches: Vec::new(),
@@ -103,11 +102,12 @@ impl PickerDelegate for RulesContextPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let Some(thread_store) = self.thread_store.upgrade() else {
-            return Task::ready(());
-        };
-
-        let search_task = search_rules(query, Arc::new(AtomicBool::default()), thread_store, cx);
+        let search_task = search_rules(
+            query,
+            Arc::new(AtomicBool::default()),
+            &self.prompt_store,
+            cx,
+        );
         cx.spawn_in(window, async move |this, cx| {
             let matches = search_task.await;
             this.update(cx, |this, cx| {
@@ -197,12 +197,9 @@ pub fn render_thread_context_entry(
 pub(crate) fn search_rules(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    thread_store: Entity<ThreadStore>,
+    prompt_store: &Entity<PromptStore>,
     cx: &mut App,
 ) -> Task<Vec<RulesContextEntry>> {
-    let Some(prompt_store) = thread_store.read(cx).prompt_store() else {
-        return Task::ready(vec![]);
-    };
     let search_task = prompt_store.read(cx).search(query, cancellation_flag, cx);
     cx.background_spawn(async move {
         search_task

@@ -120,9 +120,7 @@ impl ExampleContext {
                 let context_buffers = HashSet::default();
                 thread.insert_user_message(
                     text.to_string(),
-                    context,
-                    context_text,
-                    context_buffers,
+                    LoadedContextAndBuffers::default(),
                     None,
                     cx,
                 );

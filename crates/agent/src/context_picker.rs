@@ -23,7 +23,7 @@ use gpui::{
 use language::Buffer;
 use multi_buffer::MultiBufferRow;
 use project::{Entry, ProjectPath};
-use prompt_store::UserPromptId;
+use prompt_store::{PromptStore, UserPromptId};
 use rules_context_picker::{RulesContextEntry, RulesContextPicker};
 use symbol_context_picker::SymbolContextPicker;
 use thread_context_picker::{ThreadContextEntry, ThreadContextPicker, render_thread_context_entry};
@@ -164,6 +164,7 @@ pub(super) struct ContextPicker {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
+    prompt_store: Option<Entity<PromptStore>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -191,6 +192,13 @@ impl ContextPicker {
             )
             .collect::<Vec<Subscription>>();
 
+        let prompt_store = thread_store.as_ref().and_then(|thread_store| {
+            thread_store
+                .read_with(cx, |thread_store, _cx| thread_store.prompt_store().clone())
+                .ok()
+                .flatten()
+        });
+
         ContextPicker {
             mode: ContextPickerState::Default(ContextMenu::build(
                 window,
@@ -200,6 +208,7 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
+            prompt_store,
             _subscriptions: subscriptions,
         }
     }
@@ -224,7 +233,12 @@ impl ContextPicker {
                 .workspace
                 .upgrade()
                 .map(|workspace| {
-                    available_context_picker_entries(&self.thread_store, &workspace, cx)
+                    available_context_picker_entries(
+                        &self.prompt_store,
+                        &self.thread_store,
+                        &workspace,
+                        cx,
+                    )
                 })
                 .unwrap_or_default();
 
@@ -302,10 +316,10 @@ impl ContextPicker {
                     }));
                 }
                 ContextPickerMode::Rules => {
-                    if let Some(thread_store) = self.thread_store.as_ref() {
+                    if let Some(prompt_store) = self.prompt_store.as_ref() {
                         self.mode = ContextPickerState::Rules(cx.new(|cx| {
                             RulesContextPicker::new(
-                                thread_store.clone(),
+                                prompt_store.clone(),
                                 context_picker.clone(),
                                 self.context_store.clone(),
                                 window,
@@ -524,6 +538,7 @@ enum RecentEntry {
 }
 
 fn available_context_picker_entries(
+    prompt_store: &Option<Entity<PromptStore>>,
     thread_store: &Option<WeakEntity<ThreadStore>>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
@@ -548,6 +563,9 @@ fn available_context_picker_entries(
 
     if thread_store.is_some() {
         entries.push(ContextPickerEntry::Mode(ContextPickerMode::Thread));
+    }
+
+    if prompt_store.is_some() {
         entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
     }
 

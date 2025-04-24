@@ -15,6 +15,7 @@ use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
+use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
@@ -67,6 +68,7 @@ fn search(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     recent_entries: Vec<RecentEntry>,
+    prompt_store: Option<Entity<PromptStore>>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     workspace: Entity<Workspace>,
     cx: &mut App,
@@ -121,9 +123,9 @@ fn search(
         }
 
         Some(ContextPickerMode::Rules) => {
-            if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
+            if let Some(prompt_store) = prompt_store.as_ref() {
                 let search_rules_task =
-                    search_rules(query.clone(), cancellation_flag.clone(), thread_store, cx);
+                    search_rules(query.clone(), cancellation_flag.clone(), prompt_store, cx);
                 cx.background_spawn(async move {
                     search_rules_task
                         .await
@@ -166,7 +168,7 @@ fn search(
                     .collect::<Vec<_>>();
 
                 matches.extend(
-                    available_context_picker_entries(&thread_store, &workspace, cx)
+                    available_context_picker_entries(&prompt_store, &thread_store, &workspace, cx)
                         .into_iter()
                         .map(|mode| {
                             Match::Entry(EntryMatch {
@@ -183,7 +185,8 @@ fn search(
                 let search_files_task =
                     search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
 
-                let entries = available_context_picker_entries(&thread_store, &workspace, cx);
+                let entries =
+                    available_context_picker_entries(&prompt_store, &thread_store, &workspace, cx);
                 let entry_candidates = entries
                     .iter()
                     .enumerate()
@@ -721,11 +724,19 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             cx,
         );
 
+        let prompt_store = thread_store.as_ref().and_then(|thread_store| {
+            thread_store
+                .read_with(cx, |thread_store, _cx| thread_store.prompt_store().clone())
+                .ok()
+                .flatten()
+        });
+
         let search_task = search(
             mode,
             query,
             Arc::<AtomicBool>::default(),
             recent_entries,
+            prompt_store,
             thread_store.clone(),
             workspace.clone(),
             cx,

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::{LoadedContextAndBuffers, load_context};
+use crate::context::{ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -56,7 +56,7 @@ pub struct MessageEditor {
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    last_loaded_context: Option<LoadedContextAndBuffers>,
+    last_loaded_context: Option<ContextLoadResult>,
     context_load_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
@@ -1036,7 +1036,7 @@ impl MessageEditor {
         self.context_load_task = Some(load_task.shared());
     }
 
-    fn wait_for_context(&self, cx: &mut Context<Self>) -> Task<Option<LoadedContextAndBuffers>> {
+    fn wait_for_context(&self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
         if let Some(context_load_task) = self.context_load_task.clone() {
             cx.spawn(async move |this, cx| {
                 context_load_task.await;

@@ -35,7 +35,7 @@ use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 
-use crate::context::{AssistantContext, LoadedContext, LoadedContextAndBuffers};
+use crate::context::{AssistantContext, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse, SharedProjectContext,
@@ -702,7 +702,7 @@ impl Thread {
     pub fn insert_user_message(
         &mut self,
         text: String,
-        loaded_context: LoadedContextAndBuffers,
+        loaded_context: ContextLoadResult,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
