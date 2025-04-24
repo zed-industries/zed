@@ -1750,6 +1750,7 @@ impl EditorElement {
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
+        text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -1813,41 +1814,92 @@ impl EditorElement {
         };
 
         let absolute_offset = point(start_x, start_y);
-
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-        let mouse_position = window.mouse_position();
+        let bounds = Bounds::new(absolute_offset, size);
 
-        if Bounds::new(absolute_offset, size).contains(&mouse_position) {
-            self.editor.update(cx, |editor, cx| {
-                let Some(workspace) = editor.workspace().map(|w| w.downgrade()) else {
-                    return;
-                };
-
-                let position = editor
-                    .inline_blame_hover_state
-                    .as_ref()
-                    .map_or_else(|| mouse_position, |hover_state| hover_state.position);
-
-                editor.inline_blame_hover_state = Some(InlineBlameHoverState { position });
-
-                let Some(mut popover) =
-                    render_blame_entry_popover(blame_entry, workspace, &blame, cx)
-                else {
-                    return;
-                };
-
-                popover.layout_as_root(AvailableSpace::min_size(), window, cx);
-                window.defer_draw(popover, position, 2);
-            });
-        } else {
-            self.editor.update(cx, |editor, _| {
-                editor.inline_blame_hover_state.take();
-            });
-        }
+        self.layout_blame_entry_popover(
+            bounds,
+            blame_entry,
+            blame,
+            line_height,
+            text_hitbox,
+            window,
+            cx,
+        );
 
         element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
 
         Some(element)
+    }
+
+    fn layout_blame_entry_popover(
+        &self,
+        parent_bounds: Bounds<Pixels>,
+        blame_entry: BlameEntry,
+        blame: Entity<GitBlame>,
+        line_height: Pixels,
+        text_hitbox: &Hitbox,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if !self.editor.focus_handle(cx).is_focused(window) {
+            return;
+        }
+
+        let Some((mut element, hover_state)) = self.editor.update(cx, |editor, cx| {
+            editor
+                .workspace()
+                .and_then(|workspace| Some(workspace.downgrade()))
+                .and_then(|workspace| {
+                    render_blame_entry_popover(blame_entry, workspace, &blame, cx)
+                        .map(|element| (element, editor.inline_blame_hover_state.clone()))
+                })
+        }) else {
+            return;
+        };
+
+        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
+        let mouse_position = window.mouse_position();
+        let mouse_over_inline_blame = parent_bounds.contains(&mouse_position);
+
+        // let mouse_over_popover = Bounds::new(final_origin, size).contains(&mouse_position);
+
+        if mouse_over_inline_blame {
+            let target_point = if let Some(hover_state) = hover_state {
+                hover_state.position
+            } else {
+                self.editor.update(cx, |editor, _| {
+                    editor.inline_blame_hover_state = Some(InlineBlameHoverState {
+                        position: mouse_position,
+                    });
+                });
+                mouse_position
+            };
+
+            let origin = {
+                let overall_height = size.height + HOVER_POPOVER_GAP;
+                let popover_origin = if target_point.y > overall_height {
+                    point(target_point.x, target_point.y - size.height)
+                } else {
+                    point(
+                        target_point.x,
+                        target_point.y + line_height + HOVER_POPOVER_GAP,
+                    )
+                };
+                let horizontal_offset = (text_hitbox.top_right().x
+                    - POPOVER_RIGHT_OFFSET
+                    - (popover_origin.x + size.width))
+                    .min(Pixels::ZERO);
+                point(popover_origin.x + horizontal_offset, popover_origin.y)
+            };
+
+            window.defer_draw(element, origin, 2);
+        } else {
+            self.editor.update(cx, |editor, _| {
+                editor.inline_blame_hover_state = None;
+            });
+        }
     }
 
     fn layout_blame_entries(
@@ -7279,6 +7331,7 @@ impl Element for EditorElement {
                                 content_origin,
                                 scroll_pixel_position,
                                 line_height,
+                                &text_hitbox,
                                 window,
                                 cx,
                             );

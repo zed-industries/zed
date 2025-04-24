@@ -798,6 +798,7 @@ impl ChangeList {
     }
 }
 
+#[derive(Debug, Clone)]
 struct InlineBlameHoverState {
     position: gpui::Point<Pixels>,
 }
