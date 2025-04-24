@@ -10,6 +10,7 @@ use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
 use language::LanguageToolchainStore;
 use node_runtime::NodeRuntime;
+use proto::{DebugAttachRequest, DebugLaunchRequest};
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use smol::{self, fs::File, lock::Mutex};
@@ -138,35 +139,35 @@ pub struct DebugTaskDefinition {
     pub tcp_connection: Option<TcpArgumentsTemplate>,
 }
 
-impl TryFrom<DebugScenario> for DebugTaskDefinition {
-    type Error = anyhow::Error;
+// impl TryFrom<DebugScenario> for DebugTaskDefinition {
+//     type Error = anyhow::Error;
 
-    fn try_from(value: DebugScenario) -> Result<Self, Self::Error> {
-        let DebugScenario {
-            label,
-            adapter,
-            request: Some(request),
-            initialize_args,
-            tcp_connection,
-            stop_on_entry,
-            ..
-        } = value
-        else {
-            return Err(anyhow!(
-                "DebugScenario is expected to have a concrete binary to spawn/attach to."
-            ));
-        };
+//     fn try_from(value: DebugScenario) -> Result<Self, Self::Error> {
+//         let DebugScenario {
+//             label,
+//             adapter,
+//             request: Some(request),
+//             initialize_args,
+//             tcp_connection,
+//             stop_on_entry,
+//             ..
+//         } = value
+//         else {
+//             return Err(anyhow!(
+//                 "DebugScenario is expected to have a concrete binary to spawn/attach to."
+//             ));
+//         };
 
-        Ok(Self {
-            label,
-            adapter,
-            request,
-            initialize_args,
-            tcp_connection,
-            stop_on_entry,
-        })
-    }
-}
+//         Ok(Self {
+//             label,
+//             adapter,
+//             request,
+//             initialize_args,
+//             tcp_connection,
+//             stop_on_entry,
+//         })
+//     }
+// }
 
 impl From<DebugTaskDefinition> for DebugScenario {
     fn from(value: DebugTaskDefinition) -> Self {
@@ -194,21 +195,24 @@ impl From<DebugTaskDefinition> for DebugScenario {
 
 impl DebugTaskDefinition {
     pub fn from_proto(payload: proto::DebugScenario) -> Result<Self> {
-        let Some(request) = payload.request else {
+        let Some(proto::DebugRequest {
+            request: Some(request),
+        }) = payload.request
+        else {
             return Err(anyhow!("Missing request in debug scenario"));
         };
         let request = match request {
-            proto::debug_scenario::Request::DebugAttachRequest(config) => {
+            proto::debug_request::Request::DebugAttachRequest(request) => {
                 DebugRequest::Attach(AttachRequest {
-                    process_id: Some(config.process_id),
+                    process_id: Some(request.process_id),
                 })
             }
 
-            proto::debug_scenario::Request::DebugLaunchRequest(config) => {
+            proto::debug_request::Request::DebugLaunchRequest(request) => {
                 DebugRequest::Launch(LaunchRequest {
-                    program: config.program,
-                    cwd: config.cwd.map(|cwd| cwd.into()),
-                    args: config.args,
+                    program: request.program,
+                    cwd: request.cwd.map(|cwd| cwd.into()),
+                    args: request.args,
                 })
             }
         };

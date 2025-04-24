@@ -1,6 +1,7 @@
 use super::DapLocator;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use dap::DebugRequest;
 use serde_json::Value;
 use smol::{
     io::AsyncReadExt,
@@ -37,11 +38,11 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
 }
 #[async_trait]
 impl DapLocator for CargoLocator {
-    async fn run_locator(&self, build_config: Option<TaskTemplate>) -> Result<TaskTemplate> {
-        let Some(mut build_config) = build_config else {
-            return Err(anyhow!("Couldn't get build config in locator"));
-        };
+    fn accepts(&self, build_config: &TaskTemplate) -> bool {
+        build_config.command == "cargo"
+    }
 
+    async fn run(&self, build_config: TaskTemplate) -> Result<DebugRequest> {
         let Some(cwd) = build_config.cwd.clone() else {
             return Err(anyhow!(
                 "Couldn't get cwd from debug config which is needed for locators"
@@ -107,13 +108,12 @@ impl DapLocator for CargoLocator {
             return Err(anyhow!("Couldn't get executable in cargo locator"));
         };
 
-        build_config.command = executable;
+        let args = test_name.into_iter().collect();
 
-        build_config.args.clear();
-        if let Some(test_name) = test_name {
-            build_config.args.push(test_name);
-        }
-
-        Ok(build_config)
+        Ok(DebugRequest::Launch(task::LaunchRequest {
+            program: executable,
+            cwd: build_config.cwd.map(String::into),
+            args,
+        }))
     }
 }

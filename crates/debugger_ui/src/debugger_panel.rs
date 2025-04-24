@@ -230,7 +230,7 @@ impl DebugPanel {
                 tasks_ui::task_contexts(workspace, window, cx)
             })
             .ok();
-        let dap_store = self.project.read(cx).dap_store().clone();
+        let dap_store = self.project.read(cx).dap_store().clone().downgrade();
 
         cx.spawn_in(window, async move |this, cx| {
             let task_context = if let Some(task) = task_contexts {
@@ -241,7 +241,12 @@ impl DebugPanel {
                 task::TaskContext::default()
             };
 
-            let template = DebugTaskDefinition::try_from(definition)?;
+            let template = dap_store
+                .update(cx, |this, cx| {
+                    this.resolve_scenario(definition, task_context, cx)
+                })?
+                .await?;
+
             let (session, task) = dap_store.update(cx, |dap_store, cx| {
                 let session = dap_store.new_session(template, None, cx);
 

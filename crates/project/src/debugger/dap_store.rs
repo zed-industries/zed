@@ -13,9 +13,9 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, EvaluateArguments,
-    EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments, Source,
-    StackFrameId, StartDebuggingRequestArguments,
+    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
+    Source, StackFrameId, StartDebuggingRequestArguments,
     adapters::{
         DapStatus, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
@@ -53,7 +53,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::TaskTemplate;
+use task::{DebugScenario, TaskContext, TaskTemplate};
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -330,12 +330,25 @@ impl DapStore {
         }
     }
 
-    fn task_template_to_proto(
-        adapter: &str,
-        template: &TaskTemplate,
-    ) -> proto::DebugTaskDefinition {
+    fn task_template_from_proto(template: proto::DebugTaskDefinition) -> TaskTemplate {
+        let proto::DebugTaskDefinition {
+            command,
+            args,
+            cwd,
+            env,
+            ..
+        } = template;
+        TaskTemplate {
+            command,
+            args,
+            cwd,
+            env,
+            ..Default::default()
+        }
+    }
+
+    fn task_template_to_proto(template: &TaskTemplate) -> proto::DebugTaskDefinition {
         proto::DebugTaskDefinition {
-            adapter: adapter.to_owned(),
             command: template.command.clone(),
             args: template.args.clone(),
             cwd: template.cwd.clone(),
@@ -343,32 +356,93 @@ impl DapStore {
         }
     }
 
-    fn task_template_from_proto(_: proto::DebugTaskDefinition) -> TaskTemplate {
-        todo!()
+    fn debug_request_to_proto(request: DebugRequest) -> proto::DebugRequest {
+        match request {
+            DebugRequest::Launch(launch_request) => proto::DebugRequest {
+                request: Some(proto::debug_request::Request::DebugLaunchRequest(
+                    proto::DebugLaunchRequest {
+                        program: launch_request.program,
+                        cwd: launch_request
+                            .cwd
+                            .map(|cwd| cwd.to_string_lossy().into_owned()),
+                        args: launch_request.args,
+                    },
+                )),
+            },
+            DebugRequest::Attach(attach_request) => proto::DebugRequest {
+                request: Some(proto::debug_request::Request::DebugAttachRequest(
+                    proto::DebugAttachRequest {
+                        process_id: attach_request
+                            .process_id
+                            .expect("The process ID to be already filled out."),
+                    },
+                )),
+            },
+        }
+    }
+
+    fn debug_request_from_proto(val: proto::DebugRequest) -> DebugRequest {
+        match val.request {
+            Some(proto::debug_request::Request::DebugLaunchRequest(
+                proto::DebugLaunchRequest { program, cwd, args },
+            )) => DebugRequest::Launch(task::LaunchRequest {
+                program,
+                cwd: cwd.map(From::from),
+                args,
+            }),
+
+            Some(proto::debug_request::Request::DebugAttachRequest(
+                proto::DebugAttachRequest { process_id },
+            )) => DebugRequest::Attach(task::AttachRequest {
+                process_id: Some(process_id),
+            }),
+            _ => todo!(),
+        }
     }
     pub fn run_debug_locator(
         &mut self,
-        locator_name: SharedString,
         template: TaskTemplate,
         cx: &mut Context<Self>,
-    ) -> Task<Result<TaskTemplate>> {
+    ) -> Task<Result<DebugRequest>> {
         match &self.mode {
             DapStoreMode::Local(local) => {
-                if let Some(locator) = local.locators.get(locator_name.as_ref()).cloned() {
-                    cx.background_spawn(async move { locator.run_locator(Some(template)).await })
+                let locators = local
+                    .locators
+                    .values()
+                    .filter(|locator| locator.accepts(&template))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !locators.is_empty() {
+                    cx.background_spawn(async move {
+                        for locator in locators {
+                            let result = locator
+                                .run(template.clone())
+                                .await
+                                .log_with_level(log::Level::Debug);
+                            if let Some(result) = result {
+                                return Ok(result);
+                            }
+                        }
+                        Err(anyhow!(
+                            "None of the locators for task `{}` completed successfully",
+                            template.label
+                        ))
+                    })
                 } else {
-                    Task::ready(Err(anyhow!("Couldn't find locator {}", locator_name)))
+                    Task::ready(Err(anyhow!(
+                        "Couldn't find any locator for task `{}`",
+                        template.label
+                    )))
                 }
             }
             DapStoreMode::Ssh(ssh) => {
-                let request = ssh.upstream_client.request(proto::RunDebugLocator {
+                let request = ssh.upstream_client.request(proto::RunDebugLocators {
                     project_id: ssh.upstream_project_id,
-                    task: Some(Self::task_template_to_proto(&locator_name, &template)),
-                    locator: locator_name.into(),
+                    task: Some(Self::task_template_to_proto(&template)),
                 });
                 cx.background_spawn(async move {
                     let response = request.await?;
-                    Ok(Self::task_template_from_proto(response))
+                    Ok(Self::debug_request_from_proto(response))
                 })
             }
             DapStoreMode::Collab => {
@@ -384,6 +458,43 @@ impl DapStore {
         }
     }
 
+    pub fn resolve_scenario(
+        &self,
+        scenario: DebugScenario,
+        task_context: TaskContext,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<DebugTaskDefinition>> {
+        cx.spawn(async move |this, cx| {
+            let DebugScenario {
+                adapter,
+                label,
+                build,
+                request,
+                initialize_args,
+                tcp_connection,
+                stop_on_entry,
+            } = scenario;
+            let request = if let Some(request) = request {
+                request
+            } else if let Some(build) = build {
+                this.update(cx, |this, cx| {
+                    // todo: query all locators.
+                    this.run_debug_locator(build, cx)
+                })?
+                .await?
+            } else {
+                return Err(anyhow!("No request or build provided"));
+            };
+            Ok(DebugTaskDefinition {
+                label,
+                adapter,
+                request,
+                initialize_args,
+                stop_on_entry,
+                tcp_connection,
+            })
+        })
+    }
     pub fn new_session(
         &mut self,
         template: DebugTaskDefinition,
@@ -958,22 +1069,19 @@ impl DapStore {
 
     async fn handle_run_debug_locator(
         this: Entity<Self>,
-        envelope: TypedEnvelope<proto::RunDebugLocator>,
+        envelope: TypedEnvelope<proto::RunDebugLocators>,
         mut cx: AsyncApp,
-    ) -> Result<proto::DebugTaskDefinition> {
+    ) -> Result<proto::DebugRequest> {
         let task = envelope
             .payload
             .task
             .ok_or_else(|| anyhow!("missing definition"))?;
-        let adapter = task.adapter.clone();
         let build_task = Self::task_template_from_proto(task);
-        let template = this
-            .update(&mut cx, |this, cx| {
-                this.run_debug_locator(SharedString::from(envelope.payload.locator), build_task, cx)
-            })?
+        let request = this
+            .update(&mut cx, |this, cx| this.run_debug_locator(build_task, cx))?
             .await?;
 
-        Ok(Self::task_template_to_proto(&adapter, &template))
+        Ok(Self::debug_request_to_proto(request))
     }
 
     async fn handle_get_debug_adapter_binary(
