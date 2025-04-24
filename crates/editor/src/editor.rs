@@ -799,7 +799,7 @@ impl ChangeList {
 }
 
 #[derive(Debug)]
-struct InlineBlameHoverState {
+struct InlineBlamePopover {
     position: gpui::Point<Pixels>,
     show_task: Option<Task<()>>,
     hide_task: Option<Task<()>>,
@@ -874,7 +874,7 @@ pub struct Editor {
     context_menu_options: Option<ContextMenuOptions>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
-    inline_blame_hover_state: Option<InlineBlameHoverState>,
+    inline_blame_popover: Option<InlineBlamePopover>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
@@ -1674,7 +1674,7 @@ impl Editor {
             context_menu_options: None,
             mouse_context_menu: None,
             completion_tasks: Default::default(),
-            inline_blame_hover_state: Default::default(),
+            inline_blame_popover: Default::default(),
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
@@ -1816,6 +1816,7 @@ impl Editor {
                             );
                         });
                         editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
+                        editor.inline_blame_popover.take();
                     }
                 }
                 EditorEvent::Edited { .. } => {
@@ -2613,7 +2614,7 @@ impl Editor {
             self.update_visible_inline_completion(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
-            self.inline_blame_hover_state.take();
+            self.inline_blame_popover.take();
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(window, cx);
             }
@@ -5495,7 +5496,7 @@ impl Editor {
     }
 
     fn show_blame_popover(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
-        if let Some(state) = &mut self.inline_blame_hover_state {
+        if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
         } else {
             let delay = EditorSettings::get_global(cx).hover_popover_delay;
@@ -5505,13 +5506,13 @@ impl Editor {
                     .await;
                 editor
                     .update(cx, |editor, _| {
-                        if let Some(state) = &mut editor.inline_blame_hover_state {
+                        if let Some(state) = &mut editor.inline_blame_popover {
                             state.show_task = None;
                         }
                     })
                     .ok();
             });
-            self.inline_blame_hover_state = Some(InlineBlameHoverState {
+            self.inline_blame_popover = Some(InlineBlamePopover {
                 position,
                 show_task: Some(show_task),
                 hide_task: None,
@@ -5521,9 +5522,9 @@ impl Editor {
     }
 
     fn hide_blame_popover(&mut self, cx: &mut Context<Self>) {
-        if let Some(state) = &mut self.inline_blame_hover_state {
+        if let Some(state) = &mut self.inline_blame_popover {
             if state.show_task.is_some() {
-                self.inline_blame_hover_state.take();
+                self.inline_blame_popover.take();
             } else {
                 let hide_task = cx.spawn(async move |editor, cx| {
                     cx.background_executor()
@@ -5531,7 +5532,7 @@ impl Editor {
                         .await;
                     editor
                         .update(cx, |editor, _| {
-                            editor.inline_blame_hover_state.take();
+                            editor.inline_blame_popover.take();
                         })
                         .ok();
                 });

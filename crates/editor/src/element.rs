@@ -1849,7 +1849,7 @@ impl EditorElement {
         let mouse_over_inline_blame = parent_bounds.contains(&mouse_position);
         let mouse_over_popover = self.editor.update(cx, |editor, _| {
             editor
-                .inline_blame_hover_state
+                .inline_blame_popover
                 .as_ref()
                 .and_then(|state| state.popover_bounds)
                 .map_or(false, |bounds| bounds.contains(&mouse_position))
@@ -1865,7 +1865,7 @@ impl EditorElement {
 
         let should_draw = self.editor.update(cx, |editor, _| {
             editor
-                .inline_blame_hover_state
+                .inline_blame_popover
                 .as_ref()
                 .map_or(false, |state| state.show_task.is_none())
         });
@@ -1884,7 +1884,7 @@ impl EditorElement {
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                 let origin = self.editor.update(cx, |editor, _| {
                     let target_point = editor
-                        .inline_blame_hover_state
+                        .inline_blame_popover
                         .as_ref()
                         .map_or(mouse_position, |state| state.position);
 
@@ -1908,7 +1908,7 @@ impl EditorElement {
 
                 let popover_bounds = Bounds::new(origin, size);
                 self.editor.update(cx, |editor, _| {
-                    if let Some(state) = &mut editor.inline_blame_hover_state {
+                    if let Some(state) = &mut editor.inline_blame_popover {
                         state.popover_bounds = Some(popover_bounds);
                     }
                 });
