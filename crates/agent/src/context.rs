@@ -46,15 +46,11 @@ impl ContextKind {
     }
 }
 
-/// Handle for context that can be added to the message thread. This type has the following properties:
+/// Handle for context that can be added to a user message.
 ///
-/// * Cheap to clone.
-///
-/// * `Eq + Hash` for detecting when context has already been added.
-///
-/// * Use IDs that are stable enough for tracking renames and identifying when context has already
-/// been added to the thread. For example, `ProjectEntryId` is used instead of `ProjectPath` for
-/// `DirectoryContext` so that it follows renames.
+/// This uses IDs that are stable enough for tracking renames and identifying when context has
+/// already been added to the thread. To use this in a set, wrap it in `AgentContextKey` to opt in
+/// to `PartialEq` and `Hash` impls that use the subset of the fields used for this stable identity.
 #[derive(Debug, Clone)]
 pub enum AgentContext {
     File(FileContext),
@@ -87,7 +83,7 @@ impl AgentContext {
 }
 
 /// ID created at time of context add, for use in ElementId. This is not the stable identity of a
-/// context, instead that's handled by the `Eq` and `Hash` of `ContextSetEntry`.
+/// context, instead that's handled by the `PartialEq` and `Hash` impls of `AgentContextKey`.
 #[derive(Debug, Copy, Clone)]
 pub struct ContextId(usize);
 
@@ -96,7 +92,7 @@ impl ContextId {
         ContextId(0)
     }
 
-    fn for_query() -> Self {
+    fn for_lookup() -> Self {
         ContextId(usize::MAX)
     }
 
@@ -117,11 +113,11 @@ pub struct FileContext {
 }
 
 impl FileContext {
-    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
         self.buffer == other.buffer
     }
 
-    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
         self.buffer.hash(state)
     }
 
@@ -160,11 +156,11 @@ pub struct DirectoryContext {
 }
 
 impl DirectoryContext {
-    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
         self.entry_id == other.entry_id
     }
 
-    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
         self.entry_id.hash(state)
     }
 
@@ -198,19 +194,17 @@ pub struct SymbolContext {
     pub symbol: SharedString,
     pub range: Range<Anchor>,
     /// The range that fully contain the symbol. e.g. for function symbol, this will include not
-    /// only the signature, but also the body.
-    ///
-    /// Note: not used by Eq and Hash for ContextSetEntry
+    /// only the signature, but also the body. Not used by `PartialEq` or `Hash` for `AgentContextKey`.
     pub enclosing_range: Range<Anchor>,
     pub context_id: ContextId,
 }
 
 impl SymbolContext {
-    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
         self.buffer == other.buffer && self.symbol == other.symbol && self.range == other.range
     }
 
-    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
         self.buffer.hash(state);
         self.symbol.hash(state);
         self.range.hash(state);
@@ -245,11 +239,11 @@ pub struct SelectionContext {
 }
 
 impl SelectionContext {
-    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
         self.buffer == other.buffer && self.range == other.range
     }
 
-    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
         self.buffer.hash(state);
         self.range.hash(state);
     }
@@ -279,27 +273,26 @@ impl SelectionContext {
 pub struct FetchedUrlContext {
     pub url: SharedString,
     /// Text contents of the fetched url. Unlike other context types, the contents of this gets
-    /// populated when added rather than when sending the message.
-    ///
-    /// Note: not used by Eq and Hash for ContextSetEntry
+    /// populated when added rather than when sending the message. Not used by `PartialEq` or `Hash`
+    /// for `AgentContextKey`.
     pub text: SharedString,
     pub context_id: ContextId,
 }
 
 impl FetchedUrlContext {
-    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
         self.url == other.url
     }
 
-    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
         self.url.hash(state);
     }
 
-    pub fn new_context_set_query(url: SharedString) -> ContextSetEntry {
-        ContextSetEntry(AgentContext::FetchedUrl(FetchedUrlContext {
+    pub fn lookup_key(url: SharedString) -> AgentContextKey {
+        AgentContextKey(AgentContext::FetchedUrl(FetchedUrlContext {
             url,
             text: "".into(),
-            context_id: ContextId::for_query(),
+            context_id: ContextId::for_lookup(),
         }))
     }
 }
@@ -311,11 +304,11 @@ pub struct ThreadContext {
 }
 
 impl ThreadContext {
-    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
         self.thread == other.thread
     }
 
-    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
         self.thread.hash(state)
     }
 
@@ -345,18 +338,18 @@ pub struct RulesContext {
 }
 
 impl RulesContext {
-    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
         self.prompt_id == other.prompt_id
     }
 
-    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
         self.prompt_id.hash(state)
     }
 
-    pub fn new_context_set_query(prompt_id: UserPromptId) -> ContextSetEntry {
-        ContextSetEntry(AgentContext::Rules(RulesContext {
+    pub fn lookup_key(prompt_id: UserPromptId) -> AgentContextKey {
+        AgentContextKey(AgentContext::Rules(RulesContext {
             prompt_id,
-            context_id: ContextId::for_query(),
+            context_id: ContextId::for_lookup(),
         }))
     }
 
@@ -406,11 +399,11 @@ pub enum ImageStatus {
 }
 
 impl ImageContext {
-    pub fn eq_for_context_set(&self, other: &Self) -> bool {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
         self.original_image.id == other.original_image.id
     }
 
-    pub fn hash_for_context_set<H: Hasher>(&self, state: &mut H) {
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
         self.original_image.id.hash(state);
     }
 
@@ -739,75 +732,75 @@ fn to_fenced_codeblock(
 /// needed for stable context identity.
 #[derive(Debug, Clone, RefCast)]
 #[repr(transparent)]
-pub struct ContextSetEntry(pub AgentContext);
+pub struct AgentContextKey(pub AgentContext);
 
-impl AsRef<AgentContext> for ContextSetEntry {
+impl AsRef<AgentContext> for AgentContextKey {
     fn as_ref(&self) -> &AgentContext {
         &self.0
     }
 }
 
-impl Eq for ContextSetEntry {}
+impl Eq for AgentContextKey {}
 
-impl PartialEq for ContextSetEntry {
+impl PartialEq for AgentContextKey {
     fn eq(&self, other: &Self) -> bool {
         match &self.0 {
             AgentContext::File(context) => {
                 if let AgentContext::File(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
+                    return context.eq_for_key(other_context);
                 }
             }
             AgentContext::Directory(context) => {
                 if let AgentContext::Directory(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
+                    return context.eq_for_key(other_context);
                 }
             }
             AgentContext::Symbol(context) => {
                 if let AgentContext::Symbol(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
+                    return context.eq_for_key(other_context);
                 }
             }
             AgentContext::Selection(context) => {
                 if let AgentContext::Selection(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
+                    return context.eq_for_key(other_context);
                 }
             }
             AgentContext::FetchedUrl(context) => {
                 if let AgentContext::FetchedUrl(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
+                    return context.eq_for_key(other_context);
                 }
             }
             AgentContext::Thread(context) => {
                 if let AgentContext::Thread(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
+                    return context.eq_for_key(other_context);
                 }
             }
             AgentContext::Rules(context) => {
                 if let AgentContext::Rules(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
+                    return context.eq_for_key(other_context);
                 }
             }
             AgentContext::Image(context) => {
                 if let AgentContext::Image(other_context) = &other.0 {
-                    return context.eq_for_context_set(other_context);
+                    return context.eq_for_key(other_context);
                 }
             }
         }
-        return false;
+        false
     }
 }
 
-impl Hash for ContextSetEntry {
+impl Hash for AgentContextKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match &self.0 {
-            AgentContext::File(context) => context.hash_for_context_set(state),
-            AgentContext::Directory(context) => context.hash_for_context_set(state),
-            AgentContext::Symbol(context) => context.hash_for_context_set(state),
-            AgentContext::Selection(context) => context.hash_for_context_set(state),
-            AgentContext::FetchedUrl(context) => context.hash_for_context_set(state),
-            AgentContext::Thread(context) => context.hash_for_context_set(state),
-            AgentContext::Rules(context) => context.hash_for_context_set(state),
-            AgentContext::Image(context) => context.hash_for_context_set(state),
+            AgentContext::File(context) => context.hash_for_key(state),
+            AgentContext::Directory(context) => context.hash_for_key(state),
+            AgentContext::Symbol(context) => context.hash_for_key(state),
+            AgentContext::Selection(context) => context.hash_for_key(state),
+            AgentContext::FetchedUrl(context) => context.hash_for_key(state),
+            AgentContext::Thread(context) => context.hash_for_key(state),
+            AgentContext::Rules(context) => context.hash_for_key(state),
+            AgentContext::Image(context) => context.hash_for_key(state),
         }
     }
 }

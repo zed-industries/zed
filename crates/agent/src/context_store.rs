@@ -17,7 +17,7 @@ use util::ResultExt as _;
 
 use crate::ThreadStore;
 use crate::context::{
-    AgentContext, ContextId, ContextSetEntry, DirectoryContext, FetchedUrlContext, FileContext,
+    AgentContext, AgentContextKey, ContextId, DirectoryContext, FetchedUrlContext, FileContext,
     ImageContext, RulesContext, SelectionContext, SymbolContext, ThreadContext,
 };
 use crate::context_strip::SuggestedContext;
@@ -28,7 +28,7 @@ pub struct ContextStore {
     thread_store: Option<WeakEntity<ThreadStore>>,
     thread_summary_tasks: Vec<Task<()>>,
     next_context_id: ContextId,
-    context_set: IndexSet<ContextSetEntry>,
+    context_set: IndexSet<AgentContextKey>,
     context_thread_ids: HashSet<ThreadId>,
 }
 
@@ -60,7 +60,7 @@ impl ContextStore {
         let existing_context = thread
             .messages()
             .flat_map(|message| &message.loaded_context.contexts)
-            .map(ContextSetEntry::ref_cast)
+            .map(AgentContextKey::ref_cast)
             .collect::<HashSet<_>>();
         self.context_set
             .iter()
@@ -328,7 +328,7 @@ impl ContextStore {
             }
             _ => {}
         }
-        let inserted = self.context_set.insert(ContextSetEntry(context));
+        let inserted = self.context_set.insert(AgentContextKey(context));
         if inserted {
             cx.notify();
         }
@@ -338,7 +338,7 @@ impl ContextStore {
     pub fn remove_context(&mut self, context: &AgentContext, cx: &mut Context<Self>) {
         if self
             .context_set
-            .shift_remove(ContextSetEntry::ref_cast(context))
+            .shift_remove(AgentContextKey::ref_cast(context))
         {
             match context {
                 AgentContext::Thread(thread_context) => {
@@ -353,7 +353,7 @@ impl ContextStore {
 
     pub fn has_context(&mut self, context: &AgentContext) -> bool {
         self.context_set
-            .contains(ContextSetEntry::ref_cast(context))
+            .contains(AgentContextKey::ref_cast(context))
     }
 
     /// Returns whether this file path is already included directly in the context, or if it will be
@@ -410,12 +410,12 @@ impl ContextStore {
 
     pub fn includes_user_rules(&self, prompt_id: UserPromptId) -> bool {
         self.context_set
-            .contains(&RulesContext::new_context_set_query(prompt_id))
+            .contains(&RulesContext::lookup_key(prompt_id))
     }
 
     pub fn includes_url(&self, url: impl Into<SharedString>) -> bool {
         self.context_set
-            .contains(&FetchedUrlContext::new_context_set_query(url.into()))
+            .contains(&FetchedUrlContext::lookup_key(url.into()))
     }
 
     pub fn file_paths(&self, cx: &App) -> HashSet<ProjectPath> {
