@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
     ChatMessage, CopilotChat, Model as CopilotChatModel, ModelVendor,
@@ -13,8 +13,8 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
 use gpui::{
-    percentage, svg, Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render,
-    Subscription, Task, Transformation,
+    Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
+    Transformation, percentage, svg,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,

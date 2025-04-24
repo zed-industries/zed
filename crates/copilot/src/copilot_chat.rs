@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::DateTime;
 use collections::HashSet;
 use fs::Fs;
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use gpui::{prelude::*, App, AsyncApp, Global};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use itertools::Itertools;
 use paths::home_dir;
@@ -410,6 +410,8 @@ async fn get_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Ve
         // models, which are likely the best choice (e.g. gpt-4o rather than gpt-4o-2024-11-20)
         .dedup_by(|a, b| a.capabilities.family == b.capabilities.family)
         .collect();
+
+    dbg!(&models);
 
     Ok(models)
 }
