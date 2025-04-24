@@ -98,10 +98,15 @@ pub trait BlameRenderer {
         &self,
         _: &TextStyle,
         _: BlameEntry,
+        _: &mut App,
+    ) -> Option<AnyElement>;
+
+    fn render_blame_entry_popover(
+        &self,
+        _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
-        _: Entity<Editor>,
         _: &mut App,
     ) -> Option<AnyElement>;
 
@@ -139,10 +144,17 @@ impl BlameRenderer for () {
         &self,
         _: &TextStyle,
         _: BlameEntry,
+        _: &mut App,
+    ) -> Option<AnyElement> {
+        None
+    }
+
+    fn render_blame_entry_popover(
+        &self,
+        _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
-        _: Entity<Editor>,
         _: &mut App,
     ) -> Option<AnyElement> {
         None

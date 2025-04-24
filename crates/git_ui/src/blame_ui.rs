@@ -12,7 +12,8 @@ use gpui::{
 use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
 use ui::{
-    ActiveTheme, Color, ContextMenu, FluentBuilder as _, Icon, IconName, ParentElement as _, h_flex,
+    ActiveTheme, Color, ContextMenu, FluentBuilder as _, Icon, IconName, IntoElement,
+    ParentElement as _, h_flex,
 };
 use workspace::Workspace;
 
@@ -115,10 +116,6 @@ impl BlameRenderer for GitBlameRenderer {
         &self,
         style: &TextStyle,
         blame_entry: BlameEntry,
-        details: Option<ParsedCommitMessage>,
-        repository: Entity<Repository>,
-        workspace: WeakEntity<Workspace>,
-        editor: Entity<Editor>,
         cx: &mut App,
     ) -> Option<AnyElement> {
         let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
@@ -144,22 +141,29 @@ impl BlameRenderer for GitBlameRenderer {
                 .child(Icon::new(IconName::FileGit).color(Color::Hint))
                 .child(text)
                 .gap_2()
-                .hoverable_tooltip(move |_window, cx| {
-                    let tooltip = cx.new(|cx| {
-                        CommitTooltip::blame_entry(
-                            &blame_entry,
-                            details.clone(),
-                            repository.clone(),
-                            workspace.clone(),
-                            cx,
-                        )
-                    });
-                    editor.update(cx, |editor, _| {
-                        editor.git_blame_inline_tooltip = Some(tooltip.downgrade().into())
-                    });
-                    tooltip.into()
-                })
                 .into_any(),
+        )
+    }
+
+    fn render_blame_entry_popover(
+        &self,
+        blame_entry: BlameEntry,
+        details: Option<ParsedCommitMessage>,
+        repository: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        Some(
+            cx.new(|cx| {
+                CommitTooltip::blame_entry(
+                    &blame_entry,
+                    details.clone(),
+                    repository.clone(),
+                    workspace.clone(),
+                    cx,
+                )
+            })
+            .into_any_element(),
         )
     }
 

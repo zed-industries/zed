@@ -798,6 +798,10 @@ impl ChangeList {
     }
 }
 
+struct InlineBlameHoverState {
+    position: gpui::Point<Pixels>,
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -866,6 +870,7 @@ pub struct Editor {
     context_menu_options: Option<ContextMenuOptions>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    inline_blame_hover_state: Option<InlineBlameHoverState>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
@@ -1665,6 +1670,7 @@ impl Editor {
             context_menu_options: None,
             mouse_context_menu: None,
             completion_tasks: Default::default(),
+            inline_blame_hover_state: Default::default(),
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),

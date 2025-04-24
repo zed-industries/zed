@@ -5,10 +5,11 @@ use crate::{
     DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
     EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
-    LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
-    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection,
-    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
+    HoveredCursor, InlayHintRefreshReason, InlineBlameHoverState, InlineCompletion, JumpData,
+    LineDown, LineHighlight, LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt,
+    SelectPhase, SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint,
+    ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk, ToDisplayPoint,
@@ -34,9 +35,9 @@ use feature_flags::{Debugger, FeatureFlagAppExt};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, status::FileStatus};
 use gpui::{
-    Action, Along, AnyElement, App, AvailableSpace, Axis as ScrollbarAxis, BorderStyle, Bounds,
-    ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
+    Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
+    Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
+    Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
     InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
@@ -1780,21 +1781,13 @@ impl EditorElement {
             padding * em_width
         };
 
-        let workspace = editor.workspace()?.downgrade();
         let blame_entry = blame
             .update(cx, |blame, cx| {
                 blame.blame_for_rows(&[*row_info], cx).next()
             })
             .flatten()?;
 
-        let mut element = render_inline_blame_entry(
-            self.editor.clone(),
-            workspace,
-            &blame,
-            blame_entry,
-            &self.style,
-            cx,
-        )?;
+        let mut element = render_inline_blame_entry(blame_entry.clone(), &self.style, cx)?;
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -1820,6 +1813,38 @@ impl EditorElement {
         };
 
         let absolute_offset = point(start_x, start_y);
+
+        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+        let mouse_position = window.mouse_position();
+
+        if Bounds::new(absolute_offset, size).contains(&mouse_position) {
+            self.editor.update(cx, |editor, cx| {
+                let Some(workspace) = editor.workspace().map(|w| w.downgrade()) else {
+                    return;
+                };
+
+                let position = editor
+                    .inline_blame_hover_state
+                    .as_ref()
+                    .map_or_else(|| mouse_position, |hover_state| hover_state.position);
+
+                editor.inline_blame_hover_state = Some(InlineBlameHoverState { position });
+
+                let Some(mut popover) =
+                    render_blame_entry_popover(blame_entry, workspace, &blame, cx)
+                else {
+                    return;
+                };
+
+                popover.layout_as_root(AvailableSpace::min_size(), window, cx);
+                window.defer_draw(popover, position, 2);
+            });
+        } else {
+            self.editor.update(cx, |editor, _| {
+                editor.inline_blame_hover_state.take();
+            });
+        }
+
         element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
 
         Some(element)
@@ -5851,26 +5876,25 @@ fn prepaint_gutter_button(
 }
 
 fn render_inline_blame_entry(
-    editor: Entity<Editor>,
-    workspace: WeakEntity<Workspace>,
-    blame: &Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
+    cx: &mut App,
+) -> Option<AnyElement> {
+    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+    renderer.render_inline_blame_entry(&style.text, blame_entry, cx)
+}
+
+fn render_blame_entry_popover(
+    blame_entry: BlameEntry,
+    workspace: WeakEntity<Workspace>,
+    blame: &Entity<GitBlame>,
     cx: &mut App,
 ) -> Option<AnyElement> {
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
     let blame = blame.read(cx);
     let details = blame.details_for_entry(&blame_entry);
     let repository = blame.repository(cx)?.clone();
-    renderer.render_inline_blame_entry(
-        &style.text,
-        blame_entry,
-        details,
-        repository,
-        workspace,
-        editor,
-        cx,
-    )
+    renderer.render_blame_entry_popover(blame_entry, details, repository, workspace, cx)
 }
 
 fn render_blame_entry(
@@ -7046,14 +7070,7 @@ impl Element for EditorElement {
                                     blame.blame_for_rows(&[row_infos], cx).next()
                                 })
                                 .flatten()?;
-                            let mut element = render_inline_blame_entry(
-                                self.editor.clone(),
-                                editor.workspace()?.downgrade(),
-                                blame,
-                                blame_entry,
-                                &style,
-                                cx,
-                            )?;
+                            let mut element = render_inline_blame_entry(blame_entry, &style, cx)?;
                             let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
                             Some(
                                 element
