@@ -3188,20 +3188,6 @@ impl Project {
         })
     }
 
-    #[inline(never)]
-    fn definition_impl(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            GetDefinition { position },
-            cx,
-        )
-    }
     pub fn definition<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -3209,21 +3195,9 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.definition_impl(buffer, position, cx)
-    }
-
-    fn declaration_impl(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            GetDeclaration { position },
-            cx,
-        )
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.definition(buffer, position, cx)
+        })
     }
 
     pub fn declaration<T: ToPointUtf16>(
@@ -3233,21 +3207,9 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.declaration_impl(buffer, position, cx)
-    }
-
-    fn type_definition_impl(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LocationLink>>> {
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            GetTypeDefinition { position },
-            cx,
-        )
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.declaration(buffer, position, cx)
+        })
     }
 
     pub fn type_definition<T: ToPointUtf16>(
@@ -3257,7 +3219,9 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.type_definition_impl(buffer, position, cx)
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.type_definition(buffer, position, cx)
+        })
     }
 
     pub fn implementation<T: ToPointUtf16>(
@@ -3267,12 +3231,9 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            GetImplementation { position },
-            cx,
-        )
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.implementation(buffer, position, cx)
+        })
     }
 
     pub fn references<T: ToPointUtf16>(
@@ -3282,12 +3243,9 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            GetReferences { position },
-            cx,
-        )
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.references(buffer, position, cx)
+        })
     }
 
     fn document_highlights_impl(
