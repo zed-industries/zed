@@ -20,6 +20,8 @@ use util::paths::PathMatcher;
 pub struct GrepToolInput {
     /// A regex pattern to search for in the entire project. Note that the regex
     /// will be parsed by the Rust `regex` crate.
+    ///
+    /// Do NOT specify a path here! This will only be matched against the code **content**.
     pub regex: String,
 
     /// A glob pattern for the paths of files to include in the search.

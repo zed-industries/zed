@@ -9,12 +9,12 @@ mod delete_path_tool;
 mod diagnostics_tool;
 mod edit_file_tool;
 mod fetch_tool;
+mod find_path_tool;
 mod grep_tool;
 mod list_directory_tool;
 mod move_path_tool;
 mod now_tool;
 mod open_tool;
-mod path_search_tool;
 mod read_file_tool;
 mod rename_tool;
 mod replace;
@@ -45,11 +45,11 @@ use crate::delete_path_tool::DeletePathTool;
 use crate::diagnostics_tool::DiagnosticsTool;
 use crate::edit_file_tool::EditFileTool;
 use crate::fetch_tool::FetchTool;
+use crate::find_path_tool::FindPathTool;
 use crate::grep_tool::GrepTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
 use crate::open_tool::OpenTool;
-use crate::path_search_tool::PathSearchTool;
 use crate::read_file_tool::ReadFileTool;
 use crate::rename_tool::RenameTool;
 use crate::symbol_info_tool::SymbolInfoTool;
@@ -58,7 +58,7 @@ use crate::thinking_tool::ThinkingTool;
 
 pub use create_file_tool::CreateFileToolInput;
 pub use edit_file_tool::EditFileToolInput;
-pub use path_search_tool::PathSearchToolInput;
+pub use find_path_tool::FindPathToolInput;
 pub use read_file_tool::ReadFileToolInput;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
@@ -81,7 +81,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(OpenTool);
     registry.register_tool(CodeSymbolsTool);
     registry.register_tool(ContentsTool);
-    registry.register_tool(PathSearchTool);
+    registry.register_tool(FindPathTool);
     registry.register_tool(ReadFileTool);
     registry.register_tool(GrepTool);
     registry.register_tool(RenameTool);
