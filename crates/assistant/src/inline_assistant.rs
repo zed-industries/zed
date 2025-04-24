@@ -22,7 +22,7 @@ use feature_flags::{
 };
 use fs::Fs;
 use futures::{
-    SinkExt, Stream, StreamExt,
+    SinkExt, Stream, StreamExt, TryStreamExt as _,
     channel::mpsc,
     future::{BoxFuture, LocalBoxFuture},
     join,
@@ -3056,7 +3056,8 @@ impl CodegenAlternative {
                         let mut response_latency = None;
                         let request_start = Instant::now();
                         let diff = async {
-                            let chunks = StripInvalidSpans::new(stream?.stream);
+                            let chunks =
+                                StripInvalidSpans::new(stream?.stream.map_err(|e| e.into()));
                             futures::pin_mut!(chunks);
                             let mut diff = StreamingDiff::new(selected_text.to_string());
                             let mut line_diff = LineDiff::default();
