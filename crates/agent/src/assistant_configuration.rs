@@ -16,7 +16,7 @@ use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageMod
 use settings::{Settings, update_settings_file};
 use ui::{
     Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Scrollbar, ScrollbarState,
-    Switch, Tooltip, prelude::*,
+    Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
@@ -132,7 +132,11 @@ impl AssistantConfiguration {
             .cloned();
 
         v_flex()
+            .pt_3()
+            .pb_1()
             .gap_1p5()
+            .border_t_1()
+            .border_color(cx.theme().colors().border.opacity(0.6))
             .child(
                 h_flex()
                     .justify_between()
@@ -144,7 +148,7 @@ impl AssistantConfiguration {
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(Label::new(provider_name.clone())),
+                            .child(Label::new(provider_name.clone()).size(LabelSize::Large)),
                     )
                     .when(provider.is_authenticated(cx), |parent| {
                         parent.child(
@@ -169,20 +173,12 @@ impl AssistantConfiguration {
                         )
                     }),
             )
-            .child(
-                div()
-                    .p(DynamicSpacing::Base08.rems(cx))
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_sm()
-                    .map(|parent| match configuration_view {
-                        Some(configuration_view) => parent.child(configuration_view),
-                        None => parent.child(div().child(Label::new(format!(
-                            "No configuration view for {provider_name}",
-                        )))),
-                    }),
-            )
+            .map(|parent| match configuration_view {
+                Some(configuration_view) => parent.child(configuration_view),
+                None => parent.child(div().child(Label::new(format!(
+                    "No configuration view for {provider_name}",
+                )))),
+            })
     }
 
     fn render_provider_configuration_section(
@@ -199,7 +195,7 @@ impl AssistantConfiguration {
             .child(
                 v_flex()
                     .gap_0p5()
-                    .child(Headline::new("LLM Providers").size(HeadlineSize::Small))
+                    .child(Headline::new("LLM Providers"))
                     .child(
                         Label::new("Add at least one provider to use AI-powered features.")
                             .color(Color::Muted),
@@ -215,21 +211,16 @@ impl AssistantConfiguration {
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
 
-        const HEADING: &str = "Allow running tools without asking for confirmation";
+        const HEADING: &str = "Allow running editing tools without asking for confirmation";
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_2()
             .flex_1()
-            .child(Headline::new("General Settings").size(HeadlineSize::Small))
+            .child(Headline::new("General Settings"))
             .child(
                 h_flex()
-                    .p_2p5()
-                    .rounded_sm()
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
                     .gap_4()
                     .justify_between()
                     .flex_wrap()
@@ -245,6 +236,7 @@ impl AssistantConfiguration {
                             "always-allow-tool-actions-switch",
                             always_allow_tool_actions.into(),
                         )
+                        .color(SwitchColor::Accent)
                         .on_click({
                             let fs = self.fs.clone();
                             move |state, _window, cx| {
@@ -277,10 +269,7 @@ impl AssistantConfiguration {
             .child(
                 v_flex()
                     .gap_0p5()
-                    .child(
-                        Headline::new("Model Context Protocol (MCP) Servers")
-                            .size(HeadlineSize::Small),
-                    )
+                    .child(Headline::new("Model Context Protocol (MCP) Servers"))
                     .child(Label::new(SUBHEADING).color(Color::Muted)),
             )
             .children(context_servers.into_iter().map(|context_server| {
@@ -301,9 +290,9 @@ impl AssistantConfiguration {
                 v_flex()
                     .id(SharedString::from(context_server.id()))
                     .border_1()
-                    .rounded_sm()
+                    .rounded_md()
                     .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().editor_background)
+                    .bg(cx.theme().colors().background.opacity(0.25))
                     .child(
                         h_flex()
                             .p_1()
@@ -344,41 +333,44 @@ impl AssistantConfiguration {
                                     ),
                             )
                             .child(
-                                Switch::new("context-server-switch", is_running.into()).on_click({
-                                    let context_server_manager =
-                                        self.context_server_manager.clone();
-                                    let context_server = context_server.clone();
-                                    move |state, _window, cx| match state {
-                                        ToggleState::Unselected | ToggleState::Indeterminate => {
-                                            context_server_manager.update(cx, |this, cx| {
-                                                this.stop_server(context_server.clone(), cx)
-                                                    .log_err();
-                                            });
-                                        }
-                                        ToggleState::Selected => {
-                                            cx.spawn({
-                                                let context_server_manager =
-                                                    context_server_manager.clone();
-                                                let context_server = context_server.clone();
-                                                async move |cx| {
-                                                    if let Some(start_server_task) =
-                                                        context_server_manager
-                                                            .update(cx, |this, cx| {
-                                                                this.start_server(
-                                                                    context_server,
-                                                                    cx,
-                                                                )
-                                                            })
-                                                            .log_err()
-                                                    {
-                                                        start_server_task.await.log_err();
+                                Switch::new("context-server-switch", is_running.into())
+                                    .color(SwitchColor::Accent)
+                                    .on_click({
+                                        let context_server_manager =
+                                            self.context_server_manager.clone();
+                                        let context_server = context_server.clone();
+                                        move |state, _window, cx| match state {
+                                            ToggleState::Unselected
+                                            | ToggleState::Indeterminate => {
+                                                context_server_manager.update(cx, |this, cx| {
+                                                    this.stop_server(context_server.clone(), cx)
+                                                        .log_err();
+                                                });
+                                            }
+                                            ToggleState::Selected => {
+                                                cx.spawn({
+                                                    let context_server_manager =
+                                                        context_server_manager.clone();
+                                                    let context_server = context_server.clone();
+                                                    async move |cx| {
+                                                        if let Some(start_server_task) =
+                                                            context_server_manager
+                                                                .update(cx, |this, cx| {
+                                                                    this.start_server(
+                                                                        context_server,
+                                                                        cx,
+                                                                    )
+                                                                })
+                                                                .log_err()
+                                                        {
+                                                            start_server_task.await.log_err();
+                                                        }
                                                     }
-                                                }
-                                            })
-                                            .detach();
+                                                })
+                                                .detach();
+                                            }
                                         }
-                                    }
-                                }),
+                                    }),
                             ),
                     )
                     .map(|parent| {
@@ -386,34 +378,28 @@ impl AssistantConfiguration {
                             return parent;
                         }
 
-                        parent.child(v_flex().children(tools.into_iter().enumerate().map(
-                            |(ix, tool)| {
+                        parent.child(v_flex().py_1p5().px_1().gap_1().children(
+                            tools.into_iter().enumerate().map(|(ix, tool)| {
                                 h_flex()
-                                    .id("tool-item")
-                                    .pl_2()
-                                    .pr_1()
-                                    .py_1()
+                                    .id(("tool-item", ix))
+                                    .px_1()
                                     .gap_2()
                                     .justify_between()
-                                    .when(ix < tool_count - 1, |element| {
-                                        element
-                                            .border_b_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                    })
+                                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                    .rounded_sm()
                                     .child(
                                         Label::new(tool.name())
                                             .buffer_font(cx)
                                             .size(LabelSize::Small),
                                     )
                                     .child(
-                                        IconButton::new(("tool-description", ix), IconName::Info)
-                                            .shape(ui::IconButtonShape::Square)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Ignored)
-                                            .tooltip(Tooltip::text(tool.description())),
+                                        Icon::new(IconName::Info)
+                                            .size(IconSize::Small)
+                                            .color(Color::Ignored),
                                     )
-                            },
-                        )))
+                                    .tooltip(Tooltip::text(tool.description()))
+                            }),
+                        ))
                     })
             }))
             .child(
@@ -422,7 +408,7 @@ impl AssistantConfiguration {
                     .gap_2()
                     .child(
                         h_flex().w_full().child(
-                            Button::new("add-context-server", "Add MCPs Directly")
+                            Button::new("add-context-server", "Add Custom Server")
                                 .style(ButtonStyle::Filled)
                                 .layer(ElevationIndex::ModalSurface)
                                 .full_width()

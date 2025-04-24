@@ -16,10 +16,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, prelude::*};
+use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::ui::InstructionListItem;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -159,6 +160,10 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         self.provided_models(cx).into_iter().next()
+    }
+
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.default_model(cx)
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -399,42 +404,26 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
-        let ollama_intro = "Get up and running with Llama 3.3, Mistral, Gemma 2, and other large language models with Ollama.";
-        let ollama_reqs =
-            "Ollama must be running with at least one model installed to use it in the assistant.";
-
-        let inline_code_bg = cx.theme().colors().editor_foreground.opacity(0.05);
+        let ollama_intro =
+            "Get up & running with Llama 3.3, Mistral, Gemma 2, and other LLMs with Ollama.";
 
         if self.loading_models_task.is_some() {
             div().child(Label::new("Loading models...")).into_any()
         } else {
             v_flex()
-                .size_full()
-                .gap_3()
+                .gap_2()
                 .child(
-                    v_flex()
-                        .size_full()
-                        .gap_2()
-                        .p_1()
-                        .child(Label::new(ollama_intro))
-                        .child(Label::new(ollama_reqs))
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(Label::new("Once installed, try "))
-                                .child(
-                                    div()
-                                        .bg(inline_code_bg)
-                                        .px_1p5()
-                                        .rounded_sm()
-                                        .child(Label::new("ollama run llama3.2")),
-                                ),
-                        ),
+                    v_flex().gap_1().child(Label::new(ollama_intro)).child(
+                        List::new()
+                            .child(InstructionListItem::text_only("Ollama must be running with at least one model installed to use it in the assistant."))
+                            .child(InstructionListItem::text_only(
+                                "Once installed, try `ollama run llama3.2`",
+                            )),
+                    ),
                 )
                 .child(
                     h_flex()
                         .w_full()
-                        .pt_2()
                         .justify_between()
                         .gap_2()
                         .child(
@@ -478,30 +467,32 @@ impl Render for ConfigurationView {
                                         .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                                 ),
                         )
-                        .child(if is_authenticated {
-                            // This is only a button to ensure the spacing is correct
-                            // it should stay disabled
-                            ButtonLike::new("connected")
-                                .disabled(true)
-                                // Since this won't ever be clickable, we can use the arrow cursor
-                                .cursor_style(gpui::CursorStyle::Arrow)
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Indicator::dot().color(Color::Success))
-                                        .child(Label::new("Connected"))
-                                        .into_any_element(),
+                        .map(|this| {
+                            if is_authenticated {
+                                this.child(
+                                    ButtonLike::new("connected")
+                                        .disabled(true)
+                                        .cursor_style(gpui::CursorStyle::Arrow)
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(Indicator::dot().color(Color::Success))
+                                                .child(Label::new("Connected"))
+                                                .into_any_element(),
+                                        ),
                                 )
-                                .into_any_element()
-                        } else {
-                            Button::new("retry_ollama_models", "Connect")
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::ArrowCircle)
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.retry_connection(cx)),
+                            } else {
+                                this.child(
+                                    Button::new("retry_ollama_models", "Connect")
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon(IconName::Play)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.retry_connection(cx)
+                                        })),
                                 )
-                                .into_any_element()
-                        }),
+                            }
+                        })
                 )
                 .into_any()
         }

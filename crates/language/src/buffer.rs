@@ -1,12 +1,6 @@
-pub use crate::{
-    Grammar, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap},
-    proto,
-};
 use crate::{
-    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
-    TreeSitterOptions,
+    DebugVariableCapture, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
+    TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
@@ -16,6 +10,12 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
+};
+pub use crate::{
+    Grammar, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet,
+    highlight_map::{HighlightId, HighlightMap},
+    proto,
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_watch as watch;
@@ -72,6 +72,12 @@ use util::{RangeExt, debug_panic, maybe};
 pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
+
+#[derive(Debug)]
+pub struct DebugVariableRanges {
+    pub buffer_id: BufferId,
+    pub range: Range<usize>,
+}
 
 /// A label for the background task spawned by the buffer to compute
 /// a diff against the contents of its file.
@@ -202,6 +208,7 @@ pub struct Diagnostic {
     pub source: Option<String>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,
+    pub code_description: Option<lsp::Url>,
     /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.
@@ -3167,7 +3174,7 @@ impl BufferSnapshot {
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
         let mut scope = None;
-        let mut smallest_range: Option<Range<usize>> = None;
+        let mut smallest_range_and_depth: Option<(Range<usize>, usize)> = None;
 
         // Use the layer that has the smallest node intersecting the given point.
         for layer in self
@@ -3179,7 +3186,7 @@ impl BufferSnapshot {
             let mut range = None;
             loop {
                 let child_range = cursor.node().byte_range();
-                if !child_range.to_inclusive().contains(&offset) {
+                if !child_range.contains(&offset) {
                     break;
                 }
 
@@ -3190,11 +3197,19 @@ impl BufferSnapshot {
             }
 
             if let Some(range) = range {
-                if smallest_range
-                    .as_ref()
-                    .map_or(true, |smallest_range| range.len() < smallest_range.len())
-                {
-                    smallest_range = Some(range);
+                if smallest_range_and_depth.as_ref().map_or(
+                    true,
+                    |(smallest_range, smallest_range_depth)| {
+                        if layer.depth > *smallest_range_depth {
+                            true
+                        } else if layer.depth == *smallest_range_depth {
+                            range.len() < smallest_range.len()
+                        } else {
+                            false
+                        }
+                    },
+                ) {
+                    smallest_range_and_depth = Some((range, layer.depth));
                     scope = Some(LanguageScope {
                         language: layer.language.clone(),
                         override_id: layer.override_id(offset, &self.text),
@@ -3880,6 +3895,79 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn debug_variable_ranges(
+        &self,
+        offset_range: Range<usize>,
+    ) -> impl Iterator<Item = DebugVariableRanges> + '_ {
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar
+                .debug_variables_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
+
+        let configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.debug_variables_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            loop {
+                let mat = syntax_matches.peek()?;
+
+                let variable_ranges = configs[mat.grammar_index].and_then(|config| {
+                    let full_range = mat.captures.iter().fold(
+                        Range {
+                            start: usize::MAX,
+                            end: 0,
+                        },
+                        |mut acc, next| {
+                            let byte_range = next.node.byte_range();
+                            if acc.start > byte_range.start {
+                                acc.start = byte_range.start;
+                            }
+                            if acc.end < byte_range.end {
+                                acc.end = byte_range.end;
+                            }
+                            acc
+                        },
+                    );
+                    if full_range.start > full_range.end {
+                        // We did not find a full spanning range of this match.
+                        return None;
+                    }
+
+                    let captures = mat.captures.iter().filter_map(|capture| {
+                        Some((
+                            capture,
+                            config.captures.get(capture.index as usize).cloned()?,
+                        ))
+                    });
+
+                    let mut variable_range = None;
+                    for (query, capture) in captures {
+                        if let DebugVariableCapture::Variable = capture {
+                            let _ = variable_range.insert(query.node.byte_range());
+                        }
+                    }
+
+                    Some(DebugVariableRanges {
+                        buffer_id: self.remote_id(),
+                        range: variable_range?,
+                    })
+                });
+
+                syntax_matches.advance();
+                if variable_ranges.is_some() {
+                    // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
+                    // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
+                    return variable_ranges;
+                }
+            }
+        })
+    }
+
     pub fn runnable_ranges(
         &self,
         offset_range: Range<usize>,
@@ -4525,6 +4613,7 @@ impl Default for Diagnostic {
         Self {
             source: Default::default(),
             code: None,
+            code_description: None,
             severity: DiagnosticSeverity::ERROR,
             message: Default::default(),
             group_id: 0,

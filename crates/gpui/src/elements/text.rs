@@ -278,6 +278,7 @@ impl IntoElement for StyledText {
 pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
 
 struct TextLayoutInner {
+    len: usize,
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
@@ -349,6 +350,7 @@ impl TextLayout {
                 } else {
                     text.clone()
                 };
+                let len = text.len();
 
                 let Some(lines) = window
                     .text_system()
@@ -363,6 +365,7 @@ impl TextLayout {
                 else {
                     element_state.0.borrow_mut().replace(TextLayoutInner {
                         lines: Default::default(),
+                        len: 0,
                         line_height,
                         wrap_width,
                         size: Some(Size::default()),
@@ -380,6 +383,7 @@ impl TextLayout {
 
                 element_state.0.borrow_mut().replace(TextLayoutInner {
                     lines,
+                    len,
                     line_height,
                     wrap_width,
                     size: Some(size),
@@ -542,6 +546,11 @@ impl TextLayout {
     /// The line height for this layout.
     pub fn line_height(&self) -> Pixels {
         self.0.borrow().as_ref().unwrap().line_height
+    }
+
+    /// The UTF-8 length of the underlying text.
+    pub fn len(&self) -> usize {
+        self.0.borrow().as_ref().unwrap().len
     }
 
     /// The text for this layout.

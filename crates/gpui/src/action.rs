@@ -394,7 +394,10 @@ macro_rules! action_with_deprecated_aliases {
     };
 }
 
-/// Defines and registers a unit struct that can be used as an action, with some deprecated aliases.
+/// Registers the action and implements the Action trait for any struct that implements Clone,
+/// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
+///
+/// Similar to `impl_actions!`, but only handles one struct, and registers some deprecated aliases.
 #[macro_export]
 macro_rules! impl_action_with_deprecated_aliases {
     ($namespace:path, $name:ident, [$($alias:literal),* $(,)?]) => {

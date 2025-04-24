@@ -453,7 +453,7 @@ impl GitPanel {
                         .ok();
                 }
                 GitStoreEvent::RepositoryUpdated(_, _, _) => {}
-                GitStoreEvent::JobsUpdated => {}
+                GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
             },
         )
         .detach();
@@ -610,7 +610,7 @@ impl GitPanel {
             if let Ok(ix) = self.entries[conflicted_start..conflicted_start + self.conflicted_count]
                 .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
-                return Some(ix);
+                return Some(conflicted_start + ix);
             }
         }
         if self.tracked_count > 0 {
@@ -622,7 +622,7 @@ impl GitPanel {
             if let Ok(ix) = self.entries[tracked_start..tracked_start + self.tracked_count]
                 .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
-                return Some(ix);
+                return Some(tracked_start + ix);
             }
         }
         if self.new_count > 0 {
@@ -638,7 +638,7 @@ impl GitPanel {
             if let Ok(ix) = self.entries[untracked_start..untracked_start + self.new_count]
                 .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
-                return Some(ix);
+                return Some(untracked_start + ix);
             }
         }
         None
@@ -1442,13 +1442,20 @@ impl GitPanel {
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
-            if !self.amend_pending {
-                self.set_amend_pending(true, cx);
-                self.load_last_commit_message_if_empty(cx);
-            } else {
-                telemetry::event!("Git Amended", source = "Git Panel");
-                self.set_amend_pending(false, cx);
-                self.commit_changes(CommitOptions { amend: true }, window, cx);
+            if self
+                .active_repository
+                .as_ref()
+                .and_then(|repo| repo.read(cx).head_commit.as_ref())
+                .is_some()
+            {
+                if !self.amend_pending {
+                    self.set_amend_pending(true, cx);
+                    self.load_last_commit_message_if_empty(cx);
+                } else {
+                    telemetry::event!("Git Amended", source = "Git Panel");
+                    self.set_amend_pending(false, cx);
+                    self.commit_changes(CommitOptions { amend: true }, window, cx);
+                }
             }
         } else {
             cx.propagate();
@@ -1466,11 +1473,9 @@ impl GitPanel {
         else {
             return;
         };
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
-            return;
-        };
-        let Some(recent_sha) = branch
-            .most_recent_commit
+        let Some(recent_sha) = active_repository
+            .read(cx)
+            .head_commit
             .as_ref()
             .map(|commit| commit.sha.to_string())
         else {
@@ -1689,7 +1694,7 @@ impl GitPanel {
         if let Some(merge_message) = self
             .active_repository
             .as_ref()
-            .and_then(|repo| repo.upgrade()?.read(cx).merge_message.as_ref())
+            .and_then(|repo| repo.read(cx).merge.message.as_ref())
         {
             return Some(merge_message.to_string());
         }
@@ -1787,6 +1792,8 @@ impl GitPanel {
                 const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
                 let request = LanguageModelRequest {
+                    thread_id: None,
+                    prompt_id: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: Role::User,
                         content: vec![content.into()],
@@ -3011,6 +3018,7 @@ impl GitPanel {
         let expand_tooltip_focus_handle = editor_focus_handle.clone();
 
         let branch = active_repository.read(cx).branch.clone();
+        let head_commit = active_repository.read(cx).head_commit.clone();
 
         let footer_size = px(32.);
         let gap = px(9.0);
@@ -3030,15 +3038,13 @@ impl GitPanel {
         let editor_is_long = self.commit_editor.update(cx, |editor, cx| {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
-        let has_previous_commit = branch
-            .as_ref()
-            .and_then(|branch| branch.most_recent_commit.as_ref())
-            .is_some();
+        let has_previous_commit = head_commit.is_some();
 
         let footer = v_flex()
             .child(PanelRepoFooter::new(
                 display_name,
                 branch,
+                head_commit,
                 Some(git_panel.clone()),
             ))
             .child(
@@ -4396,6 +4402,8 @@ impl Render for GitPanelMessageTooltip {
 pub struct PanelRepoFooter {
     active_repository: SharedString,
     branch: Option<Branch>,
+    head_commit: Option<CommitDetails>,
+
     // Getting a GitPanel in previews will be difficult.
     //
     // For now just take an option here, and we won't bind handlers to buttons in previews.
@@ -4406,11 +4414,13 @@ impl PanelRepoFooter {
     pub fn new(
         active_repository: SharedString,
         branch: Option<Branch>,
+        head_commit: Option<CommitDetails>,
         git_panel: Option<Entity<GitPanel>>,
     ) -> Self {
         Self {
             active_repository,
             branch,
+            head_commit,
             git_panel,
         }
     }
@@ -4419,6 +4429,7 @@ impl PanelRepoFooter {
         Self {
             active_repository,
             branch,
+            head_commit: None,
             git_panel: None,
         }
     }
@@ -4444,11 +4455,26 @@ impl RenderOnce for PanelRepoFooter {
         const MAX_BRANCH_LEN: usize = 16;
         const MAX_REPO_LEN: usize = 16;
         const LABEL_CHARACTER_BUDGET: usize = MAX_BRANCH_LEN + MAX_REPO_LEN;
+        const MAX_SHORT_SHA_LEN: usize = 8;
 
-        let branch = self.branch.clone();
-        let branch_name = branch
+        let branch_name = self
+            .branch
             .as_ref()
-            .map_or(" (no branch)".into(), |branch| branch.name.clone());
+            .map(|branch| branch.name.clone())
+            .or_else(|| {
+                self.head_commit.as_ref().map(|commit| {
+                    SharedString::from(
+                        commit
+                            .sha
+                            .chars()
+                            .take(MAX_SHORT_SHA_LEN)
+                            .collect::<String>(),
+                    )
+                })
+            })
+            .unwrap_or_else(|| SharedString::from(" (no branch)"));
+        let show_separator = self.branch.is_some() || self.head_commit.is_some();
+
         let active_repo_name = self.active_repository.clone();
 
         let branch_actual_len = branch_name.len();
@@ -4554,7 +4580,7 @@ impl RenderOnce for PanelRepoFooter {
                         ),
                     )
                     .child(repo_selector)
-                    .when_some(branch.clone(), |this, _| {
+                    .when(show_separator, |this| {
                         this.child(
                             div()
                                 .text_color(cx.theme().colors().text_muted)

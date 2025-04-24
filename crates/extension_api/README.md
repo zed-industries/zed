@@ -23,7 +23,7 @@ need to set your `crate-type` accordingly:
 
 ```toml
 [dependencies]
-zed_extension_api = "0.3.0"
+zed_extension_api = "0.4.0"
 
 [lib]
 crate-type = ["cdylib"]
@@ -63,6 +63,7 @@ Here is the compatibility of the `zed_extension_api` with versions of Zed:
 
 | Zed version | `zed_extension_api` version |
 | ----------- | --------------------------- |
+| `0.184.x`   | `0.0.1` - `0.4.0`           |
 | `0.178.x`   | `0.0.1` - `0.3.0`           |
 | `0.162.x`   | `0.0.1` - `0.2.0`           |
 | `0.149.x`   | `0.0.1` - `0.1.0`           |

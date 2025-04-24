@@ -128,9 +128,16 @@ impl CommitModal {
             if let Some(force_mode) = force_mode {
                 match force_mode {
                     ForceMode::Amend => {
-                        if !git_panel.amend_pending() {
-                            git_panel.set_amend_pending(true, cx);
-                            git_panel.load_last_commit_message_if_empty(cx);
+                        if git_panel
+                            .active_repository
+                            .as_ref()
+                            .and_then(|repo| repo.read(cx).head_commit.as_ref())
+                            .is_some()
+                        {
+                            if !git_panel.amend_pending() {
+                                git_panel.set_amend_pending(true, cx);
+                                git_panel.load_last_commit_message_if_empty(cx);
+                            }
                         }
                     }
                     ForceMode::Commit => {
@@ -297,8 +304,7 @@ impl CommitModal {
             let is_amend_pending = git_panel.amend_pending();
             let has_previous_commit = active_repo
                 .as_ref()
-                .and_then(|repo| repo.upgrade()?.read(cx).branch.as_ref())
-                .and_then(|branch| branch.most_recent_commit.as_ref())
+                .and_then(|repo| repo.read(cx).head_commit.as_ref())
                 .is_some();
             (
                 can_commit,
@@ -533,6 +539,16 @@ impl CommitModal {
     }
 
     fn amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .git_panel
+            .read(cx)
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).head_commit.as_ref())
+            .is_none()
+        {
+            return;
+        }
         if !self.git_panel.read(cx).amend_pending() {
             self.git_panel.update(cx, |git_panel, cx| {
                 git_panel.set_amend_pending(true, cx);
