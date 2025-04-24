@@ -20,7 +20,9 @@ use dap::{
     client::{DebugAdapterClient, SessionId},
     messages::{Events, Message},
 };
-use dap::{ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEventCategory};
+use dap::{
+    EvaluateResponse, ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEventCategory,
+};
 use futures::channel::oneshot;
 use futures::{FutureExt, future::Shared};
 use gpui::{
@@ -632,6 +634,7 @@ impl CompletionsQuery {
     }
 }
 
+#[derive(Debug)]
 pub enum SessionEvent {
     Modules,
     LoadedSources,
@@ -639,6 +642,7 @@ pub enum SessionEvent {
     StackTrace,
     Variables,
     Threads,
+    InvalidateInlineValue,
     CapabilitiesLoaded,
 }
 
@@ -1037,6 +1041,7 @@ impl Session {
                 .map(Into::into)
                 .filter(|_| !event.preserve_focus_hint.unwrap_or(false)),
         ));
+        cx.emit(SessionEvent::InvalidateInlineValue);
         cx.notify();
     }
 
@@ -1256,6 +1261,10 @@ impl Session {
             .and_modify(|request_map| {
                 request_map.remove(&key);
             });
+    }
+
+    pub fn any_stopped_thread(&self) -> bool {
+        self.thread_states.any_stopped_thread()
     }
 
     pub fn thread_status(&self, thread_id: ThreadId) -> ThreadStatus {
@@ -1779,6 +1788,20 @@ impl Session {
             .unwrap_or_default()
     }
 
+    pub fn variables_by_stack_frame_id(&self, stack_frame_id: StackFrameId) -> Vec<dap::Variable> {
+        let Some(stack_frame) = self.stack_frames.get(&stack_frame_id) else {
+            return Vec::new();
+        };
+
+        stack_frame
+            .scopes
+            .iter()
+            .filter_map(|scope| self.variables.get(&scope.variables_reference))
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
     pub fn variables(
         &mut self,
         variables_reference: VariableReference,
@@ -1844,7 +1867,7 @@ impl Session {
         frame_id: Option<u64>,
         source: Option<Source>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<Option<EvaluateResponse>> {
         self.request(
             EvaluateCommand {
                 expression,
@@ -1873,7 +1896,6 @@ impl Session {
             },
             cx,
         )
-        .detach();
     }
 
     pub fn location(
@@ -1892,6 +1914,7 @@ impl Session {
         );
         self.locations.get(&reference).cloned()
     }
+
     pub fn disconnect_client(&mut self, cx: &mut Context<Self>) {
         let command = DisconnectCommand {
             restart: Some(false),

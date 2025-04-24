@@ -296,6 +296,7 @@ livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
@@ -605,7 +606,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.6.1"
+zed_llm_client = "0.7.1"
 zstd = "0.11"
 metal = "0.29"
 

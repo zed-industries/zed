@@ -1798,4 +1798,8 @@ impl Settings for VimSettings {
             cursor_shape: settings.cursor_shape.ok_or_else(Self::missing_default)?,
         })
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
+        // TODO: translate vim extension settings
+    }
 }

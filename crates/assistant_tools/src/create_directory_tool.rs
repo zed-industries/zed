@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
+use gpui::AnyWindowHandle;
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -67,6 +68,7 @@ impl Tool for CreateDirectoryTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CreateDirectoryToolInput>(input) {

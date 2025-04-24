@@ -4,7 +4,7 @@ use super::{
     session::{self, Session, SessionStateEvent},
 };
 use crate::{
-    ProjectEnvironment,
+    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
     project_settings::ProjectSettings,
     terminals::{SshCommand, wrap_for_ssh},
     worktree_store::WorktreeStore,
@@ -15,7 +15,7 @@ use collections::HashMap;
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, EvaluateArguments,
     EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments, Source,
-    StartDebuggingRequestArguments,
+    StackFrameId, StartDebuggingRequestArguments,
     adapters::{
         DapStatus, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
@@ -30,7 +30,10 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
-use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
+use language::{
+    BinaryStatus, Buffer, LanguageRegistry, LanguageToolchainStore,
+    language_settings::InlayHintKind, range_from_lsp,
+};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 
@@ -774,6 +777,103 @@ impl DapStore {
                 })
                 .await?
                 .targets)
+        })
+    }
+
+    pub fn resolve_inline_values(
+        &self,
+        session: Entity<Session>,
+        stack_frame_id: StackFrameId,
+        buffer_handle: Entity<Buffer>,
+        inline_values: Vec<lsp::InlineValue>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<InlayHint>>> {
+        let snapshot = buffer_handle.read(cx).snapshot();
+        let all_variables = session.read(cx).variables_by_stack_frame_id(stack_frame_id);
+
+        cx.spawn(async move |_, cx| {
+            let mut inlay_hints = Vec::with_capacity(inline_values.len());
+            for inline_value in inline_values.iter() {
+                match inline_value {
+                    lsp::InlineValue::Text(text) => {
+                        inlay_hints.push(InlayHint {
+                            position: snapshot.anchor_after(range_from_lsp(text.range).end),
+                            label: InlayHintLabel::String(format!(": {}", text.text)),
+                            kind: Some(InlayHintKind::Type),
+                            padding_left: false,
+                            padding_right: false,
+                            tooltip: None,
+                            resolve_state: ResolveState::Resolved,
+                        });
+                    }
+                    lsp::InlineValue::VariableLookup(variable_lookup) => {
+                        let range = range_from_lsp(variable_lookup.range);
+
+                        let mut variable_name = variable_lookup
+                            .variable_name
+                            .clone()
+                            .unwrap_or_else(|| snapshot.text_for_range(range.clone()).collect());
+
+                        if !variable_lookup.case_sensitive_lookup {
+                            variable_name = variable_name.to_ascii_lowercase();
+                        }
+
+                        let Some(variable) = all_variables.iter().find(|variable| {
+                            if variable_lookup.case_sensitive_lookup {
+                                variable.name == variable_name
+                            } else {
+                                variable.name.to_ascii_lowercase() == variable_name
+                            }
+                        }) else {
+                            continue;
+                        };
+
+                        inlay_hints.push(InlayHint {
+                            position: snapshot.anchor_after(range.end),
+                            label: InlayHintLabel::String(format!(": {}", variable.value)),
+                            kind: Some(InlayHintKind::Type),
+                            padding_left: false,
+                            padding_right: false,
+                            tooltip: None,
+                            resolve_state: ResolveState::Resolved,
+                        });
+                    }
+                    lsp::InlineValue::EvaluatableExpression(expression) => {
+                        let range = range_from_lsp(expression.range);
+
+                        let expression = expression
+                            .expression
+                            .clone()
+                            .unwrap_or_else(|| snapshot.text_for_range(range.clone()).collect());
+
+                        let Ok(eval_task) = session.update(cx, |session, cx| {
+                            session.evaluate(
+                                expression,
+                                Some(EvaluateArgumentsContext::Variables),
+                                Some(stack_frame_id),
+                                None,
+                                cx,
+                            )
+                        }) else {
+                            continue;
+                        };
+
+                        if let Some(response) = eval_task.await {
+                            inlay_hints.push(InlayHint {
+                                position: snapshot.anchor_after(range.end),
+                                label: InlayHintLabel::String(format!(": {}", response.result)),
+                                kind: Some(InlayHintKind::Type),
+                                padding_left: false,
+                                padding_right: false,
+                                tooltip: None,
+                                resolve_state: ResolveState::Resolved,
+                            });
+                        };
+                    }
+                };
+            }
+
+            Ok(inlay_hints)
         })
     }
 

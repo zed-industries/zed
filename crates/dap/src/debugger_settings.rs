@@ -54,6 +54,8 @@ impl Settings for DebuggerSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Global for DebuggerSettings {}

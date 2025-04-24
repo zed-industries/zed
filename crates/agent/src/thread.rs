@@ -13,7 +13,9 @@ use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
-use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+};
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelImage, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
@@ -951,7 +953,12 @@ impl Thread {
         self.remaining_turns = remaining_turns;
     }
 
-    pub fn send_to_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+    pub fn send_to_model(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
         if self.remaining_turns == 0 {
             return;
         }
@@ -982,7 +989,7 @@ impl Thread {
             };
         }
 
-        self.stream_completion(request, model, cx);
+        self.stream_completion(request, model, window, cx);
     }
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
@@ -1201,6 +1208,7 @@ impl Thread {
         &mut self,
         request: LanguageModelRequest,
         model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
@@ -1382,7 +1390,7 @@ impl Thread {
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
-                                let tool_uses = thread.use_pending_tools(cx);
+                                let tool_uses = thread.use_pending_tools(window, cx);
                                 cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
                             StopReason::EndTurn => {}
@@ -1427,7 +1435,7 @@ impl Thread {
                                 }));
                             }
 
-                            thread.cancel_last_completion(cx);
+                            thread.cancel_last_completion(window, cx);
                         }
                     }
                     cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
@@ -1596,7 +1604,11 @@ impl Thread {
         )
     }
 
-    pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) -> Vec<PendingToolUse> {
+    pub fn use_pending_tools(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
         let request = self.to_completion_request(cx);
         let messages = Arc::new(request.messages);
@@ -1628,6 +1640,7 @@ impl Thread {
                         tool_use.input.clone(),
                         &messages,
                         tool,
+                        window,
                         cx,
                     );
                 }
@@ -1644,9 +1657,10 @@ impl Thread {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         tool: Arc<dyn Tool>,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
-        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
+        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, window, cx);
         self.tool_use
             .run_pending_tool(tool_use_id, ui_text.into(), task);
     }
@@ -1657,6 +1671,7 @@ impl Thread {
         messages: &[LanguageModelRequestMessage],
         input: serde_json::Value,
         tool: Arc<dyn Tool>,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
@@ -1669,6 +1684,7 @@ impl Thread {
                 messages,
                 self.project.clone(),
                 self.action_log.clone(),
+                window,
                 cx,
             )
         };
@@ -1691,7 +1707,7 @@ impl Thread {
                             output,
                             cx,
                         );
-                        thread.tool_finished(tool_use_id, pending_tool_use, false, cx);
+                        thread.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
                     })
                     .ok();
             }
@@ -1703,6 +1719,7 @@ impl Thread {
         tool_use_id: LanguageModelToolUseId,
         pending_tool_use: Option<PendingToolUse>,
         canceled: bool,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
         if self.all_tools_finished() {
@@ -1710,7 +1727,7 @@ impl Thread {
             if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
                 self.attach_tool_results(cx);
                 if !canceled {
-                    self.send_to_model(model, cx);
+                    self.send_to_model(model, window, cx);
                 }
             }
         }
@@ -1732,7 +1749,11 @@ impl Thread {
     /// Cancels the last pending completion, if there are any pending.
     ///
     /// Returns whether a completion was canceled.
-    pub fn cancel_last_completion(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn cancel_last_completion(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let canceled = if self.pending_completions.pop().is_some() {
             true
         } else {
@@ -1743,6 +1764,7 @@ impl Thread {
                     pending_tool_use.id.clone(),
                     Some(pending_tool_use),
                     true,
+                    window,
                     cx,
                 );
             }
@@ -2199,6 +2221,7 @@ impl Thread {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
+        window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
         let err = Err(anyhow::anyhow!(
@@ -2207,7 +2230,7 @@ impl Thread {
 
         self.tool_use
             .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
-        self.tool_finished(tool_use_id.clone(), None, true, cx);
+        self.tool_finished(tool_use_id.clone(), None, true, window, cx);
     }
 }
 

@@ -11,10 +11,14 @@ use util::serde::default_true;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
 
+mod add_arg_to_trait_method;
 mod file_search;
 
 pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
-    let mut threads: Vec<Rc<dyn Example>> = vec![Rc::new(file_search::FileSearchExample)];
+    let mut threads: Vec<Rc<dyn Example>> = vec![
+        Rc::new(file_search::FileSearchExample),
+        Rc::new(add_arg_to_trait_method::AddArgToTraitMethod),
+    ];
 
     for example_path in list_declarative_examples(examples_dir).unwrap() {
         threads.push(Rc::new(DeclarativeExample::load(&example_path).unwrap()));
