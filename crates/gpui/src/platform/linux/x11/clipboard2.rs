@@ -6,9 +6,9 @@
  * Adapted from the x11 submodule of the arboard project https://github.com/1Password/arboard
  *
  * SPDX-License-Identifier: Apache-2.0 OR MIT
- * 
+ *
  * Copyright 2022 The Arboard contributors
- * 
+ *
  * The project to which this file belongs is licensed under either of
  * the Apache 2.0 or the MIT license at the licensee's choice. The terms
  * and conditions of the chosen license apply to this file.
@@ -19,84 +19,77 @@
 // https://freedesktop.org/wiki/ClipboardManager/
 
 use std::{
-	borrow::Cow,
-	cell::RefCell,
-	collections::{hash_map::Entry, HashMap},
-	path::PathBuf,
-	sync::{
-		atomic::{AtomicBool, Ordering},
-		Arc,
-	},
-	thread::JoinHandle,
-	thread_local,
-	time::{Duration, Instant},
+    borrow::Cow,
+    cell::RefCell,
+    collections::{HashMap, hash_map::Entry},
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::JoinHandle,
+    thread_local,
+    time::{Duration, Instant},
 };
-use log::{trace, warn};
-use percent_encoding::percent_decode_str;
 
-#[cfg(feature = "image-data")]
-use crate::ImageData;
-use crate::{common::private, Error};
-
-use log::{error, trace, warn};
 use parking_lot::{Condvar, Mutex, MutexGuard, RwLock};
 use x11rb::{
-	connection::Connection,
-	protocol::{
-		xproto::{
-			Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
-			PropertyNotifyEvent, SelectionNotifyEvent, SelectionRequestEvent, Time, WindowClass,
-			SELECTION_NOTIFY_EVENT,
-		},
-		Event,
-	},
-	rust_connection::RustConnection,
-	wrapper::ConnectionExt as _,
-	COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, NONE,
+    COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, NONE,
+    connection::Connection,
+    protocol::{
+        Event,
+        xproto::{
+            Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
+            PropertyNotifyEvent, SELECTION_NOTIFY_EVENT, SelectionNotifyEvent,
+            SelectionRequestEvent, Time, WindowClass,
+        },
+    },
+    rust_connection::RustConnection,
+    wrapper::ConnectionExt as _,
 };
 
-use crate::{common::ScopeGuard, Error};
+use crate::{Image, ImageFormat, hash};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 static CLIPBOARD: Mutex<Option<GlobalClipboard>> = parking_lot::const_mutex(None);
 
 x11rb::atom_manager! {
-	pub Atoms: AtomCookies {
-		CLIPBOARD,
-		PRIMARY,
-		SECONDARY,
+    pub Atoms: AtomCookies {
+        CLIPBOARD,
+        PRIMARY,
+        SECONDARY,
 
-		CLIPBOARD_MANAGER,
-		SAVE_TARGETS,
-		TARGETS,
-		ATOM,
-		INCR,
+        CLIPBOARD_MANAGER,
+        SAVE_TARGETS,
+        TARGETS,
+        ATOM,
+        INCR,
 
-		UTF8_STRING,
-		UTF8_MIME_0: b"text/plain;charset=utf-8",
-		UTF8_MIME_1: b"text/plain;charset=UTF-8",
-		// Text in ISO Latin-1 encoding
-		// See: https://tronche.com/gui/x/icccm/sec-2.html#s-2.6.2
-		STRING,
-		// Text in unknown encoding
-		// See: https://tronche.com/gui/x/icccm/sec-2.html#s-2.6.2
-		TEXT,
-		TEXT_MIME_UNKNOWN: b"text/plain",
+        UTF8_STRING,
+        UTF8_MIME_0: b"text/plain;charset=utf-8",
+        UTF8_MIME_1: b"text/plain;charset=UTF-8",
+        // Text in ISO Latin-1 encoding
+        // See: https://tronche.com/gui/x/icccm/sec-2.html#s-2.6.2
+        STRING,
+        // Text in unknown encoding
+        // See: https://tronche.com/gui/x/icccm/sec-2.html#s-2.6.2
+        TEXT,
+        TEXT_MIME_UNKNOWN: b"text/plain",
 
-		HTML: b"text/html",
-		URI_LIST: b"text/uri-list",
+        HTML: b"text/html",
+        URI_LIST: b"text/uri-list",
 
-		PNG_MIME: b"image/png",
+        PNG_MIME: b"image/png",
 
-		// This is just some random name for the property on our window, into which
-		// the clipboard owner writes the data we requested.
-		ARBOARD_CLIPBOARD,
-	}
+        // This is just some random name for the property on our window, into which
+        // the clipboard owner writes the data we requested.
+        ARBOARD_CLIPBOARD,
+    }
 }
 
 thread_local! {
-	static ATOM_NAME_CACHE: RefCell<HashMap<Atom, &'static str>> = Default::default();
+    static ATOM_NAME_CACHE: RefCell<HashMap<Atom, &'static str>> = Default::default();
 }
 
 // Some clipboard items, like images, may take a very long time to produce a
@@ -106,1256 +99,1123 @@ const SHORT_TIMEOUT_DUR: Duration = Duration::from_millis(10);
 
 #[derive(Debug, PartialEq, Eq)]
 enum ManagerHandoverState {
-	Idle,
-	InProgress,
-	Finished,
+    Idle,
+    InProgress,
+    Finished,
 }
 
 struct GlobalClipboard {
-	inner: Arc<Inner>,
+    inner: Arc<Inner>,
 
-	/// Join handle to the thread which serves selection requests.
-	server_handle: JoinHandle<()>,
+    /// Join handle to the thread which serves selection requests.
+    server_handle: JoinHandle<()>,
 }
 
 struct XContext {
-	conn: RustConnection,
-	win_id: u32,
+    conn: RustConnection,
+    win_id: u32,
 }
 
 struct Inner {
-	/// The context for the thread which serves clipboard read
-	/// requests coming to us.
-	server: XContext,
-	atoms: Atoms,
+    /// The context for the thread which serves clipboard read
+    /// requests coming to us.
+    server: XContext,
+    atoms: Atoms,
 
-	clipboard: Selection,
-	primary: Selection,
-	secondary: Selection,
+    clipboard: Selection,
+    primary: Selection,
+    secondary: Selection,
 
-	handover_state: Mutex<ManagerHandoverState>,
-	handover_cv: Condvar,
+    handover_state: Mutex<ManagerHandoverState>,
+    handover_cv: Condvar,
 
-	serve_stopped: AtomicBool,
+    serve_stopped: AtomicBool,
 }
 
 impl XContext {
-	fn new() -> Result<Self> {
-		// create a new connection to an X11 server
-		let (conn, screen_num): (RustConnection, _) =
-			RustConnection::connect(None).map_err(|_| {
-				Error::unknown("X11 server connection timed out because it was unreachable")
-			})?;
-		let screen = conn.setup().roots.get(screen_num).ok_or(Error::unknown("no screen found"))?;
-		let win_id = conn.generate_id().map_err(into_unknown)?;
+    fn new() -> Result<Self> {
+        // create a new connection to an X11 server
+        let (conn, screen_num): (RustConnection, _) =
+            RustConnection::connect(None).map_err(|_| {
+                Error::unknown("X11 server connection timed out because it was unreachable")
+            })?;
+        let screen = conn
+            .setup()
+            .roots
+            .get(screen_num)
+            .ok_or(Error::unknown("no screen found"))?;
+        let win_id = conn.generate_id().map_err(into_unknown)?;
 
-		let event_mask =
+        let event_mask =
             // Just in case that some program reports SelectionNotify events
             // with XCB_EVENT_MASK_PROPERTY_CHANGE mask.
             EventMask::PROPERTY_CHANGE |
             // To receive DestroyNotify event and stop the message loop.
             EventMask::STRUCTURE_NOTIFY;
-		// create the window
-		conn.create_window(
-			// copy as much as possible from the parent, because no other specific input is needed
-			COPY_DEPTH_FROM_PARENT,
-			win_id,
-			screen.root,
-			0,
-			0,
-			1,
-			1,
-			0,
-			WindowClass::COPY_FROM_PARENT,
-			COPY_FROM_PARENT,
-			// don't subscribe to any special events because we are requesting everything we need ourselves
-			&CreateWindowAux::new().event_mask(event_mask),
-		)
-		.map_err(into_unknown)?;
-		conn.flush().map_err(into_unknown)?;
+        // create the window
+        conn.create_window(
+            // copy as much as possible from the parent, because no other specific input is needed
+            COPY_DEPTH_FROM_PARENT,
+            win_id,
+            screen.root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::COPY_FROM_PARENT,
+            COPY_FROM_PARENT,
+            // don't subscribe to any special events because we are requesting everything we need ourselves
+            &CreateWindowAux::new().event_mask(event_mask),
+        )
+        .map_err(into_unknown)?;
+        conn.flush().map_err(into_unknown)?;
 
-		Ok(Self { conn, win_id })
-	}
+        Ok(Self { conn, win_id })
+    }
 }
 
 #[derive(Default)]
 struct Selection {
-	data: RwLock<Option<Vec<ClipboardData>>>,
-	/// Mutex around nothing to use with the below condvar.
-	mutex: Mutex<()>,
-	/// A condvar that is notified when the contents of this clipboard are changed.
-	///
-	/// This is associated with `Self::mutex`.
-	data_changed: Condvar,
+    data: RwLock<Option<Vec<ClipboardData>>>,
+    /// Mutex around nothing to use with the below condvar.
+    mutex: Mutex<()>,
+    /// A condvar that is notified when the contents of this clipboard are changed.
+    ///
+    /// This is associated with `Self::mutex`.
+    data_changed: Condvar,
 }
 
 #[derive(Debug, Clone)]
 struct ClipboardData {
-	bytes: Vec<u8>,
+    bytes: Vec<u8>,
 
-	/// The atom representing the format in which the data is encoded.
-	format: Atom,
+    /// The atom representing the format in which the data is encoded.
+    format: Atom,
 }
 
 enum ReadSelNotifyResult {
-	GotData(Vec<u8>),
-	IncrStarted,
-	EventNotRecognized,
+    GotData(Vec<u8>),
+    IncrStarted,
+    EventNotRecognized,
 }
 
 impl Inner {
-	fn new() -> Result<Self> {
-		let server = XContext::new()?;
-		let atoms =
-			Atoms::new(&server.conn).map_err(into_unknown)?.reply().map_err(into_unknown)?;
+    fn new() -> Result<Self> {
+        let server = XContext::new()?;
+        let atoms = Atoms::new(&server.conn)
+            .map_err(into_unknown)?
+            .reply()
+            .map_err(into_unknown)?;
 
-		Ok(Self {
-			server,
-			atoms,
-			clipboard: Selection::default(),
-			primary: Selection::default(),
-			secondary: Selection::default(),
-			handover_state: Mutex::new(ManagerHandoverState::Idle),
-			handover_cv: Condvar::new(),
-			serve_stopped: AtomicBool::new(false),
-		})
-	}
+        Ok(Self {
+            server,
+            atoms,
+            clipboard: Selection::default(),
+            primary: Selection::default(),
+            secondary: Selection::default(),
+            handover_state: Mutex::new(ManagerHandoverState::Idle),
+            handover_cv: Condvar::new(),
+            serve_stopped: AtomicBool::new(false),
+        })
+    }
 
-	fn write(
-		&self,
-		data: Vec<ClipboardData>,
-		selection: LinuxClipboardKind,
-		wait: WaitConfig,
-	) -> Result<()> {
-		if self.serve_stopped.load(Ordering::Relaxed) {
-			return Err(Error::unknown("The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)"));
-		}
+    fn write(
+        &self,
+        data: Vec<ClipboardData>,
+        selection: LinuxClipboardKind,
+        wait: WaitConfig,
+    ) -> Result<()> {
+        if self.serve_stopped.load(Ordering::Relaxed) {
+            return Err(Error::unknown(
+                "The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)",
+            ));
+        }
 
-		let server_win = self.server.win_id;
+        let server_win = self.server.win_id;
 
-		// ICCCM version 2, section 2.6.1.3 states that we should re-assert ownership whenever data
-		// changes.
-		self.server
-			.conn
-			.set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
-			.map_err(|_| Error::ClipboardOccupied)?;
+        // ICCCM version 2, section 2.6.1.3 states that we should re-assert ownership whenever data
+        // changes.
+        self.server
+            .conn
+            .set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
+            .map_err(|_| Error::ClipboardOccupied)?;
 
-		self.server.conn.flush().map_err(into_unknown)?;
+        self.server.conn.flush().map_err(into_unknown)?;
 
-		// Just setting the data, and the `serve_requests` will take care of the rest.
-		let selection = self.selection_of(selection);
-		let mut data_guard = selection.data.write();
-		*data_guard = Some(data);
+        // Just setting the data, and the `serve_requests` will take care of the rest.
+        let selection = self.selection_of(selection);
+        let mut data_guard = selection.data.write();
+        *data_guard = Some(data);
 
-		// Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
-		// dropping the `data_guard` and calling `wait[_for]` and that we don't we wake other
-		// threads in that position.
-		let mut guard = selection.mutex.lock();
+        // Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
+        // dropping the `data_guard` and calling `wait[_for]` and that we don't we wake other
+        // threads in that position.
+        let mut guard = selection.mutex.lock();
 
-		// Notify any existing waiting threads that we have changed the data in the selection.
-		// It is important that the mutex is locked to prevent this notification getting lost.
-		selection.data_changed.notify_all();
+        // Notify any existing waiting threads that we have changed the data in the selection.
+        // It is important that the mutex is locked to prevent this notification getting lost.
+        selection.data_changed.notify_all();
 
-		match wait {
-			WaitConfig::None => {}
-			WaitConfig::Forever => {
-				drop(data_guard);
-				selection.data_changed.wait(&mut guard);
-			}
+        match wait {
+            WaitConfig::None => {}
+            WaitConfig::Forever => {
+                drop(data_guard);
+                selection.data_changed.wait(&mut guard);
+            }
 
-			WaitConfig::Until(deadline) => {
-				drop(data_guard);
-				selection.data_changed.wait_until(&mut guard, deadline);
-			}
-		}
+            WaitConfig::Until(deadline) => {
+                drop(data_guard);
+                selection.data_changed.wait_until(&mut guard, deadline);
+            }
+        }
 
-		Ok(())
-	}
+        Ok(())
+    }
 
-	/// `formats` must be a slice of atoms, where each atom represents a target format.
-	/// The first format from `formats`, which the clipboard owner supports will be the
-	/// format of the return value.
-	fn read(&self, formats: &[Atom], selection: LinuxClipboardKind) -> Result<ClipboardData> {
-		// if we are the current owner, we can get the current clipboard ourselves
-		if self.is_owner(selection)? {
-			let data = self.selection_of(selection).data.read();
-			if let Some(data_list) = &*data {
-				for data in data_list {
-					for format in formats {
-						if *format == data.format {
-							return Ok(data.clone());
-						}
-					}
-				}
-			}
-			return Err(Error::ContentNotAvailable);
-		}
-		// if let Some(data) = self.data.read().clone() {
-		//     return Ok(data)
-		// }
-		let reader = XContext::new()?;
+    /// `formats` must be a slice of atoms, where each atom represents a target format.
+    /// The first format from `formats`, which the clipboard owner supports will be the
+    /// format of the return value.
+    fn read(&self, formats: &[Atom], selection: LinuxClipboardKind) -> Result<ClipboardData> {
+        // if we are the current owner, we can get the current clipboard ourselves
+        if self.is_owner(selection)? {
+            let data = self.selection_of(selection).data.read();
+            if let Some(data_list) = &*data {
+                for data in data_list {
+                    for format in formats {
+                        if *format == data.format {
+                            return Ok(data.clone());
+                        }
+                    }
+                }
+            }
+            return Err(Error::ContentNotAvailable);
+        }
+        // if let Some(data) = self.data.read().clone() {
+        //     return Ok(data)
+        // }
+        let reader = XContext::new()?;
 
-		trace!("Trying to get the clipboard data.");
-		for format in formats {
-			match self.read_single(&reader, selection, *format) {
-				Ok(bytes) => {
-					return Ok(ClipboardData { bytes, format: *format });
-				}
-				Err(Error::ContentNotAvailable) => {
-					continue;
-				}
-				Err(e) => return Err(e),
-			}
-		}
-		Err(Error::ContentNotAvailable)
-	}
+        log::trace!("Trying to get the clipboard data.");
+        for format in formats {
+            match self.read_single(&reader, selection, *format) {
+                Ok(bytes) => {
+                    return Ok(ClipboardData {
+                        bytes,
+                        format: *format,
+                    });
+                }
+                Err(Error::ContentNotAvailable) => {
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(Error::ContentNotAvailable)
+    }
 
-	fn read_single(
-		&self,
-		reader: &XContext,
-		selection: LinuxClipboardKind,
-		target_format: Atom,
-	) -> Result<Vec<u8>> {
-		// Delete the property so that we can detect (using property notify)
-		// when the selection owner receives our request.
-		reader
-			.conn
-			.delete_property(reader.win_id, self.atoms.ARBOARD_CLIPBOARD)
-			.map_err(into_unknown)?;
+    fn read_single(
+        &self,
+        reader: &XContext,
+        selection: LinuxClipboardKind,
+        target_format: Atom,
+    ) -> Result<Vec<u8>> {
+        // Delete the property so that we can detect (using property notify)
+        // when the selection owner receives our request.
+        reader
+            .conn
+            .delete_property(reader.win_id, self.atoms.ARBOARD_CLIPBOARD)
+            .map_err(into_unknown)?;
 
-		// request to convert the clipboard selection to our data type(s)
-		reader
-			.conn
-			.convert_selection(
-				reader.win_id,
-				self.atom_of(selection),
-				target_format,
-				self.atoms.ARBOARD_CLIPBOARD,
-				Time::CURRENT_TIME,
-			)
-			.map_err(into_unknown)?;
-		reader.conn.sync().map_err(into_unknown)?;
+        // request to convert the clipboard selection to our data type(s)
+        reader
+            .conn
+            .convert_selection(
+                reader.win_id,
+                self.atom_of(selection),
+                target_format,
+                self.atoms.ARBOARD_CLIPBOARD,
+                Time::CURRENT_TIME,
+            )
+            .map_err(into_unknown)?;
+        reader.conn.sync().map_err(into_unknown)?;
 
-		trace!("Finished `convert_selection`");
+        log::trace!("Finished `convert_selection`");
 
-		let mut incr_data: Vec<u8> = Vec::new();
-		let mut using_incr = false;
+        let mut incr_data: Vec<u8> = Vec::new();
+        let mut using_incr = false;
 
-		let mut timeout_end = Instant::now() + LONG_TIMEOUT_DUR;
+        let mut timeout_end = Instant::now() + LONG_TIMEOUT_DUR;
 
-		while Instant::now() < timeout_end {
-			let event = reader.conn.poll_for_event().map_err(into_unknown)?;
-			let event = match event {
-				Some(e) => e,
-				None => {
-					std::thread::sleep(Duration::from_millis(1));
-					continue;
-				}
-			};
-			match event {
-				// The first response after requesting a selection.
-				Event::SelectionNotify(event) => {
-					trace!("Read SelectionNotify");
-					let result = self.handle_read_selection_notify(
-						reader,
-						target_format,
-						&mut using_incr,
-						&mut incr_data,
-						event,
-					)?;
-					match result {
-						ReadSelNotifyResult::GotData(data) => return Ok(data),
-						ReadSelNotifyResult::IncrStarted => {
-							// This means we received an indication that an the
-							// data is going to be sent INCRementally. Let's
-							// reset our timeout.
-							timeout_end += SHORT_TIMEOUT_DUR;
-						}
-						ReadSelNotifyResult::EventNotRecognized => (),
-					}
-				}
-				// If the previous SelectionNotify event specified that the data
-				// will be sent in INCR segments, each segment is transferred in
-				// a PropertyNotify event.
-				Event::PropertyNotify(event) => {
-					let result = self.handle_read_property_notify(
-						reader,
-						target_format,
-						using_incr,
-						&mut incr_data,
-						&mut timeout_end,
-						event,
-					)?;
-					if result {
-						return Ok(incr_data);
-					}
-				}
-				_ => log::trace!("An unexpected event arrived while reading the clipboard."),
-			}
-		}
-		log::info!("Time-out hit while reading the clipboard.");
-		Err(Error::ContentNotAvailable)
-	}
+        while Instant::now() < timeout_end {
+            let event = reader.conn.poll_for_event().map_err(into_unknown)?;
+            let event = match event {
+                Some(e) => e,
+                None => {
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+            };
+            match event {
+                // The first response after requesting a selection.
+                Event::SelectionNotify(event) => {
+                    log::trace!("Read SelectionNotify");
+                    let result = self.handle_read_selection_notify(
+                        reader,
+                        target_format,
+                        &mut using_incr,
+                        &mut incr_data,
+                        event,
+                    )?;
+                    match result {
+                        ReadSelNotifyResult::GotData(data) => return Ok(data),
+                        ReadSelNotifyResult::IncrStarted => {
+                            // This means we received an indication that an the
+                            // data is going to be sent INCRementally. Let's
+                            // reset our timeout.
+                            timeout_end += SHORT_TIMEOUT_DUR;
+                        }
+                        ReadSelNotifyResult::EventNotRecognized => (),
+                    }
+                }
+                // If the previous SelectionNotify event specified that the data
+                // will be sent in INCR segments, each segment is transferred in
+                // a PropertyNotify event.
+                Event::PropertyNotify(event) => {
+                    let result = self.handle_read_property_notify(
+                        reader,
+                        target_format,
+                        using_incr,
+                        &mut incr_data,
+                        &mut timeout_end,
+                        event,
+                    )?;
+                    if result {
+                        return Ok(incr_data);
+                    }
+                }
+                _ => log::trace!("An unexpected event arrived while reading the clipboard."),
+            }
+        }
+        log::info!("Time-out hit while reading the clipboard.");
+        Err(Error::ContentNotAvailable)
+    }
 
-	fn atom_of(&self, selection: LinuxClipboardKind) -> Atom {
-		match selection {
-			LinuxClipboardKind::Clipboard => self.atoms.CLIPBOARD,
-			LinuxClipboardKind::Primary => self.atoms.PRIMARY,
-			LinuxClipboardKind::Secondary => self.atoms.SECONDARY,
-		}
-	}
+    fn atom_of(&self, selection: LinuxClipboardKind) -> Atom {
+        match selection {
+            LinuxClipboardKind::Clipboard => self.atoms.CLIPBOARD,
+            LinuxClipboardKind::Primary => self.atoms.PRIMARY,
+            LinuxClipboardKind::Secondary => self.atoms.SECONDARY,
+        }
+    }
 
-	fn selection_of(&self, selection: LinuxClipboardKind) -> &Selection {
-		match selection {
-			LinuxClipboardKind::Clipboard => &self.clipboard,
-			LinuxClipboardKind::Primary => &self.primary,
-			LinuxClipboardKind::Secondary => &self.secondary,
-		}
-	}
+    fn selection_of(&self, selection: LinuxClipboardKind) -> &Selection {
+        match selection {
+            LinuxClipboardKind::Clipboard => &self.clipboard,
+            LinuxClipboardKind::Primary => &self.primary,
+            LinuxClipboardKind::Secondary => &self.secondary,
+        }
+    }
 
-	fn kind_of(&self, atom: Atom) -> Option<LinuxClipboardKind> {
-		match atom {
-			a if a == self.atoms.CLIPBOARD => Some(LinuxClipboardKind::Clipboard),
-			a if a == self.atoms.PRIMARY => Some(LinuxClipboardKind::Primary),
-			a if a == self.atoms.SECONDARY => Some(LinuxClipboardKind::Secondary),
-			_ => None,
-		}
-	}
+    fn kind_of(&self, atom: Atom) -> Option<LinuxClipboardKind> {
+        match atom {
+            a if a == self.atoms.CLIPBOARD => Some(LinuxClipboardKind::Clipboard),
+            a if a == self.atoms.PRIMARY => Some(LinuxClipboardKind::Primary),
+            a if a == self.atoms.SECONDARY => Some(LinuxClipboardKind::Secondary),
+            _ => None,
+        }
+    }
 
-	fn is_owner(&self, selection: LinuxClipboardKind) -> Result<bool> {
-		let current = self
-			.server
-			.conn
-			.get_selection_owner(self.atom_of(selection))
-			.map_err(into_unknown)?
-			.reply()
-			.map_err(into_unknown)?
-			.owner;
+    fn is_owner(&self, selection: LinuxClipboardKind) -> Result<bool> {
+        let current = self
+            .server
+            .conn
+            .get_selection_owner(self.atom_of(selection))
+            .map_err(into_unknown)?
+            .reply()
+            .map_err(into_unknown)?
+            .owner;
 
-		Ok(current == self.server.win_id)
-	}
+        Ok(current == self.server.win_id)
+    }
 
-	fn atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> Result<String> {
-		String::from_utf8(
-			self.server
-				.conn
-				.get_atom_name(atom)
-				.map_err(into_unknown)?
-				.reply()
-				.map_err(into_unknown)?
-				.name,
-		)
-		.map_err(into_unknown)
-	}
-	fn atom_name_dbg(&self, atom: x11rb::protocol::xproto::Atom) -> &'static str {
-		ATOM_NAME_CACHE.with(|cache| {
-			let mut cache = cache.borrow_mut();
-			match cache.entry(atom) {
-				Entry::Occupied(entry) => *entry.get(),
-				Entry::Vacant(entry) => {
-					let s = self
-						.atom_name(atom)
-						.map(|s| Box::leak(s.into_boxed_str()) as &str)
-						.unwrap_or("FAILED-TO-GET-THE-ATOM-NAME");
-					entry.insert(s);
-					s
-				}
-			}
-		})
-	}
+    fn atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> Result<String> {
+        String::from_utf8(
+            self.server
+                .conn
+                .get_atom_name(atom)
+                .map_err(into_unknown)?
+                .reply()
+                .map_err(into_unknown)?
+                .name,
+        )
+        .map_err(into_unknown)
+    }
 
-	fn handle_read_selection_notify(
-		&self,
-		reader: &XContext,
-		target_format: u32,
-		using_incr: &mut bool,
-		incr_data: &mut Vec<u8>,
-		event: SelectionNotifyEvent,
-	) -> Result<ReadSelNotifyResult> {
-		// The property being set to NONE means that the `convert_selection`
-		// failed.
+    fn atom_name_dbg(&self, atom: x11rb::protocol::xproto::Atom) -> &'static str {
+        ATOM_NAME_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            match cache.entry(atom) {
+                Entry::Occupied(entry) => *entry.get(),
+                Entry::Vacant(entry) => {
+                    let s = self
+                        .atom_name(atom)
+                        .map(|s| Box::leak(s.into_boxed_str()) as &str)
+                        .unwrap_or("FAILED-TO-GET-THE-ATOM-NAME");
+                    entry.insert(s);
+                    s
+                }
+            }
+        })
+    }
 
-		// According to: https://tronche.com/gui/x/icccm/sec-2.html#s-2.4
-		// the target must be set to the same as what we requested.
-		if event.property == NONE || event.target != target_format {
-			return Err(Error::ContentNotAvailable);
-		}
-		if self.kind_of(event.selection).is_none() {
-			log::info!("Received a SelectionNotify for a selection other than CLIPBOARD, PRIMARY or SECONDARY. This is unexpected.");
-			return Ok(ReadSelNotifyResult::EventNotRecognized);
-		}
-		if *using_incr {
-			log::warn!("Received a SelectionNotify while already expecting INCR segments.");
-			return Ok(ReadSelNotifyResult::EventNotRecognized);
-		}
-		// request the selection
-		let mut reply = reader
-			.conn
-			.get_property(true, event.requestor, event.property, event.target, 0, u32::MAX / 4)
-			.map_err(into_unknown)?
-			.reply()
-			.map_err(into_unknown)?;
+    fn handle_read_selection_notify(
+        &self,
+        reader: &XContext,
+        target_format: u32,
+        using_incr: &mut bool,
+        incr_data: &mut Vec<u8>,
+        event: SelectionNotifyEvent,
+    ) -> Result<ReadSelNotifyResult> {
+        // The property being set to NONE means that the `convert_selection`
+        // failed.
 
-		// trace!("Property.type: {:?}", self.atom_name(reply.type_));
+        // According to: https://tronche.com/gui/x/icccm/sec-2.html#s-2.4
+        // the target must be set to the same as what we requested.
+        if event.property == NONE || event.target != target_format {
+            return Err(Error::ContentNotAvailable);
+        }
+        if self.kind_of(event.selection).is_none() {
+            log::info!(
+                "Received a SelectionNotify for a selection other than CLIPBOARD, PRIMARY or SECONDARY. This is unexpected."
+            );
+            return Ok(ReadSelNotifyResult::EventNotRecognized);
+        }
+        if *using_incr {
+            log::warn!("Received a SelectionNotify while already expecting INCR segments.");
+            return Ok(ReadSelNotifyResult::EventNotRecognized);
+        }
+        // request the selection
+        let mut reply = reader
+            .conn
+            .get_property(
+                true,
+                event.requestor,
+                event.property,
+                event.target,
+                0,
+                u32::MAX / 4,
+            )
+            .map_err(into_unknown)?
+            .reply()
+            .map_err(into_unknown)?;
 
-		// we found something
-		if reply.type_ == target_format {
-			Ok(ReadSelNotifyResult::GotData(reply.value))
-		} else if reply.type_ == self.atoms.INCR {
-			// Note that we call the get_property again because we are
-			// indicating that we are ready to receive the data by deleting the
-			// property, however deleting only works if the type matches the
-			// property type. But the type didn't match in the previous call.
-			reply = reader
-				.conn
-				.get_property(
-					true,
-					event.requestor,
-					event.property,
-					self.atoms.INCR,
-					0,
-					u32::MAX / 4,
-				)
-				.map_err(into_unknown)?
-				.reply()
-				.map_err(into_unknown)?;
-			log::trace!("Receiving INCR segments");
-			*using_incr = true;
-			if reply.value_len == 4 {
-				let min_data_len = reply.value32().and_then(|mut vals| vals.next()).unwrap_or(0);
-				incr_data.reserve(min_data_len as usize);
-			}
-			Ok(ReadSelNotifyResult::IncrStarted)
-		} else {
-			// this should never happen, we have sent a request only for supported types
-			Err(Error::unknown("incorrect type received from clipboard"))
-		}
-	}
+        //log::trace!("Property.type: {:?}", self.atom_name(reply.type_));
 
-	/// Returns Ok(true) when the incr_data is ready
-	fn handle_read_property_notify(
-		&self,
-		reader: &XContext,
-		target_format: u32,
-		using_incr: bool,
-		incr_data: &mut Vec<u8>,
-		timeout_end: &mut Instant,
-		event: PropertyNotifyEvent,
-	) -> Result<bool> {
-		if event.atom != self.atoms.ARBOARD_CLIPBOARD || event.state != Property::NEW_VALUE {
-			return Ok(false);
-		}
-		if !using_incr {
-			// This must mean the selection owner received our request, and is
-			// now preparing the data
-			return Ok(false);
-		}
-		let reply = reader
-			.conn
-			.get_property(true, event.window, event.atom, target_format, 0, u32::MAX / 4)
-			.map_err(into_unknown)?
-			.reply()
-			.map_err(into_unknown)?;
+        // we found something
+        if reply.type_ == target_format {
+            Ok(ReadSelNotifyResult::GotData(reply.value))
+        } else if reply.type_ == self.atoms.INCR {
+            // Note that we call the get_property again because we are
+            // indicating that we are ready to receive the data by deleting the
+            // property, however deleting only works if the type matches the
+            // property type. But the type didn't match in the previous call.
+            reply = reader
+                .conn
+                .get_property(
+                    true,
+                    event.requestor,
+                    event.property,
+                    self.atoms.INCR,
+                    0,
+                    u32::MAX / 4,
+                )
+                .map_err(into_unknown)?
+                .reply()
+                .map_err(into_unknown)?;
+            log::trace!("Receiving INCR segments");
+            *using_incr = true;
+            if reply.value_len == 4 {
+                let min_data_len = reply
+                    .value32()
+                    .and_then(|mut vals| vals.next())
+                    .unwrap_or(0);
+                incr_data.reserve(min_data_len as usize);
+            }
+            Ok(ReadSelNotifyResult::IncrStarted)
+        } else {
+            // this should never happen, we have sent a request only for supported types
+            Err(Error::unknown("incorrect type received from clipboard"))
+        }
+    }
 
-		// log::trace!("Received segment. value_len {}", reply.value_len,);
-		if reply.value_len == 0 {
-			// This indicates that all the data has been sent.
-			return Ok(true);
-		}
-		incr_data.extend(reply.value);
+    /// Returns Ok(true) when the incr_data is ready
+    fn handle_read_property_notify(
+        &self,
+        reader: &XContext,
+        target_format: u32,
+        using_incr: bool,
+        incr_data: &mut Vec<u8>,
+        timeout_end: &mut Instant,
+        event: PropertyNotifyEvent,
+    ) -> Result<bool> {
+        if event.atom != self.atoms.ARBOARD_CLIPBOARD || event.state != Property::NEW_VALUE {
+            return Ok(false);
+        }
+        if !using_incr {
+            // This must mean the selection owner received our request, and is
+            // now preparing the data
+            return Ok(false);
+        }
+        let reply = reader
+            .conn
+            .get_property(
+                true,
+                event.window,
+                event.atom,
+                target_format,
+                0,
+                u32::MAX / 4,
+            )
+            .map_err(into_unknown)?
+            .reply()
+            .map_err(into_unknown)?;
 
-		// Let's reset our timeout, since we received a valid chunk.
-		*timeout_end = Instant::now() + SHORT_TIMEOUT_DUR;
+        // log::trace!("Received segment. value_len {}", reply.value_len,);
+        if reply.value_len == 0 {
+            // This indicates that all the data has been sent.
+            return Ok(true);
+        }
+        incr_data.extend(reply.value);
 
-		// Not yet complete
-		Ok(false)
-	}
+        // Let's reset our timeout, since we received a valid chunk.
+        *timeout_end = Instant::now() + SHORT_TIMEOUT_DUR;
 
-	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<()> {
-		let selection = match self.kind_of(event.selection) {
-			Some(kind) => kind,
-			None => {
-				warn!("Received a selection request to a selection other than the CLIPBOARD, PRIMARY or SECONDARY. This is unexpected.");
-				return Ok(());
-			}
-		};
+        // Not yet complete
+        Ok(false)
+    }
 
-		let success;
-		// we are asked for a list of supported conversion targets
-		if event.target == self.atoms.TARGETS {
-			trace!("Handling TARGETS, dst property is {}", self.atom_name_dbg(event.property));
-			let mut targets = Vec::with_capacity(10);
-			targets.push(self.atoms.TARGETS);
-			targets.push(self.atoms.SAVE_TARGETS);
-			let data = self.selection_of(selection).data.read();
-			if let Some(data_list) = &*data {
-				for data in data_list {
-					targets.push(data.format);
-					if data.format == self.atoms.UTF8_STRING {
-						// When we are storing a UTF8 string,
-						// add all equivalent formats to the supported targets
-						targets.push(self.atoms.UTF8_MIME_0);
-						targets.push(self.atoms.UTF8_MIME_1);
-					}
-				}
-			}
-			self.server
-				.conn
-				.change_property32(
-					PropMode::REPLACE,
-					event.requestor,
-					event.property,
-					// TODO: change to `AtomEnum::ATOM`
-					self.atoms.ATOM,
-					&targets,
-				)
-				.map_err(into_unknown)?;
-			self.server.conn.flush().map_err(into_unknown)?;
-			success = true;
-		} else {
-			trace!("Handling request for (probably) the clipboard contents.");
-			let data = self.selection_of(selection).data.read();
-			if let Some(data_list) = &*data {
-				success = match data_list.iter().find(|d| d.format == event.target) {
-					Some(data) => {
-						self.server
-							.conn
-							.change_property8(
-								PropMode::REPLACE,
-								event.requestor,
-								event.property,
-								event.target,
-								&data.bytes,
-							)
-							.map_err(into_unknown)?;
-						self.server.conn.flush().map_err(into_unknown)?;
-						true
-					}
-					None => false,
-				};
-			} else {
-				// This must mean that we lost ownership of the data
-				// since the other side requested the selection.
-				// Let's respond with the property set to none.
-				success = false;
-			}
-		}
-		// on failure we notify the requester of it
-		let property = if success { event.property } else { AtomEnum::NONE.into() };
-		// tell the requestor that we finished sending data
-		self.server
-			.conn
-			.send_event(
-				false,
-				event.requestor,
-				EventMask::NO_EVENT,
-				SelectionNotifyEvent {
-					response_type: SELECTION_NOTIFY_EVENT,
-					sequence: event.sequence,
-					time: event.time,
-					requestor: event.requestor,
-					selection: event.selection,
-					target: event.target,
-					property,
-				},
-			)
-			.map_err(into_unknown)?;
+    fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<()> {
+        let selection = match self.kind_of(event.selection) {
+            Some(kind) => kind,
+            None => {
+                log::warn!(
+                    "Received a selection request to a selection other than the CLIPBOARD, PRIMARY or SECONDARY. This is unexpected."
+                );
+                return Ok(());
+            }
+        };
 
-		self.server.conn.flush().map_err(into_unknown)
-	}
+        let success;
+        // we are asked for a list of supported conversion targets
+        if event.target == self.atoms.TARGETS {
+            log::trace!(
+                "Handling TARGETS, dst property is {}",
+                self.atom_name_dbg(event.property)
+            );
+            let mut targets = Vec::with_capacity(10);
+            targets.push(self.atoms.TARGETS);
+            targets.push(self.atoms.SAVE_TARGETS);
+            let data = self.selection_of(selection).data.read();
+            if let Some(data_list) = &*data {
+                for data in data_list {
+                    targets.push(data.format);
+                    if data.format == self.atoms.UTF8_STRING {
+                        // When we are storing a UTF8 string,
+                        // add all equivalent formats to the supported targets
+                        targets.push(self.atoms.UTF8_MIME_0);
+                        targets.push(self.atoms.UTF8_MIME_1);
+                    }
+                }
+            }
+            self.server
+                .conn
+                .change_property32(
+                    PropMode::REPLACE,
+                    event.requestor,
+                    event.property,
+                    // TODO: change to `AtomEnum::ATOM`
+                    self.atoms.ATOM,
+                    &targets,
+                )
+                .map_err(into_unknown)?;
+            self.server.conn.flush().map_err(into_unknown)?;
+            success = true;
+        } else {
+            log::trace!("Handling request for (probably) the clipboard contents.");
+            let data = self.selection_of(selection).data.read();
+            if let Some(data_list) = &*data {
+                success = match data_list.iter().find(|d| d.format == event.target) {
+                    Some(data) => {
+                        self.server
+                            .conn
+                            .change_property8(
+                                PropMode::REPLACE,
+                                event.requestor,
+                                event.property,
+                                event.target,
+                                &data.bytes,
+                            )
+                            .map_err(into_unknown)?;
+                        self.server.conn.flush().map_err(into_unknown)?;
+                        true
+                    }
+                    None => false,
+                };
+            } else {
+                // This must mean that we lost ownership of the data
+                // since the other side requested the selection.
+                // Let's respond with the property set to none.
+                success = false;
+            }
+        }
+        // on failure we notify the requester of it
+        let property = if success {
+            event.property
+        } else {
+            AtomEnum::NONE.into()
+        };
+        // tell the requestor that we finished sending data
+        self.server
+            .conn
+            .send_event(
+                false,
+                event.requestor,
+                EventMask::NO_EVENT,
+                SelectionNotifyEvent {
+                    response_type: SELECTION_NOTIFY_EVENT,
+                    sequence: event.sequence,
+                    time: event.time,
+                    requestor: event.requestor,
+                    selection: event.selection,
+                    target: event.target,
+                    property,
+                },
+            )
+            .map_err(into_unknown)?;
 
-	fn ask_clipboard_manager_to_request_our_data(&self) -> Result<()> {
-		if self.server.win_id == 0 {
-			// This shouldn't really ever happen but let's just check.
-			error!("The server's window id was 0. This is unexpected");
-			return Ok(());
-		}
+        self.server.conn.flush().map_err(into_unknown)
+    }
 
-		if !self.is_owner(LinuxClipboardKind::Clipboard)? {
-			// We are not owning the clipboard, nothing to do.
-			return Ok(());
-		}
-		if self.selection_of(LinuxClipboardKind::Clipboard).data.read().is_none() {
-			// If we don't have any data, there's nothing to do.
-			return Ok(());
-		}
+    fn ask_clipboard_manager_to_request_our_data(&self) -> Result<()> {
+        if self.server.win_id == 0 {
+            // This shouldn't really ever happen but let's just check.
+            log::error!("The server's window id was 0. This is unexpected");
+            return Ok(());
+        }
 
-		// It's important that we lock the state before sending the request
-		// because we don't want the request server thread to lock the state
-		// after the request but before we can lock it here.
-		let mut handover_state = self.handover_state.lock();
+        if !self.is_owner(LinuxClipboardKind::Clipboard)? {
+            // We are not owning the clipboard, nothing to do.
+            return Ok(());
+        }
+        if self
+            .selection_of(LinuxClipboardKind::Clipboard)
+            .data
+            .read()
+            .is_none()
+        {
+            // If we don't have any data, there's nothing to do.
+            return Ok(());
+        }
 
-		trace!("Sending the data to the clipboard manager");
-		self.server
-			.conn
-			.convert_selection(
-				self.server.win_id,
-				self.atoms.CLIPBOARD_MANAGER,
-				self.atoms.SAVE_TARGETS,
-				self.atoms.ARBOARD_CLIPBOARD,
-				Time::CURRENT_TIME,
-			)
-			.map_err(into_unknown)?;
-		self.server.conn.flush().map_err(into_unknown)?;
+        // It's important that we lock the state before sending the request
+        // because we don't want the request server thread to lock the state
+        // after the request but before we can lock it here.
+        let mut handover_state = self.handover_state.lock();
 
-		*handover_state = ManagerHandoverState::InProgress;
-		let max_handover_duration = Duration::from_millis(100);
+        log::trace!("Sending the data to the clipboard manager");
+        self.server
+            .conn
+            .convert_selection(
+                self.server.win_id,
+                self.atoms.CLIPBOARD_MANAGER,
+                self.atoms.SAVE_TARGETS,
+                self.atoms.ARBOARD_CLIPBOARD,
+                Time::CURRENT_TIME,
+            )
+            .map_err(into_unknown)?;
+        self.server.conn.flush().map_err(into_unknown)?;
 
-		// Note that we are using a parking_lot condvar here, which doesn't wake up
-		// spuriously
-		let result = self.handover_cv.wait_for(&mut handover_state, max_handover_duration);
+        *handover_state = ManagerHandoverState::InProgress;
+        let max_handover_duration = Duration::from_millis(100);
 
-		if *handover_state == ManagerHandoverState::Finished {
-			return Ok(());
-		}
-		if result.timed_out() {
-			warn!("Could not hand the clipboard contents over to the clipboard manager. The request timed out.");
-			return Ok(());
-		}
+        // Note that we are using a parking_lot condvar here, which doesn't wake up
+        // spuriously
+        let result = self
+            .handover_cv
+            .wait_for(&mut handover_state, max_handover_duration);
 
-		Err(Error::unknown("The handover was not finished and the condvar didn't time out, yet the condvar wait ended. This should be unreachable."))
-	}
+        if *handover_state == ManagerHandoverState::Finished {
+            return Ok(());
+        }
+        if result.timed_out() {
+            log::warn!(
+                "Could not hand the clipboard contents over to the clipboard manager. The request timed out."
+            );
+            return Ok(());
+        }
+
+        Err(Error::unknown(
+            "The handover was not finished and the condvar didn't time out, yet the condvar wait ended. This should be unreachable.",
+        ))
+    }
 }
 
 fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>> {
-	fn handover_finished(clip: &Arc<Inner>, mut handover_state: MutexGuard<ManagerHandoverState>) {
-		log::trace!("Finishing clipboard manager handover.");
-		*handover_state = ManagerHandoverState::Finished;
+    fn handover_finished(clip: &Arc<Inner>, mut handover_state: MutexGuard<ManagerHandoverState>) {
+        log::trace!("Finishing clipboard manager handover.");
+        *handover_state = ManagerHandoverState::Finished;
 
-		// Not sure if unlocking the mutex is necessary here but better safe than sorry.
-		drop(handover_state);
+        // Not sure if unlocking the mutex is necessary here but better safe than sorry.
+        drop(handover_state);
 
-		clip.handover_cv.notify_all();
-	}
+        clip.handover_cv.notify_all();
+    }
 
-	trace!("Started serve requests thread.");
+    log::trace!("Started serve requests thread.");
 
-	let _guard = ScopeGuard::new(|| {
-		context.serve_stopped.store(true, Ordering::Relaxed);
-	});
+    let _guard = util::defer(|| {
+        context.serve_stopped.store(true, Ordering::Relaxed);
+    });
 
-	let mut written = false;
-	let mut notified = false;
+    let mut written = false;
+    let mut notified = false;
 
-	loop {
-		match context.server.conn.wait_for_event().map_err(into_unknown)? {
-			Event::DestroyNotify(_) => {
-				// This window is being destroyed.
-				trace!("Clipboard server window is being destroyed x_x");
-				return Ok(());
-			}
-			Event::SelectionClear(event) => {
-				// TODO: check if this works
-				// Someone else has new content in the clipboard, so it is
-				// notifying us that we should delete our data now.
-				trace!("Somebody else owns the clipboard now");
+    loop {
+        match context.server.conn.wait_for_event().map_err(into_unknown)? {
+            Event::DestroyNotify(_) => {
+                // This window is being destroyed.
+                log::trace!("Clipboard server window is being destroyed x_x");
+                return Ok(());
+            }
+            Event::SelectionClear(event) => {
+                // TODO: check if this works
+                // Someone else has new content in the clipboard, so it is
+                // notifying us that we should delete our data now.
+                log::trace!("Somebody else owns the clipboard now");
 
-				if let Some(selection) = context.kind_of(event.selection) {
-					let selection = context.selection_of(selection);
-					let mut data_guard = selection.data.write();
-					*data_guard = None;
+                if let Some(selection) = context.kind_of(event.selection) {
+                    let selection = context.selection_of(selection);
+                    let mut data_guard = selection.data.write();
+                    *data_guard = None;
 
-					// It is important that this mutex is locked at the time of calling
-					// `notify_all` to prevent notifications getting lost in case the sleeping
-					// thread has unlocked its `data_guard` and is just about to sleep.
-					// It is also important that the RwLock is kept write-locked for the same
-					// reason.
-					let _guard = selection.mutex.lock();
-					selection.data_changed.notify_all();
-				}
-			}
-			Event::SelectionRequest(event) => {
-				trace!(
-					"SelectionRequest - selection is: {}, target is {}",
-					context.atom_name_dbg(event.selection),
-					context.atom_name_dbg(event.target),
-				);
-				// Someone is requesting the clipboard content from us.
-				context.handle_selection_request(event).map_err(into_unknown)?;
+                    // It is important that this mutex is locked at the time of calling
+                    // `notify_all` to prevent notifications getting lost in case the sleeping
+                    // thread has unlocked its `data_guard` and is just about to sleep.
+                    // It is also important that the RwLock is kept write-locked for the same
+                    // reason.
+                    let _guard = selection.mutex.lock();
+                    selection.data_changed.notify_all();
+                }
+            }
+            Event::SelectionRequest(event) => {
+                log::trace!(
+                    "SelectionRequest - selection is: {}, target is {}",
+                    context.atom_name_dbg(event.selection),
+                    context.atom_name_dbg(event.target),
+                );
+                // Someone is requesting the clipboard content from us.
+                context
+                    .handle_selection_request(event)
+                    .map_err(into_unknown)?;
 
-				// if we are in the progress of saving to the clipboard manager
-				// make sure we save that we have finished writing
-				let handover_state = context.handover_state.lock();
-				if *handover_state == ManagerHandoverState::InProgress {
-					// Only set written, when the actual contents were written,
-					// not just a response to what TARGETS we have.
-					if event.target != context.atoms.TARGETS {
-						trace!("The contents were written to the clipboard manager.");
-						written = true;
-						// if we have written and notified, make sure to notify that we are done
-						if notified {
-							handover_finished(&context, handover_state);
-						}
-					}
-				}
-			}
-			Event::SelectionNotify(event) => {
-				// We've requested the clipboard content and this is the answer.
-				// Considering that this thread is not responsible for reading
-				// clipboard contents, this must come from the clipboard manager
-				// signaling that the data was handed over successfully.
-				if event.selection != context.atoms.CLIPBOARD_MANAGER {
-					error!("Received a `SelectionNotify` from a selection other than the CLIPBOARD_MANAGER. This is unexpected in this thread.");
-					continue;
-				}
-				let handover_state = context.handover_state.lock();
-				if *handover_state == ManagerHandoverState::InProgress {
-					// Note that some clipboard managers send a selection notify
-					// before even sending a request for the actual contents.
-					// (That's why we use the "notified" & "written" flags)
-					trace!("The clipboard manager indicated that it's done requesting the contents from us.");
-					notified = true;
+                // if we are in the progress of saving to the clipboard manager
+                // make sure we save that we have finished writing
+                let handover_state = context.handover_state.lock();
+                if *handover_state == ManagerHandoverState::InProgress {
+                    // Only set written, when the actual contents were written,
+                    // not just a response to what TARGETS we have.
+                    if event.target != context.atoms.TARGETS {
+                        log::trace!("The contents were written to the clipboard manager.");
+                        written = true;
+                        // if we have written and notified, make sure to notify that we are done
+                        if notified {
+                            handover_finished(&context, handover_state);
+                        }
+                    }
+                }
+            }
+            Event::SelectionNotify(event) => {
+                // We've requested the clipboard content and this is the answer.
+                // Considering that this thread is not responsible for reading
+                // clipboard contents, this must come from the clipboard manager
+                // signaling that the data was handed over successfully.
+                if event.selection != context.atoms.CLIPBOARD_MANAGER {
+                    log::error!(
+                        "Received a `SelectionNotify` from a selection other than the CLIPBOARD_MANAGER. This is unexpected in this thread."
+                    );
+                    continue;
+                }
+                let handover_state = context.handover_state.lock();
+                if *handover_state == ManagerHandoverState::InProgress {
+                    // Note that some clipboard managers send a selection notify
+                    // before even sending a request for the actual contents.
+                    // (That's why we use the "notified" & "written" flags)
+                    log::trace!(
+                        "The clipboard manager indicated that it's done requesting the contents from us."
+                    );
+                    notified = true;
 
-					// One would think that we could also finish if the property
-					// here is set 0, because that indicates failure. However
-					// this is not the case; for example on KDE plasma 5.18, we
-					// immediately get a SelectionNotify with property set to 0,
-					// but following that, we also get a valid SelectionRequest
-					// from the clipboard manager.
-					if written {
-						handover_finished(&context, handover_state);
-					}
-				}
-			}
-			_event => {
-				// May be useful for debugging but nothing else really.
-				// trace!("Received unwanted event: {:?}", event);
-			}
-		}
-	}
+                    // One would think that we could also finish if the property
+                    // here is set 0, because that indicates failure. However
+                    // this is not the case; for example on KDE plasma 5.18, we
+                    // immediately get a SelectionNotify with property set to 0,
+                    // but following that, we also get a valid SelectionRequest
+                    // from the clipboard manager.
+                    if written {
+                        handover_finished(&context, handover_state);
+                    }
+                }
+            }
+            _event => {
+                // May be useful for debugging but nothing else really.
+                //log::trace!("Received unwanted event: {:?}", event);
+            }
+        }
+    }
 }
 
 pub(crate) struct Clipboard {
-	inner: Arc<Inner>,
+    inner: Arc<Inner>,
 }
 
 impl Clipboard {
-	pub(crate) fn new() -> Result<Self> {
-		let mut global_cb = CLIPBOARD.lock();
-		if let Some(global_cb) = &*global_cb {
-			return Ok(Self { inner: Arc::clone(&global_cb.inner) });
-		}
-		// At this point we know that the clipboard does not exist.
-		let ctx = Arc::new(Inner::new()?);
-		let join_handle;
-		{
-			let ctx = Arc::clone(&ctx);
-			join_handle = std::thread::spawn(move || {
-				if let Err(error) = serve_requests(ctx) {
-					error!("Worker thread errored with: {}", error);
-				}
-			});
-		}
-		*global_cb = Some(GlobalClipboard { inner: Arc::clone(&ctx), server_handle: join_handle });
-		Ok(Self { inner: ctx })
-	}
+    pub(crate) fn new() -> Result<Self> {
+        let mut global_cb = CLIPBOARD.lock();
+        if let Some(global_cb) = &*global_cb {
+            return Ok(Self {
+                inner: Arc::clone(&global_cb.inner),
+            });
+        }
+        // At this point we know that the clipboard does not exist.
+        let ctx = Arc::new(Inner::new()?);
+        let join_handle;
+        {
+            let ctx = Arc::clone(&ctx);
+            join_handle = std::thread::spawn(move || {
+                if let Err(error) = serve_requests(ctx) {
+                    log::error!("Worker thread errored with: {}", error);
+                }
+            });
+        }
+        *global_cb = Some(GlobalClipboard {
+            inner: Arc::clone(&ctx),
+            server_handle: join_handle,
+        });
+        Ok(Self { inner: ctx })
+    }
 
-	pub(crate) fn get_text(&self, selection: LinuxClipboardKind) -> Result<String> {
-		let formats = [
-			self.inner.atoms.UTF8_STRING,
-			self.inner.atoms.UTF8_MIME_0,
-			self.inner.atoms.UTF8_MIME_1,
-			self.inner.atoms.STRING,
-			self.inner.atoms.TEXT,
-			self.inner.atoms.TEXT_MIME_UNKNOWN,
-		];
-		let result = self.inner.read(&formats, selection)?;
-		if result.format == self.inner.atoms.STRING {
-			// ISO Latin-1
-			// See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
-			Ok(result.bytes.into_iter().map(|c| c as char).collect())
-		} else {
-			String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)
-		}
-	}
+    pub(crate) fn get_text(&self, selection: LinuxClipboardKind) -> Result<String> {
+        let formats = [
+            self.inner.atoms.UTF8_STRING,
+            self.inner.atoms.UTF8_MIME_0,
+            self.inner.atoms.UTF8_MIME_1,
+            self.inner.atoms.STRING,
+            self.inner.atoms.TEXT,
+            self.inner.atoms.TEXT_MIME_UNKNOWN,
+        ];
+        let result = self.inner.read(&formats, selection)?;
+        if result.format == self.inner.atoms.STRING {
+            // ISO Latin-1
+            // See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
+            Ok(result.bytes.into_iter().map(|c| c as char).collect())
+        } else {
+            String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)
+        }
+    }
 
-	pub(crate) fn set_text(
-		&self,
-		message: Cow<'_, str>,
-		selection: LinuxClipboardKind,
-		wait: WaitConfig,
-	) -> Result<()> {
-		let data = vec![ClipboardData {
-			bytes: message.into_owned().into_bytes(),
-			format: self.inner.atoms.UTF8_STRING,
-		}];
-		self.inner.write(data, selection, wait)
-	}
+    pub(crate) fn set_text(
+        &self,
+        message: Cow<'_, str>,
+        selection: LinuxClipboardKind,
+        wait: WaitConfig,
+    ) -> Result<()> {
+        let data = vec![ClipboardData {
+            bytes: message.into_owned().into_bytes(),
+            format: self.inner.atoms.UTF8_STRING,
+        }];
+        self.inner.write(data, selection, wait)
+    }
 
-	pub(crate) fn get_html(&self, selection: LinuxClipboardKind) -> Result<String> {
-		let formats = [self.inner.atoms.HTML];
-		let result = self.inner.read(&formats, selection)?;
-		String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)
-	}
+    pub(crate) fn get_html(&self, selection: LinuxClipboardKind) -> Result<String> {
+        let formats = [self.inner.atoms.HTML];
+        let result = self.inner.read(&formats, selection)?;
+        String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)
+    }
 
-	pub(crate) fn set_html(
-		&self,
-		html: Cow<'_, str>,
-		alt: Option<Cow<'_, str>>,
-		selection: LinuxClipboardKind,
-		wait: WaitConfig,
-	) -> Result<()> {
-		let mut data = vec![];
-		if let Some(alt_text) = alt {
-			data.push(ClipboardData {
-				bytes: alt_text.into_owned().into_bytes(),
-				format: self.inner.atoms.UTF8_STRING,
-			});
-		}
-		data.push(ClipboardData {
-			bytes: html.into_owned().into_bytes(),
-			format: self.inner.atoms.HTML,
-		});
-		self.inner.write(data, selection, wait)
-	}
+    pub(crate) fn set_html(
+        &self,
+        html: Cow<'_, str>,
+        alt: Option<Cow<'_, str>>,
+        selection: LinuxClipboardKind,
+        wait: WaitConfig,
+    ) -> Result<()> {
+        let mut data = vec![];
+        if let Some(alt_text) = alt {
+            data.push(ClipboardData {
+                bytes: alt_text.into_owned().into_bytes(),
+                format: self.inner.atoms.UTF8_STRING,
+            });
+        }
+        data.push(ClipboardData {
+            bytes: html.into_owned().into_bytes(),
+            format: self.inner.atoms.HTML,
+        });
+        self.inner.write(data, selection, wait)
+    }
 
-	#[cfg(feature = "image-data")]
-	pub(crate) fn get_image(&self, selection: LinuxClipboardKind) -> Result<ImageData<'static>> {
-		let formats = [self.inner.atoms.PNG_MIME];
-		let bytes = self.inner.read(&formats, selection)?.bytes;
+    pub(crate) fn get_image(&self, selection: LinuxClipboardKind) -> Result<Image> {
+        let formats = [self.inner.atoms.PNG_MIME];
+        let bytes = self.inner.read(&formats, selection)?.bytes;
+        // todo!: remove
+        assert_eq!(
+            image::guess_format(&bytes).unwrap(),
+            image::ImageFormat::Png
+        );
+        let id = hash(&bytes);
+        return Ok(Image {
+            id,
+            format: ImageFormat::Png,
+            bytes,
+        });
+    }
 
-		let cursor = std::io::Cursor::new(&bytes);
-		let mut reader = image::io::Reader::new(cursor);
-		reader.set_format(image::ImageFormat::Png);
-		let image = match reader.decode() {
-			Ok(img) => img.into_rgba8(),
-			Err(_e) => return Err(Error::ConversionFailure),
-		};
-		let (w, h) = image.dimensions();
-		let image_data =
-			ImageData { width: w as usize, height: h as usize, bytes: image.into_raw().into() };
-		Ok(image_data)
-	}
+    pub(crate) fn set_image(
+        &self,
+        image: Image,
+        selection: LinuxClipboardKind,
+        wait: WaitConfig,
+    ) -> Result<()> {
+        // todo!: remove
+        assert_eq!(image.format, ImageFormat::Png);
+        let data = vec![ClipboardData {
+            bytes: image.bytes,
+            format: self.inner.atoms.PNG_MIME,
+        }];
+        self.inner.write(data, selection, wait)
+    }
 
-	#[cfg(feature = "image-data")]
-	pub(crate) fn set_image(
-		&self,
-		image: ImageData,
-		selection: LinuxClipboardKind,
-		wait: WaitConfig,
-	) -> Result<()> {
-		let encoded = encode_as_png(&image)?;
-		let data = vec![ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME }];
-		self.inner.write(data, selection, wait)
-	}
+    pub(crate) fn get_file_list(&self, selection: LinuxClipboardKind) -> Result<Vec<PathBuf>> {
+        let result = self.inner.read(&[self.inner.atoms.URI_LIST], selection)?;
 
-	pub(crate) fn get_file_list(&self, selection: LinuxClipboardKind) -> Result<Vec<PathBuf>> {
-		let result = self.inner.read(&[self.inner.atoms.URI_LIST], selection)?;
-
-		String::from_utf8(result.bytes)
-			.map_err(|_| Error::ConversionFailure)
-			.map(paths_from_uri_list)
-	}
+        String::from_utf8(result.bytes)
+            .map_err(|_| Error::ConversionFailure)
+            .map(paths_from_uri_list)
+    }
 }
 
 impl Drop for Clipboard {
-	fn drop(&mut self) {
-		// There are always at least 3 owners:
-		// the global, the server thread, and one `Clipboard::inner`
-		const MIN_OWNERS: usize = 3;
+    fn drop(&mut self) {
+        // There are always at least 3 owners:
+        // the global, the server thread, and one `Clipboard::inner`
+        const MIN_OWNERS: usize = 3;
 
-		// We start with locking the global guard to prevent race
-		// conditions below.
-		let mut global_cb = CLIPBOARD.lock();
-		if Arc::strong_count(&self.inner) == MIN_OWNERS {
-			// If the are the only owners of the clipboard are ourselves and
-			// the global object, then we should destroy the global object,
-			// and send the data to the clipboard manager
+        // We start with locking the global guard to prevent race
+        // conditions below.
+        let mut global_cb = CLIPBOARD.lock();
+        if Arc::strong_count(&self.inner) == MIN_OWNERS {
+            // If the are the only owners of the clipboard are ourselves and
+            // the global object, then we should destroy the global object,
+            // and send the data to the clipboard manager
 
-			if let Err(e) = self.inner.ask_clipboard_manager_to_request_our_data() {
-				error!("Could not hand the clipboard data over to the clipboard manager: {}", e);
-			}
-			let global_cb = global_cb.take();
-			if let Err(e) = self.inner.server.conn.destroy_window(self.inner.server.win_id) {
-				error!("Failed to destroy the clipboard window. Error: {}", e);
-				return;
-			}
-			if let Err(e) = self.inner.server.conn.flush() {
-				error!("Failed to flush the clipboard window. Error: {}", e);
-				return;
-			}
-			if let Some(global_cb) = global_cb {
-				if let Err(e) = global_cb.server_handle.join() {
-					// Let's try extracting the error message
-					let message;
-					if let Some(msg) = e.downcast_ref::<&'static str>() {
-						message = Some((*msg).to_string());
-					} else if let Some(msg) = e.downcast_ref::<String>() {
-						message = Some(msg.clone());
-					} else {
-						message = None;
-					}
-					if let Some(message) = message {
-						error!(
-							"The clipboard server thread panicked. Panic message: '{}'",
-							message,
-						);
-					} else {
-						error!("The clipboard server thread panicked.");
-					}
-				}
-			}
-		}
-	}
+            if let Err(e) = self.inner.ask_clipboard_manager_to_request_our_data() {
+                log::error!(
+                    "Could not hand the clipboard data over to the clipboard manager: {}",
+                    e
+                );
+            }
+            let global_cb = global_cb.take();
+            if let Err(e) = self
+                .inner
+                .server
+                .conn
+                .destroy_window(self.inner.server.win_id)
+            {
+                log::error!("Failed to destroy the clipboard window. Error: {}", e);
+                return;
+            }
+            if let Err(e) = self.inner.server.conn.flush() {
+                log::error!("Failed to flush the clipboard window. Error: {}", e);
+                return;
+            }
+            if let Some(global_cb) = global_cb {
+                if let Err(e) = global_cb.server_handle.join() {
+                    // Let's try extracting the error message
+                    let message;
+                    if let Some(msg) = e.downcast_ref::<&'static str>() {
+                        message = Some((*msg).to_string());
+                    } else if let Some(msg) = e.downcast_ref::<String>() {
+                        message = Some(msg.clone());
+                    } else {
+                        message = None;
+                    }
+                    if let Some(message) = message {
+                        log::error!(
+                            "The clipboard server thread panicked. Panic message: '{}'",
+                            message,
+                        );
+                    } else {
+                        log::error!("The clipboard server thread panicked.");
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
-	Error::Unknown { description: error.to_string() }
-}
-
-#[cfg(feature = "image-data")]
-fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
-	use image::ImageEncoder as _;
-
-	if image.bytes.is_empty() || image.width == 0 || image.height == 0 {
-		return Err(Error::ConversionFailure);
-	}
-
-	let mut png_bytes = Vec::new();
-	let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
-	encoder
-		.write_image(
-			image.bytes.as_ref(),
-			image.width as u32,
-			image.height as u32,
-			image::ExtendedColorType::Rgba8,
-		)
-		.map_err(|_| Error::ConversionFailure)?;
-
-	Ok(png_bytes)
+    Error::Unknown {
+        description: error.to_string(),
+    }
 }
 
 fn paths_from_uri_list(uri_list: String) -> Vec<PathBuf> {
-	uri_list
-		.lines()
-		.filter_map(|s| s.strip_prefix("file://"))
-		.filter_map(|s| percent_decode_str(s).decode_utf8().ok())
-		.map(|decoded| PathBuf::from(decoded.as_ref()))
-		.collect()
+    uri_list
+        .lines()
+        .filter_map(|s| s.strip_prefix("file://"))
+        // todo! keep?
+        // .filter_map(|s| percent_decode_str(s).decode_utf8().ok())
+        .map(|decoded| PathBuf::from(decoded))
+        .collect()
 }
 
 /// Clipboard selection
 ///
 /// Linux has a concept of clipboard "selections" which tend to be used in different contexts. This
-/// enum provides a way to get/set to a specific clipboard (the default
-/// [`Clipboard`](Self::Clipboard) being used for the common platform API). You can choose which
-/// clipboard to use with [`GetExtLinux::clipboard`] and [`SetExtLinux::clipboard`].
+/// enum provides a way to get/set to a specific clipboard
 ///
 /// See <https://specifications.freedesktop.org/clipboards-spec/clipboards-0.1.txt> for a better
 /// description of the different clipboards.
 #[derive(Copy, Clone, Debug)]
 pub enum LinuxClipboardKind {
-	/// Typically used selection for explicit cut/copy/paste actions (ie. windows/macos like
-	/// clipboard behavior)
-	Clipboard,
+    /// Typically used selection for explicit cut/copy/paste actions (ie. windows/macos like
+    /// clipboard behavior)
+    Clipboard,
 
-	/// Typically used for mouse selections and/or currently selected text. Accessible via middle
-	/// mouse click.
-	///
-	/// *On Wayland, this may not be available for all systems (requires a compositor supporting
-	/// version 2 or above) and operations using this will return an error if unsupported.*
-	Primary,
+    /// Typically used for mouse selections and/or currently selected text. Accessible via middle
+    /// mouse click.
+    Primary,
 
-	/// The secondary clipboard is rarely used but theoretically available on X11.
-	///
-	/// *On Wayland, this is not be available and operations using this variant will return an
-	/// error.*
-	Secondary,
-}
-
-pub(crate) enum Clipboard {
-	X11(x11::Clipboard),
-
-	#[cfg(feature = "wayland-data-control")]
-	WlDataControl(wayland::Clipboard),
-}
-
-impl Clipboard {
-	pub(crate) fn new() -> Result<Self, Error> {
-		#[cfg(feature = "wayland-data-control")]
-		{
-			if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-				// Wayland is available
-				match wayland::Clipboard::new() {
-					Ok(clipboard) => {
-						trace!("Successfully initialized the Wayland data control clipboard.");
-						return Ok(Self::WlDataControl(clipboard));
-					}
-					Err(e) => warn!(
-						"Tried to initialize the wayland data control protocol clipboard, but failed. Falling back to the X11 clipboard protocol. The error was: {}",
-						e
-					),
-				}
-			}
-		}
-		Ok(Self::X11(x11::Clipboard::new()?))
-	}
-}
-
-pub(crate) struct Get<'clipboard> {
-	clipboard: &'clipboard mut Clipboard,
-	selection: LinuxClipboardKind,
-}
-
-impl<'clipboard> Get<'clipboard> {
-	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard, selection: LinuxClipboardKind::Clipboard }
-	}
-
-	pub(crate) fn text(self) -> Result<String, Error> {
-		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_text(self.selection),
-			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.get_text(self.selection),
-		}
-	}
-
-	#[cfg(feature = "image-data")]
-	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
-		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_image(self.selection),
-			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.get_image(self.selection),
-		}
-	}
-
-	pub(crate) fn html(self) -> Result<String, Error> {
-		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_html(self.selection),
-			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.get_html(self.selection),
-		}
-	}
-
-	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
-		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_file_list(self.selection),
-			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.get_file_list(self.selection),
-		}
-	}
-}
-
-/// Linux-specific extensions to the [`Get`](super::Get) builder.
-pub trait GetExtLinux: private::Sealed {
-	/// Sets the clipboard the operation will retrieve data from.
-	///
-	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
-	/// return an error.
-	fn clipboard(self, selection: LinuxClipboardKind) -> Self;
-}
-
-impl GetExtLinux for crate::Get<'_> {
-	fn clipboard(mut self, selection: LinuxClipboardKind) -> Self {
-		self.platform.selection = selection;
-		self
-	}
+    /// The secondary clipboard is rarely used but theoretically available on X11.
+    Secondary,
 }
 
 /// Configuration on how long to wait for a new X11 copy event is emitted.
 #[derive(Default)]
 pub(crate) enum WaitConfig {
-	/// Waits until the given [`Instant`] has reached.
-	Until(Instant),
+    /// Waits until the given [`Instant`] has reached.
+    Until(Instant),
 
-	/// Waits forever until a new event is reached.
-	Forever,
+    /// Waits forever until a new event is reached.
+    Forever,
 
-	/// It shouldn't wait.
-	#[default]
-	None,
+    /// It shouldn't wait.
+    #[default]
+    None,
 }
 
-pub(crate) struct Set<'clipboard> {
-	clipboard: &'clipboard mut Clipboard,
-	wait: WaitConfig,
-	selection: LinuxClipboardKind,
+#[non_exhaustive]
+pub enum Error {
+    /// The clipboard contents were not available in the requested format.
+    /// This could either be due to the clipboard being empty or the clipboard contents having
+    /// an incompatible format to the requested one (eg when calling `get_image` on text)
+    ContentNotAvailable,
+
+    /// The selected clipboard is not supported by the current configuration (system and/or environment).
+    ///
+    /// This can be caused by a few conditions:
+    /// - Using the Primary clipboard with an older Wayland compositor (that doesn't support version 2)
+    /// - Using the Secondary clipboard on Wayland
+    ClipboardNotSupported,
+
+    /// The native clipboard is not accessible due to being held by an other party.
+    ///
+    /// This "other party" could be a different process or it could be within
+    /// the same program. So for example you may get this error when trying
+    /// to interact with the clipboard from multiple threads at once.
+    ///
+    /// Note that it's OK to have multiple `Clipboard` instances. The underlying
+    /// implementation will make sure that the native clipboard is only
+    /// opened for transferring data and then closed as soon as possible.
+    ClipboardOccupied,
+
+    /// The image or the text that was about the be transferred to/from the clipboard could not be
+    /// converted to the appropriate format.
+    ConversionFailure,
+
+    /// Any error that doesn't fit the other error types.
+    ///
+    /// The `description` field is only meant to help the developer and should not be relied on as a
+    /// means to identify an error case during runtime.
+    Unknown { description: String },
 }
 
-impl<'clipboard> Set<'clipboard> {
-	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard, wait: WaitConfig::default(), selection: LinuxClipboardKind::Clipboard }
-	}
-
-	pub(crate) fn text(self, text: Cow<'_, str>) -> Result<(), Error> {
-		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_text(text, self.selection, self.wait),
-
-			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.set_text(text, self.selection, self.wait),
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+			Error::ContentNotAvailable => f.write_str("The clipboard contents were not available in the requested format or the clipboard is empty."),
+			Error::ClipboardNotSupported => f.write_str("The selected clipboard is not supported with the current system configuration."),
+			Error::ClipboardOccupied => f.write_str("The native clipboard is not accessible due to being held by an other party."),
+			Error::ConversionFailure => f.write_str("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format."),
+			Error::Unknown { description } => f.write_fmt(format_args!("Unknown error while interacting with the clipboard: {description}")),
 		}
-	}
+    }
+}
 
-	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
-		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
+impl std::error::Error for Error {}
 
-			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
+impl std::fmt::Debug for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Error::*;
+        macro_rules! kind_to_str {
+			($( $e: pat ),*) => {
+				match self {
+					$(
+						$e => stringify!($e),
+					)*
+				}
+			}
 		}
-	}
-
-	#[cfg(feature = "image-data")]
-	pub(crate) fn image(self, image: ImageData<'_>) -> Result<(), Error> {
-		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_image(image, self.selection, self.wait),
-
-			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.set_image(image, self.selection, self.wait),
-		}
-	}
+        let name = kind_to_str!(
+            ContentNotAvailable,
+            ClipboardNotSupported,
+            ClipboardOccupied,
+            ConversionFailure,
+            Unknown { .. }
+        );
+        f.write_fmt(format_args!("{name} - \"{self}\""))
+    }
 }
 
-/// Linux specific extensions to the [`Set`](super::Set) builder.
-pub trait SetExtLinux: private::Sealed {
-	/// Whether to wait for the clipboard's contents to be replaced after setting it.
-	///
-	/// The Wayland and X11 clipboards work by having the clipboard content being, at any given
-	/// time, "owned" by a single process, and that process is expected to reply to all the requests
-	/// from any other system process that wishes to access the clipboard's contents. As a
-	/// consequence, when that process exits the contents of the clipboard will effectively be
-	/// cleared since there is no longer anyone around to serve requests for it.
-	///
-	/// This poses a problem for short-lived programs that just want to copy to the clipboard and
-	/// then exit, since they don't want to wait until the user happens to copy something else just
-	/// to finish. To resolve that, whenever the user copies something you can offload the actual
-	/// work to a newly-spawned daemon process which will run in the background (potentially
-	/// outliving the current process) and serve all the requests. That process will then
-	/// automatically and silently exit once the user copies something else to their clipboard so it
-	/// doesn't take up too many resources.
-	///
-	/// To support that pattern, this method will not only have the contents of the clipboard be
-	/// set, but will also wait and continue to serve requests until the clipboard is overwritten.
-	/// As long as you don't exit the current process until that method has returned, you can avoid
-	/// all surprising situations where the clipboard's contents seemingly disappear from under your
-	/// feet.
-	///
-	/// See the [daemonize example] for a demo of how you could implement this.
-	///
-	/// [daemonize example]: https://github.com/1Password/arboard/blob/master/examples/daemonize.rs
-	fn wait(self) -> Self;
-
-	/// Whether or not to wait for the clipboard's content to be replaced after setting it. This waits until the
-	/// `deadline` has exceeded.
-	///
-	/// This is useful for short-lived programs so it won't block until new contents on the clipboard
-	/// were added.
-	///
-	/// Note: this is a superset of [`wait()`][SetExtLinux::wait] and will overwrite any state
-	/// that was previously set using it.
-	fn wait_until(self, deadline: Instant) -> Self;
-
-	/// Sets the clipboard the operation will store its data to.
-	///
-	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
-	/// return an error.
-	///
-	/// # Examples
-	///
-	/// ```
-	/// use arboard::{Clipboard, SetExtLinux, LinuxClipboardKind};
-	/// # fn main() -> Result<(), arboard::Error> {
-	/// let mut ctx = Clipboard::new()?;
-	///
-	/// let clipboard = "This goes in the traditional (ex. Copy & Paste) clipboard.";
-	/// ctx.set().clipboard(LinuxClipboardKind::Clipboard).text(clipboard.to_owned())?;
-	///
-	/// let primary = "This goes in the primary keyboard. It's typically used via middle mouse click.";
-	/// ctx.set().clipboard(LinuxClipboardKind::Primary).text(primary.to_owned())?;
-	/// # Ok(())
-	/// # }
-	/// ```
-	fn clipboard(self, selection: LinuxClipboardKind) -> Self;
-}
-
-impl SetExtLinux for crate::Set<'_> {
-	fn wait(mut self) -> Self {
-		self.platform.wait = WaitConfig::Forever;
-		self
-	}
-
-	fn clipboard(mut self, selection: LinuxClipboardKind) -> Self {
-		self.platform.selection = selection;
-		self
-	}
-
-	fn wait_until(mut self, deadline: Instant) -> Self {
-		self.platform.wait = WaitConfig::Until(deadline);
-		self
-	}
-}
-
-pub(crate) struct Clear<'clipboard> {
-	clipboard: &'clipboard mut Clipboard,
-}
-
-impl<'clipboard> Clear<'clipboard> {
-	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard }
-	}
-
-	pub(crate) fn clear(self) -> Result<(), Error> {
-		self.clear_inner(LinuxClipboardKind::Clipboard)
-	}
-
-	fn clear_inner(self, selection: LinuxClipboardKind) -> Result<(), Error> {
-		let mut set = Set::new(self.clipboard);
-		set.selection = selection;
-
-		set.text(Cow::Borrowed(""))
-	}
-}
-
-/// Linux specific extensions to the [Clear] builder.
-pub trait ClearExtLinux: private::Sealed {
-	/// Performs the "clear" operation on the selected clipboard.
-	///
-	/// ### Example
-	///
-	/// ```no_run
-	/// # use arboard::{Clipboard, LinuxClipboardKind, ClearExtLinux, Error};
-	/// # fn main() -> Result<(), Error> {
-	/// let mut clipboard = Clipboard::new()?;
-	///
-	/// clipboard
-	///     .clear_with()
-	///     .clipboard(LinuxClipboardKind::Secondary)?;
-	/// # Ok(())
-	/// # }
-	/// ```
-	///
-	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
-	/// return an error.
-	fn clipboard(self, selection: LinuxClipboardKind) -> Result<(), Error>;
-}
-
-impl ClearExtLinux for crate::Clear<'_> {
-	fn clipboard(self, selection: LinuxClipboardKind) -> Result<(), Error> {
-		self.platform.clear_inner(selection)
-	}
+impl Error {
+    pub(crate) fn unknown<M: Into<String>>(message: M) -> Self {
+        Error::Unknown {
+            description: message.into(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
 
-	#[test]
-	fn test_decoding_uri_list() {
-		// Test that paths_from_uri_list correctly decodes
-		// differents percent encoded characters
-		let file_list = vec![
-			"file:///tmp/bar.log",
-			"file:///tmp/test%5C.txt",
-			"file:///tmp/foo%3F.png",
-			"file:///tmp/white%20space.txt",
-		];
+    #[test]
+    fn test_decoding_uri_list() {
+        // Test that paths_from_uri_list correctly decodes
+        // differents percent encoded characters
+        let file_list = vec![
+            "file:///tmp/bar.log",
+            "file:///tmp/test%5C.txt",
+            "file:///tmp/foo%3F.png",
+            "file:///tmp/white%20space.txt",
+        ];
 
-		let paths = vec![
-			PathBuf::from("/tmp/bar.log"),
-			PathBuf::from("/tmp/test\\.txt"),
-			PathBuf::from("/tmp/foo?.png"),
-			PathBuf::from("/tmp/white space.txt"),
-		];
-		assert_eq!(paths_from_uri_list(file_list.join("\n")), paths);
-	}
+        let paths = vec![
+            PathBuf::from("/tmp/bar.log"),
+            PathBuf::from("/tmp/test\\.txt"),
+            PathBuf::from("/tmp/foo?.png"),
+            PathBuf::from("/tmp/white space.txt"),
+        ];
+        assert_eq!(paths_from_uri_list(file_list.join("\n")), paths);
+    }
 }

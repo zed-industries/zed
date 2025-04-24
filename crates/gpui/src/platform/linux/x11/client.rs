@@ -1,4 +1,3 @@
-use crate::platform::{linux::x11::clipboard::Clipboard, scap_screen_capture::scap_screen_sources};
 use core::str;
 use std::{
     cell::RefCell,
@@ -54,8 +53,10 @@ use crate::platform::{
         LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
         platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
         reveal_path_internal,
+        x11::clipboard2::Clipboard,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
+    scap_screen_capture::scap_screen_sources,
 };
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
@@ -1496,10 +1497,10 @@ impl LinuxClient for X11Client {
         let state = self.0.borrow_mut();
         state
             .clipboard
-            .store(
-                state.clipboard.setter.atoms.primary,
-                state.clipboard.setter.atoms.utf8_string,
-                item.text().unwrap_or_default().as_bytes(),
+            .set_text(
+                std::borrow::Cow::Owned(item.text().unwrap_or_default()),
+                super::clipboard2::LinuxClipboardKind::Primary,
+                super::clipboard2::WaitConfig::None,
             )
             .ok();
     }
@@ -1508,10 +1509,10 @@ impl LinuxClient for X11Client {
         let mut state = self.0.borrow_mut();
         state
             .clipboard
-            .store(
-                state.clipboard.setter.atoms.clipboard,
-                state.clipboard.setter.atoms.utf8_string,
-                item.text().unwrap_or_default().as_bytes(),
+            .set_text(
+                std::borrow::Cow::Owned(item.text().unwrap_or_default()),
+                super::clipboard2::LinuxClipboardKind::Clipboard,
+                super::clipboard2::WaitConfig::None,
             )
             .ok();
         state.clipboard_item.replace(item);
@@ -1519,44 +1520,48 @@ impl LinuxClient for X11Client {
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
-        state
+        if let Ok(image) = state
             .clipboard
-            .load(
-                state.clipboard.getter.atoms.primary,
-                state.clipboard.getter.atoms.utf8_string,
-                state.clipboard.getter.atoms.property,
-                Duration::from_secs(3),
-            )
-            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
-            .ok()
+            .get_image(super::clipboard2::LinuxClipboardKind::Primary)
+        {
+            return Some(crate::ClipboardItem::new_image(&image));
+        }
+        return state
+            .clipboard
+            .get_text(super::clipboard2::LinuxClipboardKind::Primary)
+            .map(|text| crate::ClipboardItem::new_string(text))
+            .ok();
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
+        // todo! support
         // if the last copy was from this app, return our cached item
         // which has metadata attached.
-        if state
+        // if state
+        //     .clipboard
+        //     .clipboard
+        //     .setter
+        //     .connection
+        //     .get_selection_owner(state.clipboard.setter.atoms.clipboard)
+        //     .ok()
+        //     .and_then(|r| r.reply().ok())
+        //     .map(|reply| reply.owner == state.clipboard.setter.window)
+        //     .unwrap_or(false)
+        // {
+        //     return state.clipboard_item.clone();
+        // }
+        if let Ok(image) = state
             .clipboard
-            .setter
-            .connection
-            .get_selection_owner(state.clipboard.setter.atoms.clipboard)
-            .ok()
-            .and_then(|r| r.reply().ok())
-            .map(|reply| reply.owner == state.clipboard.setter.window)
-            .unwrap_or(false)
+            .get_image(super::clipboard2::LinuxClipboardKind::Clipboard)
         {
-            return state.clipboard_item.clone();
+            return Some(crate::ClipboardItem::new_image(&image));
         }
-        state
+        return state
             .clipboard
-            .load(
-                state.clipboard.getter.atoms.clipboard,
-                state.clipboard.getter.atoms.utf8_string,
-                state.clipboard.getter.atoms.property,
-                Duration::from_secs(3),
-            )
-            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
-            .ok()
+            .get_text(super::clipboard2::LinuxClipboardKind::Primary)
+            .map(|text| crate::ClipboardItem::new_string(text))
+            .ok();
     }
 
     fn run(&self) {
