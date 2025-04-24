@@ -56,7 +56,7 @@ impl ContextKind {
 /// been added to the thread. For example, `ProjectEntryId` is used instead of `ProjectPath` for
 /// `DirectoryContext` so that it follows renames.
 #[derive(Debug, Clone)]
-pub enum AssistantContext {
+pub enum AgentContext {
     File(FileContext),
     Directory(DirectoryContext),
     Symbol(SymbolContext),
@@ -67,7 +67,7 @@ pub enum AssistantContext {
     Image(ImageContext),
 }
 
-impl AssistantContext {
+impl AgentContext {
     fn id(&self) -> ContextId {
         match self {
             Self::File(context) => context.context_id,
@@ -296,7 +296,7 @@ impl FetchedUrlContext {
     }
 
     pub fn new_context_set_query(url: SharedString) -> ContextSetEntry {
-        ContextSetEntry(AssistantContext::FetchedUrl(FetchedUrlContext {
+        ContextSetEntry(AgentContext::FetchedUrl(FetchedUrlContext {
             url,
             text: "".into(),
             context_id: ContextId::for_query(),
@@ -354,7 +354,7 @@ impl RulesContext {
     }
 
     pub fn new_context_set_query(prompt_id: UserPromptId) -> ContextSetEntry {
-        ContextSetEntry(AssistantContext::Rules(RulesContext {
+        ContextSetEntry(AgentContext::Rules(RulesContext {
             prompt_id,
             context_id: ContextId::for_query(),
         }))
@@ -435,7 +435,7 @@ pub struct ContextLoadResult {
 
 #[derive(Debug, Clone, Default)]
 pub struct LoadedContext {
-    pub contexts: Vec<AssistantContext>,
+    pub contexts: Vec<AgentContext>,
     pub text: String,
     pub images: Vec<LanguageModelImage>,
 }
@@ -471,7 +471,7 @@ impl LoadedContext {
 
 /// Loads and formats a collection of contexts.
 pub fn load_context(
-    contexts: Vec<AssistantContext>,
+    contexts: Vec<AgentContext>,
     project: &Entity<Project>,
     prompt_store: &Option<Entity<PromptStore>>,
     cx: &mut App,
@@ -487,16 +487,16 @@ pub fn load_context(
 
     for context in contexts.iter().cloned() {
         match context {
-            AssistantContext::File(context) => file_tasks.extend(context.load(cx)),
-            AssistantContext::Directory(context) => {
+            AgentContext::File(context) => file_tasks.extend(context.load(cx)),
+            AgentContext::Directory(context) => {
                 directory_tasks.extend(context.load(project.clone(), cx))
             }
-            AssistantContext::Symbol(context) => symbol_tasks.extend(context.load(cx)),
-            AssistantContext::Selection(context) => selection_tasks.extend(context.load(cx)),
-            AssistantContext::FetchedUrl(context) => fetch_context.push(context),
-            AssistantContext::Thread(context) => thread_context.push(context.load(cx)),
-            AssistantContext::Rules(context) => rules_tasks.push(context.load(prompt_store, cx)),
-            AssistantContext::Image(context) => image_tasks.push(context.image_task.clone()),
+            AgentContext::Symbol(context) => symbol_tasks.extend(context.load(cx)),
+            AgentContext::Selection(context) => selection_tasks.extend(context.load(cx)),
+            AgentContext::FetchedUrl(context) => fetch_context.push(context),
+            AgentContext::Thread(context) => thread_context.push(context.load(cx)),
+            AgentContext::Rules(context) => rules_tasks.push(context.load(prompt_store, cx)),
+            AgentContext::Image(context) => image_tasks.push(context.image_task.clone()),
         }
     }
 
@@ -735,14 +735,14 @@ fn to_fenced_codeblock(
     buffer
 }
 
-/// Wraps `AssistantContext` to opt-in to `PartialEq` and `Hash` impls which use a subset of fields
+/// Wraps `AgentContext` to opt-in to `PartialEq` and `Hash` impls which use a subset of fields
 /// needed for stable context identity.
 #[derive(Debug, Clone, RefCast)]
 #[repr(transparent)]
-pub struct ContextSetEntry(pub AssistantContext);
+pub struct ContextSetEntry(pub AgentContext);
 
-impl AsRef<AssistantContext> for ContextSetEntry {
-    fn as_ref(&self) -> &AssistantContext {
+impl AsRef<AgentContext> for ContextSetEntry {
+    fn as_ref(&self) -> &AgentContext {
         &self.0
     }
 }
@@ -752,43 +752,43 @@ impl Eq for ContextSetEntry {}
 impl PartialEq for ContextSetEntry {
     fn eq(&self, other: &Self) -> bool {
         match &self.0 {
-            AssistantContext::File(context) => {
-                if let AssistantContext::File(other_context) = &other.0 {
+            AgentContext::File(context) => {
+                if let AgentContext::File(other_context) = &other.0 {
                     return context.eq_for_context_set(other_context);
                 }
             }
-            AssistantContext::Directory(context) => {
-                if let AssistantContext::Directory(other_context) = &other.0 {
+            AgentContext::Directory(context) => {
+                if let AgentContext::Directory(other_context) = &other.0 {
                     return context.eq_for_context_set(other_context);
                 }
             }
-            AssistantContext::Symbol(context) => {
-                if let AssistantContext::Symbol(other_context) = &other.0 {
+            AgentContext::Symbol(context) => {
+                if let AgentContext::Symbol(other_context) = &other.0 {
                     return context.eq_for_context_set(other_context);
                 }
             }
-            AssistantContext::Selection(context) => {
-                if let AssistantContext::Selection(other_context) = &other.0 {
+            AgentContext::Selection(context) => {
+                if let AgentContext::Selection(other_context) = &other.0 {
                     return context.eq_for_context_set(other_context);
                 }
             }
-            AssistantContext::FetchedUrl(context) => {
-                if let AssistantContext::FetchedUrl(other_context) = &other.0 {
+            AgentContext::FetchedUrl(context) => {
+                if let AgentContext::FetchedUrl(other_context) = &other.0 {
                     return context.eq_for_context_set(other_context);
                 }
             }
-            AssistantContext::Thread(context) => {
-                if let AssistantContext::Thread(other_context) = &other.0 {
+            AgentContext::Thread(context) => {
+                if let AgentContext::Thread(other_context) = &other.0 {
                     return context.eq_for_context_set(other_context);
                 }
             }
-            AssistantContext::Rules(context) => {
-                if let AssistantContext::Rules(other_context) = &other.0 {
+            AgentContext::Rules(context) => {
+                if let AgentContext::Rules(other_context) = &other.0 {
                     return context.eq_for_context_set(other_context);
                 }
             }
-            AssistantContext::Image(context) => {
-                if let AssistantContext::Image(other_context) = &other.0 {
+            AgentContext::Image(context) => {
+                if let AgentContext::Image(other_context) = &other.0 {
                     return context.eq_for_context_set(other_context);
                 }
             }
@@ -800,14 +800,14 @@ impl PartialEq for ContextSetEntry {
 impl Hash for ContextSetEntry {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match &self.0 {
-            AssistantContext::File(context) => context.hash_for_context_set(state),
-            AssistantContext::Directory(context) => context.hash_for_context_set(state),
-            AssistantContext::Symbol(context) => context.hash_for_context_set(state),
-            AssistantContext::Selection(context) => context.hash_for_context_set(state),
-            AssistantContext::FetchedUrl(context) => context.hash_for_context_set(state),
-            AssistantContext::Thread(context) => context.hash_for_context_set(state),
-            AssistantContext::Rules(context) => context.hash_for_context_set(state),
-            AssistantContext::Image(context) => context.hash_for_context_set(state),
+            AgentContext::File(context) => context.hash_for_context_set(state),
+            AgentContext::Directory(context) => context.hash_for_context_set(state),
+            AgentContext::Symbol(context) => context.hash_for_context_set(state),
+            AgentContext::Selection(context) => context.hash_for_context_set(state),
+            AgentContext::FetchedUrl(context) => context.hash_for_context_set(state),
+            AgentContext::Thread(context) => context.hash_for_context_set(state),
+            AgentContext::Rules(context) => context.hash_for_context_set(state),
+            AgentContext::Image(context) => context.hash_for_context_set(state),
         }
     }
 }

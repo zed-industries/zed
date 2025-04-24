@@ -7,7 +7,7 @@ use prompt_store::PromptStore;
 use text::OffsetRangeExt;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
-use crate::context::{AssistantContext, ContextKind, ImageStatus};
+use crate::context::{AgentContext, ContextKind, ImageStatus};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -266,7 +266,7 @@ pub enum ContextStatus {
 //
 // #[derive(RegisterComponent)]
 pub struct AddedContext {
-    pub context: AssistantContext,
+    pub context: AgentContext,
     pub kind: ContextKind,
     pub name: SharedString,
     pub parent: Option<SharedString>,
@@ -277,18 +277,18 @@ pub struct AddedContext {
 }
 
 impl AddedContext {
-    /// Creates an `AddedContext` by retrieving relevant details of `AssistantContext`. This returns
-    /// a `None` if `DirectoryContext` or `RulesContext` no longer exist.
+    /// Creates an `AddedContext` by retrieving relevant details of `AgentContext`. This returns a
+    /// `None` if `DirectoryContext` or `RulesContext` no longer exist.
     ///
     /// TODO: `None` cases are unremovable from `ContextStore` and so are a very minor memory leak.
     pub fn new(
-        context: AssistantContext,
+        context: AgentContext,
         prompt_store: Option<&Entity<PromptStore>>,
         project: &Project,
         cx: &App,
     ) -> Option<AddedContext> {
         match context {
-            AssistantContext::File(ref file_context) => {
+            AgentContext::File(ref file_context) => {
                 let full_path = file_context.buffer.read(cx).file()?.full_path(cx);
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
@@ -312,7 +312,7 @@ impl AddedContext {
                 })
             }
 
-            AssistantContext::Directory(ref directory_context) => {
+            AgentContext::Directory(ref directory_context) => {
                 let worktree = project
                     .worktree_for_entry(directory_context.entry_id, cx)?
                     .read(cx);
@@ -340,7 +340,7 @@ impl AddedContext {
                 })
             }
 
-            AssistantContext::Symbol(ref symbol_context) => Some(AddedContext {
+            AgentContext::Symbol(ref symbol_context) => Some(AddedContext {
                 kind: ContextKind::Symbol,
                 name: symbol_context.symbol.clone(),
                 parent: None,
@@ -351,7 +351,7 @@ impl AddedContext {
                 context,
             }),
 
-            AssistantContext::Selection(ref selection_context) => {
+            AgentContext::Selection(ref selection_context) => {
                 let buffer = selection_context.buffer.read(cx);
                 let full_path = buffer.file()?.full_path(cx);
                 let mut full_path_string = full_path.to_string_lossy().into_owned();
@@ -399,7 +399,7 @@ impl AddedContext {
                 })
             }
 
-            AssistantContext::FetchedUrl(ref fetched_url_context) => Some(AddedContext {
+            AgentContext::FetchedUrl(ref fetched_url_context) => Some(AddedContext {
                 kind: ContextKind::FetchedUrl,
                 name: fetched_url_context.url.clone(),
                 parent: None,
@@ -410,7 +410,7 @@ impl AddedContext {
                 context,
             }),
 
-            AssistantContext::Thread(ref thread_context) => Some(AddedContext {
+            AgentContext::Thread(ref thread_context) => Some(AddedContext {
                 kind: ContextKind::Thread,
                 name: thread_context.name(cx),
                 parent: None,
@@ -431,7 +431,7 @@ impl AddedContext {
                 context,
             }),
 
-            AssistantContext::Rules(ref user_rules_context) => {
+            AgentContext::Rules(ref user_rules_context) => {
                 let name = prompt_store
                     .as_ref()?
                     .read(cx)
@@ -449,7 +449,7 @@ impl AddedContext {
                 })
             }
 
-            AssistantContext::Image(ref image_context) => Some(AddedContext {
+            AgentContext::Image(ref image_context) => Some(AddedContext {
                 kind: ContextKind::Image,
                 name: "Image".into(),
                 parent: None,
@@ -510,7 +510,7 @@ impl Component for AddedContext {
         let image_ready = (
             "Ready",
             AddedContext::new(
-                AssistantContext::Image(ImageContext {
+                AgentContext::Image(ImageContext {
                     context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
@@ -522,7 +522,7 @@ impl Component for AddedContext {
         let image_loading = (
             "Loading",
             AddedContext::new(
-                AssistantContext::Image(ImageContext {
+                AgentContext::Image(ImageContext {
                     context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: cx
@@ -539,7 +539,7 @@ impl Component for AddedContext {
         let image_error = (
             "Error",
             AddedContext::new(
-                AssistantContext::Image(ImageContext {
+                AgentContext::Image(ImageContext {
                     context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(None).shared(),
