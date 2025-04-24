@@ -352,36 +352,6 @@ impl ThreadStore {
         &self.prompt_store
     }
 
-    // todo! remove?
-    pub fn load_rules(
-        &self,
-        prompt_id: UserPromptId,
-        cx: &App,
-    ) -> Task<Result<(PromptMetadata, String)>> {
-        let Some(prompt_store) = self.prompt_store.as_ref() else {
-            return Task::ready(Err(anyhow!("Prompt store unexpectedly missing.")));
-        };
-        let prompt_store = prompt_store.read(cx);
-        let prompt_id: PromptId = prompt_id.into();
-        let Some(metadata) = prompt_store.metadata(prompt_id) else {
-            return Task::ready(Err(anyhow!("User rules not found in library.")));
-        };
-        let text_task = prompt_store.load(prompt_id, cx);
-        cx.background_spawn(async move { Ok((metadata, text_task.await?)) })
-    }
-
-    // todo! remove?
-    pub fn rules_metadata(&self, prompt_id: UserPromptId, cx: &App) -> Result<PromptMetadata> {
-        let Some(prompt_store) = self.prompt_store.as_ref() else {
-            return Err(anyhow!("Prompt store unexpectedly missing."));
-        };
-        let prompt_store = prompt_store.read(cx);
-        let Some(metadata) = prompt_store.metadata(prompt_id.into()) else {
-            return Err(anyhow!("User rules not found in library."));
-        };
-        Ok(metadata)
-    }
-
     pub fn tools(&self) -> Entity<ToolWorkingSet> {
         self.tools.clone()
     }

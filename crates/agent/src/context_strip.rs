@@ -332,25 +332,19 @@ impl ContextStrip {
     fn accept_suggested_context(
         &mut self,
         _: &AcceptSuggestedContext,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(suggested) = self.suggested_context(cx) {
             if self.is_suggested_focused(&self.added_contexts(cx)) {
-                self.add_suggested_context(&suggested, window, cx);
+                self.add_suggested_context(&suggested, cx);
             }
         }
     }
 
-    fn add_suggested_context(
-        &mut self,
-        suggested: &SuggestedContext,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // todo! conditional notify
+    fn add_suggested_context(&mut self, suggested: &SuggestedContext, cx: &mut Context<Self>) {
         self.context_store.update(cx, |context_store, cx| {
-            context_store.accept_suggested_context(&suggested, cx)
+            context_store.add_suggested_context(&suggested, cx)
         });
         cx.notify();
     }
@@ -508,8 +502,8 @@ impl Render for ContextStrip {
                         focused,
                     )
                     .on_click(Rc::new(cx.listener(
-                        move |this, _event, window, cx| {
-                            this.add_suggested_context(&suggested, window, cx);
+                        move |this, _event, _window, cx| {
+                            this.add_suggested_context(&suggested, cx);
                         },
                     ))),
                 )

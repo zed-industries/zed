@@ -6,6 +6,7 @@ use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use prompt_store::{PromptId, UserPromptId};
 use ui::{ListItem, prelude::*};
+use util::ResultExt as _;
 
 use crate::context::RULES_ICON;
 use crate::context_picker::ContextPicker;
@@ -124,31 +125,11 @@ impl PickerDelegate for RulesContextPickerDelegate {
             return;
         };
 
-        let Some(thread_store) = self.thread_store.upgrade() else {
-            return;
-        };
-
-        let prompt_id = entry.prompt_id;
-
-        let load_rules_task = thread_store.update(cx, |thread_store, cx| {
-            thread_store.load_rules(prompt_id, cx)
-        });
-
-        cx.spawn(async move |this, cx| {
-            let (metadata, text) = load_rules_task.await?;
-            let Some(title) = metadata.title else {
-                return Err(anyhow!("Encountered user rule with no title when attempting to add it to agent context."));
-            };
-            this.update(cx, |this, cx| {
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, cx| {
-                        context_store.add_rules(prompt_id, true, cx)
-                    })
-                    .ok();
+        self.context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_rules(entry.prompt_id, true, cx)
             })
-        })
-        .detach_and_log_err(cx);
+            .log_err();
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -182,7 +163,7 @@ pub fn render_thread_context_entry(
     let added = context_store.upgrade().map_or(false, |context_store| {
         context_store
             .read(cx)
-            .includes_user_rules(user_rules.prompt_id.clone())
+            .includes_user_rules(user_rules.prompt_id)
     });
 
     h_flex()

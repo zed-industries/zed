@@ -311,7 +311,7 @@ impl ContextStore {
         self.insert_context(context, cx);
     }
 
-    pub fn accept_suggested_context(
+    pub fn add_suggested_context(
         &mut self,
         suggested: &SuggestedContext,
         cx: &mut Context<ContextStore>,
