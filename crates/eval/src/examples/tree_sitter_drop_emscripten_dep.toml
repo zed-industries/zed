@@ -1,7 +1,6 @@
 url = "https://github.com/tree-sitter/tree-sitter.git"
 revision = "635c49909ce4aa7f58a9375374f91b1b434f6f9c"
 language_extension = "rs"
-# require_lsp = false
 
 prompt = """
 Change `compile_parser_to_wasm` to use `wasi-sdk` instead of emscripten.
