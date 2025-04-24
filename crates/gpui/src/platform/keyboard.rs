@@ -47,7 +47,7 @@ pub struct TestKeyboardMapper {
     mapper: super::MacKeyboardMapper,
     #[cfg(target_os = "linux")]
     mapper: super::LinuxKeyboardMapper,
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     mapper: EmptyKeyboardMapper,
 }
 
@@ -61,7 +61,7 @@ impl TestKeyboardMapper {
             mapper: super::MacKeyboardMapper::new(),
             #[cfg(target_os = "linux")]
             mapper: super::LinuxKeyboardMapper::new(),
-            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
             mapper: EmptyKeyboardMapper,
         }
     }
