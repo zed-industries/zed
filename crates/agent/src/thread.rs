@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
@@ -16,7 +16,6 @@ use git::repository::DiffType;
 use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
-use language::Buffer;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
@@ -36,7 +35,7 @@ use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 
-use crate::context::{AssistantContext, LoadedContext};
+use crate::context::{AssistantContext, LoadedContext, LoadedContextAndBuffers};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse, SharedProjectContext,
@@ -99,7 +98,6 @@ pub struct Message {
     pub id: MessageId,
     pub role: Role,
     pub segments: Vec<MessageSegment>,
-    pub context: Vec<AssistantContext>,
     pub loaded_context: LoadedContext,
 }
 
@@ -416,8 +414,8 @@ impl Thread {
                             }
                         })
                         .collect(),
-                    context: Vec::new(),
                     loaded_context: LoadedContext {
+                        contexts: Vec::new(),
                         text: message.context,
                         images: Vec::new(),
                     },
@@ -664,7 +662,7 @@ impl Thread {
             .iter()
             .find(|message| message.id == id)
             .into_iter()
-            .flat_map(|message| message.context.iter())
+            .flat_map(|message| message.loaded_context.contexts.iter())
     }
 
     /// Returns whether all of the tool uses have finished running.
@@ -704,15 +702,13 @@ impl Thread {
     pub fn insert_user_message(
         &mut self,
         text: String,
-        context: Vec<AssistantContext>,
-        loaded_context: LoadedContext,
-        context_buffers: HashSet<Entity<Buffer>>,
+        loaded_context: LoadedContextAndBuffers,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        if !context_buffers.is_empty() {
+        if !loaded_context.referenced_buffers.is_empty() {
             self.action_log.update(cx, |log, cx| {
-                for buffer in context_buffers {
+                for buffer in loaded_context.referenced_buffers {
                     log.track_buffer(buffer, cx);
                 }
             });
@@ -721,8 +717,7 @@ impl Thread {
         let message_id = self.insert_message(
             Role::User,
             vec![MessageSegment::Text(text)],
-            context,
-            loaded_context,
+            loaded_context.loaded_context,
             cx,
         );
 
@@ -743,20 +738,13 @@ impl Thread {
         segments: Vec<MessageSegment>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        self.insert_message(
-            Role::Assistant,
-            segments,
-            vec![],
-            LoadedContext::default(),
-            cx,
-        )
+        self.insert_message(Role::Assistant, segments, LoadedContext::default(), cx)
     }
 
     pub fn insert_message(
         &mut self,
         role: Role,
         segments: Vec<MessageSegment>,
-        context: Vec<AssistantContext>,
         loaded_context: LoadedContext,
         cx: &mut Context<Self>,
     ) -> MessageId {
@@ -765,7 +753,6 @@ impl Thread {
             id,
             role,
             segments,
-            context,
             loaded_context,
         });
         self.touch_updated_at();
@@ -1668,7 +1655,7 @@ impl Thread {
     pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
         // Tool results are assumed to be waiting on the next message id, so they will populate
         // this empty message before sending to model. Would prefer this to be more straightforward.
-        self.insert_message(Role::User, vec![], vec![], LoadedContext::default(), cx);
+        self.insert_message(Role::User, vec![], LoadedContext::default(), cx);
         self.auto_capture_telemetry(cx);
     }
 

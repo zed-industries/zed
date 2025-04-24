@@ -1,4 +1,4 @@
-use crate::context::LoadedContext;
+use crate::context::LoadedContextAndBuffers;
 use crate::inline_prompt_editor::CodegenStatus;
 use crate::{context::load_context, context_store::ContextStore};
 use anyhow::Result;
@@ -435,7 +435,7 @@ impl CodegenAlternative {
                     .collect::<Vec<_>>();
                 load_context(context, &project, &self.prompt_store, cx)
             } else {
-                Task::ready((LoadedContext::default(), HashSet::default()))
+                Task::ready(LoadedContextAndBuffers::default())
             }
         });
 
@@ -449,7 +449,7 @@ impl CodegenAlternative {
             if let Some(context_task) = context_task {
                 context_task
                     .await
-                    .0
+                    .loaded_context
                     .add_to_request_message(&mut request_message);
             }
 

@@ -1,4 +1,3 @@
-use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -60,7 +59,7 @@ impl ContextStore {
     pub fn new_context_for_thread(&self, thread: &Thread) -> Vec<AssistantContext> {
         let existing_context = thread
             .messages()
-            .flat_map(|message| &message.context)
+            .flat_map(|message| &message.loaded_context.contexts)
             .map(ContextSetEntry::ref_cast)
             .collect::<HashSet<_>>();
         self.context_set
@@ -271,20 +270,6 @@ impl ContextStore {
             context_id: self.next_context_id.post_inc(),
         });
         self.insert_context(context, cx);
-    }
-
-    pub fn wait_for_images(&self, cx: &App) -> Task<()> {
-        let tasks = self
-            .context()
-            .filter_map(|ctx| match ctx {
-                AssistantContext::Image(ctx) => Some(ctx.image_task.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        cx.spawn(async move |_cx| {
-            join_all(tasks).await;
-        })
     }
 
     pub fn add_selection(

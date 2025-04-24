@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::load_context;
+use crate::context::{LoadedContextAndBuffers, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -13,7 +13,8 @@ use editor::{
 };
 use file_icons::FileIcons;
 use fs::Fs;
-use futures::future;
+use futures::future::Shared;
+use futures::{FutureExt as _, future};
 use gpui::{
     Animation, AnimationExt, App, ClipboardEntry, Entity, EventEmitter, Focusable, Subscription,
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
@@ -55,6 +56,8 @@ pub struct MessageEditor {
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
+    last_loaded_context: Option<LoadedContextAndBuffers>,
+    context_load_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
     editor_is_expanded: bool,
@@ -139,13 +142,11 @@ impl MessageEditor {
         let subscriptions = vec![
             cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
             cx.subscribe(&editor, |this, _, event, cx| match event {
-                EditorEvent::BufferEdited => {
-                    this.message_or_context_changed(true, cx);
-                }
+                EditorEvent::BufferEdited => this.handle_message_changed(cx),
                 _ => {}
             }),
             cx.observe(&context_store, |this, _, cx| {
-                this.message_or_context_changed(false, cx);
+                this.handle_context_changed(cx)
             }),
         ];
 
@@ -159,6 +160,8 @@ impl MessageEditor {
             prompt_store,
             context_strip,
             context_picker_menu_handle,
+            context_load_task: None,
+            last_loaded_context: None,
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs.clone(),
@@ -280,45 +283,19 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
-        let summaries_task = self.wait_for_summaries(cx);
-        let context_task = cx.spawn(async move |this, cx| {
-            // Waits for detailed summaries before `load_context`, as it directly reads these from
-            // the thread. TODO: Would be cleaner to have context loading await on summarization.
-            summaries_task.await;
-            let (load_task, new_context) = this
-                .update(cx, |this, cx| {
-                    let new_context = this.context_store.read_with(cx, |context_store, cx| {
-                        context_store.new_context_for_thread(this.thread.read(cx))
-                    });
-                    let load_task =
-                        load_context(new_context.clone(), &this.project, &this.prompt_store, cx);
-                    (load_task, new_context)
-                })
-                .ok()?;
-            Some((load_task.await, new_context))
-        });
-
         let thread = self.thread.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
+        let context_task = self.wait_for_context(cx);
         let window_handle = window.window_handle();
 
         cx.spawn(async move |_this, cx| {
-            let (checkpoint, context_result) = future::join(checkpoint, context_task).await;
-            let Some(((loaded_context, context_buffers), new_context)) = context_result else {
-                return;
-            };
+            let (checkpoint, loaded_context) = future::join(checkpoint, context_task).await;
+            let loaded_context = loaded_context.unwrap_or_default();
 
             thread
                 .update(cx, |thread, cx| {
-                    thread.insert_user_message(
-                        user_message,
-                        new_context,
-                        loaded_context,
-                        context_buffers,
-                        checkpoint.ok(),
-                        cx,
-                    );
+                    thread.insert_user_message(user_message, loaded_context, checkpoint.ok(), cx);
                 })
                 .log_err();
 
@@ -1029,6 +1006,49 @@ impl MessageEditor {
         self.update_token_count_task.is_some()
     }
 
+    fn handle_message_changed(&mut self, cx: &mut Context<Self>) {
+        self.message_or_context_changed(true, cx);
+    }
+
+    fn handle_context_changed(&mut self, cx: &mut Context<Self>) {
+        let summaries_task = self.wait_for_summaries(cx);
+        let load_task = cx.spawn(async move |this, cx| {
+            // Waits for detailed summaries before `load_context`, as it directly reads these from
+            // the thread. TODO: Would be cleaner to have context loading await on summarization.
+            summaries_task.await;
+            let Ok(load_task) = this.update(cx, |this, cx| {
+                let new_context = this.context_store.read_with(cx, |context_store, cx| {
+                    context_store.new_context_for_thread(this.thread.read(cx))
+                });
+                load_context(new_context, &this.project, &this.prompt_store, cx)
+            }) else {
+                return;
+            };
+            let result = load_task.await;
+            this.update(cx, |this, cx| {
+                this.last_loaded_context = Some(result);
+                this.context_load_task = None;
+                this.message_or_context_changed(false, cx);
+            })
+            .ok();
+        });
+        // Replace existing load task, if any, causing it to be cancelled.
+        self.context_load_task = Some(load_task.shared());
+    }
+
+    fn wait_for_context(&self, cx: &mut Context<Self>) -> Task<Option<LoadedContextAndBuffers>> {
+        if let Some(context_load_task) = self.context_load_task.clone() {
+            cx.spawn(async move |this, cx| {
+                context_load_task.await;
+                this.read_with(cx, |this, _cx| this.last_loaded_context.clone())
+                    .ok()
+                    .flatten()
+            })
+        } else {
+            Task::ready(self.last_loaded_context.clone())
+        }
+    }
+
     fn message_or_context_changed(&mut self, debounce: bool, cx: &mut Context<Self>) {
         cx.emit(MessageEditorEvent::Changed);
         self.update_token_count_task.take();
@@ -1038,9 +1058,7 @@ impl MessageEditor {
             return;
         };
 
-        let context_store = self.context_store.clone();
         let editor = self.editor.clone();
-        let thread = self.thread.clone();
 
         self.update_token_count_task = Some(cx.spawn(async move |this, cx| {
             if debounce {
@@ -1049,27 +1067,33 @@ impl MessageEditor {
                     .await;
             }
 
-            let token_count = if let Some(task) = cx.update(|cx| {
-                let context = context_store.read(cx).context().iter();
-                let new_context = thread.read(cx).filter_new_context(context);
-                let context_text =
-                    format_context_as_string(new_context, cx).unwrap_or(String::new());
+            let token_count = if let Some(task) = this.update(cx, |this, cx| {
+                let loaded_context = this
+                    .last_loaded_context
+                    .as_ref()
+                    .map(|loaded_context_and_buffers| &loaded_context_and_buffers.loaded_context);
                 let message_text = editor.read(cx).text(cx);
 
-                let content = context_text + &message_text;
-
-                if content.is_empty() {
+                if message_text.is_empty()
+                    && loaded_context.map_or(true, |loaded_context| loaded_context.is_empty())
+                {
                     return None;
+                }
+
+                let mut request_message = LanguageModelRequestMessage {
+                    role: language_model::Role::User,
+                    content: Vec::new(),
+                    cache: false,
+                };
+
+                if let Some(loaded_context) = loaded_context {
+                    loaded_context.add_to_request_message(&mut request_message);
                 }
 
                 let request = language_model::LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
-                    messages: vec![LanguageModelRequestMessage {
-                        role: language_model::Role::User,
-                        content: vec![content.into()],
-                        cache: false,
-                    }],
+                    messages: vec![request_message],
                     tools: vec![],
                     stop: vec![],
                     temperature: None,

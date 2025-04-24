@@ -133,7 +133,7 @@ impl FileContext {
         })
     }
 
-    fn load(self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
+    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("file context missing path");
@@ -141,7 +141,7 @@ impl FileContext {
         };
         let full_path = file.full_path(cx);
         let rope = buffer_ref.as_rope().clone();
-        let buffer = self.buffer;
+        let buffer = self.buffer.clone();
         Some(
             cx.background_spawn(
                 async move { (to_fenced_codeblock(&full_path, rope, None), buffer) },
@@ -169,7 +169,7 @@ impl DirectoryContext {
     }
 
     fn load(
-        self,
+        &self,
         project: Entity<Project>,
         cx: &mut App,
     ) -> Option<Task<Vec<(String, Entity<Buffer>)>>> {
@@ -216,7 +216,7 @@ impl SymbolContext {
         self.range.hash(state);
     }
 
-    fn load(self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
+    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("symbol context's file has no path");
@@ -227,7 +227,7 @@ impl SymbolContext {
             .text_for_range(self.enclosing_range.clone())
             .collect::<Rope>();
         let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
-        let buffer = self.buffer;
+        let buffer = self.buffer.clone();
         Some(cx.background_spawn(async move {
             (
                 to_fenced_codeblock(&full_path, rope, Some(line_range)),
@@ -254,7 +254,7 @@ impl SelectionContext {
         self.range.hash(state);
     }
 
-    fn load(self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
+    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("selection context's file has no path");
@@ -265,7 +265,7 @@ impl SelectionContext {
             .text_for_range(self.range.clone())
             .collect::<Rope>();
         let line_range = self.range.to_point(&buffer_ref.snapshot());
-        let buffer = self.buffer;
+        let buffer = self.buffer.clone();
         Some(cx.background_spawn(async move {
             (
                 to_fenced_codeblock(&full_path, rope, Some(line_range)),
@@ -326,7 +326,7 @@ impl ThreadContext {
             .unwrap_or_else(|| "New thread".into())
     }
 
-    pub fn load(self, cx: &App) -> String {
+    pub fn load(&self, cx: &App) -> String {
         let name = self.name(cx);
         let contents = self.thread.read(cx).latest_detailed_summary_or_text();
         // todo! better format
@@ -362,7 +362,7 @@ impl RulesContext {
     }
 
     pub fn load(
-        self,
+        &self,
         prompt_store: &Option<Entity<PromptStore>>,
         cx: &App,
     ) -> Task<Option<String>> {
@@ -428,8 +428,16 @@ impl ImageContext {
     }
 }
 
+// TODO: Better name for this?
+#[derive(Debug, Clone, Default)]
+pub struct LoadedContextAndBuffers {
+    pub loaded_context: LoadedContext,
+    pub referenced_buffers: HashSet<Entity<Buffer>>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LoadedContext {
+    pub contexts: Vec<AssistantContext>,
     pub text: String,
     pub images: Vec<LanguageModelImage>,
 }
@@ -469,7 +477,7 @@ pub fn load_context(
     project: &Entity<Project>,
     prompt_store: &Option<Entity<PromptStore>>,
     cx: &mut App,
-) -> Task<(LoadedContext, HashSet<Entity<Buffer>>)> {
+) -> Task<LoadedContextAndBuffers> {
     let mut file_tasks = Vec::new();
     let mut directory_tasks = Vec::new();
     let mut symbol_tasks = Vec::new();
@@ -479,7 +487,7 @@ pub fn load_context(
     let mut rules_tasks = Vec::new();
     let mut image_tasks = Vec::new();
 
-    for context in contexts {
+    for context in contexts.iter().cloned() {
         match context {
             AssistantContext::File(context) => file_tasks.extend(context.load(cx)),
             AssistantContext::Directory(context) => {
@@ -515,7 +523,7 @@ pub fn load_context(
         let rules_context = rules_context.into_iter().flatten().collect::<Vec<_>>();
         let images = images.into_iter().flatten().collect::<Vec<_>>();
 
-        let mut buffers = HashSet::default();
+        let mut referenced_buffers = HashSet::default();
         let mut text = String::new();
 
         if file_context.is_empty()
@@ -526,7 +534,14 @@ pub fn load_context(
             && thread_context.is_empty()
             && rules_context.is_empty()
         {
-            return (LoadedContext { text, images }, buffers);
+            return LoadedContextAndBuffers {
+                loaded_context: LoadedContext {
+                    contexts,
+                    text,
+                    images,
+                },
+                referenced_buffers,
+            };
         }
 
         text.push_str(
@@ -540,7 +555,7 @@ pub fn load_context(
             for (file_text, buffer) in file_context {
                 text.push('\n');
                 text.push_str(&file_text);
-                buffers.insert(buffer);
+                referenced_buffers.insert(buffer);
             }
             text.push_str("</files>\n");
         }
@@ -550,7 +565,7 @@ pub fn load_context(
             for (file_text, buffer) in directory_context {
                 text.push('\n');
                 text.push_str(&file_text);
-                buffers.insert(buffer);
+                referenced_buffers.insert(buffer);
             }
             text.push_str("</directories>\n");
         }
@@ -560,7 +575,7 @@ pub fn load_context(
             for (symbol_text, buffer) in symbol_context {
                 text.push('\n');
                 text.push_str(&symbol_text);
-                buffers.insert(buffer);
+                referenced_buffers.insert(buffer);
             }
             text.push_str("</symbols>\n");
         }
@@ -570,7 +585,7 @@ pub fn load_context(
             for (selection_text, buffer) in selection_context {
                 text.push('\n');
                 text.push_str(&selection_text);
-                buffers.insert(buffer);
+                referenced_buffers.insert(buffer);
             }
             text.push_str("</selections>\n");
         }
@@ -610,7 +625,14 @@ pub fn load_context(
 
         text.push_str("</context>\n");
 
-        (LoadedContext { text, images }, buffers)
+        LoadedContextAndBuffers {
+            loaded_context: LoadedContext {
+                contexts,
+                text,
+                images,
+            },
+            referenced_buffers,
+        }
     })
 }
 
