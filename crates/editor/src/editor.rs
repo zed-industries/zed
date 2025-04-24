@@ -2613,6 +2613,7 @@ impl Editor {
             self.update_visible_inline_completion(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
+            self.inline_blame_hover_state.take();
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(window, cx);
             }
@@ -5490,6 +5491,52 @@ impl Editor {
                     })
                     .log_err();
                 }));
+        }
+    }
+
+    fn show_blame_popover(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        if let Some(state) = &mut self.inline_blame_hover_state {
+            state.hide_task.take();
+        } else {
+            let delay = EditorSettings::get_global(cx).hover_popover_delay;
+            let show_task = cx.spawn(async move |editor, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(delay))
+                    .await;
+                editor
+                    .update(cx, |editor, _| {
+                        if let Some(state) = &mut editor.inline_blame_hover_state {
+                            state.show_task = None;
+                        }
+                    })
+                    .ok();
+            });
+            self.inline_blame_hover_state = Some(InlineBlameHoverState {
+                position,
+                show_task: Some(show_task),
+                hide_task: None,
+                popover_bounds: None,
+            });
+        }
+    }
+
+    fn hide_blame_popover(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = &mut self.inline_blame_hover_state {
+            if state.show_task.is_some() {
+                self.inline_blame_hover_state.take();
+            } else {
+                let hide_task = cx.spawn(async move |editor, cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(50))
+                        .await;
+                    editor
+                        .update(cx, |editor, _| {
+                            editor.inline_blame_hover_state.take();
+                        })
+                        .ok();
+                });
+                state.hide_task = Some(hide_task);
+            }
         }
     }
 

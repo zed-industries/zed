@@ -5,11 +5,10 @@ use crate::{
     DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
     EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, InlayHintRefreshReason, InlineBlameHoverState, InlineCompletion, JumpData,
-    LineDown, LineHighlight, LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold,
+    HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
+    LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
+    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk, ToDisplayPoint,
@@ -1846,56 +1845,21 @@ impl EditorElement {
             return;
         }
 
-        let delay = EditorSettings::get_global(cx).hover_popover_delay;
         let mouse_position = window.mouse_position();
         let mouse_over_inline_blame = parent_bounds.contains(&mouse_position);
-
-        self.editor.update(cx, |editor, cx| {
-            let mouse_over_popover = editor
+        let mouse_over_popover = self.editor.update(cx, |editor, _| {
+            editor
                 .inline_blame_hover_state
                 .as_ref()
                 .and_then(|state| state.popover_bounds)
-                .map_or(false, |bounds| bounds.contains(&mouse_position));
+                .map_or(false, |bounds| bounds.contains(&mouse_position))
+        });
 
+        self.editor.update(cx, |editor, cx| {
             if mouse_over_inline_blame || mouse_over_popover {
-                if let Some(state) = &mut editor.inline_blame_hover_state {
-                    state.hide_task.take();
-                } else {
-                    let show_task = cx.spawn(async move |editor, cx| {
-                        cx.background_executor()
-                            .timer(std::time::Duration::from_millis(delay))
-                            .await;
-                        editor
-                            .update(cx, |editor, _| {
-                                if let Some(state) = &mut editor.inline_blame_hover_state {
-                                    state.show_task = None;
-                                }
-                            })
-                            .ok();
-                    });
-                    editor.inline_blame_hover_state = Some(InlineBlameHoverState {
-                        position: mouse_position,
-                        show_task: Some(show_task),
-                        hide_task: None,
-                        popover_bounds: None,
-                    });
-                }
+                editor.show_blame_popover(mouse_position, cx);
             } else {
-                if let Some(state) = &mut editor.inline_blame_hover_state {
-                    if state.hide_task.is_none() {
-                        let hide_task = cx.spawn(async move |editor, cx| {
-                            cx.background_executor()
-                                .timer(std::time::Duration::from_millis(delay))
-                                .await;
-                            editor
-                                .update(cx, |editor, _| {
-                                    editor.inline_blame_hover_state = None;
-                                })
-                                .ok();
-                        });
-                        state.hide_task = Some(hide_task);
-                    }
-                }
+                editor.hide_blame_popover(cx);
             }
         });
 
