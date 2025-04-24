@@ -13,6 +13,7 @@ use anyhow::Result;
 use askpass::AskPassDelegate;
 use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
+use prompt_store::PromptStore;
 
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
@@ -55,6 +56,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
@@ -1716,8 +1718,28 @@ impl GitPanel {
             }
         });
 
+        let prompt_store = PromptStore::global(cx);
+
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
+                const PROMPT: &str = include_str!("commit_message_prompt.txt");
+
+                let prompt_store = prompt_store.await?;
+
+                let prompts = prompt_store.read_with(cx, |prompt_store, cx| {
+                    prompt_store.search(String::from("commit_message_prompt"), Arc::new(AtomicBool::default()), cx)
+                })?.await;
+
+
+                let git_prompt = match prompts.first() {
+                    Some(prompt) => {
+                        prompt_store.read_with(cx, |prompt_store, cx| {
+                            prompt_store.load(prompt.id, cx)
+                        })?.await.unwrap_or(String::from(PROMPT))
+                    }
+                    None => String::from(PROMPT),
+                };
+
                 let _defer = cx.on_drop(&this, |this, _cx| {
                     this.generate_commit_message_task.take();
                 });
@@ -1736,12 +1758,11 @@ impl GitPanel {
                 let text_empty = subject.trim().is_empty();
 
                 let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
+                    format!("{git_prompt}\nHere are the changes in this commit:\n{diff_text}")
                 } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                    format!("{git_prompt}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
                 };
 
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
                 let request = LanguageModelRequest {
                     thread_id: None,
