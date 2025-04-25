@@ -331,10 +331,23 @@ impl DapStore {
 
     pub fn debug_scenario_for_build_task(
         &self,
-        build: SpawnInTerminal,
+        mut build: SpawnInTerminal,
         unresoved_label: SharedString,
         adapter: SharedString,
     ) -> Task<Option<DebugScenario>> {
+        build.args = build
+            .args
+            .into_iter()
+            .map(|arg| {
+                if arg.starts_with("$") {
+                    arg.strip_prefix("$")
+                        .and_then(|arg| build.env.get(arg).map(ToOwned::to_owned))
+                        .unwrap_or_else(|| arg)
+                } else {
+                    arg
+                }
+            })
+            .collect();
         match &self.mode {
             DapStoreMode::Local(local_dap_store) => Task::ready(
                 local_dap_store
@@ -357,11 +370,25 @@ impl DapStore {
     }
     pub fn run_debug_locator(
         &mut self,
-        build_command: SpawnInTerminal,
+        mut build_command: SpawnInTerminal,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugRequest>> {
         match &self.mode {
             DapStoreMode::Local(local) => {
+                // Pre-resolve args with existing environment.
+                build_command.args = build_command
+                    .args
+                    .into_iter()
+                    .map(|arg| {
+                        if arg.starts_with("$") {
+                            arg.strip_prefix("$")
+                                .and_then(|arg| build_command.env.get(arg).map(ToOwned::to_owned))
+                                .unwrap_or_else(|| arg)
+                        } else {
+                            arg
+                        }
+                    })
+                    .collect();
                 let locators = local
                     .locators
                     .values()
