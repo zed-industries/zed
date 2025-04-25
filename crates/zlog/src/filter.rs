@@ -59,19 +59,15 @@ pub fn is_possibly_enabled_level(level: log::Level) -> bool {
 }
 
 pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Level) -> bool {
-    if level <= unsafe { LEVEL_ENABLED_MAX_STATIC } {
-        // [FAST PATH]
-        // if the message is at or below the minimum printed log level
-        // (where error < warn < info etc) then always enable
-        return true;
-    }
+    // TODO: is_always_allowed_level that checks against LEVEL_ENABLED_MIN_CONFIG
     if !is_possibly_enabled_level(level) {
-        // [FAST PATH PT. 2]
+        // [FAST PATH]
         // if the message is above the maximum enabled log level
         // (where error < warn < info etc) then disable without checking
         // scope map
         return false;
     }
+    let is_enabled_by_default = level <= unsafe { LEVEL_ENABLED_MAX_STATIC };
     let global_scope_map = SCOPE_MAP.read().unwrap_or_else(|err| {
         SCOPE_MAP.clear_poison();
         return err.into_inner();
@@ -79,17 +75,16 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
 
     let Some(map) = global_scope_map.as_ref() else {
         // on failure, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
-        return false;
+        return is_enabled_by_default;
     };
 
     if map.is_empty() {
         // if no scopes are enabled, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
-        return false;
+        return is_enabled_by_default;
     }
     let enabled_status = map.is_enabled(&scope, module_path, level);
     return match enabled_status {
-        // if it isn't configured, then it it's disabled because it's not <= LEVEL_ENABLED_MAX_STATIC
-        EnabledStatus::NotConfigured => false,
+        EnabledStatus::NotConfigured => is_enabled_by_default,
         EnabledStatus::Enabled => true,
         EnabledStatus::Disabled => false,
     };
