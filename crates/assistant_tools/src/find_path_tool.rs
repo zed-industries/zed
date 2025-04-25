@@ -2,6 +2,7 @@ use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use editor::Editor;
+use futures::channel::oneshot::{self, Receiver};
 use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
 };
@@ -10,7 +11,8 @@ use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat}
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::fmt::Write;
+use std::{cmp, path::PathBuf, sync::Arc};
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathMatcher};
 use workspace::Workspace;
@@ -33,7 +35,7 @@ pub struct FindPathToolInput {
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
-    pub offset: u32,
+    pub offset: usize,
 }
 
 const RESULTS_PER_PAGE: usize = 50;
@@ -82,111 +84,99 @@ impl Tool for FindPathTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        let matches = match search_paths(&glob, project, cx) {
-            Ok(matches) => matches,
-            Err(err) => return Task::ready(Err(err)).into(),
-        };
+        let (sender, receiver) = oneshot::channel();
 
-        let total_matches = matches.len();
+        let card = cx.new(|cx| FindPathToolCard::new(glob.clone(), receiver, cx));
 
-        let card = if !matches.is_empty() {
-            let matches_for_card: Vec<_> = matches
-                .iter()
-                .skip(offset as usize)
-                .take(RESULTS_PER_PAGE)
-                .cloned()
-                .collect();
+        let search_paths_task = search_paths(&glob, project, cx);
 
-            Some(
-                cx.new(|cx| {
-                    FindPathToolCard::new(total_matches, matches_for_card, glob.clone(), cx)
-                })
-                .into(),
-            )
-        } else {
-            Some(
-                cx.new(|cx| FindPathToolCard::new(0, Vec::new(), glob.clone(), cx))
-                    .into(),
-            )
-        };
+        let task = cx.background_spawn(async move {
+            let matches = search_paths_task.await?;
+            let paginated_matches: &[PathBuf] = &matches[cmp::min(offset, matches.len())
+                ..cmp::min(offset + RESULTS_PER_PAGE, matches.len())];
 
-        let result = if matches.is_empty() {
-            format!("No paths in the project matched the glob {glob:?}")
-        } else {
-            let paginated_matches: Vec<_> = matches
-                .into_iter()
-                .skip(offset as usize)
-                .take(RESULTS_PER_PAGE)
-                .collect();
+            sender.send(paginated_matches.to_vec()).log_err();
 
-            if total_matches > RESULTS_PER_PAGE + offset as usize {
-                format!(
-                    "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
-                    total_matches,
-                    offset + 1,
-                    offset as usize + paginated_matches.len(),
-                    paginated_matches.join("\n")
-                )
+            if matches.is_empty() {
+                Ok("No matches found".to_string())
             } else {
-                paginated_matches.join("\n")
+                let mut message = format!("Found {} total matches.", matches.len());
+                if matches.len() > RESULTS_PER_PAGE {
+                    write!(
+                        &mut message,
+                        "\nShowing results {}-{} (provide 'offset' parameter for more results):",
+                        offset + 1,
+                        offset + paginated_matches.len()
+                    )
+                    .unwrap();
+                }
+                for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
+                    write!(&mut message, "\n{}", mat.display()).unwrap();
+                }
+                Ok(message)
             }
-        };
+        });
 
         ToolResult {
-            output: Task::ready(Ok(result)),
-            card,
+            output: task,
+            card: Some(card.into()),
         }
     }
 }
 
-fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Result<Vec<String>> {
-    let path_matcher = match PathMatcher::new([if glob.is_empty() { "*" } else { glob }]) {
+fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Result<Vec<PathBuf>>> {
+    let path_matcher = match PathMatcher::new([
+        // Sometimes models try to search for "". In this case, return all paths in the project.
+        if glob.is_empty() { "*" } else { glob },
+    ]) {
         Ok(matcher) => matcher,
-        Err(err) => return Err(anyhow!("Invalid glob: {err}")),
+        Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
     };
+    let snapshots: Vec<_> = project
+        .read(cx)
+        .worktrees(cx)
+        .map(|worktree| worktree.read(cx).snapshot())
+        .collect();
 
-    let project_handle = project.read(cx);
-    let worktrees: Vec<_> = project_handle.worktrees(cx).collect();
-
-    let mut matches = Vec::new();
-    for worktree_handle in &worktrees {
-        let worktree = worktree_handle.read(cx);
-        let snapshot = worktree.snapshot();
-        let root_name = snapshot.root_name();
-
-        for entry in snapshot.entries(false, 0) {
-            let full_path = PathBuf::from(root_name).join(&entry.path);
-            let full_path_str = full_path.to_string_lossy().to_string();
-
-            if path_matcher.is_match(&entry.path) || path_matcher.is_match(&full_path) {
-                matches.push(full_path_str);
-            }
-        }
-    }
-
-    matches.sort();
-    Ok(matches)
+    cx.background_spawn(async move {
+        Ok(snapshots
+            .iter()
+            .flat_map(|snapshot| {
+                let root_name = PathBuf::from(snapshot.root_name());
+                snapshot
+                    .entries(false, 0)
+                    .map(move |entry| root_name.join(&entry.path))
+                    .filter(|path| path_matcher.is_match(&path))
+            })
+            .collect())
+    })
 }
 
 struct FindPathToolCard {
-    total_matches: usize,
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     expanded: bool,
     glob: String,
+    _receiver_task: Option<Task<Result<()>>>,
 }
 
 impl FindPathToolCard {
-    fn new(
-        total_matches: usize,
-        paths: Vec<String>,
-        glob: String,
-        _cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(glob: String, receiver: Receiver<Vec<PathBuf>>, cx: &mut Context<Self>) -> Self {
+        let _receiver_task = cx.spawn(async move |this, cx| {
+            let paths = receiver.await?;
+
+            this.update(cx, |this, _cx| {
+                this.paths = paths;
+            })
+            .log_err();
+
+            Ok(())
+        });
+
         Self {
-            total_matches,
-            paths,
+            paths: Vec::new(),
             expanded: false,
             glob,
+            _receiver_task: Some(_receiver_task),
         }
     }
 }
@@ -199,12 +189,12 @@ impl ToolCard for FindPathToolCard {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let matches_label: SharedString = if self.total_matches == 0 {
+        let matches_label: SharedString = if self.paths.len() == 0 {
             "No matches".into()
-        } else if self.total_matches == 1 {
+        } else if self.paths.len() == 1 {
             "1 match".into()
         } else {
-            format!("{} matches", self.total_matches).into()
+            format!("{} matches", self.paths.len()).into()
         };
 
         let glob_label = self.glob.to_string();
@@ -221,8 +211,9 @@ impl ToolCard for FindPathToolCard {
                     .children(self.paths.iter().enumerate().map(|(index, path)| {
                         let path_clone = path.clone();
                         let workspace_clone = workspace.clone();
+                        let button_label = path.to_string_lossy().to_string();
 
-                        Button::new(("path", index), path.clone())
+                        Button::new(("path", index), button_label)
                             .icon(IconName::ArrowUpRight)
                             .icon_size(IconSize::XSmall)
                             .icon_position(IconPosition::End)
@@ -287,7 +278,7 @@ impl ToolCard for FindPathToolCard {
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown)
                             .disabled(self.paths.is_empty())
-                            .on_click(cx.listener(move |this, _event, _window, _cx| {
+                            .on_click(cx.listener(move |this, _, _, _cx| {
                                 this.expanded = !this.expanded;
                             })),
                     ),
@@ -302,26 +293,26 @@ impl Component for FindPathTool {
     }
 
     fn sort_name() -> &'static str {
-        "ToolPathSearch"
+        "FindPathTool"
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let successful_card = cx.new(|_| FindPathToolCard {
-            total_matches: 3,
             paths: vec![
-                "src/main.rs".to_string(),
-                "src/lib.rs".to_string(),
-                "tests/test.rs".to_string(),
+                PathBuf::from("src/main.rs"),
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("tests/test.rs"),
             ],
             expanded: true,
             glob: "*.rs".to_string(),
+            _receiver_task: None,
         });
 
         let empty_card = cx.new(|_| FindPathToolCard {
-            total_matches: 0,
             paths: Vec::new(),
             expanded: false,
             glob: "*.nonexistent".to_string(),
+            _receiver_task: None,
         });
 
         Some(
@@ -329,7 +320,7 @@ impl Component for FindPathTool {
                 .gap_6()
                 .children(vec![example_group(vec![
                     single_example(
-                        "With Results",
+                        "With Paths",
                         div()
                             .size_full()
                             .child(successful_card.update(cx, |tool, cx| {
@@ -344,7 +335,7 @@ impl Component for FindPathTool {
                             .into_any_element(),
                     ),
                     single_example(
-                        "No Results",
+                        "No Paths",
                         div()
                             .size_full()
                             .child(empty_card.update(cx, |tool, cx| {
@@ -370,12 +361,12 @@ mod test {
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
-    use std::path::MAIN_SEPARATOR_STR;
     use util::path;
 
     #[gpui::test]
     async fn test_find_path_tool(cx: &mut TestAppContext) {
         init_test(cx);
+
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
@@ -394,20 +385,29 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
-        let expected_paths = [
-            ["root", "apple", "banana", "carrot"].join(MAIN_SEPARATOR_STR),
-            ["root", "apple", "bandana", "carbonara"].join(MAIN_SEPARATOR_STR),
-        ];
-
         let matches = cx
             .update(|cx| search_paths("root/**/car*", project.clone(), cx))
+            .await
             .unwrap();
-        assert_eq!(matches, &expected_paths);
+        assert_eq!(
+            matches,
+            &[
+                PathBuf::from("root/apple/banana/carrot"),
+                PathBuf::from("root/apple/bandana/carbonara")
+            ]
+        );
 
         let matches = cx
             .update(|cx| search_paths("**/car*", project.clone(), cx))
+            .await
             .unwrap();
-        assert_eq!(matches, &expected_paths);
+        assert_eq!(
+            matches,
+            &[
+                PathBuf::from("root/apple/banana/carrot"),
+                PathBuf::from("root/apple/bandana/carbonara")
+            ]
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {
