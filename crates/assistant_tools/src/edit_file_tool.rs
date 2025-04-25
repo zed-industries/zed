@@ -299,7 +299,6 @@ impl EditFileToolCard {
             editor.set_show_scrollbars(false, cx);
             editor.set_show_gutter(false, cx);
             editor.disable_inline_diagnostics();
-            // // editor.disable_scrolling(cx);
             editor.disable_expand_excerpt_buttons(cx);
             editor.set_soft_wrap_mode(SoftWrap::None, cx);
             editor.scroll_manager.forbid_vertical_scroll();
