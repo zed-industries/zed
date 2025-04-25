@@ -252,11 +252,11 @@ These commands jump to specific positions in the file.
 
 ### Replacement
 
-This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, [in the regex differences section](#regex-differences). Also, by default, Zed always replaces all occurrences of the search pattern in the current line.
+This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, [in the regex differences section](#regex-differences). Zed will replace only the first occurrence of the search pattern in the current line. To replace all matches append the `g` flag.
 
-| Command              | Description                       |
-| -------------------- | --------------------------------- |
-| `:[range]s/foo/bar/` | Replace instances of foo with bar |
+| Command                 | Description                       |
+| ----------------------- | --------------------------------- |
+| `:[range]s/foo/bar/[g]` | Replace instances of foo with bar |
 
 ### Editing
 
