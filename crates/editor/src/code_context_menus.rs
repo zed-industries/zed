@@ -671,7 +671,7 @@ impl CompletionsMenu {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
-                sort_score_int: Reverse<i32>,
+                sort_bucket: Reverse<i32>,
                 sort_snippet: Reverse<i32>,
                 sort_text: Option<&'a str>,
                 sort_key: (usize, &'a str),
@@ -684,11 +684,9 @@ impl CompletionsMenu {
         // Our goal here is to intelligently sort completion suggestions. We want to
         // balance the raw fuzzy match score with hints from the language server
         //
-        // We first primary sort using fuzzy score by putting matches into two buckets
-        // strong one and weak one. Among these buckets matches are then compared by
+        // We first primary sort using fuzzy score by putting matches into multiple
+        // buckets. Among these buckets matches are then compared by
         // various criteria like snippet, LSP hints, kind, label text etc.
-        //
-        const FUZZY_THRESHOLD: f64 = 0.1317;
 
         let query_start_lower = query
             .and_then(|q| q.chars().next())
@@ -712,14 +710,20 @@ impl CompletionsMenu {
                 let sort_score = Reverse(OrderedFloat(score));
                 MatchTier::OtherMatch { sort_score }
             } else {
-                let sort_score_int = Reverse(if score >= FUZZY_THRESHOLD { 1 } else { 0 });
+                // Convert fuzzy match score (0.0-1.0) to a priority bucket (0-3)
+                let sort_bucket = Reverse(match (score * 10.0).floor() as i32 {
+                    s if s >= 7 => 3,
+                    s if s >= 1 => 2,
+                    s if s > 0 => 1,
+                    _ => 0,
+                });
                 let sort_snippet = match snippet_sort_order {
                     SnippetSortOrder::Top => Reverse(if mat.is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if mat.is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
                 };
                 MatchTier::WordStartMatch {
-                    sort_score_int,
+                    sort_bucket,
                     sort_snippet,
                     sort_text: mat.sort_text,
                     sort_key: mat.sort_key,
