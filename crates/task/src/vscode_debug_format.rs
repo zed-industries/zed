@@ -135,6 +135,8 @@ fn task_type_to_adapter_name(task_type: &str) -> SharedString {
 
 #[cfg(test)]
 mod tests {
+    use collections::FxHashMap;
+
     use crate::{DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest, TcpArgumentsTemplate};
 
     use super::VsCodeDebugTaskFile;
@@ -181,6 +183,7 @@ mod tests {
                     program: "${ZED_WORKTREE_ROOT}/xyz.js".into(),
                     args: vec!["--foo".into(), "${ZED_WORKTREE_ROOT}/thing".into()],
                     cwd: Some("${ZED_WORKTREE_ROOT}/${FOO}/sub".into()),
+                    env: FxHashMap::from_iter([("X".into(), "Y".into())])
                 })),
                 build: None
             }])
