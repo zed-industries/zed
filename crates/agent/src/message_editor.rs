@@ -146,7 +146,7 @@ impl MessageEditor {
                 _ => {}
             }),
             cx.observe(&context_store, |this, _, cx| {
-                this.handle_context_changed(cx)
+                let _ = this.start_context_load(cx);
             }),
         ];
 
@@ -286,7 +286,7 @@ impl MessageEditor {
         let thread = self.thread.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
-        let context_task = self.wait_for_context(cx);
+        let context_task = self.load_context(cx);
         let window_handle = window.window_handle();
 
         cx.spawn(async move |_this, cx| {
@@ -1010,7 +1010,7 @@ impl MessageEditor {
         self.message_or_context_changed(true, cx);
     }
 
-    fn handle_context_changed(&mut self, cx: &mut Context<Self>) {
+    fn start_context_load(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
         let summaries_task = self.wait_for_summaries(cx);
         let load_task = cx.spawn(async move |this, cx| {
             // Waits for detailed summaries before `load_context`, as it directly reads these from
@@ -1033,20 +1033,19 @@ impl MessageEditor {
             .ok();
         });
         // Replace existing load task, if any, causing it to be cancelled.
-        self.context_load_task = Some(load_task.shared());
+        let load_task = load_task.shared();
+        self.context_load_task = Some(load_task.clone());
+        load_task
     }
 
-    fn wait_for_context(&self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
-        if let Some(context_load_task) = self.context_load_task.clone() {
-            cx.spawn(async move |this, cx| {
-                context_load_task.await;
-                this.read_with(cx, |this, _cx| this.last_loaded_context.clone())
-                    .ok()
-                    .flatten()
-            })
-        } else {
-            Task::ready(self.last_loaded_context.clone())
-        }
+    fn load_context(&mut self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
+        let context_load_task = self.start_context_load(cx);
+        cx.spawn(async move |this, cx| {
+            context_load_task.await;
+            this.read_with(cx, |this, _cx| this.last_loaded_context.clone())
+                .ok()
+                .flatten()
+        })
     }
 
     fn message_or_context_changed(&mut self, debounce: bool, cx: &mut Context<Self>) {
