@@ -97,6 +97,14 @@ impl PlatformKeyboardMapper for MacKeyboardMapper {
         Cow::Borrowed(keystroke)
     }
 
+    fn key_to_shifted(&self, key: &str) -> String {
+        if is_letter_key(key) {
+            key.to_uppercase()
+        } else {
+            key.to_string()
+        }
+    }
+
     fn get_equivalents(&self) -> Option<&HashMap<String, String>> {
         self.mappings.as_ref()
     }
