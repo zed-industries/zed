@@ -469,7 +469,7 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match dbg!(event) {
+        match event {
             dap_store::DapStoreEvent::RunInTerminal {
                 session_id,
                 title,
@@ -1140,7 +1140,6 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         debug_assert!(self.sessions.contains(&session_item));
-        dbg!("ACTIVATE SESSSION");
         session_item.focus_handle(cx).focus(window);
         session_item.update(cx, |this, cx| {
             if let Some(running) = this.mode().as_running() {
