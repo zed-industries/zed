@@ -345,7 +345,7 @@ fn handle_syskeydown_msg(
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let platform_input = parse_keystroke(wparam, lparam, |keystroke| {
+    let platform_input = handle_key_event(wparam, lparam, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
@@ -377,7 +377,7 @@ fn handle_syskeyup_msg(
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
-    let platform_input = parse_keystroke(wparam, lparam, |keystroke| {
+    let platform_input = handle_key_event(wparam, lparam, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     })?;
 
@@ -399,7 +399,7 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(platform_input) = parse_keystroke(wparam, lparam, |keystroke| {
+    let Some(platform_input) = handle_key_event(wparam, lparam, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
@@ -433,7 +433,7 @@ fn handle_keyup_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(platform_input) = parse_keystroke(wparam, lparam, |keystroke| {
+    let Some(platform_input) = handle_key_event(wparam, lparam, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     }) else {
         return Some(1);
@@ -1256,7 +1256,7 @@ fn handle_input_language_changed(
     Some(0)
 }
 
-fn parse_keystroke<F>(wparam: WPARAM, lparam: LPARAM, f: F) -> Option<PlatformInput>
+fn handle_key_event<F>(wparam: WPARAM, lparam: LPARAM, f: F) -> Option<PlatformInput>
 where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
@@ -1550,7 +1550,6 @@ where
     let mut input_handler = {
         let mut lock = state_ptr.state.borrow_mut();
         if lock.suppress_next_char_msg {
-            lock.suppress_next_char_msg = false;
             return None;
         }
         lock.input_handler.take()?
@@ -1570,7 +1569,6 @@ where
     let (mut input_handler, scale_factor) = {
         let mut lock = state_ptr.state.borrow_mut();
         if lock.suppress_next_char_msg {
-            lock.suppress_next_char_msg = false;
             return None;
         }
         (lock.input_handler.take()?, lock.scale_factor)

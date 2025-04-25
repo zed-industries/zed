@@ -45,27 +45,6 @@ pub trait PlatformKeyboardMapper {
     fn get_equivalents(&self) -> Option<&HashMap<String, String>>;
 }
 
-/// An empty keyboard mapper that does nothing.
-pub struct EmptyKeyboardMapper;
-
-impl PlatformKeyboardMapper for EmptyKeyboardMapper {
-    fn map_keystroke(&self, keystroke: Keystroke, _: bool) -> Keystroke {
-        keystroke
-    }
-
-    fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
-        Cow::Borrowed(keystroke)
-    }
-
-    fn get_shifted_key(&self, key: &str) -> String {
-        key.to_uppercase()
-    }
-
-    fn get_equivalents(&self) -> Option<&HashMap<String, String>> {
-        None
-    }
-}
-
 /// A test keyboard mapper that uses the platform-specific keyboard mappers.
 pub struct TestKeyboardMapper {
     #[cfg(target_os = "windows")]
@@ -109,6 +88,27 @@ impl PlatformKeyboardMapper for TestKeyboardMapper {
 
     fn get_equivalents(&self) -> Option<&HashMap<String, String>> {
         self.mapper.get_equivalents()
+    }
+}
+
+/// An empty keyboard mapper that does nothing.
+pub struct EmptyKeyboardMapper;
+
+impl PlatformKeyboardMapper for EmptyKeyboardMapper {
+    fn map_keystroke(&self, keystroke: Keystroke, _: bool) -> Keystroke {
+        keystroke
+    }
+
+    fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
+        Cow::Borrowed(keystroke)
+    }
+
+    fn get_shifted_key(&self, key: &str) -> String {
+        key.to_uppercase()
+    }
+
+    fn get_equivalents(&self) -> Option<&HashMap<String, String>> {
+        None
     }
 }
 
