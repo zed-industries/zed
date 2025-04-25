@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use assistant_settings::{
     AgentProfile, AgentProfileContent, AgentProfileId, AssistantSettings, AssistantSettingsContent,
-    ContextServerPresetContent, VersionedAssistantSettingsContent,
+    ContextServerPresetContent,
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use fs::Fs;
@@ -201,10 +201,10 @@ impl PickerDelegate for ToolPickerDelegate {
             let profile_id = self.profile_id.clone();
             let default_profile = self.profile.clone();
             let tool = tool.clone();
-            move |settings, _cx| match settings {
-                AssistantSettingsContent::Versioned(boxed) => {
-                    if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
-                        let profiles = settings.profiles.get_or_insert_default();
+            move |settings: &mut AssistantSettingsContent, _cx| {
+                settings
+                    .v2_setting(|v2_settings| {
+                        let profiles = v2_settings.profiles.get_or_insert_default();
                         let profile =
                             profiles
                                 .entry(profile_id)
@@ -240,9 +240,10 @@ impl PickerDelegate for ToolPickerDelegate {
                                 *preset.tools.entry(tool.name.clone()).or_default() = is_enabled;
                             }
                         }
-                    }
-                }
-                _ => {}
+
+                        Ok(())
+                    })
+                    .ok();
             }
         });
     }

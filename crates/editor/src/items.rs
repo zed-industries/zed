@@ -288,7 +288,7 @@ impl FollowableItem for Editor {
                     }
                     true
                 }
-                EditorEvent::ExcerptsRemoved { ids } => {
+                EditorEvent::ExcerptsRemoved { ids, .. } => {
                     update
                         .deleted_excerpts
                         .extend(ids.iter().map(ExcerptId::to_proto));
@@ -957,6 +957,7 @@ impl Item for Editor {
             cx.subscribe(&workspace, |editor, _, event: &workspace::Event, _cx| {
                 if matches!(event, workspace::Event::ModalOpened) {
                     editor.mouse_context_menu.take();
+                    editor.inline_blame_popover.take();
                 }
             })
             .detach();

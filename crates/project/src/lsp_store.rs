@@ -8610,6 +8610,10 @@ impl LspStore {
                     diagnostic: Diagnostic {
                         source: diagnostic.source.clone(),
                         code: diagnostic.code.clone(),
+                        code_description: diagnostic
+                            .code_description
+                            .as_ref()
+                            .map(|d| d.href.clone()),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
                         message: diagnostic.message.trim().to_string(),
                         group_id,
@@ -8628,6 +8632,10 @@ impl LspStore {
                                 diagnostic: Diagnostic {
                                     source: diagnostic.source.clone(),
                                     code: diagnostic.code.clone(),
+                                    code_description: diagnostic
+                                        .code_description
+                                        .as_ref()
+                                        .map(|c| c.href.clone()),
                                     severity: DiagnosticSeverity::INFORMATION,
                                     message: info.message.trim().to_string(),
                                     group_id,

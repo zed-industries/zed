@@ -5825,6 +5825,13 @@ async fn test_select_next(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+
+    // Test selection direction should be preserved
+    cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
+
+    cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«ˇabc» «ˇabc»\ndefabc\nabc");
 }
 
 #[gpui::test]
@@ -6011,6 +6018,25 @@ let «fooˇ» = 2;
 let foo = 2;
 let foo = «2ˇ»;"#,
     );
+
+    // Test last selection direction should be preserved
+    cx.set_state(
+        r#"let foo = 2;
+let foo = 2;
+let «fooˇ» = 2;
+let «ˇfoo» = 2;
+let foo = 2;"#,
+    );
+
+    cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state(
+        r#"let foo = 2;
+let foo = 2;
+let «fooˇ» = 2;
+let «ˇfoo» = 2;
+let «ˇfoo» = 2;"#,
+    );
 }
 
 #[gpui::test]
@@ -6138,25 +6164,26 @@ async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+    // selection direction is preserved
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\n«ˇabc»");
 
     cx.update_editor(|editor, window, cx| editor.undo_selection(&UndoSelection, window, cx));
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\nabc");
 
     cx.update_editor(|editor, window, cx| editor.redo_selection(&RedoSelection, window, cx));
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\n«ˇabc»");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndef«abcˇ»\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndef«ˇabc»\n«ˇabc»");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» «ˇabc»\ndef«ˇabc»\n«ˇabc»");
 }
 
 #[gpui::test]
@@ -10419,6 +10446,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
                     EditorMode::Full {
                         scale_ui_elements_with_buffer_font_size: false,
                         show_active_line_background: false,
+                        sized_by_content: false,
                     },
                     multi_buffer.clone(),
                     Some(project.clone()),
@@ -12825,46 +12853,6 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
         fn func(abc def: i32) -> ˇu32 {
         }
     "});
-}
-
-#[gpui::test]
-async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorTestContext::new(cx).await;
-
-    cx.set_state(indoc! {"
-        fn func(abˇc def: i32) -> u32 {
-        }
-    "});
-    let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
-
-    cx.update(|_, cx| {
-        lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostics(
-                LanguageServerId(0),
-                lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
-                    version: None,
-                    diagnostics: vec![lsp::Diagnostic {
-                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
-                        severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "we've had problems with <https://link.one>, and <https://link.two> is broken".to_string(),
-                        ..Default::default()
-                    }],
-                },
-                &[],
-                cx,
-            )
-        })
-    }).unwrap();
-    cx.run_until_parked();
-    cx.update_editor(|editor, window, cx| {
-        hover_popover::hover(editor, &Default::default(), window, cx)
-    });
-    cx.run_until_parked();
-    cx.update_editor(|editor, _, _| assert!(editor.hover_state.diagnostic_popover.is_some()))
 }
 
 #[gpui::test]
