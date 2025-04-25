@@ -46,8 +46,8 @@ struct InventoryFor<T> {
 impl<T> Default for InventoryFor<T> {
     fn default() -> Self {
         Self {
-            global: HashMap::new(),
-            worktree: HashMap::new(),
+            global: HashMap::default(),
+            worktree: HashMap::default(),
         }
     }
 }
