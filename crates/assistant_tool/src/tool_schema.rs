@@ -35,7 +35,15 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             }
         }
 
-        obj.remove("format");
+        const KEYS_TO_REMOVE: [&str; 4] = [
+            "format",
+            "additionalProperties",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+        ];
+        for key in KEYS_TO_REMOVE {
+            obj.remove(key);
+        }
 
         if let Some(default) = obj.get("default") {
             let is_null = default.is_null();
@@ -47,7 +55,7 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
         }
 
         // If a type is not specified for an input parameter, add a default type
-        if obj.contains_key("description")
+        if matches!(obj.get("description"), Some(Value::String(_)))
             && !obj.contains_key("type")
             && !(obj.contains_key("anyOf")
                 || obj.contains_key("oneOf")
@@ -122,11 +130,14 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_removes_format() {
+    fn test_transform_removes_unsupported_keys() {
         let mut json = json!({
             "description": "A test field",
             "type": "integer",
-            "format": "uint32"
+            "format": "uint32",
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 100,
+            "additionalProperties": false
         });
 
         adapt_to_json_schema_subset(&mut json).unwrap();
