@@ -253,7 +253,7 @@ impl Keystroke {
                 key if !is_printable_key(key) || key.is_empty() => None,
                 key => {
                     if self.modifiers.shift {
-                        Some(keyboard_mapper.key_to_shifted(key))
+                        Some(keyboard_mapper.get_shifted_key(key))
                     } else {
                         Some(key.into())
                     }

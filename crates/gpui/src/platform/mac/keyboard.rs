@@ -78,7 +78,7 @@ impl PlatformKeyboardMapper for MacKeyboardMapper {
     }
 
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
-        if is_letter_key(keystroke.key.as_str()) && keystroke.modifiers.shift {
+        if is_alphabetic_key(keystroke.key.as_str()) && keystroke.modifiers.shift {
             return Cow::Owned(Keystroke {
                 modifiers: keystroke.modifiers & !Modifiers::shift(),
                 key: keystroke.key.to_uppercase(),
@@ -97,8 +97,8 @@ impl PlatformKeyboardMapper for MacKeyboardMapper {
         Cow::Borrowed(keystroke)
     }
 
-    fn key_to_shifted(&self, key: &str) -> String {
-        if is_letter_key(key) {
+    fn get_shifted_key(&self, key: &str) -> String {
+        if is_alphabetic_key(key) {
             key.to_uppercase()
         } else {
             key.to_string()
@@ -1536,7 +1536,7 @@ impl MacKeyboardMapper {
     }
 }
 
-fn is_letter_key(key: &str) -> bool {
+fn is_alphabetic_key(key: &str) -> bool {
     matches!(
         key,
         "a" | "b"

@@ -58,7 +58,7 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
             return Cow::Borrowed(keystroke);
         }
 
-        if is_letter_key(keystroke.key.as_str()) {
+        if is_alphabetic_key(keystroke.key.as_str()) {
             if keystroke.modifiers.shift {
                 return Cow::Owned(Keystroke {
                     modifiers: keystroke.modifiers & !Modifiers::shift(),
@@ -86,7 +86,7 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
         }
 
         // Below handles case 2 and case 3, `ctrl-shit-4` -> `ctrl-$`, `alt-shift-3` -> `alt-#`
-        if let Some(key) = to_shifted_key(keystroke.key.as_str()).log_err() {
+        if let Some(key) = get_shifted_character(keystroke.key.as_str()).log_err() {
             Cow::Owned(Keystroke {
                 modifiers: keystroke.modifiers & !Modifiers::shift(),
                 key,
@@ -97,15 +97,17 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
         }
     }
 
-    fn key_to_shifted(&self, key: &str) -> String {
+    fn get_shifted_key(&self, key: &str) -> String {
         if is_immutable_key(key) || key.len() != 1 {
             return key.to_string();
         }
-        if is_letter_key(key) {
+        if is_alphabetic_key(key) {
             return key.to_uppercase();
         }
 
-        to_shifted_key(key).log_err().unwrap_or(key.to_string())
+        get_shifted_character(key)
+            .log_err()
+            .unwrap_or(key.to_string())
     }
 
     fn get_equivalents(&self) -> Option<&collections::HashMap<String, String>> {
@@ -238,7 +240,7 @@ fn get_vkey_from_char(key: &str, modifiers: &mut Modifiers) -> Result<VIRTUAL_KE
     Ok(VIRTUAL_KEY(low as u16))
 }
 
-fn to_shifted_key(key: &str) -> Result<String> {
+fn get_shifted_character(key: &str) -> Result<String> {
     let mut modifiers = Modifiers::default();
     let virtual_key = get_vkey_from_char(key, &mut modifiers).context(format!(
         "Failed to get virtual key from char while key_to_shifted: {}",
@@ -349,7 +351,7 @@ fn is_immutable_key(key: &str) -> bool {
     )
 }
 
-fn is_letter_key(key: &str) -> bool {
+fn is_alphabetic_key(key: &str) -> bool {
     matches!(
         key,
         "a" | "b"
