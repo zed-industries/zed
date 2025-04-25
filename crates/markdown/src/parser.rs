@@ -2,14 +2,9 @@ use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
-    Alignment, CowStr, HeadingLevel, InlineStr, LinkType, MetadataBlockKind, Options, Parser,
+    Alignment, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
-use std::{
-    collections::HashSet,
-    ops::{Deref, Range},
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashSet, ops::Range, path::Path, sync::Arc};
 
 use crate::path_range::PathWithRange;
 
@@ -232,7 +227,6 @@ pub fn parse_markdown(
                     for link in finder.links(&merged_text) {
                         let link_start_in_merged = link.start();
                         let link_end_in_merged = link.end();
-                        dbg!(&link_start_in_merged, &link_end_in_merged,);
 
                         while ranges
                             .peek()
@@ -670,8 +664,8 @@ mod tests {
                     })
                 ),
                 (38..53, Text),
-                (53..58, SubstitutedText(".".into()).into()),
-                (58..61, Text.into()),
+                (53..58, SubstitutedText(".".into())),
+                (58..61, Text),
                 (38..61, End(MarkdownTagEnd::Link)),
                 (61..62, Text),
                 (0..62, End(MarkdownTagEnd::Paragraph))
