@@ -160,7 +160,7 @@ impl DebugTaskDefinition {
 
     pub fn to_proto(&self) -> proto::DebugTaskDefinition {
         proto::DebugTaskDefinition {
-            adapter: self.label.to_string(),
+            adapter: self.adapter.to_string(),
             request: Some(match &self.request {
                 DebugRequest::Launch(config) => {
                     proto::debug_task_definition::Request::DebugLaunchRequest(
