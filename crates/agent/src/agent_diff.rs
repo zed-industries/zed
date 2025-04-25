@@ -597,6 +597,10 @@ impl Item for AgentDiff {
             editor.added_to_workspace(workspace, window, cx)
         });
     }
+
+    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+        "Agent Diff".into()
+    }
 }
 
 impl Render for AgentDiff {

@@ -285,8 +285,8 @@ impl Item for ProposedChangesEditor {
         Some(Icon::new(IconName::Diff))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(self.title.clone())
+    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+        self.title.clone()
     }
 
     fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {

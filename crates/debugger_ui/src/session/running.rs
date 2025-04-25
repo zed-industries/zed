@@ -139,8 +139,8 @@ impl Item for SubView {
 
     /// This is used to serialize debugger pane layouts
     /// A SharedString gets converted to a enum and back during serialization/deserialization.
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(self.kind.to_shared_string())
+    fn tab_content_text(&self,_detail: usize,  _window: &Window, _cx: &App) -> SharedString {
+        self.kind.to_shared_string()
     }
 
     fn tab_content(

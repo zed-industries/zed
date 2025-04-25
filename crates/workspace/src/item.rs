@@ -30,7 +30,7 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
-use ui::{Color, Element as _, Icon, IntoElement, Label, LabelCommon};
+use ui::{Color,  Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
@@ -240,9 +240,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// By default this returns a [`Label`] that displays that text from
     /// `tab_content_text`.
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
-        let Some(text) = self.tab_content_text(window, cx) else {
-            return gpui::Empty.into_any();
-        };
+        let text = self.tab_content_text(params.detail.unwrap_or_default(), window, cx);
 
         Label::new(text)
             .color(params.text_color())
@@ -252,9 +250,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// Returns the textual contents of the tab.
     ///
     /// Use this if you don't need to customize the tab contents.
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        None
-    }
+    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString;
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         None
@@ -273,10 +269,6 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// `tab_tooltip_text`.
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
-    }
-
-    fn tab_description(&self, _: usize, _: &App) -> Option<SharedString> {
-        None
     }
 
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
@@ -484,9 +476,8 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut App,
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut App)>,
     ) -> gpui::Subscription;
-    fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement;
-    fn tab_content_text(&self, window: &Window, cx: &App) -> Option<SharedString>;
+    fn tab_content_text(&self, detail: usize, window: &Window, cx: &App) -> SharedString;
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon>;
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
@@ -609,15 +600,11 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).telemetry_event_text()
     }
 
-    fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString> {
-        self.read(cx).tab_description(detail, cx)
-    }
-
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
         self.read(cx).tab_content(params, window, cx)
     }
-    fn tab_content_text(&self, window: &Window, cx: &App) -> Option<SharedString> {
-        self.read(cx).tab_content_text(window, cx)
+    fn tab_content_text(&self, detail: usize, window: &Window, cx: &App) -> SharedString {
+        self.read(cx).tab_content_text(detail, window, cx)
     }
 
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon> {
@@ -1446,11 +1433,15 @@ pub mod test {
             f(*event)
         }
 
-        fn tab_description(&self, detail: usize, _: &App) -> Option<SharedString> {
-            self.tab_descriptions.as_ref().and_then(|descriptions| {
-                let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
-                Some(description.into())
-            })
+        fn tab_content_text(&self, detail: usize, _window: &Window, _cx: &App) -> SharedString {
+            self.tab_descriptions
+                .as_ref()
+                .and_then(|descriptions| {
+                    let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
+                    description.into()
+                })
+                .unwrap_or_default()
+                .into()
         }
 
         fn telemetry_event_text(&self) -> Option<&'static str> {

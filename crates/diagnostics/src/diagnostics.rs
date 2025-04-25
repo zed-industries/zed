@@ -568,6 +568,10 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
+    fn tab_content_text(&self, _detail: usize, _window: &Window, _: &App) -> SharedString {
+        "Diagnostics".into()
+    }
+
     fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
         h_flex()
             .gap_1()

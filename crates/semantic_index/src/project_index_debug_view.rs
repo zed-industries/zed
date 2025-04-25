@@ -289,8 +289,8 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Project Index (Debug)".into())
+    fn tab_content_text(&self,_detail: usize, _window: &Window, _cx: &App) -> SharedString {
+        "Project Index (Debug)".into()
     }
 
     fn clone_on_split(

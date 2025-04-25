@@ -727,8 +727,8 @@ impl Item for DapLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("DAP Logs".into())
+    fn tab_content_text(&self,_detail: usize,  _window: &Window, _cx: &App) -> SharedString {
+        "DAP Logs".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

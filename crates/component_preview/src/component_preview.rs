@@ -735,8 +735,8 @@ impl From<ComponentId> for ActivePageId {
 impl Item for ComponentPreview {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Component Preview".into())
+    fn tab_content_text(&self,_detail: usize,  _window: &Window, _cx: &App) -> SharedString {
+        "Component Preview".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

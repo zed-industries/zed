@@ -540,6 +540,10 @@ impl Item for ChannelView {
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
+
+    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+        "Channels".into()
+    }
 }
 
 impl FollowableItem for ChannelView {

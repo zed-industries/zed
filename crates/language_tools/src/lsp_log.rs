@@ -1058,8 +1058,8 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("LSP Logs".into())
+    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+        "LSP Logs".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

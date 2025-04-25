@@ -3,7 +3,7 @@ mod tab_switcher_tests;
 
 use collections::HashMap;
 use editor::items::entry_git_aware_label_color;
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Render,
@@ -14,7 +14,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
-use std::sync::Arc;
+use std::{cmp::Reverse, sync::Arc};
 use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{
@@ -198,6 +198,7 @@ impl Render for TabSwitcher {
 
 #[derive(Clone)]
 struct TabMatch {
+    pane: WeakEntity<Pane>,
     item_index: usize,
     item: Box<dyn ItemHandle>,
     detail: usize,
@@ -268,44 +269,48 @@ impl TabSwitcherDelegate {
             return;
         };
         let mut all_items = Vec::new();
-        for pane in workspace.read(cx).panes() {
-            let pane = pane.read(cx);
+        let mut item_index = 0;
+        for pane_handle in workspace.read(cx).panes() {
+            let pane = pane_handle.read(cx);
             let items: Vec<Box<dyn ItemHandle>> =
                 pane.items().map(|item| item.boxed_clone()).collect();
-            for ((ix, item), detail) in items.iter().enumerate().zip(tab_details(&items, cx)) {
+            for ((_detail, item), detail) in items
+                .iter()
+                .enumerate()
+                .zip(tab_details(&items, window, cx))
+            {
                 all_items.push(TabMatch {
-                    item_index: ix,
+                    pane: pane_handle.downgrade(),
+                    item_index,
                     item: item.clone(),
                     detail,
                     preview: pane.is_active_preview_item(item.item_id()),
-                })
+                });
+                item_index += 1;
             }
         }
 
-        let candidates = all_items
-            .iter()
-            .enumerate()
-            .flat_map(|(ix, tab_match)| {
-                Some(StringMatchCandidate::new(
-                    ix,
-                    &tab_match.item.tab_description(0, cx)?,
-                ))
-            })
-            .collect::<Vec<_>>();
 
         let matches = if query.is_empty() {
-            // TODO: sort by... activation history? we only have it for current pane, maybe just put the rest under that
-            candidates
-                .into_iter()
-                .enumerate()
-                .map(|(index, candidate)| StringMatch {
-                    candidate_id: index,
-                    string: candidate.string,
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect()
+            let history = workspace.read(cx).recently_activated_items(cx);
+            for item in &all_items
+            {
+                eprintln!("{:?} {:?}", item.item.tab_content_text(0, window, cx), (Reverse(history.get(&item.item.item_id())), item.item_index))
+            }
+            eprintln!("");
+            all_items.sort_by_key(|tab| (Reverse(history.get(&tab.item.item_id())), tab.item_index));
+            all_items
         } else {
+            let candidates = all_items
+                .iter()
+                .enumerate()
+                .flat_map(|(ix, tab_match)| {
+                    Some(StringMatchCandidate::new(
+                        ix,
+                        &tab_match.item.tab_content_text(0, window, cx),
+                    ))
+                })
+                .collect::<Vec<_>>();
             smol::block_on(fuzzy::match_strings(
                 &candidates,
                 &query,
@@ -314,11 +319,14 @@ impl TabSwitcherDelegate {
                 &Default::default(),
                 cx.background_executor().clone(),
             ))
-        };
-        self.matches = matches
             .into_iter()
             .map(|m| all_items[m.candidate_id].clone())
             .collect()
+        };
+
+        let selected_item_id = self.selected_item_id();
+        self.matches = matches;
+        self.selected_index = self.compute_selected_index(selected_item_id);
     }
 
     fn update_matches(
@@ -356,8 +364,9 @@ impl TabSwitcherDelegate {
         items
             .iter()
             .enumerate()
-            .zip(tab_details(&items, cx))
+            .zip(tab_details(&items, window, cx))
             .map(|((item_index, item), detail)| TabMatch {
+                pane: self.pane.clone(),
                 item_index,
                 item: item.boxed_clone(),
                 detail,
@@ -478,15 +487,14 @@ impl PickerDelegate for TabSwitcherDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<TabSwitcherDelegate>>,
     ) {
-        let Some(pane) = self.pane.upgrade() else {
-            return;
-        };
         let Some(selected_match) = self.matches.get(self.selected_index()) else {
             return;
         };
-        pane.update(cx, |pane, cx| {
-            pane.activate_item(selected_match.item_index, true, true, window, cx);
-        });
+        selected_match.pane.update(cx, |pane, cx| {
+            if let Some(index) = pane.index_for_item(selected_match.item.as_ref()) {
+                pane.activate_item(index, true, true, window, cx);
+            }
+        }).ok();
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<TabSwitcherDelegate>>) {

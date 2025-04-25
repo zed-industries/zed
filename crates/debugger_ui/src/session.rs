@@ -170,6 +170,9 @@ impl Focusable for DebugSession {
 
 impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
+    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+        "Debugger".into()
+    }
 }
 
 impl FollowableItem for DebugSession {

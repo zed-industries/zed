@@ -502,6 +502,7 @@ impl Pane {
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.was_focused {
             self.was_focused = true;
+            self.update_history(self.active_item_index);
             cx.emit(Event::Focus);
             cx.notify();
         }
@@ -1095,17 +1096,7 @@ impl Pane {
                     prev_item.deactivated(window, cx);
                 }
             }
-            if let Some(newly_active_item) = self.items.get(index) {
-                self.activation_history
-                    .retain(|entry| entry.entity_id != newly_active_item.item_id());
-                self.activation_history.push(ActivationHistoryEntry {
-                    entity_id: newly_active_item.item_id(),
-                    timestamp: self
-                        .next_activation_timestamp
-                        .fetch_add(1, Ordering::SeqCst),
-                });
-            }
-
+            self.update_history(index);
             self.update_toolbar(window, cx);
             self.update_status_bar(window, cx);
 
@@ -1124,6 +1115,19 @@ impl Pane {
             }
 
             cx.notify();
+        }
+    }
+
+    fn update_history(&mut self, index: usize) {
+        if let Some(newly_active_item) = self.items.get(index) {
+            self.activation_history
+                .retain(|entry| entry.entity_id != newly_active_item.item_id());
+            self.activation_history.push(ActivationHistoryEntry {
+                entity_id: newly_active_item.item_id(),
+                timestamp: self
+                    .next_activation_timestamp
+                    .fetch_add(1, Ordering::SeqCst),
+            });
         }
     }
 
@@ -2633,7 +2637,7 @@ impl Pane {
             .items
             .iter()
             .enumerate()
-            .zip(tab_details(&self.items, cx))
+            .zip(tab_details(&self.items, window, cx))
             .map(|((ix, item), detail)| {
                 self.render_tab(ix, &**item, detail, &focus_handle, window, cx)
             })
@@ -3631,7 +3635,7 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
-pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &App) -> Vec<usize> {
+pub fn tab_details(items: &[Box<dyn ItemHandle>], window: &Window, cx: &App) -> Vec<usize> {
     let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
     let mut tab_descriptions = HashMap::default();
     let mut done = false;
@@ -3640,15 +3644,12 @@ pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &App) -> Vec<usize> {
 
         // Store item indices by their tab description.
         for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
-            if let Some(description) = item.tab_description(*detail, cx) {
-                if *detail == 0
-                    || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
-                {
-                    tab_descriptions
-                        .entry(description)
-                        .or_insert(Vec::new())
-                        .push(ix);
-                }
+            let description = item.tab_content_text(*detail, window, cx);
+            if *detail == 0 || description != item.tab_content_text(detail - 1, window, cx) {
+                tab_descriptions
+                    .entry(description)
+                    .or_insert(Vec::new())
+                    .push(ix);
             }
         }
 
