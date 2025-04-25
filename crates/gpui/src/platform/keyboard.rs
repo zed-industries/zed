@@ -111,3 +111,86 @@ impl PlatformKeyboardMapper for TestKeyboardMapper {
         self.mapper.get_equivalents()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{Keystroke, Modifiers, PlatformKeyboardMapper};
+
+    use super::TestKeyboardMapper;
+
+    #[test]
+    fn test_basic_usage() {
+        let mapper = TestKeyboardMapper::new();
+        for c in 'a'..='z' {
+            let key = c.to_string();
+
+            // `shift-a` -> `A`
+            let keystroke = Keystroke {
+                modifiers: Modifiers::shift(),
+                key: key.clone(),
+                key_char: None,
+            };
+            let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(
+                *vim_keystroke,
+                Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: key.to_uppercase(),
+                    key_char: None,
+                }
+            );
+
+            // `ctrl-shift-a` -> `ctrl-A`
+            let keystroke = Keystroke {
+                modifiers: Modifiers::control_shift(),
+                key: key.clone(),
+                key_char: None,
+            };
+            let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(
+                *vim_keystroke,
+                Keystroke {
+                    modifiers: Modifiers::control(),
+                    key: key.to_uppercase(),
+                    key_char: None,
+                }
+            );
+
+            // `alt-shift-a` -> `alt-A`
+            let keystroke = Keystroke {
+                modifiers: Modifiers::alt() | Modifiers::shift(),
+                key: key.clone(),
+                key_char: None,
+            };
+            let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(
+                *vim_keystroke,
+                Keystroke {
+                    modifiers: Modifiers::alt(),
+                    key: key.to_uppercase(),
+                    key_char: None,
+                }
+            );
+
+            // `ctrl-alt-shift-a` -> `ctrl-alt-A`
+            let keystroke = Keystroke {
+                modifiers: Modifiers::alt() | Modifiers::shift() | Modifiers::control(),
+                key: key.clone(),
+                key_char: None,
+            };
+            let vim_keystroke = mapper.to_vim_keystroke(&keystroke);
+            assert_eq!(
+                *vim_keystroke,
+                Keystroke {
+                    modifiers: Modifiers::alt() | Modifiers::control(),
+                    key: key.to_uppercase(),
+                    key_char: None,
+                }
+            );
+
+            // `a` -> `A`
+            let shifted_key = mapper.get_shifted_key(&key);
+            assert_eq!(shifted_key, key.to_uppercase());
+        }
+    }
+}

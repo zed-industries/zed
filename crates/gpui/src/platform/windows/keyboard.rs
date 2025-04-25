@@ -469,7 +469,7 @@ mod tests {
 
     use crate::{
         Keystroke, Modifiers, PlatformKeyboardMapper, WindowsKeyboardMapper,
-        platform::windows::keyboard::map_based_on_char,
+        platform::windows::keyboard::{get_shifted_character, map_based_on_char},
     };
 
     use super::is_already_vim_style;
@@ -761,6 +761,37 @@ mod tests {
                 assert_eq!(mapped_key, key.to_string());
                 assert!(modifiers.shift);
             }
+        }
+    }
+
+    #[test]
+    fn test_get_shifted_character() {
+        let shift_pairs = [
+            ("1", "!"),
+            ("2", "@"),
+            ("3", "#"),
+            ("4", "$"),
+            ("5", "%"),
+            ("6", "^"),
+            ("7", "&"),
+            ("8", "*"),
+            ("9", "("),
+            ("0", ")"),
+            ("`", "~"),
+            ("-", "_"),
+            ("=", "+"),
+            ("[", "{"),
+            ("]", "}"),
+            ("\\", "|"),
+            (";", ":"),
+            ("'", "\""),
+            (",", "<"),
+            (".", ">"),
+            ("/", "?"),
+        ];
+        for (key, shift_key) in shift_pairs {
+            let shifted_key = get_shifted_character(&key).unwrap();
+            assert_eq!(shifted_key, shift_key);
         }
     }
 }
