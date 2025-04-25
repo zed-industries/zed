@@ -7,7 +7,7 @@ use std::{
     usize,
 };
 
-use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config};
+use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config, private};
 
 use log;
 
@@ -360,12 +360,18 @@ impl ScopeMap {
             break 'search;
         }
 
-        if enabled.is_none() && !self.modules.is_empty() && module_path.is_some() {
-            let module_path = module_path.unwrap();
-            for (module, filter) in &self.modules {
-                if module == module_path {
-                    enabled.replace(*filter);
-                    break;
+        if let Some(module_path) = module_path {
+            if !self.modules.is_empty() {
+                let crate_name = private::extract_crate_name_from_module_path(module_path);
+                let is_scope_just_crate_name =
+                    scope[0].as_ref() == crate_name && scope[1].as_ref() == "";
+                if enabled.is_none() || is_scope_just_crate_name {
+                    for (module, filter) in &self.modules {
+                        if module == module_path {
+                            enabled.replace(*filter);
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -554,8 +560,18 @@ mod tests {
             ),
             EnabledStatus::NotConfigured
         );
+        // when scope is just crate name, more specific module path overrides it
         assert_eq!(
             map.is_enabled(&scope_from_scope_str("a"), Some("a::b::d"), Level::Trace),
+            EnabledStatus::Disabled,
+        );
+        // but when it is scoped, the scope overrides the module path
+        assert_eq!(
+            map.is_enabled(
+                &scope_from_scope_str("a.scope"),
+                Some("a::b::d"),
+                Level::Trace
+            ),
             EnabledStatus::Enabled,
         );
     }
