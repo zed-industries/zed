@@ -124,10 +124,7 @@ fn task_type_to_adapter_name(task_type: &str) -> SharedString {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        DebugRequest, DebugTaskDefinition, DebugTaskFile, DebugTaskTemplate, LaunchRequest,
-        TcpArgumentsTemplate,
-    };
+    use crate::{DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest, TcpArgumentsTemplate};
 
     use super::VsCodeDebugTaskFile;
 
@@ -159,24 +156,22 @@ mod tests {
         let zed = DebugTaskFile::try_from(parsed).expect("converting to Zed debug templates");
         pretty_assertions::assert_eq!(
             zed,
-            DebugTaskFile(vec![DebugTaskTemplate {
-                locator: None,
-                definition: DebugTaskDefinition {
-                    label: "Debug my JS app".into(),
-                    adapter: "JavaScript".into(),
-                    stop_on_entry: Some(true),
-                    initialize_args: None,
-                    tcp_connection: Some(TcpArgumentsTemplate {
-                        port: Some(17),
-                        host: None,
-                        timeout: None,
-                    }),
-                    request: DebugRequest::Launch(LaunchRequest {
-                        program: "${ZED_WORKTREE_ROOT}/xyz.js".into(),
-                        args: vec!["--foo".into(), "${ZED_WORKTREE_ROOT}/thing".into()],
-                        cwd: Some("${ZED_WORKTREE_ROOT}/${FOO}/sub".into()),
-                    }),
-                }
+            DebugTaskFile(vec![DebugScenario {
+                label: "Debug my JS app".into(),
+                adapter: "JavaScript".into(),
+                stop_on_entry: Some(true),
+                initialize_args: None,
+                tcp_connection: Some(TcpArgumentsTemplate {
+                    port: Some(17),
+                    host: None,
+                    timeout: None,
+                }),
+                request: Some(DebugRequest::Launch(LaunchRequest {
+                    program: "${ZED_WORKTREE_ROOT}/xyz.js".into(),
+                    args: vec!["--foo".into(), "${ZED_WORKTREE_ROOT}/thing".into()],
+                    cwd: Some("${ZED_WORKTREE_ROOT}/${FOO}/sub".into()),
+                })),
+                build: None
             }])
         );
     }

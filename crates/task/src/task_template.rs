@@ -79,7 +79,11 @@ impl TaskTemplate {
         proto::TaskTemplate {
             command: self.command.clone(),
             args: self.args.clone(),
-            env: self.env.clone(),
+            env: self
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             cwd: self.cwd.clone(),
         }
     }
@@ -89,7 +93,7 @@ impl TaskTemplate {
             label: proto.command.clone(),
             command: proto.command.clone(),
             args: proto.args.clone(),
-            env: proto.env.clone(),
+            env: proto.env.into_iter().collect(),
             cwd: proto.cwd.clone(),
             ..Default::default()
         }
@@ -462,12 +466,7 @@ mod tests {
                 .resolve_task(TEST_ID_BASE, task_cx)
                 .unwrap_or_else(|| panic!("failed to resolve task {task_without_cwd:?}"));
             assert_substituted_variables(&resolved_task, Vec::new());
-            resolved_task
-                .resolved
-                .clone()
-                .unwrap_or_else(|| {
-                    panic!("failed to get resolve data for resolved task. Template: {task_without_cwd:?} Resolved: {resolved_task:?}")
-                })
+            resolved_task.resolved
         };
 
         let cx = TaskContext {
@@ -614,10 +613,7 @@ mod tests {
                 all_variables.iter().map(|(name, _)| name.clone()).collect(),
             );
 
-            let spawn_in_terminal = resolved_task
-                .resolved
-                .as_ref()
-                .expect("should have resolved a spawn in terminal task");
+            let spawn_in_terminal = &resolved_task.resolved;
             assert_eq!(
                 spawn_in_terminal.label,
                 format!(
@@ -701,7 +697,7 @@ mod tests {
             .resolve_task(TEST_ID_BASE, &TaskContext::default())
             .unwrap();
         assert_substituted_variables(&resolved_task, Vec::new());
-        let resolved = resolved_task.resolved.unwrap();
+        let resolved = resolved_task.resolved;
         assert_eq!(resolved.label, task.label);
         assert_eq!(resolved.command, task.command);
         assert_eq!(resolved.args, task.args);
@@ -870,8 +866,7 @@ mod tests {
         let resolved = template
             .resolve_task(TEST_ID_BASE, &context)
             .unwrap()
-            .resolved
-            .unwrap();
+            .resolved;
 
         assert_eq!(resolved.env["TASK_ENV_VAR1"], "TASK_ENV_VAR1_VALUE");
         assert_eq!(resolved.env["TASK_ENV_VAR2"], "env_var_2 1234 5678");

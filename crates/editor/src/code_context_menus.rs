@@ -802,14 +802,14 @@ pub struct AvailableCodeAction {
 }
 
 #[derive(Clone)]
-pub struct CodeActionContents {
+pub(crate) struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
     debug_scenarios: Vec<DebugScenario>,
 }
 
 impl CodeActionContents {
-    pub fn new(
+    pub(crate) fn new(
         tasks: Option<ResolvedTasks>,
         actions: Option<Rc<[AvailableCodeAction]>>,
         debug_scenarios: Vec<DebugScenario>,
@@ -928,7 +928,7 @@ impl CodeActionsItem {
     }
 }
 
-pub struct CodeActionsMenu {
+pub(crate) struct CodeActionsMenu {
     pub actions: CodeActionContents,
     pub buffer: Entity<Buffer>,
     pub selected_item: usize,
