@@ -906,25 +906,6 @@ impl Clipboard {
         Ok(Self { inner: ctx })
     }
 
-    pub(crate) fn get_text(&self, selection: LinuxClipboardKind) -> Result<String> {
-        let formats = [
-            self.inner.atoms.UTF8_STRING,
-            self.inner.atoms.UTF8_MIME_0,
-            self.inner.atoms.UTF8_MIME_1,
-            self.inner.atoms.STRING,
-            self.inner.atoms.TEXT,
-            self.inner.atoms.TEXT_MIME_UNKNOWN,
-        ];
-        let result = self.inner.read(&formats, selection)?;
-        if result.format == self.inner.atoms.STRING {
-            // ISO Latin-1
-            // See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
-            Ok(result.bytes.into_iter().map(|c| c as char).collect())
-        } else {
-            String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)
-        }
-    }
-
     pub(crate) fn set_text(
         &self,
         message: Cow<'_, str>,
@@ -938,22 +919,6 @@ impl Clipboard {
         self.inner.write(data, selection, wait)
     }
 
-    pub(crate) fn get_image(&self, selection: LinuxClipboardKind) -> Result<Image> {
-        let formats = [self.inner.atoms.PNG__MIME];
-        let bytes = self.inner.read(&formats, selection)?.bytes;
-        // todo!: remove
-        assert_eq!(
-            image::guess_format(&bytes).unwrap(),
-            image::ImageFormat::Png
-        );
-        let id = hash(&bytes);
-        return Ok(Image {
-            id,
-            format: ImageFormat::Png,
-            bytes,
-        });
-    }
-
     #[allow(unused)]
     pub(crate) fn set_image(
         &self,
@@ -961,8 +926,15 @@ impl Clipboard {
         selection: LinuxClipboardKind,
         wait: WaitConfig,
     ) -> Result<()> {
-        // todo!: remove
-        assert_eq!(image.format, ImageFormat::Png);
+        let format = match image.format {
+            ImageFormat::Png => self.inner.atoms.PNG__MIME,
+            ImageFormat::Jpeg => self.inner.atoms.JPEG_MIME,
+            ImageFormat::Webp => self.inner.atoms.WEBP_MIME,
+            ImageFormat::Gif => self.inner.atoms.GIF__MIME,
+            ImageFormat::Svg => self.inner.atoms.SVG__MIME,
+            ImageFormat::Bmp => self.inner.atoms.BMP__MIME,
+            ImageFormat::Tiff => self.inner.atoms.TIFF_MIME,
+        };
         let data = vec![ClipboardData {
             bytes: image.bytes,
             format: self.inner.atoms.PNG__MIME,
