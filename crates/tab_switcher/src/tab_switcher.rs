@@ -295,7 +295,7 @@ impl TabSwitcherDelegate {
             let history = workspace.read(cx).recently_activated_items(cx);
             for item in &all_items
             {
-                eprintln!("{:?} {:?}", item.item.tab_content_text(0, window, cx), (Reverse(history.get(&item.item.item_id())), item.item_index))
+                eprintln!("{:?} {:?}", item.item.tab_content_text(0, cx), (Reverse(history.get(&item.item.item_id())), item.item_index))
             }
             eprintln!("");
             all_items.sort_by_key(|tab| (Reverse(history.get(&tab.item.item_id())), tab.item_index));
@@ -307,7 +307,7 @@ impl TabSwitcherDelegate {
                 .flat_map(|(ix, tab_match)| {
                     Some(StringMatchCandidate::new(
                         ix,
-                        &tab_match.item.tab_content_text(0, window, cx),
+                        &tab_match.item.tab_content_text(0, cx),
                     ))
                 })
                 .collect::<Vec<_>>();

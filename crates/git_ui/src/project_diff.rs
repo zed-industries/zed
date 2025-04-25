@@ -547,7 +547,7 @@ impl Item for ProjectDiff {
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
         "Uncommitted Changes".into()
     }
 

@@ -160,7 +160,7 @@ impl Item for SettingsPage {
         Some(Icon::new(IconName::Settings))
     }
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Settings".into()
     }
 

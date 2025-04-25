@@ -446,7 +446,7 @@ impl Item for ProjectSearchView {
         Some(Icon::new(IconName::MagnifyingGlass))
     }
 
-    fn tab_content_text(&self, _detail: usize, _: &Window, cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let last_query: Option<SharedString> = self
             .entity
             .read(cx)

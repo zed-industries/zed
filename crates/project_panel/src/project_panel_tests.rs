@@ -5309,7 +5309,7 @@ impl ProjectItem for TestProjectItemView {
 impl Item for TestProjectItemView {
     type Event = ();
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Test".into()
     }
 }

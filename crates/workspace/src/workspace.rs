@@ -2118,7 +2118,7 @@ impl Workspace {
             .flat_map(|pane| {
                 pane.read(cx).items().filter_map(|item| {
                     if item.is_dirty(cx) {
-                        item.tab_content_text(0, window, cx);
+                        item.tab_content_text(0, cx);
                         Some((pane.downgrade(), item.boxed_clone()))
                     } else {
                         None
@@ -9035,12 +9035,7 @@ mod tests {
 
         impl Item for TestPngItemView {
             type Event = ();
-            fn tab_content_text(
-                &self,
-                _detail: usize,
-                _window: &Window,
-                _cx: &App,
-            ) -> SharedString {
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
                 "".into()
             }
         }
@@ -9115,12 +9110,7 @@ mod tests {
 
         impl Item for TestIpynbItemView {
             type Event = ();
-            fn tab_content_text(
-                &self,
-                _detail: usize,
-                _window: &Window,
-                _cx: &App,
-            ) -> SharedString {
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
                 "".into()
             }
         }
@@ -9166,12 +9156,7 @@ mod tests {
 
         impl Item for TestAlternatePngItemView {
             type Event = ();
-            fn tab_content_text(
-                &self,
-                _detail: usize,
-                _window: &Window,
-                _cx: &App,
-            ) -> SharedString {
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
                 "".into()
             }
         }

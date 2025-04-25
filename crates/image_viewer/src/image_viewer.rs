@@ -99,7 +99,7 @@ impl Item for ImageView {
         Some(file_path.into())
     }
 
-    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let project_path = self.image_item.read(cx).project_path(cx);
 
         let label_color = if ItemSettings::get_global(cx).git_status {
@@ -121,14 +121,14 @@ impl Item for ImageView {
             params.text_color()
         };
 
-        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), window, cx))
+        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
             .single_line()
             .color(label_color)
             .when(params.preview, |this| this.italic())
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _: usize, _: &Window, cx: &App) -> SharedString {
+    fn tab_content_text(&self, _: usize, cx: &App) -> SharedString {
         self.image_item
             .read(cx)
             .file

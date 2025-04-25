@@ -340,7 +340,7 @@ impl MarkdownPreviewView {
             },
         );
 
-        let tab_content = editor.read(cx).tab_content_text(0, window, cx);
+        let tab_content = editor.read(cx).tab_content_text(0, cx);
         self.tab_content_text = format!("Preview {}", tab_content).into();
 
         self.active_editor = Some(EditorState {
@@ -491,7 +491,7 @@ impl Item for MarkdownPreviewView {
         Some(Icon::new(IconName::FileDoc))
     }
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         self.tab_content_text.clone()
     }
 

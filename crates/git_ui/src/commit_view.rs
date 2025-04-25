@@ -409,8 +409,8 @@ impl Item for CommitView {
         Some(Icon::new(IconName::GitBranch).color(Color::Muted))
     }
 
-    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), window, cx))
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
             .color(if params.selected {
                 Color::Default
             } else {
@@ -419,10 +419,10 @@ impl Item for CommitView {
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
         let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 20);
-format!("{short_sha} - {subject}").into()
+        format!("{short_sha} - {subject}").into()
     }
 
     fn tab_tooltip_text(&self, _: &App) -> Option<ui::SharedString> {

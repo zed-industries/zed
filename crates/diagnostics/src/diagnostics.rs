@@ -568,7 +568,7 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
         "Diagnostics".into()
     }
 

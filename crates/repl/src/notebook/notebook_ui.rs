@@ -731,14 +731,14 @@ impl Item for NotebookEditor {
     }
 
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(params.detail.unwrap_or(0), window, cx))
+        Label::new(self.tab_content_text(params.detail.unwrap_or(0), cx))
             .single_line()
             .color(params.text_color())
             .when(params.preview, |this| this.italic())
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let path = &self.notebook_item.read(cx).path;
         let title = path
             .file_name()

@@ -1398,7 +1398,7 @@ impl Focusable for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Extensions".into()
     }
 

@@ -3160,7 +3160,7 @@ impl Focusable for ContextEditor {
 impl Item for ContextEditor {
     type Event = editor::EditorEvent;
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into()
     }
 

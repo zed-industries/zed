@@ -289,7 +289,7 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content_text(&self,_detail: usize, _window: &Window, _cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Project Index (Debug)".into()
     }
 

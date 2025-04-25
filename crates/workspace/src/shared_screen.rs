@@ -93,7 +93,7 @@ impl Item for SharedScreen {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         format!("{}'s screen", self.user.github_login).into()
     }
 

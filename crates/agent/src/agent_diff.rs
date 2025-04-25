@@ -598,7 +598,7 @@ impl Item for AgentDiff {
         });
     }
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Agent Diff".into()
     }
 }

@@ -619,7 +619,7 @@ impl Item for Editor {
         None
     }
 
-    fn tab_content_text(&self, detail: usize, _window: &Window, cx: &App) -> SharedString {
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
         if let Some(path) = path_for_buffer(&self.buffer, detail, true, cx) {
             path.to_string_lossy().to_string().into()
         } else {

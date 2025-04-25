@@ -3635,7 +3635,7 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
-pub fn tab_details(items: &[Box<dyn ItemHandle>], window: &Window, cx: &App) -> Vec<usize> {
+pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {
     let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
     let mut tab_descriptions = HashMap::default();
     let mut done = false;
@@ -3644,8 +3644,8 @@ pub fn tab_details(items: &[Box<dyn ItemHandle>], window: &Window, cx: &App) -> 
 
         // Store item indices by their tab description.
         for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
-            let description = item.tab_content_text(*detail, window, cx);
-            if *detail == 0 || description != item.tab_content_text(detail - 1, window, cx) {
+            let description = item.tab_content_text(*detail, cx);
+            if *detail == 0 || description != item.tab_content_text(detail - 1, cx) {
                 tab_descriptions
                     .entry(description)
                     .or_insert(Vec::new())

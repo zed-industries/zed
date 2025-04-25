@@ -541,7 +541,7 @@ impl Item for ChannelView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _detail: usize, _window: &Window, _cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Channels".into()
     }
 }
