@@ -11,7 +11,7 @@ use gpui::{
     WeakEntity,
 };
 use settings::Settings;
-use task::{DebugScenario, LaunchRequest};
+use task::{DebugScenario, LaunchRequest, TaskContext};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -114,7 +114,7 @@ impl NewSessionModal {
 
         cx.spawn_in(window, async move |this, cx| {
             debug_panel.update_in(cx, |debug_panel, window, cx| {
-                debug_panel.start_session(config, None, window, cx)
+                debug_panel.start_session(config, TaskContext::default(), None, window, cx)
             })?;
             this.update(cx, |_, cx| {
                 cx.emit(DismissEvent);

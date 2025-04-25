@@ -256,29 +256,15 @@ impl DebugPanel {
     pub fn start_session(
         &mut self,
         scenario: DebugScenario,
+        task_context: TaskContext,
         active_buffer: Option<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let task_contexts = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                tasks_ui::task_contexts(workspace, window, cx)
-            })
-            .ok();
-
         cx.spawn_in(window, async move |this, cx| {
-            let task_context = if let Some(task) = task_contexts {
-                task.await
-                    .active_item_context
-                    .map_or(task::TaskContext::default(), |(_, _, context)| context)
-            } else {
-                task::TaskContext::default()
-            };
-
             let definition = this
                 .update_in(cx, |this, window, cx| {
-                    this.resolve_scenario(scenario, active_buffer, task_context, window, cx)
+                    this.resolve_scenario(scenario, task_context, active_buffer, window, cx)
                 })?
                 .await?;
             this.update_in(cx, |this, window, cx| {
@@ -474,8 +460,9 @@ impl DebugPanel {
     pub fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-        buffer: Option<Entity<Buffer>>,
+
         task_context: TaskContext,
+        buffer: Option<Entity<Buffer>>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugTaskDefinition>> {
@@ -1237,13 +1224,14 @@ impl workspace::DebuggerProvider for DebuggerProvider {
     fn start_session(
         &self,
         definition: DebugScenario,
-        active_buffer: Option<Entity<Buffer>>,
+        context: TaskContext,
+        buffer: Option<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut App,
     ) {
         self.0.update(cx, |_, cx| {
             cx.defer_in(window, |this, window, cx| {
-                this.start_session(definition, active_buffer, window, cx);
+                this.start_session(definition, context, buffer, window, cx);
             })
         })
     }

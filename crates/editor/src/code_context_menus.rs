@@ -13,6 +13,7 @@ use project::CompletionSource;
 use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
 use task::DebugScenario;
+use task::TaskContext;
 
 use std::{
     cell::RefCell,
@@ -819,6 +820,7 @@ pub(crate) struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
     debug_scenarios: Vec<DebugScenario>,
+    pub(crate) context: TaskContext,
 }
 
 impl CodeActionContents {
@@ -826,11 +828,13 @@ impl CodeActionContents {
         tasks: Option<ResolvedTasks>,
         actions: Option<Rc<[AvailableCodeAction]>>,
         debug_scenarios: Vec<DebugScenario>,
+        context: TaskContext,
     ) -> Self {
         Self {
             tasks: tasks.map(Rc::new),
             actions,
             debug_scenarios,
+            context,
         }
     }
 

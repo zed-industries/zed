@@ -77,12 +77,13 @@ impl Workspace {
     pub fn start_debug_session(
         &mut self,
         scenario: DebugScenario,
+        task_context: TaskContext,
         active_buffer: Option<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(provider) = self.debugger_provider.as_mut() {
-            provider.start_session(scenario, active_buffer, window, cx)
+            provider.start_session(scenario, task_context, active_buffer, window, cx)
         }
     }
 

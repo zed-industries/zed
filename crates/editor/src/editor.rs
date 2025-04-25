@@ -5170,7 +5170,7 @@ impl Editor {
                         };
                         let resolved_tasks =
                             tasks
-                                .zip(task_context)
+                                .zip(task_context.clone())
                                 .map(|(tasks, task_context)| ResolvedTasks {
                                     templates: tasks.resolve(&task_context).collect(),
                                     position: snapshot.buffer_snapshot.anchor_before(Point::new(
@@ -5225,6 +5225,7 @@ impl Editor {
                                         resolved_tasks,
                                         code_actions,
                                         debug_scenarios,
+                                        task_context.unwrap_or_default(),
                                     ),
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
@@ -5316,10 +5317,14 @@ impl Editor {
                     .await
                 }))
             }
-            CodeActionsItem::DebugScenario(scenario) => workspace.update(cx, |workspace, cx| {
-                workspace.start_debug_session(scenario, Some(buffer), window, cx);
+            CodeActionsItem::DebugScenario(scenario) => {
+                let context = actions_menu.actions.context.clone();
+
+                workspace.update(cx, |workspace, cx| {
+                    workspace.start_debug_session(scenario, context, Some(buffer), window, cx);
+                });
                 Some(Task::ready(Ok(())))
-            }),
+            }
         }
     }
 
