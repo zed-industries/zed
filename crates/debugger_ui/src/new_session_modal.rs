@@ -233,7 +233,7 @@ impl NewSessionModal {
                                         Self::update_attach_picker(&attach, &debugger, window, cx);
                                     }
                                 }
-                                _ => todo!(),
+                                _ => log::warn!("Selected debug scenario without either attach or launch request specified"),
                             }
                             cx.notify();
                         })
