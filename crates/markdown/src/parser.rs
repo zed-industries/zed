@@ -2,7 +2,7 @@ use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
-    Alignment, HeadingLevel, InlineStr, LinkType, MetadataBlockKind, Options, Parser,
+    Alignment, CowStr, HeadingLevel, InlineStr, LinkType, MetadataBlockKind, Options, Parser,
 };
 use std::{
     collections::HashSet,
@@ -35,7 +35,10 @@ pub fn parse_markdown(
     let mut language_paths = HashSet::new();
     let mut within_link = false;
     let mut within_metadata = false;
-    for (pulldown_event, mut range) in Parser::new_ext(text, PARSE_OPTIONS).into_offset_iter() {
+    let mut parser = Parser::new_ext(text, PARSE_OPTIONS)
+        .into_offset_iter()
+        .peekable();
+    while let Some((pulldown_event, mut range)) = parser.next() {
         if within_metadata {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
                 pulldown_event
@@ -175,47 +178,126 @@ pub fn parse_markdown(
                 events.push((range, MarkdownEvent::End(tag)));
             }
             pulldown_cmark::Event::Text(parsed) => {
-                // `parsed` will share bytes with the input unless a substitution like handling of
-                // HTML entities or smart punctuation has occurred. When these substitutions occur,
-                // `parsed` only consists of the result of a single substitution.
-                if !cow_str_points_inside(&parsed, text) {
-                    events.push((range, MarkdownEvent::SubstitutedText(parsed.into())));
-                } else {
-                    // Automatically detect links in text if not already within a markdown link.
-                    if !within_link {
-                        let mut finder = LinkFinder::new();
-                        finder.kinds(&[linkify::LinkKind::Url]);
-                        let text_range = range.clone();
-                        for link in finder.links(&text[text_range.clone()]) {
-                            let link_range =
-                                text_range.start + link.start()..text_range.start + link.end();
+                fn event_for(
+                    text: &str,
+                    range: Range<usize>,
+                    str: &str,
+                ) -> (Range<usize>, MarkdownEvent) {
+                    if str == &text[range.clone()] {
+                        (range, MarkdownEvent::Text)
+                    } else {
+                        (range, MarkdownEvent::SubstitutedText(str.to_owned()))
+                    }
+                }
+                struct TextRange<'a> {
+                    source_range: Range<usize>,
+                    merged_range: Range<usize>,
+                    parsed: CowStr<'a>,
+                }
 
-                            if link_range.start > range.start {
-                                events.push((range.start..link_range.start, MarkdownEvent::Text));
-                            }
+                let mut last_len = parsed.len();
+                let mut ranges = vec![TextRange {
+                    source_range: range.clone(),
+                    merged_range: 0..last_len,
+                    parsed,
+                }];
 
-                            events.push((
-                                link_range.clone(),
-                                MarkdownEvent::Start(MarkdownTag::Link {
-                                    link_type: LinkType::Autolink,
-                                    dest_url: SharedString::from(link.as_str().to_string()),
-                                    title: SharedString::default(),
-                                    id: SharedString::default(),
-                                }),
-                            ));
+                while matches!(parser.peek(), Some((pulldown_cmark::Event::Text(_), _))) {
+                    let Some((pulldown_cmark::Event::Text(next_event), next_range)) = parser.next()
+                    else {
+                        unreachable!()
+                    };
+                    let next_len = last_len + next_event.len();
+                    ranges.push(TextRange {
+                        source_range: next_range.clone(),
+                        merged_range: last_len..next_len,
+                        parsed: next_event,
+                    });
+                    last_len = next_len;
+                }
 
-                            events.push((link_range.clone(), MarkdownEvent::Text));
-                            events.push((
-                                link_range.clone(),
-                                MarkdownEvent::End(MarkdownTagEnd::Link),
-                            ));
+                let mut merged_text =
+                    String::with_capacity(ranges.last().unwrap().merged_range.end);
+                for range in &ranges {
+                    merged_text.push_str(&range.parsed);
+                }
 
-                            range.start = link_range.end;
+                let mut ranges = ranges.into_iter().peekable();
+
+                if !within_link {
+                    let mut finder = LinkFinder::new();
+                    finder.kinds(&[linkify::LinkKind::Url]);
+
+                    // Find links in the merged text
+                    for link in finder.links(&merged_text) {
+                        let link_start_in_merged = link.start();
+                        let link_end_in_merged = link.end();
+                        dbg!(&link_start_in_merged, &link_end_in_merged,);
+
+                        while ranges
+                            .peek()
+                            .is_some_and(|range| range.merged_range.end <= link_start_in_merged)
+                        {
+                            let range = ranges.next().unwrap();
+                            events.push(event_for(text, range.source_range, &range.parsed));
                         }
+
+                        let range = ranges.peek_mut().unwrap();
+                        let prefix_len = link_start_in_merged - range.merged_range.start;
+                        if prefix_len > 0 {
+                            let (head, tail) = range.parsed.split_at(prefix_len);
+                            events.push(event_for(
+                                text,
+                                range.source_range.start..range.source_range.start + prefix_len,
+                                &head,
+                            ));
+                            range.parsed = CowStr::Boxed(tail.into());
+                            range.merged_range.start += prefix_len;
+                            range.source_range.start += prefix_len;
+                        }
+
+                        let link_start_in_source = range.source_range.start;
+                        let mut link_events = Vec::new();
+
+                        while ranges
+                            .peek()
+                            .is_some_and(|range| range.merged_range.end <= link_end_in_merged)
+                        {
+                            let range = ranges.next().unwrap();
+                            link_events.push(event_for(text, range.source_range, &range.parsed));
+                        }
+
+                        let range = ranges.peek_mut().unwrap();
+                        let prefix_len = link_end_in_merged - range.merged_range.start;
+                        if prefix_len > 0 {
+                            let (head, tail) = range.parsed.split_at(prefix_len);
+                            link_events.push(event_for(
+                                text,
+                                range.source_range.start..range.source_range.start + prefix_len,
+                                head,
+                            ));
+                            range.parsed = CowStr::Boxed(tail.into());
+                            range.merged_range.start += prefix_len;
+                            range.source_range.start += prefix_len;
+                        }
+                        let link_range = link_start_in_source..range.source_range.start;
+
+                        events.push((
+                            link_range.clone(),
+                            MarkdownEvent::Start(MarkdownTag::Link {
+                                link_type: LinkType::Autolink,
+                                dest_url: SharedString::from(link.as_str().to_string()),
+                                title: SharedString::default(),
+                                id: SharedString::default(),
+                            }),
+                        ));
+                        events.extend(link_events);
+                        events.push((link_range.clone(), MarkdownEvent::End(MarkdownTagEnd::Link)));
                     }
-                    if range.start < range.end {
-                        events.push((range, MarkdownEvent::Text));
-                    }
+                }
+
+                for range in ranges {
+                    events.push(event_for(text, range.source_range, &range.parsed));
                 }
             }
             pulldown_cmark::Event::Code(_) => {
@@ -291,7 +373,7 @@ pub enum MarkdownEvent {
     Text,
     /// Text that differs from the markdown source - typically due to substitution of HTML entities
     /// and smart punctuation.
-    SubstitutedText(CompactStr),
+    SubstitutedText(String),
     /// An inline code node.
     Code,
     /// An HTML node.
@@ -429,73 +511,6 @@ pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
     range
 }
 
-/// Represents either an owned or inline string. Motivation for this is to make `SubstitutedText`
-/// more efficient - it fits within a `pulldown_cmark::InlineStr` in all known cases.
-///
-/// Same as `pulldown_cmark::CowStr` but without the `Borrow` case.
-#[derive(Clone)]
-pub enum CompactStr {
-    Boxed(Box<str>),
-    Inlined(InlineStr),
-}
-
-impl std::fmt::Debug for CompactStr {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        self.deref().fmt(formatter)
-    }
-}
-
-impl Deref for CompactStr {
-    type Target = str;
-
-    fn deref(&self) -> &str {
-        match self {
-            CompactStr::Boxed(b) => b,
-            CompactStr::Inlined(i) => i,
-        }
-    }
-}
-
-impl From<&str> for CompactStr {
-    fn from(s: &str) -> Self {
-        if let Ok(inlined) = s.try_into() {
-            CompactStr::Inlined(inlined)
-        } else {
-            CompactStr::Boxed(s.into())
-        }
-    }
-}
-
-impl From<pulldown_cmark::CowStr<'_>> for CompactStr {
-    fn from(cow_str: pulldown_cmark::CowStr) -> Self {
-        match cow_str {
-            pulldown_cmark::CowStr::Boxed(b) => CompactStr::Boxed(b),
-            pulldown_cmark::CowStr::Borrowed(b) => b.into(),
-            pulldown_cmark::CowStr::Inlined(i) => CompactStr::Inlined(i),
-        }
-    }
-}
-
-impl PartialEq for CompactStr {
-    fn eq(&self, other: &Self) -> bool {
-        self.deref() == other.deref()
-    }
-}
-
-fn cow_str_points_inside(substring: &pulldown_cmark::CowStr, container: &str) -> bool {
-    match substring {
-        pulldown_cmark::CowStr::Boxed(b) => str_points_inside(b, container),
-        pulldown_cmark::CowStr::Borrowed(b) => str_points_inside(b, container),
-        pulldown_cmark::CowStr::Inlined(_) => false,
-    }
-}
-
-fn str_points_inside(substring: &str, container: &str) -> bool {
-    let substring_ptr = substring.as_ptr();
-    let container_ptr = container.as_ptr();
-    unsafe { substring_ptr >= container_ptr && substring_ptr < container_ptr.add(container.len()) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::MarkdownEvent::*;
@@ -620,5 +635,71 @@ mod tests {
 
         let input = "```python\nprint('hello')\nprint('world')\n```";
         assert_eq!(extract_code_block_content_range(input), 10..40);
+    }
+
+    #[test]
+    fn test_links_split_across_fragments() {
+        // This test verifies that links split across multiple text fragments due to escaping or other issues
+        // are correctly detected and processed
+        // Note: In real usage, pulldown_cmark creates separate text events for the escaped character
+        // We're verifying our parser can handle this correctly
+        assert_eq!(
+            parse_markdown("https:/\\/example.com is equivalent to https://example&#46;com!").0,
+            vec![
+                (0..62, Start(Paragraph)),
+                (
+                    0..20,
+                    Start(Link {
+                        link_type: LinkType::Autolink,
+                        dest_url: "https://example.com".into(),
+                        title: "".into(),
+                        id: "".into()
+                    })
+                ),
+                (0..7, Text),
+                (8..20, Text),
+                (0..20, End(MarkdownTagEnd::Link)),
+                (20..38, Text),
+                (
+                    38..61,
+                    Start(Link {
+                        link_type: LinkType::Autolink,
+                        dest_url: "https://example.com".into(),
+                        title: "".into(),
+                        id: "".into()
+                    })
+                ),
+                (38..53, Text),
+                (53..58, SubstitutedText(".".into()).into()),
+                (58..61, Text.into()),
+                (38..61, End(MarkdownTagEnd::Link)),
+                (61..62, Text),
+                (0..62, End(MarkdownTagEnd::Paragraph))
+            ],
+        );
+
+        assert_eq!(
+            parse_markdown("Visit https://example.com/cat\\/é&#8205;☕ for coffee!").0,
+            [
+                (0..55, Start(Paragraph)),
+                (0..6, Text),
+                (
+                    6..43,
+                    Start(Link {
+                        link_type: LinkType::Autolink,
+                        dest_url: "https://example.com/cat/é\u{200d}☕".into(),
+                        title: "".into(),
+                        id: "".into()
+                    })
+                ),
+                (6..29, Text),
+                (30..33, Text),
+                (33..40, SubstitutedText("\u{200d}".into())),
+                (40..43, Text),
+                (6..43, End(MarkdownTagEnd::Link)),
+                (43..55, Text),
+                (0..55, End(MarkdownTagEnd::Paragraph))
+            ]
+        );
     }
 }
