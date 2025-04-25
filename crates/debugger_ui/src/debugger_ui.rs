@@ -1,7 +1,7 @@
 use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::{DebugPanel, ToggleFocus};
 use editor::Editor;
-use feature_flags::{Debugger, FeatureFlagViewExt};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use gpui::{App, EntityInputHandler, actions};
 use new_session_modal::NewSessionModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint};
@@ -54,7 +54,7 @@ pub fn init(cx: &mut App) {
             return;
         };
 
-        cx.when_flag_enabled::<Debugger>(window, |workspace, _, _| {
+        cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |workspace, _, _| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
                     workspace.toggle_panel_focus::<DebugPanel>(window, cx);

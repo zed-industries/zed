@@ -25,7 +25,7 @@ use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::Project;
-use prompt_store::{PromptBuilder, PromptId, UserPromptId};
+use prompt_store::{PromptBuilder, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
@@ -1059,9 +1059,9 @@ impl AssistantPanel {
                     None,
                 ))
             }),
-            action.prompt_to_select.map(|uuid| PromptId::User {
-                uuid: UserPromptId(uuid),
-            }),
+            action
+                .prompt_to_select
+                .map(|uuid| UserPromptId(uuid).into()),
             cx,
         )
         .detach_and_log_err(cx);

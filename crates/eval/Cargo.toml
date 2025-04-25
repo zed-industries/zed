@@ -3,6 +3,7 @@ name = "eval"
 version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
+default-run = "eval"
 
 [dependencies]
 agent.workspace = true
@@ -18,6 +19,7 @@ client.workspace = true
 collections.workspace = true
 context_server.workspace = true
 dirs = "5.0"
+dotenv.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 fs.workspace = true
@@ -31,6 +33,7 @@ language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
+pathdiff = "0.2"
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
@@ -48,9 +51,14 @@ unindent.workspace = true
 util.workspace = true
 uuid = { version = "1.6", features = ["v4"] }
 workspace-hack.workspace = true
+
 [[bin]]
 name = "eval"
 path = "src/eval.rs"
+
+[[bin]]
+name = "explorer"
+path = "src/explorer.rs"
 
 [lints]
 workspace = true
