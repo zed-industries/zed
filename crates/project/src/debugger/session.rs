@@ -20,9 +20,7 @@ use dap::{
     client::{DebugAdapterClient, SessionId},
     messages::{Events, Message},
 };
-use dap::{
-    EvaluateResponse, ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEventCategory,
-};
+use dap::{ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEventCategory};
 use futures::channel::oneshot;
 use futures::{FutureExt, future::Shared};
 use gpui::{
@@ -116,7 +114,7 @@ impl From<dap::Thread> for Thread {
     }
 }
 
-enum Mode {
+pub enum Mode {
     Building,
     Running(LocalMode),
 }
@@ -129,6 +127,7 @@ pub struct LocalMode {
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
+    executor: BackgroundExecutor,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -188,6 +187,7 @@ impl LocalMode {
             tmp_breakpoint: None,
             root_binary,
             binary,
+            executor: cx.background_executor().clone(),
         })
     }
 
@@ -199,14 +199,11 @@ impl LocalMode {
         let tasks: Vec<_> = paths
             .into_iter()
             .map(|path| {
-                self.request(
-                    dap_command::SetBreakpoints {
-                        source: client_source(path),
-                        source_modified: None,
-                        breakpoints: vec![],
-                    },
-                    cx.background_executor().clone(),
-                )
+                self.request(dap_command::SetBreakpoints {
+                    source: client_source(path),
+                    source_modified: None,
+                    breakpoints: vec![],
+                })
             })
             .collect();
 
@@ -238,14 +235,11 @@ impl LocalMode {
             .map(Into::into)
             .collect();
 
-        let task = self.request(
-            dap_command::SetBreakpoints {
-                source: client_source(&abs_path),
-                source_modified: Some(matches!(reason, BreakpointUpdatedReason::FileSaved)),
-                breakpoints,
-            },
-            cx.background_executor().clone(),
-        );
+        let task = self.request(dap_command::SetBreakpoints {
+            source: client_source(&abs_path),
+            source_modified: Some(matches!(reason, BreakpointUpdatedReason::FileSaved)),
+            breakpoints,
+        });
 
         cx.background_spawn(async move {
             match task.await {
@@ -277,7 +271,7 @@ impl LocalMode {
                 filters: filters.into_iter().map(|filter| filter.filter).collect(),
             }
         };
-        self.request(arg, cx.background_executor().clone())
+        self.request(arg)
     }
 
     fn send_source_breakpoints(
@@ -302,14 +296,11 @@ impl LocalMode {
             };
 
             breakpoint_tasks.push(
-                self.request(
-                    dap_command::SetBreakpoints {
-                        source: client_source(&path),
-                        source_modified: Some(false),
-                        breakpoints,
-                    },
-                    cx.background_executor().clone(),
-                )
+                self.request(dap_command::SetBreakpoints {
+                    source: client_source(&path),
+                    source_modified: Some(false),
+                    breakpoints,
+                })
                 .map(|result| result.map_err(|e| (path, e))),
             );
         }
@@ -340,18 +331,12 @@ impl LocalMode {
 
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
         let launch = match raw.request {
-            dap::StartDebuggingRequestArgumentsRequest::Launch => self.request(
-                Launch {
-                    raw: raw.configuration,
-                },
-                cx.background_executor().clone(),
-            ),
-            dap::StartDebuggingRequestArgumentsRequest::Attach => self.request(
-                Attach {
-                    raw: raw.configuration,
-                },
-                cx.background_executor().clone(),
-            ),
+            dap::StartDebuggingRequestArgumentsRequest::Launch => self.request(Launch {
+                raw: raw.configuration,
+            }),
+            dap::StartDebuggingRequestArgumentsRequest::Attach => self.request(Attach {
+                raw: raw.configuration,
+            }),
         };
 
         let configuration_done_supported = ConfigurationDone::is_supported(capabilities);
@@ -415,7 +400,7 @@ impl LocalMode {
                 .await
                 .ok();
                 let ret = if configuration_done_supported {
-                    this.request(ConfigurationDone {}, cx.background_executor().clone())
+                    this.request(ConfigurationDone {})
                 } else {
                     Task::ready(Ok(()))
                 }
@@ -430,11 +415,7 @@ impl LocalMode {
         })
     }
 
-    fn request<R: LocalDapCommand>(
-        &self,
-        request: R,
-        executor: BackgroundExecutor,
-    ) -> Task<Result<R::Response>>
+    fn request<R: LocalDapCommand>(&self, request: R) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
@@ -443,32 +424,22 @@ impl LocalMode {
 
         let request_clone = request.clone();
         let connection = self.client.clone();
-        let request_task = executor.spawn(async move {
+        self.executor.spawn(async move {
             let args = request_clone.to_dap();
-            connection.request::<R::DapRequest>(args).await
-        });
-
-        executor.spawn(async move {
-            let response = request.response_from_dap(request_task.await?);
-            response
+            let response = connection.request::<R::DapRequest>(args).await?;
+            request.response_from_dap(response)
         })
     }
 }
 
 impl Mode {
-    fn request_dap<R: DapCommand>(
-        &self,
-        request: R,
-        cx: &mut Context<Session>,
-    ) -> Task<Result<R::Response>>
+    pub(super) fn request_dap<R: DapCommand>(&self, request: R) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
         match self {
-            Mode::Running(debug_adapter_client) => {
-                debug_adapter_client.request(request, cx.background_executor().clone())
-            }
+            Mode::Running(debug_adapter_client) => debug_adapter_client.request(request),
             Mode::Building => Task::ready(Err(anyhow!(
                 "no adapter running to send request: {:?}",
                 request
@@ -548,7 +519,7 @@ type IsEnabled = bool;
 pub struct OutputToken(pub usize);
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
-    mode: Mode,
+    pub mode: Mode,
     definition: DebugTaskDefinition,
     pub(super) capabilities: Capabilities,
     id: SessionId,
@@ -892,7 +863,7 @@ impl Session {
         let request = Initialize { adapter_id };
         match &self.mode {
             Mode::Running(local_mode) => {
-                let capabilities = local_mode.request(request, cx.background_executor().clone());
+                let capabilities = local_mode.request(request);
 
                 cx.spawn(async move |this, cx| {
                     let capabilities = capabilities.await?;
@@ -1217,6 +1188,17 @@ impl Session {
         }
     }
 
+    pub async fn request2<T: DapCommand + PartialEq + Eq + Hash>(
+        &self,
+        request: T,
+    ) -> Result<T::Response> {
+        if !T::is_supported(&self.capabilities) {
+            anyhow::bail!("DAP request {:?} is not supported", request);
+        }
+
+        self.mode.request_dap(request).await
+    }
+
     fn request_inner<T: DapCommand + PartialEq + Eq + Hash>(
         capabilities: &Capabilities,
         mode: &Mode,
@@ -1244,7 +1226,7 @@ impl Session {
             });
         }
 
-        let request = mode.request_dap(request, cx);
+        let request = mode.request_dap(request);
         cx.spawn(async move |this, cx| {
             let result = request.await;
             this.update(cx, |this, cx| process_result(this, result, cx))
@@ -1889,35 +1871,51 @@ impl Session {
         frame_id: Option<u64>,
         source: Option<Source>,
         cx: &mut Context<Self>,
-    ) -> Task<Option<EvaluateResponse>> {
-        self.request(
-            EvaluateCommand {
-                expression,
-                context,
-                frame_id,
-                source,
-            },
-            |this, response, cx| {
-                let response = response.log_err()?;
-                this.output_token.0 += 1;
-                this.output.push_back(dap::OutputEvent {
-                    category: None,
-                    output: response.result.clone(),
-                    group: None,
-                    variables_reference: Some(response.variables_reference),
-                    source: None,
-                    line: None,
-                    column: None,
-                    data: None,
-                    location_reference: None,
-                });
-
+    ) -> Task<()> {
+        let request = self.mode.request_dap(EvaluateCommand {
+            expression,
+            context,
+            frame_id,
+            source,
+        });
+        cx.spawn(async move |this, cx| {
+            let response = request.await;
+            this.update(cx, |this, cx| {
+                match response {
+                    Ok(response) => {
+                        this.output_token.0 += 1;
+                        this.output.push_back(dap::OutputEvent {
+                            category: None,
+                            output: format!("< {}", &response.result),
+                            group: None,
+                            variables_reference: Some(response.variables_reference),
+                            source: None,
+                            line: None,
+                            column: None,
+                            data: None,
+                            location_reference: None,
+                        });
+                    }
+                    Err(e) => {
+                        this.output_token.0 += 1;
+                        this.output.push_back(dap::OutputEvent {
+                            category: None,
+                            output: format!("{}", e),
+                            group: None,
+                            variables_reference: None,
+                            source: None,
+                            line: None,
+                            column: None,
+                            data: None,
+                            location_reference: None,
+                        });
+                    }
+                };
                 this.invalidate_command_type::<ScopesCommand>();
                 cx.notify();
-                Some(response)
-            },
-            cx,
-        )
+            })
+            .ok();
+        })
     }
 
     pub fn location(
