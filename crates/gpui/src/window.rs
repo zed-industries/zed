@@ -2115,6 +2115,16 @@ impl Window {
             None
         })
     }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading or doesn't exist this will return None.
+    /// Your view will not be re-drawn once the asset has finished loading.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    /// time.
+    pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
+        let (task, _) = cx.fetch_asset::<A>(source);
+        task.clone().now_or_never()
+    }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
     pub fn element_offset(&self) -> Point<Pixels> {

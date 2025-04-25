@@ -1522,6 +1522,22 @@ impl Image {
             .and_then(|result| result.ok())
     }
 
+    /// Use the GPUI `get_asset` API to make this image renderable
+    pub fn get_render_image(
+        self: Arc<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Arc<RenderImage>> {
+        ImageSource::Image(self)
+            .get_data(None, window, cx)
+            .and_then(|result| result.ok())
+    }
+
+    /// Use the GPUI `remove_asset` API to drop this image, if possible.
+    pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
+        ImageSource::Image(self).remove_asset(cx);
+    }
+
     /// Convert the clipboard image to an `ImageData` object.
     pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
         fn frames_for_image(
