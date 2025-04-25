@@ -51,7 +51,7 @@ use std::{
     ffi::OsStr,
     net::Ipv4Addr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Once},
 };
 use task::{DebugScenario, SpawnInTerminal};
 use util::ResultExt as _;
@@ -119,10 +119,13 @@ impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
     pub fn init(client: &AnyProtoClient, cx: &mut App) {
+        static ADD_LOCATORS: Once = Once::new();
         client.add_entity_request_handler(Self::handle_run_debug_locator);
         client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);
-        DapRegistry::global(cx)
-            .add_locator("cargo".into(), Arc::new(locators::cargo::CargoLocator {}));
+        ADD_LOCATORS.call_once(|| {
+            DapRegistry::global(cx)
+                .add_locator("cargo".into(), Arc::new(locators::cargo::CargoLocator {}))
+        });
     }
 
     #[expect(clippy::too_many_arguments)]
