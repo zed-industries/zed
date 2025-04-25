@@ -1,50 +1,50 @@
 use std::sync::Arc;
 
-use editor::Editor;
-use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity};
-use settings::update_settings_file;
+use editor::{Editor, EditorElement, EditorStyle};
+use extension::ContextServerManifestEntry;
+use gpui::{
+    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TextStyle, WeakEntity,
+};
+use language::{Language, LanguageRegistry};
+use settings::{Settings as _, update_settings_file};
+use theme::ThemeSettings;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
 use workspace::{ModalView, Workspace};
 
-pub(crate) fn init(cx: &mut App) {
-    cx.observe_new(|_: &mut Workspace, window, cx| {
+pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
+    cx.observe_new(move |_: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };
 
         if let Some(extension_events) = extension::ExtensionEvents::try_global(cx).as_ref() {
-            cx.subscribe_in(
-                extension_events,
-                window,
-                |workspace, _, event, window, cx| match event {
+            cx.subscribe_in(extension_events, window, {
+                let language_registry = language_registry.clone();
+                move |_, _, event, window, cx| match event {
                     extension::Event::ExtensionInstalled(manifest) => {
-                        let context_servers_to_setup = manifest
-                            .context_servers
-                            .iter()
-                            .filter_map(|(id, manifest)| {
-                                Some(ContextServerConfiguration {
-                                    id: id.clone(),
-                                    installation_instructions: manifest
-                                        .installation_instructions
-                                        .clone()?
-                                        .into(),
-                                    settings_hint: manifest.settings_hint.clone()?.into(),
-                                })
-                            })
-                            .collect::<Vec<_>>();
-
-                        if !context_servers_to_setup.is_empty() {
-                            workspace.toggle_modal(window, cx, |_, cx| {
-                                ConfigureContextServerModal {
-                                    context_servers_to_setup,
-                                    focus_handle: cx.focus_handle(),
+                        let jsonc_language = language_registry.language_for_name("jsonc");
+                        let manifest = manifest.clone();
+                        cx.spawn_in(window, async move |this, cx| {
+                            let jsonc_language = jsonc_language.await.ok();
+                            let workspace = this.clone();
+                            this.update_in(cx, |this, window, cx| {
+                                let modal = ConfigureContextServerModal::from_manifests(
+                                    manifest.context_servers.iter(),
+                                    jsonc_language,
+                                    workspace,
+                                    window,
+                                    cx,
+                                );
+                                if let Some(modal) = modal {
+                                    this.toggle_modal(window, cx, |_, _| modal);
                                 }
-                            });
-                        }
+                            })
+                        })
+                        .detach();
                     }
                     _ => {}
-                },
-            )
+                }
+            })
             .detach();
         } else {
             log::info!(
@@ -58,8 +58,6 @@ pub(crate) fn init(cx: &mut App) {
 struct ContextServerConfiguration {
     id: Arc<str>,
     installation_instructions: SharedString,
-    settings_hint: SharedString,
-
     settings_editor: Entity<Editor>,
 }
 
@@ -67,6 +65,47 @@ struct ConfigureContextServerModal {
     context_servers_to_setup: Vec<ContextServerConfiguration>,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
+}
+
+impl ConfigureContextServerModal {
+    pub fn from_manifests<'a>(
+        manifests: impl Iterator<Item = (&'a Arc<str>, &'a ContextServerManifestEntry)>,
+        jsonc_language: Option<Arc<Language>>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Self> {
+        let focus_handle = cx.focus_handle();
+
+        let context_servers_to_setup = manifests
+            .filter_map(|(id, manifest)| {
+                let settings_hint = manifest.settings_hint.clone()?;
+                let jsonc_language = jsonc_language.clone();
+                Some(ContextServerConfiguration {
+                    id: id.clone(),
+                    installation_instructions: manifest.installation_instructions.clone()?.into(),
+                    settings_editor: cx.new(|cx| {
+                        let mut editor = Editor::auto_height(16, window, cx);
+                        editor.set_text(settings_hint, window, cx);
+                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                            buffer.update(cx, |buffer, cx| buffer.set_language(jsonc_language, cx))
+                        }
+                        editor
+                    }),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        if context_servers_to_setup.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            context_servers_to_setup,
+            focus_handle,
+            workspace,
+        })
+    }
 }
 
 impl ConfigureContextServerModal {
@@ -80,13 +119,28 @@ impl ConfigureContextServerModal {
         };
 
         let configuration = self.context_servers_to_setup.remove(0);
-        let settings = configuration.settings_editor.read(cx).text(cx);
+        let Ok(settings_value) = serde_json_lenient::from_str::<serde_json::Value>(
+            &configuration.settings_editor.read(cx).text(cx),
+        ) else {
+            return;
+        };
 
+        let id = configuration.id.clone();
         update_settings_file::<context_server::ContextServerSettings>(
             workspace.read(cx).app_state().fs.clone(),
             cx,
-            |settings, cx| {
-                settings.context_servers.insert(configuration.)
+            |settings, _| {
+                if let Some(server_config) = settings.context_servers.get_mut(&id) {
+                    server_config.settings = Some(settings_value);
+                } else {
+                    settings.context_servers.insert(
+                        id,
+                        context_server::ServerConfig {
+                            settings: Some(settings_value),
+                            ..Default::default()
+                        },
+                    );
+                }
             },
         );
     }
@@ -116,8 +170,57 @@ impl Render for ConfigureContextServerModal {
                         Section::new().child(
                             v_flex()
                                 .gap_2()
-                                .child(current.installation_instructions.clone())
-                                .child(current.settings_hint.clone()),
+                                .child(
+                                    v_flex()
+                                        .gap_0p5()
+                                        .child(
+                                            Label::new("Installation Instructions")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
+                                        .child(Label::new(
+                                            current.installation_instructions.clone(),
+                                        )),
+                                )
+                                .child(
+                                    v_flex()
+                                        .gap_0p5()
+                                        .child(
+                                            Label::new("Settings")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
+                                        .child({
+                                            let settings = ThemeSettings::get_global(cx);
+                                            let text_style = TextStyle {
+                                                color: cx.theme().colors().text,
+                                                font_family: settings.buffer_font.family.clone(),
+                                                font_fallbacks: settings
+                                                    .buffer_font
+                                                    .fallbacks
+                                                    .clone(),
+                                                font_size: settings.buffer_font_size(cx).into(),
+                                                font_weight: settings.buffer_font.weight,
+                                                line_height: relative(
+                                                    settings.buffer_line_height.value(),
+                                                ),
+                                                ..Default::default()
+                                            };
+                                            EditorElement::new(
+                                                &current.settings_editor,
+                                                EditorStyle {
+                                                    background: cx
+                                                        .theme()
+                                                        .colors()
+                                                        .editor_background,
+                                                    local_player: cx.theme().players().local(),
+                                                    text: text_style,
+                                                    syntax: cx.theme().syntax().clone(),
+                                                    ..Default::default()
+                                                },
+                                            )
+                                        }),
+                                ),
                         ),
                     )
                     .footer(
