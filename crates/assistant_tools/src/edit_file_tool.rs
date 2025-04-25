@@ -1,4 +1,5 @@
 use crate::{
+    edit_agent::EditAgent,
     replace::{replace_exact, replace_with_flexible_indent},
     schema::json_schema_for,
 };
@@ -135,7 +136,9 @@ impl Tool for EditFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        panic!("{}", input.edit_instructions);
+        println!("{}", input.display_description);
+        println!("{}", input.edit_instructions);
+        panic!();
 
         // let card = window.and_then(|window| {
         //     window

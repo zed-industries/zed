@@ -1,15 +1,18 @@
-use anyhow::Result;
-use futures::{Stream, StreamExt};
-use gpui::{App, AsyncApp, Entity};
-use language::Anchor;
+mod edit_parser;
+
+use crate::{Template, Templates};
+use anyhow::{Result, anyhow};
+use edit_parser::EditParser;
+use futures::{Stream, StreamExt, TryStreamExt, stream};
+use gpui::{AsyncApp, Entity};
+use language::{Anchor, Bias, BufferSnapshot};
 use language_model::{
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use project::{Project, ProjectPath};
 use serde::Serialize;
+use smallvec::{SmallVec, smallvec};
 use std::{ops::Range, path::Path, sync::Arc};
-
-use crate::{Template, Templates};
 
 #[derive(Serialize)]
 pub struct EditAgentTemplate {
@@ -52,6 +55,7 @@ impl EditAgent {
             .update(cx, |project, cx| project.open_buffer(path.clone(), cx))?
             .await?;
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+        // todo!("move to background")
         let prompt = EditAgentTemplate {
             path: path.path.clone(),
             file_content: snapshot.text(),
@@ -64,15 +68,162 @@ impl EditAgent {
                 content: vec![MessageContent::Text(prompt)],
                 cache: false,
             }],
-            temperature: Some(0.0),
             ..Default::default()
         };
-        let mut stream = self.model.stream_completion_text(request, cx).await?.stream;
-        while let Some(chunk) = stream.next().await {
-            print!("{}", chunk?);
+        let mut parser = EditParser::new();
+        let stream = self.model.stream_completion_text(request, cx).await?.stream;
+        Ok(stream.flat_map(move |chunk| {
+            let mut edits = SmallVec::new();
+            let mut error = None;
+            let snapshot = snapshot.clone();
+            match chunk {
+                Ok(chunk) => edits = parser.push(&chunk),
+                Err(err) => error = Some(Err(anyhow!(err))),
+            }
+            stream::iter(
+                edits
+                    .into_iter()
+                    .map(move |edit| {
+                        let range = Self::resolve_location(&snapshot, &edit.old_text);
+                        Ok((range, edit.new_text))
+                    })
+                    .chain(error),
+            )
+        }))
+    }
+
+    fn resolve_location(buffer: &BufferSnapshot, search_query: &str) -> Range<Anchor> {
+        const INSERTION_COST: u32 = 3;
+        const DELETION_COST: u32 = 10;
+        const WHITESPACE_INSERTION_COST: u32 = 1;
+        const WHITESPACE_DELETION_COST: u32 = 1;
+
+        let buffer_len = buffer.len();
+        let query_len = search_query.len();
+        let mut matrix = SearchMatrix::new(query_len + 1, buffer_len + 1);
+        let mut leading_deletion_cost = 0_u32;
+        for (row, query_byte) in search_query.bytes().enumerate() {
+            let deletion_cost = if query_byte.is_ascii_whitespace() {
+                WHITESPACE_DELETION_COST
+            } else {
+                DELETION_COST
+            };
+
+            leading_deletion_cost = leading_deletion_cost.saturating_add(deletion_cost);
+            matrix.set(
+                row + 1,
+                0,
+                SearchState::new(leading_deletion_cost, SearchDirection::Diagonal),
+            );
+
+            for (col, buffer_byte) in buffer.bytes_in_range(0..buffer.len()).flatten().enumerate() {
+                let insertion_cost = if buffer_byte.is_ascii_whitespace() {
+                    WHITESPACE_INSERTION_COST
+                } else {
+                    INSERTION_COST
+                };
+
+                let up = SearchState::new(
+                    matrix.get(row, col + 1).cost.saturating_add(deletion_cost),
+                    SearchDirection::Up,
+                );
+                let left = SearchState::new(
+                    matrix.get(row + 1, col).cost.saturating_add(insertion_cost),
+                    SearchDirection::Left,
+                );
+                let diagonal = SearchState::new(
+                    if query_byte == *buffer_byte {
+                        matrix.get(row, col).cost
+                    } else {
+                        matrix
+                            .get(row, col)
+                            .cost
+                            .saturating_add(deletion_cost + insertion_cost)
+                    },
+                    SearchDirection::Diagonal,
+                );
+                matrix.set(row + 1, col + 1, up.min(left).min(diagonal));
+            }
         }
 
-        Ok(futures::stream::empty())
+        // Traceback to find the best match
+        let mut best_buffer_end = buffer_len;
+        let mut best_cost = u32::MAX;
+        for col in 1..=buffer_len {
+            let cost = matrix.get(query_len, col).cost;
+            if cost < best_cost {
+                best_cost = cost;
+                best_buffer_end = col;
+            }
+        }
+
+        let mut query_ix = query_len;
+        let mut buffer_ix = best_buffer_end;
+        while query_ix > 0 && buffer_ix > 0 {
+            let current = matrix.get(query_ix, buffer_ix);
+            match current.direction {
+                SearchDirection::Diagonal => {
+                    query_ix -= 1;
+                    buffer_ix -= 1;
+                }
+                SearchDirection::Up => {
+                    query_ix -= 1;
+                }
+                SearchDirection::Left => {
+                    buffer_ix -= 1;
+                }
+            }
+        }
+
+        let mut start = buffer.offset_to_point(buffer.clip_offset(buffer_ix, Bias::Left));
+        start.column = 0;
+        let mut end = buffer.offset_to_point(buffer.clip_offset(best_buffer_end, Bias::Right));
+        if end.column > 0 {
+            end.column = buffer.line_len(end.row);
+        }
+
+        buffer.anchor_after(start)..buffer.anchor_before(end)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum SearchDirection {
+    Up,
+    Left,
+    Diagonal,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct SearchState {
+    cost: u32,
+    direction: SearchDirection,
+}
+
+impl SearchState {
+    fn new(cost: u32, direction: SearchDirection) -> Self {
+        Self { cost, direction }
+    }
+}
+
+struct SearchMatrix {
+    cols: usize,
+    data: Vec<SearchState>,
+}
+
+impl SearchMatrix {
+    fn new(rows: usize, cols: usize) -> Self {
+        SearchMatrix {
+            cols,
+            data: vec![SearchState::new(0, SearchDirection::Diagonal); rows * cols],
+        }
+    }
+
+    fn get(&self, row: usize, col: usize) -> SearchState {
+        self.data[row * self.cols + col]
+    }
+
+    fn set(&mut self, row: usize, col: usize, cost: SearchState) {
+        self.data[row * self.cols + col] = cost;
     }
 }
 
@@ -91,8 +242,8 @@ mod tests {
     #[gpui::test]
     async fn test_basic(cx: &mut TestAppContext) {
         let test = agent_test(cx).await;
-        let diff = apply_edits(
-            "/root/lib.rs",
+        apply_edits(
+            "root/blame.rs",
             indoc! {"
                 struct User {
                     id: u32,
@@ -123,26 +274,180 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_remove_function(cx: &mut TestAppContext) {
+        for _ in 0..10 {
+            let mut cx = TestAppContext::build(cx.dispatcher.clone(), None);
+            let test = agent_test(&mut cx).await;
+            let new_content = apply_edits(
+                "root/blame.rs",
+                include_str!("fixtures/blame.rs"),
+                indoc! {r#"
+                    Let's delete the `run_git_blame` function while keeping all other code intact:
+
+                    // ... existing code ...
+                    const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
+                    const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
+
+                    #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
+                    pub struct BlameEntry {
+                    // ... existing code ...
+               "#},
+                &test,
+                &mut cx,
+            )
+            .await;
+            // pretty_assertions::assert_str_eq!(
+            //     new_content,
+            //     include_str!("fixtures/remove_run_git_blame/blame.rs")
+            // );
+        }
+    }
+
+    // #[gpui::test]
+    // async fn test_extract_method(cx: &mut TestAppContext) {
+    //     let EditAgentTest { fs, agent } = agent_test(cx).await;
+    //     fs.insert_file(
+    //         "/root/blame.rs",
+    //         include_bytes!("../../git/src/blame.rs").into(),
+    //     )
+    //     .await;
+    //     let path = agent
+    //         .project
+    //         .read_with(cx, |project, cx| {
+    //             project.find_project_path("root/blame.rs", cx)
+    //         })
+    //         .unwrap();
+    //     agent
+    //         .interpret(
+    //             path,
+    //             indoc! {r#"
+    //                 // ... existing code ...
+
+    //                 async fn run_git_blame(
+    //                     git_binary: &Path,
+    //                     working_directory: &Path,
+    //                     path: &Path,
+    //                     contents: &Rope,
+    //                 ) -> Result<String> {
+    //                     let mut child = util::command::new_smol_command(git_binary)
+    //                         .current_dir(working_directory)
+    //                         .arg("blame")
+    //                         .arg("--incremental")
+    //                         .arg("--contents")
+    //                         .arg("-")
+    //                         .arg(path.as_os_str())
+    //                         .stdin(Stdio::piped())
+    //                         .stdout(Stdio::piped())
+    //                         .stderr(Stdio::piped())
+    //                         .spawn()
+    //                         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
+
+    //                     let stdin = child
+    //                         .stdin
+    //                         .as_mut()
+    //                         .context("failed to get pipe to stdin of git blame command")?;
+
+    //                     for chunk in contents.chunks() {
+    //                         stdin.write_all(chunk.as_bytes()).await?;
+    //                     }
+    //                     stdin.flush().await?;
+
+    //                     let output = child
+    //                         .output()
+    //                         .await
+    //                         .map_err(|e| anyhow!("Failed to read git blame output: {}", e))?;
+
+    //                     handle_git_blame_result(output)
+    //                 }
+
+    //                 fn handle_git_blame_result(output: std::process::Output) -> Result<String> {
+    //                     if !output.status.success() {
+    //                         let stderr = String::from_utf8_lossy(&output.stderr);
+    //                         let trimmed = stderr.trim();
+    //                         if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
+    //                             return Ok(String::new());
+    //                         }
+    //                         return Err(anyhow!("git blame process failed: {}", stderr));
+    //                     }
+
+    //                     Ok(String::from_utf8(output.stdout)?)
+    //                 }
+
+    //                 // ... existing code ...
+    //             "#}
+    //             .into(),
+    //             &mut cx.to_async(),
+    //         )
+    //         .await
+    //         .unwrap();
+    // }
+
+    // #[gpui::test]
+    // async fn test_delete_method(cx: &mut TestAppContext) {
+    //     let EditAgentTest { fs, agent } = agent_test(cx).await;
+    //     fs.insert_file(
+    //         "/root/blame.rs",
+    //         include_bytes!("../../git/src/blame.rs").into(),
+    //     )
+    //     .await;
+    //     let path = agent
+    //         .project
+    //         .read_with(cx, |project, cx| {
+    //             project.find_project_path("root/blame.rs", cx)
+    //         })
+    //         .unwrap();
+    //     agent
+    //         .interpret(
+    //             path,
+    //             indoc! {r#"
+    //                 Delete the `run_git_blame` function
+
+    //                 // ... existing code ...
+    //                 const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
+    //                 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
+
+    //                 // ... existing code ...
+    //             "#}
+    //             .into(),
+    //             &mut cx.to_async(),
+    //         )
+    //         .await
+    //         .unwrap();
+    // }
+
     async fn apply_edits(
         path: impl AsRef<Path>,
         content: impl Into<String>,
         instructions: impl Into<String>,
         test: &EditAgentTest,
         cx: &mut TestAppContext,
-    ) {
-        test.fs
-            .insert_file(path.as_ref(), content.into().into_bytes())
-            .await;
+    ) -> String {
         let path = test
             .agent
             .project
             .read_with(cx, |project, cx| project.find_project_path(path, cx))
             .unwrap();
+        let abs_path = test
+            .agent
+            .project
+            .read_with(cx, |project, cx| project.absolute_path(&path, cx))
+            .unwrap();
+        test.fs
+            .insert_file(abs_path, content.into().into_bytes())
+            .await;
         let edits = test
             .agent
             .interpret(path, instructions.into(), &mut cx.to_async())
             .await
-            .unwrap();
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>();
+        dbg!(&edits);
+
+        "".into()
     }
 
     struct EditAgentTest {

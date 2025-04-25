@@ -11,6 +11,8 @@ Use this tool to propose an edit to an existing file. This will be read by a les
 
 For example:
 
+One paragraph describing the nature of the change in English. Then some code to indicate where and how to make the change.
+
 // ... existing code ...
 FIRST_EDIT
 // ... existing code ...
