@@ -1024,13 +1024,11 @@ impl AssistantPanel {
                 title_editor,
                 context_editor: _,
                 ..
-            } => {
-                div()
-                    .ml_2()
-                    .w_full()
-                    .child(title_editor.clone())
-                    .into_any_element()
-            }
+            } => div()
+                .ml_2()
+                .w_full()
+                .child(title_editor.clone())
+                .into_any_element(),
             ActiveView::History => Label::new("History").truncate().into_any_element(),
             ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
         };
