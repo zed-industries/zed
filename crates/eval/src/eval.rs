@@ -1,6 +1,7 @@
 mod assertions;
 mod example;
 mod examples;
+mod explorer;
 mod ids;
 mod instance;
 mod tool_metrics;
@@ -308,6 +309,7 @@ fn main() {
             print_report(
                 &mut *results_by_example_name.borrow_mut(),
                 &mut cumulative_tool_metrics,
+                &run_dir,
             )?;
 
             app_state.client.telemetry().flush_events().await;
@@ -525,9 +527,14 @@ fn print_h2(header: &str) {
     println!("{:^HEADER_WIDTH$}", header);
     println!("{:-^HEADER_WIDTH$}\n", "");
 }
+
 fn print_report(
-    results_by_example_name: &mut HashMap<String, Vec<(ExampleInstance, anyhow::Result<(RunOutput, JudgeOutput)>)>>,
+    results_by_example_name: &mut HashMap<
+        String,
+        Vec<(ExampleInstance, anyhow::Result<(RunOutput, JudgeOutput)>)>,
+    >,
     cumulative_tool_metrics: &mut ToolMetrics,
+    run_dir: &Path,
 ) -> anyhow::Result<()> {
     print_h1("EVAL RESULTS");
 
@@ -547,11 +554,7 @@ fn print_report(
         for (example, result) in results.iter() {
             match result {
                 Err(err) => {
-                    display_error_row(
-                        &mut table_rows,
-                        example.repetition,
-                        err.to_string(),
-                    )?;
+                    display_error_row(&mut table_rows, example.repetition, err.to_string())?;
                     error_count += 1;
                 }
                 Ok((run_output, judge_output)) => {
@@ -667,9 +670,8 @@ fn print_report(
         let thread_score_count = thread_scores.len();
 
         if thread_score_count > 0 {
-            let average_thread_score = (thread_scores.into_iter().sum::<f32>()
-                / (thread_score_count as f32))
-                .floor();
+            let average_thread_score =
+                (thread_scores.into_iter().sum::<f32>() / (thread_score_count as f32)).floor();
             println!("Average thread score: {average_thread_score}%");
         }
 
@@ -677,6 +679,20 @@ fn print_report(
 
         print_h2("CUMULATIVE TOOL METRICS");
         println!("{}", cumulative_tool_metrics);
+    }
+
+    // Generate explorer HTML
+    let explorer_output_path = run_dir.join("overview.html");
+    let json_paths: Vec<PathBuf> = results_by_example_name
+        .values()
+        .flat_map(|results| {
+            results
+                .iter()
+                .map(|(example, _)| example.run_directory.join("last.messages.json"))
+        })
+        .collect();
+    if let Err(err) = explorer::generate_explorer_html(&json_paths, &explorer_output_path) {
+        eprintln!("Failed to generate explorer HTML: {}", err);
     }
 
     Ok(())

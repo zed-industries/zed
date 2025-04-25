@@ -16,10 +16,8 @@ struct Args {
     output: PathBuf,
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
-
-    if let Some(parent) = args.output.parent() {
+pub fn generate_explorer_html(inputs: &[PathBuf], output: &PathBuf) -> Result<String> {
+    if let Some(parent) = output.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent).context(format!(
                 "Failed to create output directory: {}",
@@ -34,8 +32,7 @@ fn main() -> Result<()> {
         template_path.display()
     ))?;
 
-    let threads = args
-        .input
+    let threads = inputs
         .iter()
         .map(|input_path| {
             let mut thread_data: Value = fs::read_to_string(input_path)
@@ -49,15 +46,11 @@ fn main() -> Result<()> {
 
     let all_threads = json!({ "threads": threads });
     let html_content = inject_thread_data(template, all_threads)?;
-    fs::write(&args.output, html_content)
-        .context(format!("Failed to write output: {}", args.output.display()))?;
+    fs::write(&output, &html_content)
+        .context(format!("Failed to write output: {}", output.display()))?;
 
-    println!(
-        "Saved {} thread(s) to {}",
-        threads.len(),
-        args.output.display()
-    );
-    Ok(())
+    println!("Saved {} thread(s) to {}", threads.len(), output.display());
+    Ok(html_content)
 }
 
 fn inject_thread_data(template: String, threads_data: Value) -> Result<String> {
@@ -72,4 +65,9 @@ fn inject_thread_data(template: String, threads_data: Value) -> Result<String> {
     let final_html = template.replacen(injection_marker, &script_injection, 1);
 
     Ok(final_html)
+}
+
+pub fn main() -> Result<()> {
+    let args = Args::parse();
+    generate_explorer_html(&args.input, &args.output).map(|_| ())
 }
