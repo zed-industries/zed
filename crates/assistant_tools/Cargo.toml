@@ -36,6 +36,7 @@ rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+smallvec.workspace = true
 ui.workspace = true
 util.workspace = true
 web_search.workspace = true

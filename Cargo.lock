@@ -734,6 +734,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smallvec",
  "tree-sitter-rust",
  "ui",
  "unindent",
