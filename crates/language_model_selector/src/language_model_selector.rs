@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::{HashSet, IndexMap};
-use feature_flags::{Assistant2FeatureFlag, ZedPro};
+use feature_flags::{Assistant2FeatureFlag, ZedProFeatureFlag};
 use gpui::{
     Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
@@ -584,7 +584,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .when(cx.has_flag::<ZedPro>(), |this| {
+                .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
                     this.child(match plan {
                         Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
                             .icon(IconName::ZedAssistant)

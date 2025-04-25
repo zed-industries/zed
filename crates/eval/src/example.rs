@@ -10,7 +10,7 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent::ThreadEvent;
+use agent::{ContextLoadResult, ThreadEvent};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
@@ -115,7 +115,12 @@ impl ExampleContext {
     pub fn push_user_message(&mut self, text: impl ToString) {
         self.app
             .update_entity(&self.agent_thread, |thread, cx| {
-                thread.insert_user_message(text.to_string(), vec![], None, cx);
+                thread.insert_user_message(
+                    text.to_string(),
+                    ContextLoadResult::default(),
+                    None,
+                    cx,
+                );
             })
             .unwrap();
     }
@@ -252,6 +257,9 @@ impl ExampleContext {
                             }
                         }
                     });
+                }
+                ThreadEvent::InvalidToolInput { .. } => {
+                    println!("{log_prefix} invalid tool input");
                 }
                 ThreadEvent::ToolConfirmationNeeded => {
                     panic!(

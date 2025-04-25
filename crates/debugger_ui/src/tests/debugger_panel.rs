@@ -1,4 +1,4 @@
-use crate::{tests::start_debug_session, *};
+use crate::{persistence::DebuggerPaneItem, tests::start_debug_session, *};
 use dap::{
     ErrorResponse, Message, RunInTerminalRequestArguments, SourceBreakpoint,
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
@@ -25,7 +25,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
 use workspace::{Item, dock::Panel};
@@ -385,22 +385,17 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
 
     workspace
         .update(cx, |workspace, _window, cx| {
-            let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
-
-            let panel = terminal_panel.read(cx).pane().unwrap().read(cx);
-
-            assert_eq!(1, panel.items_len());
-            assert!(
-                panel
-                    .active_item()
-                    .unwrap()
-                    .downcast::<TerminalView>()
-                    .unwrap()
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let session = debug_panel.read(cx).active_session().unwrap();
+            let running = session.read(cx).running_state();
+            assert_eq!(
+                running
                     .read(cx)
-                    .terminal()
-                    .read(cx)
-                    .debug_terminal()
+                    .pane_items_status(cx)
+                    .get(&DebuggerPaneItem::Terminal),
+                Some(&true)
             );
+            assert!(running.read(cx).debug_terminal.read(cx).terminal.is_some());
         })
         .unwrap();
 

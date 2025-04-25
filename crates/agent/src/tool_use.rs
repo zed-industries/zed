@@ -30,7 +30,6 @@ pub struct ToolUse {
 pub struct ToolUseState {
     tools: Entity<ToolWorkingSet>,
     tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
-    tool_uses_by_user_message: HashMap<MessageId, Vec<LanguageModelToolUseId>>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
     tool_result_cards: HashMap<LanguageModelToolUseId, AnyToolCard>,
@@ -42,7 +41,6 @@ impl ToolUseState {
         Self {
             tools,
             tool_uses_by_assistant_message: HashMap::default(),
-            tool_uses_by_user_message: HashMap::default(),
             tool_results: HashMap::default(),
             pending_tool_uses_by_id: HashMap::default(),
             tool_result_cards: HashMap::default(),
@@ -56,7 +54,6 @@ impl ToolUseState {
     pub fn from_serialized_messages(
         tools: Entity<ToolWorkingSet>,
         messages: &[SerializedMessage],
-        mut filter_by_tool_name: impl FnMut(&str) -> bool,
     ) -> Self {
         let mut this = Self::new(tools);
         let mut tool_names_by_id = HashMap::default();
@@ -68,7 +65,6 @@ impl ToolUseState {
                         let tool_uses = message
                             .tool_uses
                             .iter()
-                            .filter(|tool_use| (filter_by_tool_name)(tool_use.name.as_ref()))
                             .map(|tool_use| LanguageModelToolUse {
                                 id: tool_use.id.clone(),
                                 name: tool_use.name.clone().into(),
@@ -86,14 +82,6 @@ impl ToolUseState {
 
                         this.tool_uses_by_assistant_message
                             .insert(message.id, tool_uses);
-                    }
-                }
-                Role::User => {
-                    if !message.tool_results.is_empty() {
-                        let tool_uses_by_user_message = this
-                            .tool_uses_by_user_message
-                            .entry(message.id)
-                            .or_default();
 
                         for tool_result in &message.tool_results {
                             let tool_use_id = tool_result.tool_use_id.clone();
@@ -102,11 +90,6 @@ impl ToolUseState {
                                 continue;
                             };
 
-                            if !(filter_by_tool_name)(tool_use.as_ref()) {
-                                continue;
-                            }
-
-                            tool_uses_by_user_message.push(tool_use_id.clone());
                             this.tool_results.insert(
                                 tool_use_id.clone(),
                                 LanguageModelToolResult {
@@ -119,7 +102,7 @@ impl ToolUseState {
                         }
                     }
                 }
-                Role::System => {}
+                Role::System | Role::User => {}
             }
         }
 
@@ -229,20 +212,26 @@ impl ToolUseState {
         }
     }
 
-    pub fn tool_results_for_message(&self, message_id: MessageId) -> Vec<&LanguageModelToolResult> {
-        let empty = Vec::new();
+    pub fn tool_results_for_message(
+        &self,
+        assistant_message_id: MessageId,
+    ) -> Vec<&LanguageModelToolResult> {
+        let Some(tool_uses) = self
+            .tool_uses_by_assistant_message
+            .get(&assistant_message_id)
+        else {
+            return Vec::new();
+        };
 
-        self.tool_uses_by_user_message
-            .get(&message_id)
-            .unwrap_or(&empty)
+        tool_uses
             .iter()
-            .filter_map(|tool_use_id| self.tool_results.get(&tool_use_id))
+            .filter_map(|tool_use| self.tool_results.get(&tool_use.id))
             .collect()
     }
 
-    pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
-        self.tool_uses_by_user_message
-            .get(&message_id)
+    pub fn message_has_tool_results(&self, assistant_message_id: MessageId) -> bool {
+        self.tool_uses_by_assistant_message
+            .get(&assistant_message_id)
             .map_or(false, |results| !results.is_empty())
     }
 
@@ -293,14 +282,6 @@ impl ToolUseState {
         let status = if tool_use.is_input_complete {
             self.tool_use_metadata_by_id
                 .insert(tool_use.id.clone(), metadata);
-
-            // The tool use is being requested by the Assistant, so we want to
-            // attach the tool results to the next user message.
-            let next_user_message_id = MessageId(assistant_message_id.0 + 1);
-            self.tool_uses_by_user_message
-                .entry(next_user_message_id)
-                .or_default()
-                .push(tool_use.id.clone());
 
             PendingToolUseStatus::Idle
         } else {
@@ -467,31 +448,49 @@ impl ToolUseState {
         }
     }
 
-    pub fn attach_tool_results(
+    pub fn has_tool_results(&self, assistant_message_id: MessageId) -> bool {
+        self.tool_uses_by_assistant_message
+            .contains_key(&assistant_message_id)
+    }
+
+    pub fn tool_results_message(
         &self,
-        message_id: MessageId,
-        request_message: &mut LanguageModelRequestMessage,
-    ) {
-        if let Some(tool_uses) = self.tool_uses_by_user_message.get(&message_id) {
-            for tool_use_id in tool_uses {
-                if let Some(tool_result) = self.tool_results.get(tool_use_id) {
-                    request_message.content.push(MessageContent::ToolResult(
-                        LanguageModelToolResult {
-                            tool_use_id: tool_use_id.clone(),
-                            tool_name: tool_result.tool_name.clone(),
-                            is_error: tool_result.is_error,
-                            content: if tool_result.content.is_empty() {
-                                // Surprisingly, the API fails if we return an empty string here.
-                                // It thinks we are sending a tool use without a tool result.
-                                "<Tool returned an empty string>".into()
-                            } else {
-                                tool_result.content.clone()
-                            },
+        assistant_message_id: MessageId,
+    ) -> Option<LanguageModelRequestMessage> {
+        let tool_uses = self
+            .tool_uses_by_assistant_message
+            .get(&assistant_message_id)?;
+
+        if tool_uses.is_empty() {
+            return None;
+        }
+
+        let mut request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![],
+            cache: false,
+        };
+
+        for tool_use in tool_uses {
+            if let Some(tool_result) = self.tool_results.get(&tool_use.id) {
+                request_message
+                    .content
+                    .push(MessageContent::ToolResult(LanguageModelToolResult {
+                        tool_use_id: tool_use.id.clone(),
+                        tool_name: tool_result.tool_name.clone(),
+                        is_error: tool_result.is_error,
+                        content: if tool_result.content.is_empty() {
+                            // Surprisingly, the API fails if we return an empty string here.
+                            // It thinks we are sending a tool use without a tool result.
+                            "<Tool returned an empty string>".into()
+                        } else {
+                            tool_result.content.clone()
                         },
-                    ));
-                }
+                    }));
             }
         }
+
+        Some(request_message)
     }
 }
 

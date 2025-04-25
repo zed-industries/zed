@@ -1,11 +1,7 @@
-mod supported_countries;
-
 use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
-
-pub use supported_countries::*;
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -338,7 +334,6 @@ pub struct CountTokensResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
-    pub raw_args: String,
     pub args: serde_json::Value,
 }
 
