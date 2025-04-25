@@ -1,4 +1,8 @@
-use crate::{persistence::DebuggerPaneItem, tests::start_debug_session, *};
+use crate::{
+    persistence::DebuggerPaneItem,
+    tests::{start_debug_session, start_debug_session_with},
+    *,
+};
 use dap::{
     ErrorResponse, Message, RunInTerminalRequestArguments, SourceBreakpoint,
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
@@ -25,6 +29,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+use task::{DebugTaskDefinition, LaunchRequest};
 use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
@@ -1383,4 +1388,72 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
             "Session wouldn't exist if it was shutdown"
         );
     });
+}
+
+#[gpui::test]
+async fn test_we_send_arguments_from_user_config(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        "/project",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let debug_definition = DebugTaskDefinition {
+        adapter: "fake-adapter".to_string(),
+        request: dap::DebugRequest::Launch(LaunchRequest {
+            program: "main.rs".to_owned(),
+            args: vec!["arg1".to_owned(), "arg2".to_owned()],
+            cwd: Some("/Random_path".into()),
+        }),
+        label: "test".to_string(),
+        initialize_args: None,
+        tcp_connection: None,
+        stop_on_entry: None,
+    };
+
+    let launch_handler_called = Arc::new(AtomicBool::new(false));
+
+    start_debug_session_with(&workspace, cx, debug_definition.clone(), {
+        let debug_definition = debug_definition.clone();
+        let launch_handler_called = launch_handler_called.clone();
+
+        move |client| {
+            let debug_definition = debug_definition.clone();
+            let launch_handler_called = launch_handler_called.clone();
+
+            client.on_request::<dap::requests::Launch, _>(move |_, args| {
+                launch_handler_called.store(true, Ordering::SeqCst);
+
+                let obj = args.raw.as_object().unwrap();
+                let sent_definition = serde_json::from_value::<DebugTaskDefinition>(
+                    obj.get(&"raw_request".to_owned()).unwrap().clone(),
+                )
+                .unwrap();
+
+                assert_eq!(sent_definition, debug_definition);
+
+                Ok(())
+            });
+        }
+    })
+    .ok();
+
+    cx.run_until_parked();
+
+    assert!(
+        launch_handler_called.load(Ordering::SeqCst),
+        "Launch request handler was not called"
+    );
 }

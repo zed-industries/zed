@@ -408,6 +408,7 @@ impl FakeAdapter {
             } else {
                 None
             },
+            "raw_request": serde_json::to_value(config).unwrap()
         });
         let request = match config.request {
             DebugRequest::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,

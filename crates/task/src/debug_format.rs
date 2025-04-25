@@ -121,17 +121,19 @@ impl TryFrom<TaskTemplate> for DebugTaskTemplate {
 impl DebugTaskTemplate {
     /// Translate from debug definition to a task template
     pub fn to_zed_format(self) -> TaskTemplate {
-        let (command, cwd, request) = match self.definition.request {
+        let (command, cwd, args, request) = match self.definition.request {
             DebugRequest::Launch(launch_config) => (
                 launch_config.program,
                 launch_config
                     .cwd
                     .map(|cwd| cwd.to_string_lossy().to_string()),
+                launch_config.args,
                 crate::task_template::DebugArgsRequest::Launch,
             ),
             DebugRequest::Attach(attach_config) => (
                 "".to_owned(),
                 None,
+                vec![],
                 crate::task_template::DebugArgsRequest::Attach(attach_config),
             ),
         };
@@ -150,7 +152,7 @@ impl DebugTaskTemplate {
         TaskTemplate {
             label,
             command,
-            args: vec![],
+            args,
             task_type,
             cwd,
             ..Default::default()
@@ -276,7 +278,11 @@ impl DebugTaskFile {
 
 #[cfg(test)]
 mod tests {
-    use crate::{DebugRequest, LaunchRequest};
+    use crate::{
+        AttachRequest, DebugRequest, DebugTaskDefinition, DebugTaskTemplate, LaunchRequest,
+        TaskType, TcpArgumentsTemplate,
+    };
+    use std::path::PathBuf;
 
     #[test]
     fn test_can_deserialize_non_attach_task() {
@@ -289,5 +295,97 @@ mod tests {
                 ..Default::default()
             })
         );
+    }
+
+    #[test]
+    fn test_to_zed_format_launch() {
+        let debug_template = DebugTaskTemplate {
+            locator: Some("launch-locator".to_string()),
+            definition: DebugTaskDefinition {
+                adapter: "test-adapter".to_string(),
+                request: DebugRequest::Launch(LaunchRequest {
+                    program: "/path/to/program".to_string(),
+                    cwd: Some(PathBuf::from("/path/to/cwd")),
+                    args: vec!["--arg1".to_string(), "--arg2".to_string()],
+                }),
+                label: "Launch Test".to_string(),
+                initialize_args: Some(serde_json::json!({"someInit": "value"})),
+                tcp_connection: Some(TcpArgumentsTemplate {
+                    port: Some(9000),
+                    host: None,
+                    timeout: Some(5000),
+                }),
+                stop_on_entry: Some(true),
+            },
+        };
+
+        let task_template = debug_template.to_zed_format();
+
+        assert_eq!(task_template.label, "Launch Test");
+        assert_eq!(task_template.command, "/path/to/program");
+        assert_eq!(task_template.cwd, Some("/path/to/cwd".to_string()));
+        assert_eq!(
+            task_template.args,
+            vec!["--arg1".to_string(), "--arg2".to_string()]
+        );
+
+        if let TaskType::Debug(debug_args) = task_template.task_type {
+            assert_eq!(debug_args.adapter, "test-adapter");
+            assert_eq!(debug_args.locator, Some("launch-locator".to_string()));
+            assert_eq!(
+                debug_args.initialize_args,
+                Some(serde_json::json!({"someInit": "value"}))
+            );
+            assert!(matches!(debug_args.tcp_connection, Some(_)));
+            assert_eq!(debug_args.stop_on_entry, Some(true));
+            assert!(matches!(
+                debug_args.request,
+                crate::task_template::DebugArgsRequest::Launch
+            ));
+        } else {
+            panic!("Expected TaskType::Debug");
+        }
+    }
+
+    #[test]
+    fn test_to_zed_format_attach() {
+        let debug_template = DebugTaskTemplate {
+            locator: Some("attach-locator".to_string()),
+            definition: DebugTaskDefinition {
+                adapter: "attach-adapter".to_string(),
+                request: DebugRequest::Attach(AttachRequest {
+                    process_id: Some(12345),
+                }),
+                label: "Attach Test".to_string(),
+                initialize_args: None,
+                tcp_connection: None,
+                stop_on_entry: None,
+            },
+        };
+
+        let task_template = debug_template.to_zed_format();
+
+        assert_eq!(task_template.label, "Attach Test");
+        assert_eq!(task_template.command, "");
+        assert_eq!(task_template.cwd, None);
+        assert!(task_template.args.is_empty());
+
+        if let TaskType::Debug(debug_args) = task_template.task_type {
+            assert_eq!(debug_args.adapter, "attach-adapter");
+            assert_eq!(debug_args.locator, Some("attach-locator".to_string()));
+            assert_eq!(debug_args.initialize_args, None);
+            assert_eq!(debug_args.tcp_connection, None);
+            assert_eq!(debug_args.stop_on_entry, None);
+
+            if let crate::task_template::DebugArgsRequest::Attach(attach_config) =
+                debug_args.request
+            {
+                assert_eq!(attach_config.process_id, Some(12345));
+            } else {
+                panic!("Expected DebugArgsRequest::Attach");
+            }
+        } else {
+            panic!("Expected TaskType::Debug");
+        }
     }
 }
