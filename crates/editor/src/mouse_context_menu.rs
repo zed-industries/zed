@@ -260,7 +260,14 @@ pub fn deploy_context_menu(
                     } else {
                         builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
                     }
-                });
+                })
+                .separator()
+                .action(
+                    "Show Code Actions",
+                    Box::new(ToggleCodeActions {
+                        deployed_from_indicator: None,
+                    }),
+                );
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
