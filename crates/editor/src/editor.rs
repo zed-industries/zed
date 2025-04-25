@@ -5159,8 +5159,6 @@ impl Editor {
                                 Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
                             });
 
-                    let debugger_flag = cx.has_flag::<Debugger>();
-
                     Some(cx.spawn_in(window, async move |editor, cx| {
                         let task_context = match task_context {
                             Some(task_context) => task_context.await,
@@ -5178,18 +5176,30 @@ impl Editor {
                                 });
                         let spawn_straight_away = resolved_tasks
                             .as_ref()
-                            .map_or(false, |tasks| tasks.templates.iter().len() == 1)
+                            .map_or(false, |tasks| tasks.templates.len() == 1)
                             && code_actions
                                 .as_ref()
                                 .map_or(true, |actions| actions.is_empty());
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
+                            let debug_scenarios = if cx.has_flag::<Debugger>() {
+                                maybe!({
+                                    let project = editor.project.as_ref()?;
+                                    let inventory =
+                                        project.read(cx).task_store().read(cx).task_inventory()?;
+                                    Some(inventory.read(cx).list_debug_tasks())
+                                })
+                                .unwrap_or_default()
+                            } else {
+                                vec![]
+                            };
+
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
                                     actions: CodeActionContents::new(
                                         resolved_tasks,
                                         code_actions,
-                                        cx,
+                                        debug_scenarios,
                                     ),
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
@@ -6639,6 +6649,7 @@ impl Editor {
                                     "Toggle Code Actions",
                                     &ToggleCodeActions {
                                         deployed_from_indicator: None,
+                                        quick_launch: false,
                                     },
                                     &focus_handle,
                                     window,
@@ -6647,11 +6658,13 @@ impl Editor {
                             }
                         })
                     })
-                    .on_click(cx.listener(move |editor, _e, window, cx| {
+                    .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
+                        let quick_launch = e.down.button == MouseButton::Left;
                         window.focus(&editor.focus_handle(cx));
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: Some(row),
+                                quick_launch,
                             },
                             window,
                             cx,
@@ -7119,11 +7132,13 @@ impl Editor {
             .icon_size(IconSize::XSmall)
             .icon_color(color)
             .toggle_state(is_active)
-            .on_click(cx.listener(move |editor, _e, window, cx| {
+            .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
+                let quick_launch = e.down.button == MouseButton::Left;
                 window.focus(&editor.focus_handle(cx));
                 editor.toggle_code_actions(
                     &ToggleCodeActions {
                         deployed_from_indicator: Some(row),
+                        quick_launch,
                     },
                     window,
                     cx,

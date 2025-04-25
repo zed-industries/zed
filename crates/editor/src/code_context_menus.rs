@@ -13,6 +13,7 @@ use ordered_float::OrderedFloat;
 use project::CompletionSource;
 use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
+use task::DebugScenario;
 
 use std::{
     cell::RefCell,
@@ -804,19 +805,19 @@ pub struct AvailableCodeAction {
 pub struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
+    debug_scenarios: Vec<DebugScenario>,
 }
 
 impl CodeActionContents {
     pub fn new(
         tasks: Option<ResolvedTasks>,
         actions: Option<Rc<[AvailableCodeAction]>>,
-        cx: &App,
+        debug_scenarios: Vec<DebugScenario>,
     ) -> Self {
-        if !cx.has_flag::<Debugger>() {}
-
         Self {
             tasks: tasks.map(Rc::new),
             actions,
+            debug_scenarios,
         }
     }
 
