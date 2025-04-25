@@ -374,7 +374,7 @@ impl DapStore {
                             let result = locator
                                 .run(build_command.clone())
                                 .await
-                                .log_with_level(log::Level::Debug);
+                                .log_with_level(log::Level::Error);
                             if let Some(result) = result {
                                 return Ok(result);
                             }

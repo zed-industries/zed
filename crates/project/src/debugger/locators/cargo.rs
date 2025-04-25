@@ -39,7 +39,17 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
 #[async_trait]
 impl DapLocator for CargoLocator {
     fn accepts(&self, build_config: &SpawnInTerminal) -> bool {
-        build_config.command == "cargo"
+        if build_config.command != "cargo" {
+            return false;
+        }
+        let Some(command) = build_config.args.first().map(|s| s.as_str()) else {
+            return false;
+        };
+        if matches!(command, "check" | "run") {
+            return false;
+        }
+        !matches!(command, "test" | "bench")
+            || build_config.args.iter().any(|arg| arg == "--no-run")
     }
 
     async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {

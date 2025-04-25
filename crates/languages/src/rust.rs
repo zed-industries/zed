@@ -629,6 +629,11 @@ impl ContextProvider for RustContextProvider {
         } else {
             vec!["run".into()]
         };
+        let build_task_args = if let Some(package_to_run) = package_to_run {
+            vec!["build".into(), "-p".into(), package_to_run]
+        } else {
+            vec!["build".into()]
+        };
         let mut task_templates = vec![
             TaskTemplate {
                 label: format!(
@@ -753,6 +758,37 @@ impl ContextProvider for RustContextProvider {
                 label: "Clean".into(),
                 command: "cargo".into(),
                 args: vec!["clean".into()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "Build {} {} (package: {})",
+                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
+                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
+                cwd: Some("$ZED_DIRNAME".to_owned()),
+                command: "cargo".into(),
+                args: build_task_args,
+                tags: vec!["rust-main".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "Build Test '{}' (package: {})",
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
+                    "--no-run".into(),
+                ],
+                tags: vec!["rust-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
