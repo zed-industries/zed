@@ -307,7 +307,7 @@ fn main() {
             .await;
 
             print_report(
-                &mut *results_by_example_name.borrow_mut(),
+                &mut results_by_example_name.borrow_mut(),
                 &mut cumulative_tool_metrics,
                 &run_dir,
             )?;
