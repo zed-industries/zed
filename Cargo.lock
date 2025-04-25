@@ -4982,6 +4982,7 @@ dependencies = [
  "languages",
  "node_runtime",
  "paths",
+ "pretty_assertions",
  "project",
  "prompt_store",
  "regex",

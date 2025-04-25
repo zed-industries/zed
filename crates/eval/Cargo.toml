@@ -32,6 +32,7 @@ language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
 paths.workspace = true
+pretty_assertions.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 regex.workspace = true
@@ -48,6 +49,7 @@ unindent.workspace = true
 util.workspace = true
 uuid = { version = "1.6", features = ["v4"] }
 workspace-hack.workspace = true
+
 [[bin]]
 name = "eval"
 path = "src/eval.rs"
