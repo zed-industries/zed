@@ -127,6 +127,26 @@ mod tests {
                 "type": "string"
             })
         );
+
+        // Ensure that we do not add a type if it is an object
+        let mut json = json!({
+            "description": {
+                "value": "abc",
+                "type": "string"
+            }
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "description": {
+                    "value": "abc",
+                    "type": "string"
+                }
+            })
+        );
     }
 
     #[test]
