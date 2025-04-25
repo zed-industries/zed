@@ -133,7 +133,7 @@ impl ResolvedTask {
 
     /// A human-readable label to display in the UI.
     pub fn display_label(&self) -> &str {
-        self.resolved.command_label.as_str()
+        self.resolved.label.as_str()
     }
 }
 
