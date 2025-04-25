@@ -22,7 +22,6 @@ use gpui::{
 
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{Location, WorktreeId};
 use project::{
     Project,
     debugger::{
