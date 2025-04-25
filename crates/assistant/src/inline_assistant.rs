@@ -18,7 +18,7 @@ use editor::{
     },
 };
 use feature_flags::{
-    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedPro,
+    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedProFeatureFlag,
 };
 use fs::Fs;
 use futures::{
@@ -1652,7 +1652,7 @@ impl Render for PromptEditor {
 
                         let error_message = SharedString::from(error.to_string());
                         if error.error_code() == proto::ErrorCode::RateLimitExceeded
-                            && cx.has_flag::<ZedPro>()
+                            && cx.has_flag::<ZedProFeatureFlag>()
                         {
                             el.child(
                                 v_flex()
@@ -1966,7 +1966,7 @@ impl PromptEditor {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Error(error) => {
-                if cx.has_flag::<ZedPro>()
+                if cx.has_flag::<ZedProFeatureFlag>()
                     && error.error_code() == proto::ErrorCode::RateLimitExceeded
                     && !dismissed_rate_limit_notice()
                 {
