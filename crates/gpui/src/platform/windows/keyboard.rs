@@ -81,82 +81,31 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
             }
         }
 
-        if keystroke.key.len() != 1 {
-            log::error!(
-                "Failed to convert keystroke to vim keystroke: {}",
-                keystroke
-            );
+        if keystroke.key.len() != 1 || !keystroke.modifiers.shift {
             return Cow::Borrowed(keystroke);
         }
 
         // Below handles case 2 and case 3, `ctrl-shit-4` -> `ctrl-$`, `alt-shift-3` -> `alt-#`
-        let mut modifiers = keystroke.modifiers;
-        let Some(vkey) = get_vkey_from_char(keystroke.key.as_str(), &mut modifiers).log_err()
-        else {
-            log::error!(
-                "Failed to convert keystroke to vim keystroke: {}",
-                keystroke
-            );
-            return Cow::Borrowed(keystroke);
-        };
-
-        let mut state = [0; 256];
-        if modifiers.shift {
-            state[VK_SHIFT.0 as usize] = 0x80;
-            modifiers.shift = false;
+        if let Some(key) = to_shifted_key(keystroke.key.as_str()).log_err() {
+            Cow::Owned(Keystroke {
+                modifiers: keystroke.modifiers & !Modifiers::shift(),
+                key,
+                key_char: keystroke.key_char.clone(),
+            })
+        } else {
+            Cow::Borrowed(keystroke)
         }
-
-        let scan_code = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_VSC) };
-        let mut buffer = [0; 4];
-        let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 0) };
-
-        if len > 0 {
-            let candidate = String::from_utf16_lossy(&buffer[..len as usize]);
-            if !candidate.is_empty() && !candidate.chars().next().unwrap().is_control() {
-                return Cow::Owned(Keystroke {
-                    modifiers,
-                    key: candidate,
-                    key_char: keystroke.key_char.clone(),
-                });
-            }
-        }
-
-        Cow::Borrowed(keystroke)
     }
 
     fn key_to_shifted(&self, key: &str) -> String {
-        if is_immutable_key(key) {
+        if is_immutable_key(key) || key.len() != 1 {
             return key.to_string();
         }
         if is_letter_key(key) {
             return key.to_uppercase();
         }
-        if key.len() != 1 {
-            return key.to_string();
-        }
-        let mut modifiers = Modifiers::default();
-        let Some(vkey) = get_vkey_from_char(key, &mut modifiers).log_err() else {
-            log::error!(
-                "Failed to get virtual key from char while key_to_shifted: {}",
-                key
-            );
-            return key.to_string();
-        };
-        let mut state = [0; 256];
-        state[VK_SHIFT.0 as usize] = 0x80;
 
-        let scan_code = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_VSC) };
-        let mut buffer = [0; 4];
-        let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 0) };
-
-        if len > 0 {
-            let candidate = String::from_utf16_lossy(&buffer[..len as usize]);
-            if !candidate.is_empty() && !candidate.chars().next().unwrap().is_control() {
-                return candidate;
-            }
-        }
-
-        key.to_string()
+        to_shifted_key(key).log_err().unwrap_or(key.to_string())
     }
 
     fn get_equivalents(&self) -> Option<&collections::HashMap<String, String>> {
@@ -287,6 +236,44 @@ fn get_vkey_from_char(key: &str, modifiers: &mut Modifiers) -> Result<VIRTUAL_KE
         modifiers.shift = true;
     }
     Ok(VIRTUAL_KEY(low as u16))
+}
+
+fn to_shifted_key(key: &str) -> Result<String> {
+    let mut modifiers = Modifiers::default();
+    let virtual_key = get_vkey_from_char(key, &mut modifiers).context(format!(
+        "Failed to get virtual key from char while key_to_shifted: {}",
+        key
+    ))?;
+    if modifiers != Modifiers::default() {
+        return Err(anyhow::anyhow!(
+            "Key is not a single character or has modifiers: {}",
+            key
+        ));
+    }
+
+    let mut state = [0; 256];
+    state[VK_SHIFT.0 as usize] = 0x80;
+
+    let scan_code = unsafe { MapVirtualKeyW(virtual_key.0 as u32, MAPVK_VK_TO_VSC) };
+    let mut buffer = [0; 4];
+    let len = unsafe {
+        ToUnicode(
+            virtual_key.0 as u32,
+            scan_code,
+            Some(&state),
+            &mut buffer,
+            0,
+        )
+    };
+
+    if len > 0 {
+        let candidate = String::from_utf16_lossy(&buffer[..len as usize]);
+        if !candidate.is_empty() && !candidate.chars().next().unwrap().is_control() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(anyhow::anyhow!("Failed to get shifted key for: {}", key))
 }
 
 fn display_keystroke(key: &str, modifiers: &Modifiers) -> String {
