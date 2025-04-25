@@ -78,7 +78,7 @@ impl AppSession {
                 }
 
                 cx.background_executor()
-                    .timer(Duration::from_millis(100))
+                    .timer(Duration::from_millis(500))
                     .await;
             }
         });
