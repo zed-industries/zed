@@ -11,8 +11,9 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModelCompletionEvent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, StopReason,
+    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
+    StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -355,12 +356,19 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
+        >,
     > {
         let request = into_google(request, self.model.id().to_string());
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
+            let response = request
+                .await
+                .map_err(|err| LanguageModelCompletionError::Other(anyhow!(err)))?;
             Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -396,7 +404,6 @@ pub fn into_google(
                     Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
                             name: tool_use.name.to_string(),
-                            raw_args: tool_use.raw_input,
                             args: tool_use.input,
                         },
                     }))
@@ -472,7 +479,7 @@ pub fn into_google(
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -493,7 +500,7 @@ pub fn map_to_language_model_completion_events(
             if let Some(event) = state.events.next().await {
                 match event {
                     Ok(event) => {
-                        let mut events: Vec<Result<LanguageModelCompletionEvent>> = Vec::new();
+                        let mut events: Vec<_> = Vec::new();
                         let mut wants_to_use_tool = false;
                         if let Some(usage_metadata) = event.usage_metadata {
                             update_usage(&mut state.usage, &usage_metadata);
@@ -540,8 +547,8 @@ pub fn map_to_language_model_completion_events(
                                                     is_input_complete: true,
                                                     raw_input: function_call_part
                                                         .function_call
-                                                        .raw_args
-                                                        .clone(),
+                                                        .args
+                                                        .to_string(),
                                                     input: function_call_part.function_call.args,
                                                 },
                                             )));
@@ -560,7 +567,10 @@ pub fn map_to_language_model_completion_events(
                         return Some((events, state));
                     }
                     Err(err) => {
-                        return Some((vec![Err(anyhow!(err))], state));
+                        return Some((
+                            vec![Err(LanguageModelCompletionError::Other(anyhow!(err)))],
+                            state,
+                        ));
                     }
                 }
             }

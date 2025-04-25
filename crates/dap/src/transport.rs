@@ -552,7 +552,9 @@ impl TcpTransport {
         let host = connection_args.host;
         let port = connection_args.port;
 
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
@@ -636,7 +638,9 @@ pub struct StdioTransport {
 impl StdioTransport {
     #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);

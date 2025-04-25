@@ -10,8 +10,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+pub use completion_provider::ContextPickerCompletionProvider;
 use editor::display_map::{Crease, FoldId};
 use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
+use fetch_context_picker::FetchContextPicker;
+use file_context_picker::FileContextPicker;
 use file_context_picker::render_file_context_entry;
 use gpui::{
     App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task,
@@ -20,10 +23,10 @@ use gpui::{
 use language::Buffer;
 use multi_buffer::MultiBufferRow;
 use project::{Entry, ProjectPath};
-use prompt_store::UserPromptId;
-use rules_context_picker::RulesContextEntry;
+use prompt_store::{PromptStore, UserPromptId};
+use rules_context_picker::{RulesContextEntry, RulesContextPicker};
 use symbol_context_picker::SymbolContextPicker;
-use thread_context_picker::{ThreadContextEntry, render_thread_context_entry};
+use thread_context_picker::{ThreadContextEntry, ThreadContextPicker, render_thread_context_entry};
 use ui::{
     ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor, prelude::*,
 };
@@ -32,11 +35,6 @@ use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::AssistantPanel;
 use crate::context::RULES_ICON;
-pub use crate::context_picker::completion_provider::ContextPickerCompletionProvider;
-use crate::context_picker::fetch_context_picker::FetchContextPicker;
-use crate::context_picker::file_context_picker::FileContextPicker;
-use crate::context_picker::rules_context_picker::RulesContextPicker;
-use crate::context_picker::thread_context_picker::ThreadContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
@@ -166,6 +164,7 @@ pub(super) struct ContextPicker {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
+    prompt_store: Option<Entity<PromptStore>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -193,6 +192,13 @@ impl ContextPicker {
             )
             .collect::<Vec<Subscription>>();
 
+        let prompt_store = thread_store.as_ref().and_then(|thread_store| {
+            thread_store
+                .read_with(cx, |thread_store, _cx| thread_store.prompt_store().clone())
+                .ok()
+                .flatten()
+        });
+
         ContextPicker {
             mode: ContextPickerState::Default(ContextMenu::build(
                 window,
@@ -202,6 +208,7 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
+            prompt_store,
             _subscriptions: subscriptions,
         }
     }
@@ -226,7 +233,12 @@ impl ContextPicker {
                 .workspace
                 .upgrade()
                 .map(|workspace| {
-                    available_context_picker_entries(&self.thread_store, &workspace, cx)
+                    available_context_picker_entries(
+                        &self.prompt_store,
+                        &self.thread_store,
+                        &workspace,
+                        cx,
+                    )
                 })
                 .unwrap_or_default();
 
@@ -304,10 +316,10 @@ impl ContextPicker {
                     }));
                 }
                 ContextPickerMode::Rules => {
-                    if let Some(thread_store) = self.thread_store.as_ref() {
+                    if let Some(prompt_store) = self.prompt_store.as_ref() {
                         self.mode = ContextPickerState::Rules(cx.new(|cx| {
                             RulesContextPicker::new(
-                                thread_store.clone(),
+                                prompt_store.clone(),
                                 context_picker.clone(),
                                 self.context_store.clone(),
                                 window,
@@ -526,6 +538,7 @@ enum RecentEntry {
 }
 
 fn available_context_picker_entries(
+    prompt_store: &Option<Entity<PromptStore>>,
     thread_store: &Option<WeakEntity<ThreadStore>>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
@@ -550,6 +563,9 @@ fn available_context_picker_entries(
 
     if thread_store.is_some() {
         entries.push(ContextPickerEntry::Mode(ContextPickerMode::Thread));
+    }
+
+    if prompt_store.is_some() {
         entries.push(ContextPickerEntry::Mode(ContextPickerMode::Rules));
     }
 
@@ -585,22 +601,21 @@ fn recent_context_picker_entries(
             }),
     );
 
-    let mut current_threads = context_store.read(cx).thread_ids();
+    let current_threads = context_store.read(cx).thread_ids();
 
-    if let Some(active_thread) = workspace
+    let active_thread_id = workspace
         .panel::<AssistantPanel>(cx)
-        .map(|panel| panel.read(cx).active_thread(cx))
-    {
-        current_threads.insert(active_thread.read(cx).id().clone());
-    }
+        .map(|panel| panel.read(cx).active_thread(cx).read(cx).id());
 
     if let Some(thread_store) = thread_store.and_then(|thread_store| thread_store.upgrade()) {
         recent.extend(
             thread_store
                 .read(cx)
-                .threads()
+                .reverse_chronological_threads()
                 .into_iter()
-                .filter(|thread| !current_threads.contains(&thread.id))
+                .filter(|thread| {
+                    Some(&thread.id) != active_thread_id && !current_threads.contains(&thread.id)
+                })
                 .take(2)
                 .map(|thread| {
                     RecentEntry::Thread(ThreadContextEntry {
@@ -622,9 +637,7 @@ fn add_selections_as_context(
     let selection_ranges = selection_ranges(workspace, cx);
     context_store.update(cx, |context_store, cx| {
         for (buffer, range) in selection_ranges {
-            context_store
-                .add_selection(buffer, range, cx)
-                .detach_and_log_err(cx);
+            context_store.add_selection(buffer, range, cx);
         }
     })
 }
