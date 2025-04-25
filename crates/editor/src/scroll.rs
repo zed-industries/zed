@@ -270,6 +270,9 @@ impl ScrollManager {
 
             cx.foreground_executor()
                 .spawn(async move {
+                    log::debug!(
+                        "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
+                    );
                     DB.save_scroll_position(
                         item_id,
                         workspace_id,

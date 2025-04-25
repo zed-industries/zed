@@ -1539,6 +1539,9 @@ impl Item for TerminalView {
     ) {
         if self.terminal().read(cx).task().is_none() {
             if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
+                log::debug!(
+                    "Updating workspace id for the terminal, old: {old_id:?}, new: {new_id:?}",
+                );
                 cx.background_spawn(TERMINAL_DB.update_workspace_id(
                     new_id,
                     old_id,
