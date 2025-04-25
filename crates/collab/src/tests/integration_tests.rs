@@ -5055,7 +5055,7 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Err(anyhow!("can't find references")))
         .unwrap();
-    references.await.unwrap_err();
+    assert_eq!(references.await.unwrap(), []);
 
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
