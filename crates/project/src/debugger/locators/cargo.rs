@@ -69,7 +69,7 @@ impl DapLocator for CargoLocator {
             ShellBuilder::new(true, &build_config.shell).build("cargo".into(), &args);
         let mut child = Command::new(command)
             .args(&args)
-            .envs(build_config.env.into_iter())
+            .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .current_dir(cwd)
             .stdout(Stdio::piped())
             .spawn()?;
@@ -132,6 +132,11 @@ impl DapLocator for CargoLocator {
             program: executable,
             cwd: build_config.cwd.clone(),
             args,
+            env: build_config
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         }))
     }
 }

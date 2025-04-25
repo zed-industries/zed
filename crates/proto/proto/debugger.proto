@@ -543,6 +543,7 @@ message DebugLaunchRequest {
     string program = 1;
     optional string cwd = 2;
     repeated string args = 3;
+    map<string, string> env = 4;
 }
 
 message DebugAttachRequest {

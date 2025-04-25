@@ -1,4 +1,5 @@
 use anyhow::Result;
+use collections::FxHashMap;
 use gpui::SharedString;
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,8 @@ pub struct LaunchRequest {
     /// Arguments to pass to a debuggee
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub env: FxHashMap<String, String>,
 }
 
 /// Represents the type that will determine which request to call on the debug adapter
@@ -86,6 +89,11 @@ impl DebugRequest {
                             .as_ref()
                             .map(|cwd| cwd.to_string_lossy().into_owned()),
                         args: launch_request.args.clone(),
+                        env: launch_request
+                            .env
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
                     },
                 )),
             },
@@ -110,10 +118,12 @@ impl DebugRequest {
                 program,
                 cwd,
                 args,
+                env,
             }) => Ok(DebugRequest::Launch(LaunchRequest {
                 program,
                 cwd: cwd.map(From::from),
                 args,
+                env: env.into_iter().collect(),
             })),
 
             proto::debug_request::Request::DebugAttachRequest(proto::DebugAttachRequest {

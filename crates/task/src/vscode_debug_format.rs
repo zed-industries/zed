@@ -62,7 +62,18 @@ impl VsCodeDebugTaskDefinition {
                         .into_iter()
                         .map(|arg| replacer.replace(&arg))
                         .collect();
-                    DebugRequest::Launch(LaunchRequest { program, cwd, args }).into()
+                    let env = self
+                        .env
+                        .into_iter()
+                        .filter_map(|(k, v)| v.map(|v| (k, v)))
+                        .collect();
+                    DebugRequest::Launch(LaunchRequest {
+                        program,
+                        cwd,
+                        args,
+                        env,
+                    })
+                    .into()
                 }
                 Request::Attach => DebugRequest::Attach(AttachRequest { process_id: None }).into(),
             },

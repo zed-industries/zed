@@ -168,6 +168,11 @@ impl DebugTaskDefinition {
                             program: config.program.clone(),
                             cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
                             args: config.args.clone(),
+                            env: config
+                                .env
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
                         },
                     )
                 }
@@ -211,6 +216,7 @@ impl DebugTaskDefinition {
                         program: config.program,
                         cwd: config.cwd.map(|cwd| cwd.into()),
                         args: config.args,
+                        env: Default::default(),
                     })
                 }
             },

@@ -310,6 +310,7 @@ impl LaunchMode {
             program: self.program.read(cx).text(cx),
             cwd: path.is_empty().not().then(|| PathBuf::from(path)),
             args: Default::default(),
+            env: Default::default(),
         }
     }
 }
