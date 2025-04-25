@@ -494,6 +494,22 @@ impl ThreadStore {
                     );
                 });
             }
+            // Enable all the tools from all context servers, but disable the ones that are explicitly disabled
+            for (context_server_id, preset) in &profile.context_servers {
+                self.tools.update(cx, |tools, cx| {
+                    tools.disable(
+                        ToolSource::ContextServer {
+                            id: context_server_id.clone().into(),
+                        },
+                        &preset
+                            .tools
+                            .iter()
+                            .filter_map(|(tool, enabled)| (!enabled).then(|| tool.clone()))
+                            .collect::<Vec<_>>(),
+                        cx,
+                    )
+                })
+            }
         } else {
             for (context_server_id, preset) in &profile.context_servers {
                 self.tools.update(cx, |tools, cx| {
