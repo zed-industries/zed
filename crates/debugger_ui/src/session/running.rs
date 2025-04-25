@@ -37,8 +37,8 @@ use ui::{
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, Workspace,
-    item::TabContentParams, move_item, pane::Event,
+    ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
+    Workspace, item::TabContentParams, move_item, pane::Event,
 };
 
 pub struct RunningState {
@@ -57,6 +57,7 @@ pub struct RunningState {
     _console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
+    active_pane: Option<Entity<Pane>>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     _schedule_serialize: Option<Task<()>>,
 }
@@ -167,8 +168,14 @@ impl Item for SubView {
 }
 
 impl Render for SubView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        v_flex().size_full().child(self.inner.clone())
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
+                // TODO better way of showing focus?
+                el.border_1().border_color(gpui::red())
+            })
+            .child(self.inner.clone())
     }
 }
 
@@ -576,6 +583,7 @@ impl RunningState {
             stack_frame_list,
             session_id,
             panes,
+            active_pane: None,
             module_list,
             _console: console,
             breakpoint_list,
@@ -616,7 +624,7 @@ impl RunningState {
     fn create_sub_view(
         &self,
         item_kind: DebuggerPaneItem,
-        pane: &Entity<Pane>,
+        _pane: &Entity<Pane>,
         cx: &mut Context<Self>,
     ) -> Box<dyn ItemHandle> {
         match item_kind {
@@ -624,7 +632,7 @@ impl RunningState {
                 let weak_console = self._console.clone().downgrade();
 
                 Box::new(SubView::new(
-                    pane.focus_handle(cx),
+                    self._console.focus_handle(cx),
                     self._console.clone().into(),
                     item_kind,
                     Some(Box::new(move |cx| {
@@ -784,6 +792,9 @@ impl RunningState {
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
+            Event::Focus => {
+                this.active_pane = Some(source_pane.clone());
+            }
             Event::ZoomIn => {
                 source_pane.update(cx, |pane, cx| {
                     pane.set_zoomed(true, cx);
@@ -797,6 +808,27 @@ impl RunningState {
                 cx.notify();
             }
             _ => {}
+        }
+    }
+
+    pub(crate) fn activate_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pane) = self
+            .active_pane
+            .as_ref()
+            .and_then(|pane| self.panes.find_pane_in_direction(pane, direction, cx))
+        {
+            window.focus(&pane.focus_handle(cx));
+        } else {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.activate_pane_in_direction(direction, window, cx)
+                })
+                .ok();
         }
     }
 
@@ -838,8 +870,7 @@ impl RunningState {
         &self.module_list
     }
 
-    #[cfg(test)]
-    pub(crate) fn activate_modules_list(&self, window: &mut Window, cx: &mut App) {
+    pub(crate) fn activate_item(&self, item: DebuggerPaneItem, window: &mut Window, cx: &mut App) {
         let (variable_list_position, pane) = self
             .panes
             .panes()
@@ -847,7 +878,7 @@ impl RunningState {
             .find_map(|pane| {
                 pane.read(cx)
                     .items_of_type::<SubView>()
-                    .position(|view| view.read(cx).view_kind().to_shared_string() == *"Modules")
+                    .position(|view| view.read(cx).view_kind() == item)
                     .map(|view| (view, pane))
             })
             .unwrap();
@@ -855,6 +886,7 @@ impl RunningState {
             this.activate_item(variable_list_position, true, true, window, cx);
         })
     }
+
     #[cfg(test)]
     pub(crate) fn variable_list(&self) -> &Entity<VariableList> {
         &self.variable_list
