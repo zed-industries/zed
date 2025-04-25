@@ -7,6 +7,7 @@ mod create_directory_tool;
 mod create_file_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
+mod edit_agent;
 mod edit_file_tool;
 mod fetch_tool;
 mod find_path_tool;
@@ -20,6 +21,7 @@ mod rename_tool;
 mod replace;
 mod schema;
 mod symbol_info_tool;
+mod templates;
 mod terminal_tool;
 mod thinking_tool;
 mod ui;
@@ -34,6 +36,8 @@ use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
 use web_search_tool::WebSearchTool;
+
+pub(crate) use templates::*;
 
 use crate::batch_tool::BatchTool;
 use crate::code_action_tool::CodeActionTool;

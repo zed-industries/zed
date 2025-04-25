@@ -21,6 +21,7 @@ component.workspace = true
 editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
+handlebars = { workspace = true, features = ["rust-embed"] }
 html_to_markdown.workspace = true
 http_client.workspace = true
 indoc.workspace = true
@@ -31,6 +32,7 @@ linkme.workspace = true
 open.workspace = true
 project.workspace = true
 regex.workspace = true
+rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -47,10 +49,14 @@ client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+gpui_tokio.workspace = true
+fs = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+language_models.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 pretty_assertions.workspace = true
+reqwest_client.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

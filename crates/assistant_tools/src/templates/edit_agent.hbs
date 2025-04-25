@@ -1,0 +1,43 @@
+You are an expert text editor. Taking the following file as an input:
+
+```{{path}}
+{{file_content}}
+```
+
+Produce a series of edits following the given instructions:
+
+<instructions>
+{{instructions}}
+</instructions>
+
+Your response must be a series of edits in the following format:
+
+<old_text>
+OLD TEXT 1 HERE
+</old_text>
+<new_text>
+NEW TEXT 1 HERE
+</new_text>
+
+<old_text>
+OLD TEXT 2 HERE
+</old_text>
+<new_text>
+NEW TEXT 2 HERE
+</new_text>
+
+<old_text>
+OLD TEXT 3 HERE
+</old_text>
+<new_text>
+NEW TEXT 3 HERE
+</new_text>
+
+And so on.
+
+`old_text` represents full lines (including indentation) in the input file that will be replaced with `new_text`.
+It's crucial that `old_text` is unique and unambiguous.
+Always include enough context around the lines you want to replace such that it's impossible to mistake them for other lines.
+If you want to replace all occurrences, repeat the same `old_text`/`new_text` pair multiple times and I will apply them sequentially, one occurrence at a time.
+
+Don't explain why you made a change, just report the edits.
