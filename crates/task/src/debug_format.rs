@@ -59,6 +59,7 @@ pub struct LaunchRequest {
     /// The program that you trying to debug
     pub program: String,
     /// The current working directory of your project
+    #[serde(default)]
     pub cwd: Option<PathBuf>,
     /// Arguments to pass to a debuggee
     #[serde(default)]
@@ -155,6 +156,7 @@ pub struct DebugScenario {
     /// Name of the debug task
     pub label: SharedString,
     /// A task to run prior to spawning the debuggee.
+    #[serde(default)]
     pub build: Option<SharedString>,
     #[serde(flatten)]
     pub request: Option<DebugRequest>,
