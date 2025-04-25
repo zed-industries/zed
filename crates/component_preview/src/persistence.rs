@@ -23,6 +23,9 @@ impl ComponentPreviewDb {
         workspace_id: WorkspaceId,
         active_page_id: String,
     ) -> Result<()> {
+        log::debug!(
+            "Saving active page: item_id={item_id:?}, workspace_id={workspace_id:?}, active_page_id={active_page_id}"
+        );
         let query = "INSERT INTO component_previews(item_id, workspace_id, active_page_id)
             VALUES (?1, ?2, ?3)
             ON CONFLICT DO UPDATE SET
