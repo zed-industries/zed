@@ -25,7 +25,7 @@ env:
   ZED_EVAL_TELEMETRY: 1
 
 jobs:
-  # This is a no-op job that we run to prevent GitHub from making the workflow
+  # This is a no-op job that we run to prevent GitHub from marking the workflow
   # as failed for PRs that don't have the `run-eval` label.
   noop:
     name: No-op
