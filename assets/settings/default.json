@@ -168,6 +168,8 @@
   "cursor_shape": null,
   // Determines when the mouse cursor should be hidden in an editor or input box.
   "hide_mouse": "on_typing_and_movement",
+  // Determines how snippets are sorted relative to other completion items.
+  "snippet_sort_order": "bottom",
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
