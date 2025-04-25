@@ -1,11 +1,11 @@
 use crate::{attach_modal::Candidate, tests::start_debug_session_with, *};
 use attach_modal::AttachModal;
-use dap::FakeAdapter;
+use dap::{FakeAdapter, adapters::DebugTaskDefinition};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::{AttachRequest, DebugScenario, TcpArgumentsTemplate};
+use task::{AttachRequest, TcpArgumentsTemplate};
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -29,12 +29,11 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let session = start_debug_session_with(
         &workspace,
         cx,
-        DebugScenario {
+        DebugTaskDefinition {
             adapter: "fake-adapter".into(),
-            request: Some(dap::DebugRequest::Attach(AttachRequest {
+            request: dap::DebugRequest::Attach(AttachRequest {
                 process_id: Some(10),
-            })),
-            build: None,
+            }),
             label: "label".into(),
             initialize_args: None,
             tcp_connection: None,
@@ -103,10 +102,10 @@ async fn test_show_attach_modal_and_select_process(
             workspace.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
                     workspace_handle,
-                    DebugScenario {
+                    DebugTaskDefinition {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
-                        build: None,
-                        request: Some(dap::DebugRequest::Attach(AttachRequest::default())),
+
+                        request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),
                         initialize_args: None,
                         tcp_connection: Some(TcpArgumentsTemplate::default()),
