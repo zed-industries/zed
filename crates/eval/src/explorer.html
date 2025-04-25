@@ -338,6 +338,14 @@
             >
                 Compact View
             </button>
+            <button
+                id="export-button"
+                class="view-button"
+                onclick="exportThreadAsJson()"
+                title="Export current thread as JSON"
+            >
+                Export
+            </button>
             <div class="theme-switcher">
                 <button
                     id="theme-toggle"
@@ -473,6 +481,39 @@
 
                 // Re-render the thread with the new view mode
                 renderThread();
+            }
+            
+            // Function to export the current thread as a JSON file
+            function exportThreadAsJson() {
+                // Clone the thread to avoid modifying the original
+                const threadToExport = JSON.parse(JSON.stringify(thread));
+                
+                // Create a Blob with the JSON data
+                const blob = new Blob(
+                    [JSON.stringify(threadToExport, null, 2)],
+                    { type: "application/json" }
+                );
+                
+                // Create a download link
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                
+                // Generate filename based on thread ID or index
+                const filename = threadToExport.thread_id || 
+                                threadToExport.filename || 
+                                `thread-${currentThreadIndex + 1}.json`;
+                a.download = filename.endsWith(".json") ? filename : `${filename}.json`;
+                
+                // Trigger the download
+                document.body.appendChild(a);
+                a.click();
+                
+                // Clean up
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 0);
             }
             // Default dummy thread data for preview purposes
             let dummyThread = {

@@ -681,7 +681,6 @@ fn print_report(
         println!("{}", cumulative_tool_metrics);
     }
 
-    // Generate explorer HTML
     let explorer_output_path = run_dir.join("overview.html");
     let mut json_paths: Vec<PathBuf> = results_by_example_name
         .values()
