@@ -3984,8 +3984,8 @@ mod tests {
             vec![("backspace", &B), ("{", &ActivatePreviousItem)],
             line!(),
         );
-        #[cfg(target_os = "windows")]
         // Windows prefers to use `shift-[` instead of `{`.
+        #[cfg(target_os = "windows")]
         assert_key_bindings_for(
             workspace.into(),
             cx,

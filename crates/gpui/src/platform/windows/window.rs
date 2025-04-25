@@ -51,6 +51,7 @@ pub struct WindowsWindowState {
     pub system_settings: WindowsSystemSettings,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
+    pub suppress_next_char_msg: bool,
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
@@ -105,6 +106,7 @@ impl WindowsWindowState {
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
+        let suppress_next_char_msg = false;
         let fullscreen = None;
         let initial_placement = None;
 
@@ -125,6 +127,7 @@ impl WindowsWindowState {
             system_settings,
             current_cursor,
             nc_button_pressed,
+            suppress_next_char_msg,
             display,
             fullscreen,
             initial_placement,
