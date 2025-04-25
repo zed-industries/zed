@@ -1054,7 +1054,7 @@ impl Element for MarkdownElement {
                     if builder.html_comment {
                         continue;
                     }
-                    builder.push_text(html, range.start);
+                    builder.push_text(html, range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
