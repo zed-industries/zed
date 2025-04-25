@@ -5086,6 +5086,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let quick_launch = action.quick_launch;
         let mut context_menu = self.context_menu.borrow_mut();
         if let Some(CodeContextMenu::CodeActions(code_actions)) = context_menu.as_ref() {
             if code_actions.deployed_from_indicator == action.deployed_from_indicator {
@@ -5174,9 +5175,10 @@ impl Editor {
                                         tasks.column,
                                     )),
                                 });
-                        let spawn_straight_away = resolved_tasks
-                            .as_ref()
-                            .map_or(false, |tasks| tasks.templates.len() == 1)
+                        let spawn_straight_away = quick_launch
+                            && resolved_tasks
+                                .as_ref()
+                                .map_or(false, |tasks| tasks.templates.len() == 1)
                             && code_actions
                                 .as_ref()
                                 .map_or(true, |actions| actions.is_empty());
@@ -5291,6 +5293,10 @@ impl Editor {
                     .await
                 }))
             }
+            CodeActionsItem::DebugScenario(scenario) => workspace.update(cx, |workspace, cx| {
+                workspace.start_debug_session(scenario, window, cx);
+                Some(Task::ready(Ok(())))
+            }),
         }
     }
 

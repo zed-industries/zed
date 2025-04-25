@@ -826,21 +826,13 @@ impl CodeActionContents {
     }
 
     fn len(&self) -> usize {
-        match (&self.tasks, &self.actions) {
-            (Some(tasks), Some(actions)) => actions.len() + tasks.templates.len(),
-            (Some(tasks), None) => tasks.templates.len(),
-            (None, Some(actions)) => actions.len(),
-            (None, None) => 0,
-        }
+        let tasks_len = self.tasks.as_ref().map_or(0, |tasks| tasks.templates.len());
+        let code_actions_len = self.actions.as_ref().map_or(0, |actions| actions.len());
+        tasks_len + code_actions_len + self.debug_scenarios.len()
     }
 
     fn is_empty(&self) -> bool {
-        match (&self.tasks, &self.actions) {
-            (Some(tasks), Some(actions)) => actions.is_empty() && tasks.templates.is_empty(),
-            (Some(tasks), None) => tasks.templates.is_empty(),
-            (None, Some(actions)) => actions.is_empty(),
-            (None, None) => true,
-        }
+        self.len() == 0
     }
 
     fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
@@ -859,43 +851,38 @@ impl CodeActionContents {
                     provider: available.provider.clone(),
                 })
             }))
+            .chain(
+                self.debug_scenarios
+                    .iter()
+                    .cloned()
+                    .map(CodeActionsItem::DebugScenario),
+            )
     }
 
-    pub fn get(&self, index: usize) -> Option<CodeActionsItem> {
-        match (&self.tasks, &self.actions) {
-            (Some(tasks), Some(actions)) => {
-                if index < tasks.templates.len() {
-                    tasks
-                        .templates
-                        .get(index)
-                        .cloned()
-                        .map(|(kind, task)| CodeActionsItem::Task(kind, task))
-                } else {
-                    actions.get(index - tasks.templates.len()).map(|available| {
-                        CodeActionsItem::CodeAction {
-                            excerpt_id: available.excerpt_id,
-                            action: available.action.clone(),
-                            provider: available.provider.clone(),
-                        }
-                    })
-                }
+    pub fn get(&self, mut index: usize) -> Option<CodeActionsItem> {
+        if let Some(tasks) = &self.tasks {
+            if let Some((kind, task)) = tasks.templates.get(index) {
+                return Some(CodeActionsItem::Task(kind.clone(), task.clone()));
+            } else {
+                index -= tasks.templates.len();
             }
-            (Some(tasks), None) => tasks
-                .templates
-                .get(index)
-                .cloned()
-                .map(|(kind, task)| CodeActionsItem::Task(kind, task)),
-            (None, Some(actions)) => {
-                actions
-                    .get(index)
-                    .map(|available| CodeActionsItem::CodeAction {
-                        excerpt_id: available.excerpt_id,
-                        action: available.action.clone(),
-                        provider: available.provider.clone(),
-                    })
-            }
-            (None, None) => None,
         }
+        if let Some(actions) = &self.actions {
+            if let Some(available) = actions.get(index) {
+                return Some(CodeActionsItem::CodeAction {
+                    excerpt_id: available.excerpt_id,
+                    action: available.action.clone(),
+                    provider: available.provider.clone(),
+                });
+            } else {
+                index -= actions.len();
+            }
+        }
+
+        self.debug_scenarios
+            .get(index)
+            .cloned()
+            .map(CodeActionsItem::DebugScenario)
     }
 }
 
@@ -908,6 +895,7 @@ pub enum CodeActionsItem {
         action: CodeAction,
         provider: Rc<dyn CodeActionProvider>,
     },
+    DebugScenario(DebugScenario),
 }
 
 impl CodeActionsItem {
@@ -924,11 +912,18 @@ impl CodeActionsItem {
         };
         Some(action)
     }
+    fn as_debug_scenario(&self) -> Option<&DebugScenario> {
+        let Self::DebugScenario(scenario) = self else {
+            return None;
+        };
+        Some(scenario)
+    }
 
     pub fn label(&self) -> String {
         match self {
             Self::CodeAction { action, .. } => action.lsp_action.title().to_owned(),
             Self::Task(_, task) => task.resolved_label.clone(),
+            Self::DebugScenario(scenario) => scenario.label.to_string(),
         }
     }
 }
@@ -1087,6 +1082,16 @@ impl CodeActionsMenu {
                                                 this.text_color(colors.text_accent)
                                             }),
                                     )
+                                })
+                                .when_some(action.as_debug_scenario(), |this, scenario| {
+                                    this.child(
+                                        h_flex()
+                                            .overflow_hidden()
+                                            .child(scenario.label.clone())
+                                            .when(selected, |this| {
+                                                this.text_color(colors.text_accent)
+                                            }),
+                                    )
                                 }),
                         )
                     })
@@ -1105,6 +1110,7 @@ impl CodeActionsMenu {
                     CodeActionsItem::CodeAction { action, .. } => {
                         action.lsp_action.title().chars().count()
                     }
+                    CodeActionsItem::DebugScenario(scenario) => scenario.label.chars().count(),
                 })
                 .map(|(ix, _)| ix),
         )
