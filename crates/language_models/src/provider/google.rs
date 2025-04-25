@@ -434,13 +434,20 @@ pub fn into_google(
         contents: request
             .messages
             .into_iter()
-            .map(|message| google_ai::Content {
-                parts: map_content(message.content),
-                role: match message.role {
-                    Role::User => google_ai::Role::User,
-                    Role::Assistant => google_ai::Role::Model,
-                    Role::System => google_ai::Role::User, // Google AI doesn't have a system role
-                },
+            .filter_map(|message| {
+                let parts = map_content(message.content);
+                if parts.is_empty() {
+                    None
+                } else {
+                    Some(google_ai::Content {
+                        parts,
+                        role: match message.role {
+                            Role::User => google_ai::Role::User,
+                            Role::Assistant => google_ai::Role::Model,
+                            Role::System => google_ai::Role::User, // Google AI doesn't have a system role
+                        },
+                    })
+                }
             })
             .collect(),
         generation_config: Some(google_ai::GenerationConfig {
