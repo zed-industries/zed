@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{FxHashMap, HashMap};
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
@@ -53,7 +53,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::TaskTemplate;
+use task::{DebugScenario, SpawnInTerminal};
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -96,7 +96,7 @@ pub struct LocalDapStore {
     environment: Entity<ProjectEnvironment>,
     language_registry: Arc<LanguageRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
-    locators: HashMap<String, Arc<dyn DapLocator>>,
+    locators: FxHashMap<String, Arc<dyn DapLocator>>,
 }
 
 pub struct SshDapStore {
@@ -138,7 +138,7 @@ impl DapStore {
     ) -> Self {
         cx.on_app_quit(Self::shutdown_sessions).detach();
 
-        let locators = HashMap::from_iter([(
+        let locators = FxHashMap::from_iter([(
             "cargo".to_string(),
             Arc::new(super::locators::cargo::CargoLocator {}) as _,
         )]);
@@ -329,9 +329,34 @@ impl DapStore {
         }
     }
 
+    pub fn debug_scenario_for_build_task(
+        &self,
+        build: SpawnInTerminal,
+        adapter: SharedString,
+    ) -> Task<Option<DebugScenario>> {
+        match &self.mode {
+            DapStoreMode::Local(local_dap_store) => Task::ready(
+                local_dap_store
+                    .locators
+                    .values()
+                    .find(|locator| locator.accepts(&build))
+                    .map(|_| DebugScenario {
+                        adapter,
+                        label: format!("Debug `{}`", build.label).into(),
+                        build: Some(build.label.into()),
+                        request: None,
+                        initialize_args: None,
+                        tcp_connection: None,
+                        stop_on_entry: None,
+                    }),
+            ),
+            DapStoreMode::Ssh(_) => todo!(),
+            DapStoreMode::Collab => Task::ready(None),
+        }
+    }
     pub fn run_debug_locator(
         &mut self,
-        template: TaskTemplate,
+        build_command: SpawnInTerminal,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugRequest>> {
         match &self.mode {
@@ -339,14 +364,14 @@ impl DapStore {
                 let locators = local
                     .locators
                     .values()
-                    .filter(|locator| locator.accepts(&template))
+                    .filter(|locator| locator.accepts(&build_command))
                     .cloned()
                     .collect::<Vec<_>>();
                 if !locators.is_empty() {
                     cx.background_spawn(async move {
                         for locator in locators {
                             let result = locator
-                                .run(template.clone())
+                                .run(build_command.clone())
                                 .await
                                 .log_with_level(log::Level::Debug);
                             if let Some(result) = result {
@@ -355,20 +380,20 @@ impl DapStore {
                         }
                         Err(anyhow!(
                             "None of the locators for task `{}` completed successfully",
-                            template.label
+                            build_command.label
                         ))
                     })
                 } else {
                     Task::ready(Err(anyhow!(
                         "Couldn't find any locator for task `{}`. Specify the `attach` or `launch` arguments in your debug scenario definition",
-                        template.label
+                        build_command.label
                     )))
                 }
             }
             DapStoreMode::Ssh(ssh) => {
                 let request = ssh.upstream_client.request(proto::RunDebugLocators {
                     project_id: ssh.upstream_project_id,
-                    task: Some(template.to_proto()),
+                    build_command: Some(build_command.to_proto()),
                 });
                 cx.background_spawn(async move {
                     let response = request.await?;
@@ -967,9 +992,9 @@ impl DapStore {
     ) -> Result<proto::DebugRequest> {
         let task = envelope
             .payload
-            .task
+            .build_command
             .ok_or_else(|| anyhow!("missing definition"))?;
-        let build_task = TaskTemplate::from_proto(task);
+        let build_task = SpawnInTerminal::from_proto(task);
         let request = this
             .update(&mut cx, |this, cx| this.run_debug_locator(build_task, cx))?
             .await?;

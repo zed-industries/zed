@@ -35,9 +35,7 @@ use settings::Settings;
 use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
-use task::{
-    DebugScenario, HideStrategy, RevealStrategy, RevealTarget, TaskContext, TaskId, TaskTemplate,
-};
+use task::{DebugScenario, HideStrategy, RevealStrategy, RevealTarget, TaskContext, TaskId};
 use terminal_view::TerminalView;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
@@ -524,16 +522,8 @@ impl DebugPanel {
                     anyhow::bail!("Build failed");
                 }
 
-                let template = TaskTemplate {
-                    label: task.resolved.full_label,
-                    command: task.resolved.command,
-                    args: task.resolved.args,
-                    env: task.resolved.env,
-                    cwd: task.resolved.cwd.map(|s| s.to_string_lossy().into_owned()),
-                    ..Default::default()
-                };
                 dap_store
-                    .update(cx, |this, cx| this.run_debug_locator(template, cx))?
+                    .update(cx, |this, cx| this.run_debug_locator(task.resolved, cx))?
                     .await?
             } else {
                 return Err(anyhow!("No request or build provided"));

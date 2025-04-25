@@ -27,11 +27,11 @@ pub use zed_actions::RevealTarget;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 pub struct TaskId(pub String);
 
 /// Contains all information needed by Zed to spawn a new terminal tab for the given task.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct SpawnInTerminal {
     /// Id of the task to use when determining task tab affinity.
     pub id: TaskId,
@@ -68,6 +68,36 @@ pub struct SpawnInTerminal {
     pub show_command: bool,
     /// Whether to show the rerun button in the terminal tab.
     pub show_rerun: bool,
+}
+
+impl SpawnInTerminal {
+    pub fn to_proto(&self) -> proto::SpawnInTerminal {
+        proto::SpawnInTerminal {
+            label: self.label.clone(),
+            command: self.command.clone(),
+            args: self.args.clone(),
+            env: self
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            cwd: self
+                .cwd
+                .clone()
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
+        }
+    }
+
+    pub fn from_proto(proto: proto::SpawnInTerminal) -> Self {
+        Self {
+            label: proto.label.clone(),
+            command: proto.command.clone(),
+            args: proto.args.clone(),
+            env: proto.env.into_iter().collect(),
+            cwd: proto.cwd.map(PathBuf::from).clone(),
+            ..Default::default()
+        }
+    }
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particular [`TaskContext`] and now is ready to spawn the actual task.

@@ -577,7 +577,7 @@ message DebugAdapterBinary {
 
 message RunDebugLocators {
     uint64 project_id = 1;
-    TaskTemplate task = 2;
+    SpawnInTerminal build_command = 2;
 }
 
 message DebugRequest {
@@ -597,9 +597,10 @@ message DebugScenario {
     optional string configuration = 7;
 }
 
-message TaskTemplate {
-    string command = 1;
-    repeated string args = 2;
-    map<string, string> env = 3;
-    optional string cwd = 4;
+message SpawnInTerminal {
+    string label = 1;
+    string command = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+    optional string cwd = 5;
 }

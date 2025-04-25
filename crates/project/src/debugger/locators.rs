@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use dap::DebugRequest;
-use task::TaskTemplate;
+use task::SpawnInTerminal;
 
 pub(crate) mod cargo;
 
@@ -9,6 +9,6 @@ pub(crate) mod cargo;
 #[async_trait]
 pub(super) trait DapLocator: Send + Sync {
     /// Determines whether this locator can generate debug target for given task.
-    fn accepts(&self, build_config: &TaskTemplate) -> bool;
-    async fn run(&self, build_config: TaskTemplate) -> Result<DebugRequest>;
+    fn accepts(&self, build_config: &SpawnInTerminal) -> bool;
+    async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest>;
 }

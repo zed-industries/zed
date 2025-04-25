@@ -74,32 +74,6 @@ pub struct TaskTemplate {
     pub show_command: bool,
 }
 
-impl TaskTemplate {
-    pub fn to_proto(&self) -> proto::TaskTemplate {
-        proto::TaskTemplate {
-            command: self.command.clone(),
-            args: self.args.clone(),
-            env: self
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-            cwd: self.cwd.clone(),
-        }
-    }
-
-    pub fn from_proto(proto: proto::TaskTemplate) -> Self {
-        Self {
-            label: proto.command.clone(),
-            command: proto.command.clone(),
-            args: proto.args.clone(),
-            env: proto.env.into_iter().collect(),
-            cwd: proto.cwd.clone(),
-            ..Default::default()
-        }
-    }
-}
-
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
 /// Use to represent debug request type
 pub enum DebugArgsRequest {

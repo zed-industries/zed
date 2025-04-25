@@ -74,7 +74,7 @@ pub use element::{
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
 use futures::{
     FutureExt,
-    future::{self, Shared, join},
+    future::{self, Shared, join, join_all},
 };
 use fuzzy::StringMatchCandidate;
 
@@ -5182,19 +5182,36 @@ impl Editor {
                             && code_actions
                                 .as_ref()
                                 .map_or(true, |actions| actions.is_empty());
-                        if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
-                            let debug_scenarios = if cx.has_flag::<DebuggerFeatureFlag>() {
+                        let debug_scenarios = editor.update(cx, |editor, cx| {
+                            if cx.has_flag::<DebuggerFeatureFlag>() {
                                 maybe!({
                                     let project = editor.project.as_ref()?;
-                                    let inventory =
-                                        project.read(cx).task_store().read(cx).task_inventory()?;
-                                    Some(inventory.read(cx).list_debug_scenarios(None))
+                                    let dap_store = project.read(cx).dap_store();
+                                    let mut scenario_tasks = vec![];
+                                    let resolved_tasks = resolved_tasks.as_ref()?;
+                                    dap_store.update(cx, |this, _| {
+                                        for (_, task) in &resolved_tasks.templates {
+                                            scenario_tasks.push(
+                                                this.debug_scenario_for_build_task(
+                                                    task.resolved.clone(),
+                                                    "CodeLLDB".into(),
+                                                ),
+                                            );
+                                        }
+                                    });
+                                    Some(scenario_tasks)
                                 })
                                 .unwrap_or_default()
                             } else {
                                 vec![]
-                            };
-
+                            }
+                        })?;
+                        let debug_scenarios = join_all(debug_scenarios)
+                            .await
+                            .into_iter()
+                            .filter_map(std::convert::identity)
+                            .collect();
+                        if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,

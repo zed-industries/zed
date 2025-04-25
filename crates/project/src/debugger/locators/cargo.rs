@@ -7,7 +7,7 @@ use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
-use task::TaskTemplate;
+use task::SpawnInTerminal;
 
 pub(crate) struct CargoLocator;
 
@@ -38,11 +38,11 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
 }
 #[async_trait]
 impl DapLocator for CargoLocator {
-    fn accepts(&self, build_config: &TaskTemplate) -> bool {
+    fn accepts(&self, build_config: &SpawnInTerminal) -> bool {
         build_config.command == "cargo"
     }
 
-    async fn run(&self, build_config: TaskTemplate) -> Result<DebugRequest> {
+    async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {
         let Some(cwd) = build_config.cwd.clone() else {
             return Err(anyhow!(
                 "Couldn't get cwd from debug config which is needed for locators"
@@ -112,7 +112,7 @@ impl DapLocator for CargoLocator {
 
         Ok(DebugRequest::Launch(task::LaunchRequest {
             program: executable,
-            cwd: build_config.cwd.map(String::into),
+            cwd: build_config.cwd.clone(),
             args,
         }))
     }
