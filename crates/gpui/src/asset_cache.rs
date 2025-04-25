@@ -51,13 +51,13 @@ pub trait Asset: 'static {
     ) -> impl Future<Output = Self::Output> + Send + 'static;
 }
 
-/// An asset Loader that logs whatever passes through it
+/// An asset Loader that logs whatever errors pass through it
 pub enum AssetLogger<T> {
     #[doc(hidden)]
     _Phantom(PhantomData<T>, &'static dyn crate::seal::Sealed),
 }
 
-impl<R: Clone + Send, E: Clone + Send + std::error::Error, T: Asset<Output = Result<R, E>>> Asset
+impl<R: Clone + Send, E: Clone + Send + std::fmt::Display, T: Asset<Output = Result<R, E>>> Asset
     for AssetLogger<T>
 {
     type Source = T::Source;
