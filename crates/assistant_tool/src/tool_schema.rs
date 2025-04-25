@@ -36,6 +36,7 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
         }
 
         obj.remove("format");
+        obj.remove("additionalProperties");
 
         if let Some(default) = obj.get("default") {
             let is_null = default.is_null();
