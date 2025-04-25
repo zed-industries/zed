@@ -4822,6 +4822,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None
             )
             .unwrap(),
@@ -4856,6 +4857,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -4900,6 +4902,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None
             )
             .unwrap(),
@@ -4921,6 +4924,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None
             )
             .unwrap(),
@@ -4945,6 +4949,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -4970,6 +4975,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
                     .unwrap(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5016,6 +5022,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5042,6 +5049,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5066,6 +5074,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5091,6 +5100,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 Default::default(),
                 PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
                     .unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5132,6 +5142,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5153,6 +5164,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5174,6 +5186,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5195,6 +5208,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.rs".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5249,6 +5263,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["worktree-a/*.rs".to_owned()]).unwrap(),
                 Default::default(),
+                true,
                 None,
             )
             .unwrap(),
@@ -5269,6 +5284,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["worktree-b/*.rs".to_owned()]).unwrap(),
                 Default::default(),
+                true,
                 None,
             )
             .unwrap(),
@@ -5290,6 +5306,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5345,6 +5362,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5367,6 +5385,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 true,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5410,6 +5429,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 true,
                 files_to_include,
                 files_to_exclude,
+                false,
                 None,
             )
             .unwrap(),
@@ -5448,6 +5468,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
         false,
         Default::default(),
         Default::default(),
+        false,
         None,
     );
     assert_matches!(unicode_case_sensitive_query, Ok(SearchQuery::Text { .. }));
@@ -5468,6 +5489,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
         false,
         Default::default(),
         Default::default(),
+        false,
         None,
     );
     assert_matches!(
@@ -5495,6 +5517,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -8273,16 +8296,33 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         json!({
             ".git": {
                 "worktrees": {
-                    "some-worktree": {}
+                    "some-worktree": {
+                        "commondir": "../..\n"
+                    }
                 },
+                "modules": {
+                    "subdir": {
+                        "some-submodule": {
+                            // For is_git_dir
+                            "HEAD": "",
+                            "config": "",
+                        }
+                    }
+                }
             },
             "src": {
                 "a.txt": "A",
             },
             "some-worktree": {
-                ".git": "gitdir: ../.git/worktrees/some-worktree",
+                ".git": "gitdir: ../.git/worktrees/some-worktree\n",
                 "src": {
                     "b.txt": "B",
+                }
+            },
+            "subdir": {
+                "some-submodule": {
+                    ".git": "gitdir: ../../.git/modules/subdir/some-submodule\n",
+                    "c.txt": "C",
                 }
             }
         }),
@@ -8315,9 +8355,11 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         [
             Path::new(path!("/project")).into(),
             Path::new(path!("/project/some-worktree")).into(),
+            Path::new(path!("/project/subdir/some-submodule")).into(),
         ]
     );
 
+    // Generate a git-related event for the worktree and check that it's refreshed.
     fs.with_git_state(
         path!("/project/some-worktree/.git").as_ref(),
         true,
@@ -8356,6 +8398,45 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     worktree_repo.update(cx, |repo, _| {
         pretty_assertions::assert_eq!(
             repo.status_for_path(&"src/b.txt".into()).unwrap().status,
+            StatusCode::Modified.worktree(),
+        );
+    });
+
+    // The same for the submodule.
+    fs.with_git_state(
+        path!("/project/subdir/some-submodule/.git").as_ref(),
+        true,
+        |state| {
+            state.head_contents.insert("c.txt".into(), "c".to_owned());
+            state.index_contents.insert("c.txt".into(), "c".to_owned());
+        },
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/subdir/some-submodule/c.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (submodule_repo, barrier) = project.update(cx, |project, cx| {
+        let (repo, _) = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+            .unwrap();
+        pretty_assertions::assert_eq!(
+            repo.read(cx).work_directory_abs_path,
+            Path::new(path!("/project/subdir/some-submodule")).into(),
+        );
+        let barrier = repo.update(cx, |repo, _| repo.barrier());
+        (repo.clone(), barrier)
+    });
+    barrier.await.unwrap();
+    submodule_repo.update(cx, |repo, _| {
+        pretty_assertions::assert_eq!(
+            repo.status_for_path(&"c.txt".into()).unwrap().status,
             StatusCode::Modified.worktree(),
         );
     });

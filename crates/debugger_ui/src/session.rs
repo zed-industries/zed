@@ -88,6 +88,12 @@ impl DebugSession {
         }
     }
 
+    pub fn session(&self, cx: &App) -> Entity<Session> {
+        match &self.mode {
+            DebugSessionState::Running(entity) => entity.read(cx).session().clone(),
+        }
+    }
+
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
         match &self.mode {
             DebugSessionState::Running(state) => state.update(cx, |state, cx| state.shutdown(cx)),
@@ -96,6 +102,12 @@ impl DebugSession {
 
     pub(crate) fn mode(&self) -> &DebugSessionState {
         &self.mode
+    }
+
+    pub(crate) fn running_state(&self) -> Entity<RunningState> {
+        match &self.mode {
+            DebugSessionState::Running(running_state) => running_state.clone(),
+        }
     }
 
     pub(crate) fn label(&self, cx: &App) -> String {
@@ -115,13 +127,7 @@ impl DebugSession {
         };
 
         self.label
-            .get_or_init(|| {
-                session
-                    .read(cx)
-                    .as_local()
-                    .expect("Remote Debug Sessions are not implemented yet")
-                    .label()
-            })
+            .get_or_init(|| session.read(cx).label())
             .to_owned()
     }
 

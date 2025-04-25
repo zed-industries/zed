@@ -1,6 +1,4 @@
-use editor::{
-    Anchor, Bias, Direction, Editor, display_map::ToDisplayPoint, movement, scroll::Autoscroll,
-};
+use editor::{Bias, Direction, Editor, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
 use gpui::{Context, Window, actions};
 
 use crate::{Vim, state::Mode};
@@ -25,68 +23,60 @@ impl Vim {
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
-        if self.change_list.is_empty() {
-            return;
-        }
-
-        let prev = self.change_list_position.unwrap_or(self.change_list.len());
-        let next = if direction == Direction::Prev {
-            prev.saturating_sub(count)
-        } else {
-            (prev + count).min(self.change_list.len() - 1)
-        };
-        self.change_list_position = Some(next);
-        let Some(selections) = self.change_list.get(next).cloned() else {
-            return;
-        };
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                let map = s.display_map();
-                s.select_display_ranges(selections.into_iter().map(|a| {
-                    let point = a.to_display_point(&map);
-                    point..point
-                }))
-            })
+            if let Some(selections) = editor
+                .change_list
+                .next_change(count, direction)
+                .map(|s| s.to_vec())
+            {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    let map = s.display_map();
+                    s.select_display_ranges(selections.iter().map(|a| {
+                        let point = a.to_display_point(&map);
+                        point..point
+                    }))
+                })
+            };
         });
     }
 
     pub(crate) fn push_to_change_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((map, selections, buffer)) = self.update_editor(window, cx, |_, editor, _, cx| {
+        let Some((new_positions, buffer)) = self.update_editor(window, cx, |vim, editor, _, cx| {
             let (map, selections) = editor.selections.all_adjusted_display(cx);
             let buffer = editor.buffer().clone();
-            (map, selections, buffer)
+
+            let pop_state = editor
+                .change_list
+                .last()
+                .map(|previous| {
+                    previous.len() == selections.len()
+                        && previous.iter().enumerate().all(|(ix, p)| {
+                            p.to_display_point(&map).row() == selections[ix].head().row()
+                        })
+                })
+                .unwrap_or(false);
+
+            let new_positions = selections
+                .into_iter()
+                .map(|s| {
+                    let point = if vim.mode == Mode::Insert {
+                        movement::saturating_left(&map, s.head())
+                    } else {
+                        s.head()
+                    };
+                    map.display_point_to_anchor(point, Bias::Left)
+                })
+                .collect::<Vec<_>>();
+
+            editor
+                .change_list
+                .push_to_change_list(pop_state, new_positions.clone());
+
+            (new_positions, buffer)
         }) else {
             return;
         };
 
-        let pop_state = self
-            .change_list
-            .last()
-            .map(|previous| {
-                previous.len() == selections.len()
-                    && previous.iter().enumerate().all(|(ix, p)| {
-                        p.to_display_point(&map).row() == selections[ix].head().row()
-                    })
-            })
-            .unwrap_or(false);
-
-        let new_positions: Vec<Anchor> = selections
-            .into_iter()
-            .map(|s| {
-                let point = if self.mode == Mode::Insert {
-                    movement::saturating_left(&map, s.head())
-                } else {
-                    s.head()
-                };
-                map.display_point_to_anchor(point, Bias::Left)
-            })
-            .collect();
-
-        self.change_list_position.take();
-        if pop_state {
-            self.change_list.pop();
-        }
-        self.change_list.push(new_positions.clone());
         self.set_mark(".".to_string(), new_positions, &buffer, window, cx)
     }
 }

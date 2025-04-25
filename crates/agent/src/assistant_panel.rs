@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,26 +9,27 @@ use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AssistantPanelDelegate, ConfigurationError, ContextEditor, SlashCommandCompletionProvider,
-    make_lsp_adapter_delegate, render_remaining_tokens,
+    humanize_token_count, make_lsp_adapter_delegate, render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
-use client::zed_urls;
-use editor::{Editor, EditorEvent, MultiBuffer};
+use client::{UserStore, zed_urls};
+use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, Corner, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task,
-    UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
+    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
+    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
-use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::PromptBuilder;
+use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
+use proto::Plan;
+use rules_library::{RulesLibrary, open_rules_library};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
@@ -37,17 +39,18 @@ use util::ResultExt as _;
 use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::agent::OpenConfiguration;
-use zed_actions::assistant::{OpenPromptLibrary, ToggleFocus};
+use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
-use crate::active_thread::ActiveThread;
+use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore};
-use crate::message_editor::MessageEditor;
+use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
+use crate::ui::UsageBanner;
 use crate::{
-    AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
+    AddContextServer, AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
 };
 
@@ -86,11 +89,11 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
+                            panel.deploy_rules_library(action, window, cx)
                         });
                     }
                 })
@@ -121,7 +124,9 @@ enum ActiveView {
         change_title_editor: Entity<Editor>,
         _subscriptions: Vec<gpui::Subscription>,
     },
-    PromptEditor,
+    PromptEditor {
+        context_editor: Entity<ContextEditor>,
+    },
     History,
     Configuration,
 }
@@ -185,15 +190,16 @@ impl ActiveView {
 
 pub struct AssistantPanel {
     workspace: WeakEntity<Workspace>,
+    user_store: Entity<UserStore>,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<ActiveThread>,
-    _thread_subscription: Subscription,
     message_editor: Entity<MessageEditor>,
+    _active_thread_subscriptions: Vec<Subscription>,
     context_store: Entity<assistant_context_editor::ContextStore>,
-    context_editor: Option<Entity<ContextEditor>>,
+    prompt_store: Option<Entity<PromptStore>>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
@@ -223,16 +229,27 @@ impl AssistantPanel {
     pub fn load(
         workspace: WeakEntity<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
-        cx: AsyncWindowContext,
+        mut cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
+        let prompt_store = cx.update(|_window, cx| PromptStore::global(cx));
         cx.spawn(async move |cx| {
+            let prompt_store = match prompt_store {
+                Ok(prompt_store) => prompt_store.await.ok(),
+                Err(_) => None,
+            };
             let tools = cx.new(|_| ToolWorkingSet::default())?;
             let thread_store = workspace
                 .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    ThreadStore::load(project, tools.clone(), prompt_builder.clone(), cx)
+                    ThreadStore::load(
+                        project,
+                        tools.clone(),
+                        prompt_store.clone(),
+                        prompt_builder.clone(),
+                        cx,
+                    )
                 })?
-                .await;
+                .await?;
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace
@@ -259,8 +276,16 @@ impl AssistantPanel {
             };
 
             let panel = workspace.update_in(cx, |workspace, window, cx| {
-                let panel =
-                    cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx));
+                let panel = cx.new(|cx| {
+                    Self::new(
+                        workspace,
+                        thread_store,
+                        context_store,
+                        prompt_store,
+                        window,
+                        cx,
+                    )
+                });
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
                         panel.width = serialized_panel.width.map(|w| w.round());
@@ -278,11 +303,13 @@ impl AssistantPanel {
         workspace: &Workspace,
         thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context_editor::ContextStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
+        let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
         let workspace = workspace.weak_handle();
@@ -300,12 +327,20 @@ impl AssistantPanel {
                 fs.clone(),
                 workspace.clone(),
                 message_editor_context_store.clone(),
+                prompt_store.clone(),
                 thread_store.downgrade(),
                 thread.clone(),
                 window,
                 cx,
             )
         });
+
+        let message_editor_subscription =
+            cx.subscribe(&message_editor, |_, _, event, cx| match event {
+                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                    cx.notify();
+                }
+            });
 
         let history_store =
             cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
@@ -324,25 +359,35 @@ impl AssistantPanel {
                 thread.clone(),
                 thread_store.clone(),
                 language_registry.clone(),
-                message_editor_context_store.clone(),
                 workspace.clone(),
                 window,
                 cx,
             )
         });
 
+        let active_thread_subscription = cx.subscribe(&thread, |_, _, event, cx| match &event {
+            ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                cx.notify();
+            }
+        });
+
         Self {
             active_view,
             workspace,
+            user_store,
             project: project.clone(),
             fs: fs.clone(),
             language_registry,
             thread_store: thread_store.clone(),
             thread,
-            _thread_subscription: thread_subscription,
             message_editor,
+            _active_thread_subscriptions: vec![
+                thread_subscription,
+                active_thread_subscription,
+                message_editor_subscription,
+            ],
             context_store,
-            context_editor: None,
+            prompt_store,
             configuration: None,
             configuration_subscription: None,
             local_timezone: UtcOffset::from_whole_seconds(
@@ -377,18 +422,17 @@ impl AssistantPanel {
         self.local_timezone
     }
 
+    pub(crate) fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
+        &self.prompt_store
+    }
+
     pub(crate) fn thread_store(&self) -> &Entity<ThreadStore> {
         &self.thread_store
     }
 
-    fn cancel(
-        &mut self,
-        _: &editor::actions::Cancel,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.thread
-            .update(cx, |thread, cx| thread.cancel_last_completion(cx));
+            .update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
     }
 
     fn new_thread(&mut self, action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
@@ -426,30 +470,37 @@ impl AssistantPanel {
             .detach_and_log_err(cx);
         }
 
-        self.thread = cx.new(|cx| {
-            ActiveThread::new(
-                thread.clone(),
-                self.thread_store.clone(),
-                self.language_registry.clone(),
-                message_editor_context_store.clone(),
-                self.workspace.clone(),
-                window,
-                cx,
-            )
-        });
-
-        self._thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
+        let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
             if let ThreadEvent::MessageAdded(_) = &event {
                 // needed to leave empty state
                 cx.notify();
             }
         });
 
+        self.thread = cx.new(|cx| {
+            ActiveThread::new(
+                thread.clone(),
+                self.thread_store.clone(),
+                self.language_registry.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
+        });
+
+        let active_thread_subscription =
+            cx.subscribe(&self.thread, |_, _, event, cx| match &event {
+                ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                    cx.notify();
+                }
+            });
+
         self.message_editor = cx.new(|cx| {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
                 message_editor_context_store,
+                self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 thread,
                 window,
@@ -457,11 +508,22 @@ impl AssistantPanel {
             )
         });
         self.message_editor.focus_handle(cx).focus(window);
+
+        let message_editor_subscription =
+            cx.subscribe(&self.message_editor, |_, _, event, cx| match event {
+                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                    cx.notify();
+                }
+            });
+
+        self._active_thread_subscriptions = vec![
+            thread_subscription,
+            active_thread_subscription,
+            message_editor_subscription,
+        ];
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_active_view(ActiveView::PromptEditor, window, cx);
-
         let context = self
             .context_store
             .update(cx, |context_store, cx| context_store.create(cx));
@@ -469,7 +531,7 @@ impl AssistantPanel {
             .log_err()
             .flatten();
 
-        self.context_editor = Some(cx.new(|cx| {
+        let context_editor = cx.new(|cx| {
             let mut editor = ContextEditor::for_context(
                 context,
                 self.fs.clone(),
@@ -481,20 +543,25 @@ impl AssistantPanel {
             );
             editor.insert_default_prompt(window, cx);
             editor
-        }));
+        });
 
-        if let Some(context_editor) = self.context_editor.as_ref() {
-            context_editor.focus_handle(cx).focus(window);
-        }
+        self.set_active_view(
+            ActiveView::PromptEditor {
+                context_editor: context_editor.clone(),
+            },
+            window,
+            cx,
+        );
+        context_editor.focus_handle(cx).focus(window);
     }
 
-    fn deploy_prompt_library(
+    fn deploy_rules_library(
         &mut self,
-        _: &OpenPromptLibrary,
+        action: &OpenRulesLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        open_prompt_library(
+        open_rules_library(
             self.language_registry.clone(),
             Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
             Arc::new(|| {
@@ -504,6 +571,9 @@ impl AssistantPanel {
                     None,
                 ))
             }),
+            action
+                .prompt_to_select
+                .map(|uuid| UserPromptId(uuid).into()),
             cx,
         )
         .detach_and_log_err(cx);
@@ -552,8 +622,13 @@ impl AssistantPanel {
                         cx,
                     )
                 });
-                this.set_active_view(ActiveView::PromptEditor, window, cx);
-                this.context_editor = Some(editor);
+                this.set_active_view(
+                    ActiveView::PromptEditor {
+                        context_editor: editor,
+                    },
+                    window,
+                    cx,
+                );
 
                 anyhow::Ok(())
             })??;
@@ -582,22 +657,37 @@ impl AssistantPanel {
                         Some(this.thread_store.downgrade()),
                     )
                 });
+                let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
+                    if let ThreadEvent::MessageAdded(_) = &event {
+                        // needed to leave empty state
+                        cx.notify();
+                    }
+                });
+
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
                         this.language_registry.clone(),
-                        message_editor_context_store.clone(),
                         this.workspace.clone(),
                         window,
                         cx,
                     )
                 });
+
+                let active_thread_subscription =
+                    cx.subscribe(&this.thread, |_, _, event, cx| match &event {
+                        ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                            cx.notify();
+                        }
+                    });
+
                 this.message_editor = cx.new(|cx| {
                     MessageEditor::new(
                         this.fs.clone(),
                         this.workspace.clone(),
                         message_editor_context_store,
+                        this.prompt_store.clone(),
                         this.thread_store.downgrade(),
                         thread,
                         window,
@@ -605,6 +695,19 @@ impl AssistantPanel {
                     )
                 });
                 this.message_editor.focus_handle(cx).focus(window);
+
+                let message_editor_subscription =
+                    cx.subscribe(&this.message_editor, |_, _, event, cx| match event {
+                        MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                            cx.notify();
+                        }
+                    });
+
+                this._active_thread_subscriptions = vec![
+                    thread_subscription,
+                    active_thread_subscription,
+                    message_editor_subscription,
+                ];
             })
         })
     }
@@ -756,8 +859,15 @@ impl AssistantPanel {
             .update(cx, |this, cx| this.delete_thread(thread_id, cx))
     }
 
+    pub(crate) fn has_active_thread(&self) -> bool {
+        matches!(self.active_view, ActiveView::Thread { .. })
+    }
+
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
-        self.context_editor.clone()
+        match &self.active_view {
+            ActiveView::PromptEditor { context_editor } => Some(context_editor.clone()),
+            _ => None,
+        }
     }
 
     pub(crate) fn delete_context(
@@ -795,16 +905,10 @@ impl AssistantPanel {
 
 impl Focusable for AssistantPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.active_view {
+        match &self.active_view {
             ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
-            ActiveView::PromptEditor => {
-                if let Some(context_editor) = self.context_editor.as_ref() {
-                    context_editor.focus_handle(cx)
-                } else {
-                    cx.focus_handle()
-                }
-            }
+            ActiveView::PromptEditor { context_editor } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
                 if let Some(configuration) = self.configuration.as_ref() {
                     configuration.focus_handle(cx)
@@ -898,7 +1002,7 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_title_view(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
         const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
 
         let content = match &self.active_view {
@@ -929,15 +1033,8 @@ impl AssistantPanel {
                         .into_any_element()
                 }
             }
-            ActiveView::PromptEditor => {
-                let title = self
-                    .context_editor
-                    .as_ref()
-                    .map(|context_editor| {
-                        SharedString::from(context_editor.read(cx).title(cx).to_string())
-                    })
-                    .unwrap_or_else(|| SharedString::from(LOADING_SUMMARY_PLACEHOLDER));
-
+            ActiveView::PromptEditor { context_editor } => {
+                let title = SharedString::from(context_editor.read(cx).title(cx).to_string());
                 Label::new(title).ml_2().truncate().into_any_element()
             }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
@@ -958,20 +1055,17 @@ impl AssistantPanel {
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_thread = self.thread.read(cx);
         let thread = active_thread.thread().read(cx);
-        let token_usage = thread.total_token_usage(cx);
         let thread_id = thread.id().clone();
-
-        let is_generating = thread.is_generating();
         let is_empty = active_thread.is_empty();
-        let focus_handle = self.focus_handle(cx);
-
         let is_history = matches!(self.active_view, ActiveView::History);
 
         let show_token_count = match &self.active_view {
             ActiveView::Thread { .. } => !is_empty,
-            ActiveView::PromptEditor => self.context_editor.is_some(),
+            ActiveView::PromptEditor { .. } => true,
             _ => false,
         };
+
+        let focus_handle = self.focus_handle(cx);
 
         let go_back_button = match &self.active_view {
             ActiveView::History | ActiveView::Configuration => Some(
@@ -1019,69 +1113,9 @@ impl AssistantPanel {
                 h_flex()
                     .h_full()
                     .gap_2()
-                    .when(show_token_count, |parent| match self.active_view {
-                        ActiveView::Thread { .. } => {
-                            if token_usage.total == 0 {
-                                return parent;
-                            }
-
-                            let token_color = match token_usage.ratio {
-                                TokenUsageRatio::Normal => Color::Muted,
-                                TokenUsageRatio::Warning => Color::Warning,
-                                TokenUsageRatio::Exceeded => Color::Error,
-                            };
-
-                            parent.child(
-                                h_flex()
-                                    .flex_shrink_0()
-                                    .gap_0p5()
-                                    .child(
-                                        Label::new(assistant_context_editor::humanize_token_count(
-                                            token_usage.total,
-                                        ))
-                                        .size(LabelSize::Small)
-                                        .color(token_color)
-                                        .map(|label| {
-                                            if is_generating {
-                                                label
-                                                    .with_animation(
-                                                        "used-tokens-label",
-                                                        Animation::new(Duration::from_secs(2))
-                                                            .repeat()
-                                                            .with_easing(pulsating_between(
-                                                                0.6, 1.,
-                                                            )),
-                                                        |label, delta| label.alpha(delta),
-                                                    )
-                                                    .into_any()
-                                            } else {
-                                                label.into_any_element()
-                                            }
-                                        }),
-                                    )
-                                    .child(
-                                        Label::new("/").size(LabelSize::Small).color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(assistant_context_editor::humanize_token_count(
-                                            token_usage.max,
-                                        ))
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                    ),
-                            )
-                        }
-                        ActiveView::PromptEditor => {
-                            let Some(editor) = self.context_editor.as_ref() else {
-                                return parent;
-                            };
-                            let Some(element) = render_remaining_tokens(editor, cx) else {
-                                return parent;
-                            };
-                            parent.child(element)
-                        }
-                        _ => parent,
-                    })
+                    .when(show_token_count, |parent|
+                        parent.children(self.render_token_count(&thread, cx))
+                    )
                     .child(
                         h_flex()
                             .h_full()
@@ -1158,23 +1192,129 @@ impl AssistantPanel {
                                                     "New Text Thread",
                                                     NewTextThread.boxed_clone(),
                                                 )
-                                                .action("Settings", OpenConfiguration.boxed_clone())
+                                                .action("Rules Library", Box::new(OpenRulesLibrary::default()))
+                                                .action("Settings", Box::new(OpenConfiguration))
                                                 .separator()
+                                                .header("MCPs")
                                                 .action(
-                                                    "Install MCPs",
-                                                    zed_actions::Extensions {
+                                                    "View Server Extensions",
+                                                    Box::new(zed_actions::Extensions {
                                                         category_filter: Some(
                                                             zed_actions::ExtensionCategoryFilter::ContextServers,
                                                         ),
-                                                    }
-                                                    .boxed_clone(),
+                                                        }),
                                                 )
+                                                .action("Add Custom Server", Box::new(AddContextServer))
                                             },
                                         ))
                                     }),
                             ),
                     ),
             )
+    }
+
+    fn render_token_count(&self, thread: &Thread, cx: &App) -> Option<AnyElement> {
+        let is_generating = thread.is_generating();
+        let message_editor = self.message_editor.read(cx);
+
+        let conversation_token_usage = thread.total_token_usage(cx);
+        let (total_token_usage, is_estimating) = if let Some((editing_message_id, unsent_tokens)) =
+            self.thread.read(cx).editing_message_id()
+        {
+            let combined = thread
+                .token_usage_up_to_message(editing_message_id, cx)
+                .add(unsent_tokens);
+
+            (combined, unsent_tokens > 0)
+        } else {
+            let unsent_tokens = message_editor.last_estimated_token_count().unwrap_or(0);
+            let combined = conversation_token_usage.add(unsent_tokens);
+
+            (combined, unsent_tokens > 0)
+        };
+
+        let is_waiting_to_update_token_count = message_editor.is_waiting_to_update_token_count();
+
+        match &self.active_view {
+            ActiveView::Thread { .. } => {
+                if total_token_usage.total == 0 {
+                    return None;
+                }
+
+                let token_color = match total_token_usage.ratio() {
+                    TokenUsageRatio::Normal if is_estimating => Color::Default,
+                    TokenUsageRatio::Normal => Color::Muted,
+                    TokenUsageRatio::Warning => Color::Warning,
+                    TokenUsageRatio::Exceeded => Color::Error,
+                };
+
+                let token_count = h_flex()
+                    .id("token-count")
+                    .flex_shrink_0()
+                    .gap_0p5()
+                    .when(!is_generating && is_estimating, |parent| {
+                        parent
+                            .child(
+                                h_flex()
+                                    .mr_1()
+                                    .size_2p5()
+                                    .justify_center()
+                                    .rounded_full()
+                                    .bg(cx.theme().colors().text.opacity(0.1))
+                                    .child(
+                                        div().size_1().rounded_full().bg(cx.theme().colors().text),
+                                    ),
+                            )
+                            .tooltip(move |window, cx| {
+                                Tooltip::with_meta(
+                                    "Estimated New Token Count",
+                                    None,
+                                    format!(
+                                        "Current Conversation Tokens: {}",
+                                        humanize_token_count(conversation_token_usage.total)
+                                    ),
+                                    window,
+                                    cx,
+                                )
+                            })
+                    })
+                    .child(
+                        Label::new(humanize_token_count(total_token_usage.total))
+                            .size(LabelSize::Small)
+                            .color(token_color)
+                            .map(|label| {
+                                if is_generating || is_waiting_to_update_token_count {
+                                    label
+                                        .with_animation(
+                                            "used-tokens-label",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.6, 1.)),
+                                            |label, delta| label.alpha(delta),
+                                        )
+                                        .into_any()
+                                } else {
+                                    label.into_any_element()
+                                }
+                            }),
+                    )
+                    .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                    .child(
+                        Label::new(humanize_token_count(total_token_usage.max))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .into_any();
+
+                Some(token_count)
+            }
+            ActiveView::PromptEditor { context_editor } => {
+                let element = render_remaining_tokens(context_editor, cx)?;
+
+                Some(element.into_any_element())
+            }
+            _ => None,
+        }
     }
 
     fn render_active_thread_or_empty_state(
@@ -1477,6 +1617,22 @@ impl AssistantPanel {
             })
     }
 
+    fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let plan = self
+            .user_store
+            .read(cx)
+            .current_plan()
+            .map(|plan| match plan {
+                Plan::Free => zed_llm_client::Plan::Free,
+                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
+                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+            })
+            .unwrap_or(zed_llm_client::Plan::Free);
+        let usage = self.thread.read(cx).last_usage()?;
+
+        Some(UsageBanner::new(plan, usage).into_any_element())
+    }
+
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let last_error = self.thread.read(cx).last_error()?;
 
@@ -1494,6 +1650,9 @@ impl AssistantPanel {
                     ThreadError::PaymentRequired => self.render_payment_required_error(cx),
                     ThreadError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
+                    }
+                    ThreadError::ModelRequestLimitReached { plan } => {
+                        self.render_model_request_limit_reached_error(plan, cx)
                     }
                     ThreadError::Message { header, message } => {
                         self.render_error_message(header, message, cx)
@@ -1526,6 +1685,8 @@ impl AssistantPanel {
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(ERROR_MESSAGE))
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
@@ -1572,6 +1733,8 @@ impl AssistantPanel {
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(ERROR_MESSAGE))
                     .child(
                         Button::new("subscribe", "Update Monthly Spend Limit").on_click(
                             cx.listener(|this, _, _, cx| {
@@ -1597,12 +1760,80 @@ impl AssistantPanel {
             .into_any()
     }
 
+    fn render_model_request_limit_reached_error(
+        &self,
+        plan: Plan,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let error_message = match plan {
+            Plan::ZedPro => {
+                "Model request limit reached. Upgrade to usage-based billing for more requests."
+            }
+            Plan::ZedProTrial => {
+                "Model request limit reached. Upgrade to Zed Pro for more requests."
+            }
+            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
+        };
+        let call_to_action = match plan {
+            Plan::ZedPro => "Upgrade to usage-based billing",
+            Plan::ZedProTrial => "Upgrade to Zed Pro",
+            Plan::Free => "Upgrade to Zed Pro",
+        };
+
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(Label::new("Model Request Limit Reached").weight(FontWeight::MEDIUM)),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(error_message)),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(error_message))
+                    .child(
+                        Button::new("subscribe", call_to_action).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.thread.update(cx, |this, _cx| {
+                                    this.clear_last_error();
+                                });
+
+                                cx.open_url(&zed_urls::account_url(cx));
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.thread.update(cx, |this, _cx| {
+                                this.clear_last_error();
+                            });
+
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
+
     fn render_error_message(
         &self,
         header: SharedString,
         message: SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let message_with_header = format!("{}\n{}", header, message);
         v_flex()
             .gap_0p5()
             .child(
@@ -1617,12 +1848,14 @@ impl AssistantPanel {
                     .id("error-message")
                     .max_h_32()
                     .overflow_y_scroll()
-                    .child(Label::new(message)),
+                    .child(Label::new(message.clone())),
             )
             .child(
                 h_flex()
                     .justify_end()
                     .mt_1()
+                    .gap_1()
+                    .child(self.create_copy_button(message_with_header))
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
@@ -1636,10 +1869,19 @@ impl AssistantPanel {
             .into_any()
     }
 
+    fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
+        let message = message.into();
+        IconButton::new("copy", IconName::Copy)
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
+            })
+            .tooltip(Tooltip::text("Copy Error Message"))
+    }
+
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        if matches!(self.active_view, ActiveView::PromptEditor) {
+        if matches!(self.active_view, ActiveView::PromptEditor { .. }) {
             key_context.add("prompt_editor");
         }
         key_context
@@ -1663,17 +1905,18 @@ impl Render for AssistantPanel {
                 this.open_configuration(window, cx);
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
-            .on_action(cx.listener(Self::deploy_prompt_library))
+            .on_action(cx.listener(Self::deploy_rules_library))
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::go_back))
             .child(self.render_toolbar(window, cx))
-            .map(|parent| match self.active_view {
+            .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
+                    .children(self.render_usage_banner(cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
-                ActiveView::PromptEditor => parent.children(self.context_editor.clone()),
+                ActiveView::PromptEditor { context_editor } => parent.child(context_editor.clone()),
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             })
     }
@@ -1689,13 +1932,13 @@ impl PromptLibraryInlineAssist {
     }
 }
 
-impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
+impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     fn assist(
         &self,
         prompt_editor: &Entity<Editor>,
         _initial_prompt: Option<String>,
         window: &mut Window,
-        cx: &mut Context<PromptLibrary>,
+        cx: &mut Context<RulesLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
             let Some(project) = self
@@ -1705,11 +1948,14 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             else {
                 return;
             };
+            let prompt_store = None;
+            let thread_store = None;
             assistant.assist(
                 &prompt_editor,
                 self.workspace.clone(),
                 project,
-                None,
+                prompt_store,
+                thread_store,
                 window,
                 cx,
             )
@@ -1738,7 +1984,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         cx: &mut Context<Workspace>,
     ) -> Option<Entity<ContextEditor>> {
         let panel = workspace.panel::<AssistantPanel>(cx)?;
-        panel.update(cx, |panel, _cx| panel.context_editor.clone())
+        panel.read(cx).active_context_editor()
     }
 
     fn open_saved_context(
@@ -1769,10 +2015,59 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
 
     fn quote_selection(
         &self,
-        _workspace: &mut Workspace,
-        _creases: Vec<(String, String)>,
-        _window: &mut Window,
-        _cx: &mut Context<Workspace>,
+        workspace: &mut Workspace,
+        selection_ranges: Vec<Range<Anchor>>,
+        buffer: Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(window, cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
+        }
+
+        panel.update(cx, |_, cx| {
+            // Wait to create a new context until the workspace is no longer
+            // being updated.
+            cx.defer_in(window, move |panel, window, cx| {
+                if panel.has_active_thread() {
+                    panel.message_editor.update(cx, |message_editor, cx| {
+                        message_editor.context_store().update(cx, |store, cx| {
+                            let buffer = buffer.read(cx);
+                            let selection_ranges = selection_ranges
+                                .into_iter()
+                                .flat_map(|range| {
+                                    let (start_buffer, start) =
+                                        buffer.text_anchor_for_position(range.start, cx)?;
+                                    let (end_buffer, end) =
+                                        buffer.text_anchor_for_position(range.end, cx)?;
+                                    if start_buffer != end_buffer {
+                                        return None;
+                                    }
+                                    Some((start_buffer, start..end))
+                                })
+                                .collect::<Vec<_>>();
+
+                            for (buffer, range) in selection_ranges {
+                                store.add_selection(buffer, range, cx);
+                            }
+                        })
+                    })
+                } else if let Some(context_editor) = panel.active_context_editor() {
+                    let snapshot = buffer.read(cx).snapshot(cx);
+                    let selection_ranges = selection_ranges
+                        .into_iter()
+                        .map(|range| range.to_point(&snapshot))
+                        .collect::<Vec<_>>();
+
+                    context_editor.update(cx, |context_editor, cx| {
+                        context_editor.quote_ranges(selection_ranges, snapshot, window, cx)
+                    });
+                }
+            });
+        });
     }
 }

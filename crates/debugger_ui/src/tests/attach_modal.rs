@@ -1,11 +1,11 @@
-use crate::{attach_modal::Candidate, *};
+use crate::{attach_modal::Candidate, tests::start_debug_session_with, *};
 use attach_modal::AttachModal;
-use dap::{FakeAdapter, client::SessionId};
+use dap::FakeAdapter;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::{AttachConfig, DebugTaskDefinition, TCPHost};
+use task::{AttachRequest, DebugTaskDefinition, TcpArgumentsTemplate};
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -26,18 +26,17 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = debugger::test::start_debug_session_with(
-        &project,
+    let session = start_debug_session_with(
+        &workspace,
         cx,
         DebugTaskDefinition {
             adapter: "fake-adapter".to_string(),
-            request: dap::DebugRequestType::Attach(AttachConfig {
+            request: dap::DebugRequest::Attach(AttachRequest {
                 process_id: Some(10),
             }),
             label: "label".to_string(),
             initialize_args: None,
             tcp_connection: None,
-            locator: None,
             stop_on_entry: None,
         },
         |client| {
@@ -48,7 +47,6 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
             });
         },
     )
-    .await
     .unwrap();
 
     cx.run_until_parked();
@@ -100,16 +98,16 @@ async fn test_show_attach_modal_and_select_process(
         });
     let attach_modal = workspace
         .update(cx, |workspace, window, cx| {
+            let workspace_handle = cx.entity();
             workspace.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
-                    project.clone(),
+                    workspace_handle,
                     DebugTaskDefinition {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
-                        request: dap::DebugRequestType::Attach(AttachConfig::default()),
+                        request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),
                         initialize_args: None,
-                        tcp_connection: Some(TCPHost::default()),
-                        locator: None,
+                        tcp_connection: Some(TcpArgumentsTemplate::default()),
                         stop_on_entry: None,
                     },
                     vec![
@@ -178,14 +176,4 @@ async fn test_show_attach_modal_and_select_process(
             assert!(workspace.active_modal::<AttachModal>(cx).is_none());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            let session = dap_store.session_by_id(SessionId(0)).unwrap();
-
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }

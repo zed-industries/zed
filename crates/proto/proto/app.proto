@@ -18,6 +18,7 @@ message GetPrivateUserInfoResponse {
 enum Plan {
     Free = 0;
     ZedPro = 1;
+    ZedProTrial = 2;
 }
 
 message UpdateUserPlan {

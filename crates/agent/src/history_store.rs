@@ -51,7 +51,10 @@ impl HistoryStore {
             return history_entries;
         }
 
-        for thread in self.thread_store.update(cx, |this, _cx| this.threads()) {
+        for thread in self
+            .thread_store
+            .update(cx, |this, _cx| this.reverse_chronological_threads())
+        {
             history_entries.push(HistoryEntry::Thread(thread));
         }
 

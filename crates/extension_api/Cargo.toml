@@ -6,8 +6,7 @@ repository = "https://github.com/zed-industries/zed"
 documentation = "https://docs.rs/zed_extension_api"
 keywords = ["zed", "extension"]
 edition.workspace = true
-# Change back to `true` when we're ready to publish v0.4.0.
-publish = false
+publish = true
 license = "Apache-2.0"
 
 [lints]

@@ -8,9 +8,9 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 
 use futures::stream::BoxStream;
@@ -144,6 +144,16 @@ impl MistralLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: mistral::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(MistralLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for MistralLanguageModelProvider {
@@ -168,14 +178,11 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = mistral::Model::default();
-        Some(Arc::new(MistralLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(mistral::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(mistral::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -337,7 +344,12 @@ impl LanguageModel for MistralLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = into_mistral(
             request,
             self.model.id().to_string(),
@@ -349,20 +361,22 @@ impl LanguageModel for MistralLanguageModel {
             let stream = stream.await?;
             Ok(stream
                 .map(|result| {
-                    result.and_then(|response| {
-                        response
-                            .choices
-                            .first()
-                            .ok_or_else(|| anyhow!("Empty response"))
-                            .map(|choice| {
-                                choice
-                                    .delta
-                                    .content
-                                    .clone()
-                                    .unwrap_or_default()
-                                    .map(LanguageModelCompletionEvent::Text)
-                            })
-                    })
+                    result
+                        .and_then(|response| {
+                            response
+                                .choices
+                                .first()
+                                .ok_or_else(|| anyhow!("Empty response"))
+                                .map(|choice| {
+                                    choice
+                                        .delta
+                                        .content
+                                        .clone()
+                                        .unwrap_or_default()
+                                        .map(LanguageModelCompletionEvent::Text)
+                                })
+                        })
+                        .map_err(LanguageModelCompletionError::Other)
                 })
                 .boxed())
         }
@@ -554,7 +568,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(cx.theme().colors().border)
                         .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
@@ -567,8 +581,13 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -580,7 +599,8 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
+                        .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)

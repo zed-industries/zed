@@ -212,7 +212,7 @@ impl<'a, T: 'static> Context<'a, T> {
 
     /// Convenience method for accessing view state in an event callback.
     ///
-    /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut AppContext)`,
+    /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut App)`,
     /// but it's often useful to be able to access view state in these
     /// callbacks. This method provides a convenient way to do so.
     pub fn listener<E: ?Sized>(
@@ -608,8 +608,8 @@ impl<'a, T: 'static> Context<'a, T> {
     }
 
     /// Schedule a future to be run asynchronously.
-    /// The given callback is invoked with a [`WeakEntity<V>`] to avoid leaking the view for a long-running process.
-    /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
+    /// The given callback is invoked with a [`WeakEntity<V>`] to avoid leaking the entity for a long-running process.
+    /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the entity across await points.
     /// The returned future will be polled on the main thread.
     #[track_caller]
     pub fn spawn_in<AsyncFn, R>(&self, window: &Window, f: AsyncFn) -> Task<R>

@@ -8,7 +8,7 @@ mod terminal_inline_assistant;
 
 use std::sync::Arc;
 
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AssistantSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
@@ -101,7 +101,7 @@ pub fn init(
     SlashCommandSettings::register(cx);
 
     assistant_context_editor::init(client.clone(), cx);
-    prompt_library::init(cx);
+    rules_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     assistant_tool::init(cx);
@@ -161,71 +161,38 @@ fn init_language_model_settings(cx: &mut App) {
 
 fn update_active_language_model_from_settings(cx: &mut App) {
     let settings = AssistantSettings::get_global(cx);
-    // Default model - used as fallback
-    let active_model_provider_name =
-        LanguageModelProviderId::from(settings.default_model.provider.clone());
-    let active_model_id = LanguageModelId::from(settings.default_model.model.clone());
 
-    // Inline assistant model
-    let inline_assistant_model = settings
+    fn to_selected_model(selection: &LanguageModelSelection) -> language_model::SelectedModel {
+        language_model::SelectedModel {
+            provider: LanguageModelProviderId::from(selection.provider.clone()),
+            model: LanguageModelId::from(selection.model.clone()),
+        }
+    }
+
+    let default = to_selected_model(&settings.default_model);
+    let inline_assistant = settings
         .inline_assistant_model
         .as_ref()
-        .unwrap_or(&settings.default_model);
-    let inline_assistant_provider_name =
-        LanguageModelProviderId::from(inline_assistant_model.provider.clone());
-    let inline_assistant_model_id = LanguageModelId::from(inline_assistant_model.model.clone());
-
-    // Commit message model
-    let commit_message_model = settings
+        .map(to_selected_model);
+    let commit_message = settings
         .commit_message_model
         .as_ref()
-        .unwrap_or(&settings.default_model);
-    let commit_message_provider_name =
-        LanguageModelProviderId::from(commit_message_model.provider.clone());
-    let commit_message_model_id = LanguageModelId::from(commit_message_model.model.clone());
-
-    // Thread summary model
-    let thread_summary_model = settings
+        .map(to_selected_model);
+    let thread_summary = settings
         .thread_summary_model
         .as_ref()
-        .unwrap_or(&settings.default_model);
-    let thread_summary_provider_name =
-        LanguageModelProviderId::from(thread_summary_model.provider.clone());
-    let thread_summary_model_id = LanguageModelId::from(thread_summary_model.model.clone());
-
+        .map(to_selected_model);
     let inline_alternatives = settings
         .inline_alternatives
         .iter()
-        .map(|alternative| {
-            (
-                LanguageModelProviderId::from(alternative.provider.clone()),
-                LanguageModelId::from(alternative.model.clone()),
-            )
-        })
+        .map(to_selected_model)
         .collect::<Vec<_>>();
 
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-        // Set the default model
-        registry.select_default_model(&active_model_provider_name, &active_model_id, cx);
-
-        // Set the specific models
-        registry.select_inline_assistant_model(
-            &inline_assistant_provider_name,
-            &inline_assistant_model_id,
-            cx,
-        );
-        registry.select_commit_message_model(
-            &commit_message_provider_name,
-            &commit_message_model_id,
-            cx,
-        );
-        registry.select_thread_summary_model(
-            &thread_summary_provider_name,
-            &thread_summary_model_id,
-            cx,
-        );
-
-        // Set the alternatives
+        registry.select_default_model(Some(&default), cx);
+        registry.select_inline_assistant_model(inline_assistant.as_ref(), cx);
+        registry.select_commit_message_model(commit_message.as_ref(), cx);
+        registry.select_thread_summary_model(thread_summary.as_ref(), cx);
         registry.select_inline_alternative_models(inline_alternatives, cx);
     });
 }

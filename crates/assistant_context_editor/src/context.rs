@@ -2373,7 +2373,7 @@ impl AssistantContext {
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
-                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                    LanguageModelCompletionEvent::Thinking { text: chunk, .. } => {
                                         if thought_process_stack.is_empty() {
                                             let start =
                                                 buffer.anchor_before(message_old_end_offset);
@@ -2555,6 +2555,8 @@ impl AssistantContext {
         }
 
         let mut completion_request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
             messages: Vec::new(),
             tools: Vec::new(),
             stop: Vec::new(),
@@ -2609,7 +2611,9 @@ impl AssistantContext {
                     .map(MessageContent::Text),
             );
 
-            completion_request.messages.push(request_message);
+            if !request_message.contents_empty() {
+                completion_request.messages.push(request_message);
+            }
         }
 
         if let RequestType::SuggestEdits = request_type {

@@ -160,7 +160,11 @@ impl Render for Tooltip {
                     }),
             )
             .when_some(self.meta.clone(), |this, meta| {
-                this.child(Label::new(meta).size(LabelSize::Small).color(Color::Muted))
+                this.child(
+                    div()
+                        .max_w_72()
+                        .child(Label::new(meta).size(LabelSize::Small).color(Color::Muted)),
+                )
             })
         })
     }
