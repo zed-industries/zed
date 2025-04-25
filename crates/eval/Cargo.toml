@@ -19,6 +19,7 @@ client.workspace = true
 collections.workspace = true
 context_server.workspace = true
 dirs = "5.0"
+dotenv.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 fs.workspace = true

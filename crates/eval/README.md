@@ -6,6 +6,8 @@ This eval assumes the working directory is the root of the repository. Run it wi
 cargo run -p eval
 ```
 
+The eval will optionally read a `.env` file in `crates/eval` if you need it to set environment variables, such as API keys.
+
 ## Explorer Tool
 
 The explorer tool generates a self-contained HTML view from one or more thread

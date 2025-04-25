@@ -34,8 +34,11 @@ use std::collections::VecDeque;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use util::ResultExt as _;
+
+static CARGO_MANIFEST_DIR: LazyLock<PathBuf> =
+    LazyLock::new(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
 
 #[derive(Parser, Debug)]
 #[command(name = "eval", disable_version_flag = true)]
@@ -57,6 +60,8 @@ struct Args {
 }
 
 fn main() {
+    dotenv::from_filename(CARGO_MANIFEST_DIR.join(".env")).ok();
+
     env_logger::init();
 
     let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
