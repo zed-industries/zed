@@ -119,7 +119,7 @@ impl TcpArguments {
 ///
 /// We start off with a [DebugScenario], a user-facing type that additionally defines how a debug target is built; once
 /// an optional build step is completed, we turn it's result into a DebugTaskDefinition by running a locator (or using a user-provided task) and resolving task variables.
-/// Finally, a [DebugTaskDefinition] has to be turned into a concrete debugger invokation ([DebugAdapterBinary]).
+/// Finally, a [DebugTaskDefinition] has to be turned into a concrete debugger invocation ([DebugAdapterBinary]).
 #[derive(Clone, Debug)]
 pub struct DebugTaskDefinition {
     pub label: SharedString,

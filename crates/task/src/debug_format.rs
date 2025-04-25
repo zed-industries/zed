@@ -144,7 +144,7 @@ pub struct DebugScenario {
     pub adapter: SharedString,
     /// Name of the debug task
     pub label: SharedString,
-    /// A task to run prior to spawning the debugee
+    /// A task to run prior to spawning the debuggee.
     pub build: Option<SharedString>,
     #[serde(flatten)]
     pub request: Option<DebugRequest>,
