@@ -217,9 +217,9 @@ impl<T: ImageCache> ImageCacheProvider for Entity<T> {
 }
 
 /// An implementation of ImageCache, that uses an LRU caching strategy to unload images when the cache is full
-pub struct HashMapImageCache(HashMap<u64, ImageCacheItem>);
+pub struct RetainAllImageCache(HashMap<u64, ImageCacheItem>);
 
-impl fmt::Debug for HashMapImageCache {
+impl fmt::Debug for RetainAllImageCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HashMapImageCache")
             .field("num_images", &self.0.len())
@@ -227,11 +227,11 @@ impl fmt::Debug for HashMapImageCache {
     }
 }
 
-impl HashMapImageCache {
+impl RetainAllImageCache {
     /// Create a new image cache.
     #[inline]
     pub fn new(cx: &mut App) -> Entity<Self> {
-        let e = cx.new(|_cx| HashMapImageCache(HashMap::new()));
+        let e = cx.new(|_cx| RetainAllImageCache(HashMap::new()));
         cx.observe_release(&e, |image_cache, cx| {
             for (_, mut item) in std::mem::replace(&mut image_cache.0, HashMap::new()) {
                 if let Some(Ok(image)) = item.get() {
@@ -307,13 +307,13 @@ impl HashMapImageCache {
     }
 }
 
-impl ImageCache for HashMapImageCache {
+impl ImageCache for RetainAllImageCache {
     fn load(
         &mut self,
         resource: &Resource,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
-        HashMapImageCache::load(self, resource, window, cx)
+        RetainAllImageCache::load(self, resource, window, cx)
     }
 }

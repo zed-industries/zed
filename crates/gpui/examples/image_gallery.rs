@@ -1,9 +1,9 @@
 use futures::FutureExt;
 use gpui::{
     App, AppContext, Application, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId,
-    Entity, HashMapImageCache, ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu,
-    MenuItem, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div,
-    hash, image_cache, img, prelude::*, px, rgb, size,
+    Entity, ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
+    RetainAllImageCache, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
 };
 use reqwest_client::ReqwestClient;
 use std::{collections::HashMap, sync::Arc};
@@ -14,7 +14,7 @@ struct ImageGallery {
     image_key: String,
     items_count: usize,
     total_count: usize,
-    image_cache: Entity<HashMapImageCache>,
+    image_cache: Entity<RetainAllImageCache>,
 }
 
 impl ImageGallery {
@@ -282,7 +282,7 @@ fn main() {
                 image_key: "".into(),
                 items_count: IMAGES_IN_GALLERY,
                 total_count: 0,
-                image_cache: HashMapImageCache::new(ctx),
+                image_cache: RetainAllImageCache::new(ctx),
             })
         })
         .unwrap();
