@@ -1,7 +1,6 @@
-use super::DapLocator;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use dap::DebugRequest;
+use dap::{DapLocator, DebugRequest};
 use serde_json::Value;
 use smol::{
     io::AsyncReadExt,

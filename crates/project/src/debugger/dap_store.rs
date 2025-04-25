@@ -1,6 +1,6 @@
 use super::{
     breakpoint_store::BreakpointStore,
-    locators::DapLocator,
+    locators,
     session::{self, Session, SessionStateEvent},
 };
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use collections::{FxHashMap, HashMap};
+use collections::HashMap;
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
@@ -96,7 +96,6 @@ pub struct LocalDapStore {
     environment: Entity<ProjectEnvironment>,
     language_registry: Arc<LanguageRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
-    locators: FxHashMap<String, Arc<dyn DapLocator>>,
 }
 
 pub struct SshDapStore {
@@ -119,9 +118,11 @@ pub struct DapStore {
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
-    pub fn init(client: &AnyProtoClient) {
+    pub fn init(client: &AnyProtoClient, cx: &mut App) {
         client.add_entity_request_handler(Self::handle_run_debug_locator);
         client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);
+        DapRegistry::global(cx)
+            .add_locator("cargo".into(), Arc::new(locators::cargo::CargoLocator {}));
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -136,11 +137,6 @@ impl DapStore {
         breakpoint_store: Entity<BreakpointStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let locators = FxHashMap::from_iter([(
-            "cargo".to_string(),
-            Arc::new(super::locators::cargo::CargoLocator {}) as _,
-        )]);
-
         let mode = DapStoreMode::Local(LocalDapStore {
             fs,
             environment,
@@ -148,7 +144,6 @@ impl DapStore {
             node_runtime,
             toolchain_store,
             language_registry,
-            locators,
         });
 
         Self::new(mode, breakpoint_store, worktree_store, cx)
@@ -332,7 +327,8 @@ impl DapStore {
         mut build: SpawnInTerminal,
         unresoved_label: SharedString,
         adapter: SharedString,
-    ) -> Task<Option<DebugScenario>> {
+        cx: &mut App,
+    ) -> Option<DebugScenario> {
         build.args = build
             .args
             .into_iter()
@@ -346,33 +342,29 @@ impl DapStore {
                 }
             })
             .collect();
-        match &self.mode {
-            DapStoreMode::Local(local_dap_store) => Task::ready(
-                local_dap_store
-                    .locators
-                    .values()
-                    .find(|locator| locator.accepts(&build))
-                    .map(|_| DebugScenario {
-                        adapter,
-                        label: format!("Debug `{}`", build.label).into(),
-                        build: Some(unresoved_label),
-                        request: None,
-                        initialize_args: None,
-                        tcp_connection: None,
-                        stop_on_entry: None,
-                    }),
-            ),
-            DapStoreMode::Ssh(_) => todo!(),
-            DapStoreMode::Collab => Task::ready(None),
-        }
+
+        DapRegistry::global(cx)
+            .locators()
+            .values()
+            .find(|locator| locator.accepts(&build))
+            .map(|_| DebugScenario {
+                adapter,
+                label: format!("Debug `{}`", build.label).into(),
+                build: Some(unresoved_label),
+                request: None,
+                initialize_args: None,
+                tcp_connection: None,
+                stop_on_entry: None,
+            })
     }
+
     pub fn run_debug_locator(
         &mut self,
         mut build_command: SpawnInTerminal,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugRequest>> {
         match &self.mode {
-            DapStoreMode::Local(local) => {
+            DapStoreMode::Local(_) => {
                 // Pre-resolve args with existing environment.
                 build_command.args = build_command
                     .args
@@ -387,8 +379,8 @@ impl DapStore {
                         }
                     })
                     .collect();
-                let locators = local
-                    .locators
+                let locators = DapRegistry::global(cx)
+                    .locators()
                     .values()
                     .filter(|locator| locator.accepts(&build_command))
                     .cloned()

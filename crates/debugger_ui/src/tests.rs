@@ -5,7 +5,7 @@ use dap::{DebugRequest, client::DebugAdapterClient};
 use gpui::{Entity, TestAppContext, WindowHandle};
 use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
-use task::DebugTaskDefinition;
+use task::{DebugTaskDefinition, TaskContext};
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
@@ -104,7 +104,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
 ) -> Result<Entity<Session>> {
     let _subscription = project::debugger::test::intercept_debug_sessions(cx, configure);
     workspace.update(cx, |workspace, window, cx| {
-        workspace.start_debug_session(config, window, cx)
+        workspace.start_debug_session(config, window, TaskContext::default(), None, cx)
     })?;
     cx.run_until_parked();
     let session = workspace.read_with(cx, |workspace, cx| {
