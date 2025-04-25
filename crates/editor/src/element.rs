@@ -2661,19 +2661,21 @@ impl EditorElement {
                         text_x + layout.width,
                     ))
                 };
-                x_position = if rows.contains(&align_to.row()) {
-                    x_and_width(&line_layouts[align_to.row().minus(rows.start) as usize])
-                } else {
-                    x_and_width(&layout_line(
-                        align_to.row(),
-                        snapshot,
-                        &self.style,
-                        editor_width,
-                        is_row_soft_wrapped,
-                        window,
-                        cx,
-                    ))
-                };
+                let line_ix = align_to.row().0.checked_sub(rows.start.0);
+                x_position =
+                    if let Some(layout) = line_ix.and_then(|ix| line_layouts.get(ix as usize)) {
+                        x_and_width(&layout)
+                    } else {
+                        x_and_width(&layout_line(
+                            align_to.row(),
+                            snapshot,
+                            &self.style,
+                            editor_width,
+                            is_row_soft_wrapped,
+                            window,
+                            cx,
+                        ))
+                    };
 
                 let anchor_x = x_position.unwrap().0;
 
