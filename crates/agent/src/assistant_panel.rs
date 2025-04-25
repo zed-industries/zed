@@ -24,9 +24,9 @@ use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
-use prompt_library::{PromptLibrary, open_prompt_library};
-use prompt_store::{PromptBuilder, PromptId, UserPromptId};
+use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
+use rules_library::{RulesLibrary, open_rules_library};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
@@ -36,7 +36,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::agent::OpenConfiguration;
-use zed_actions::assistant::{OpenPromptLibrary, ToggleFocus};
+use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
@@ -79,11 +79,11 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
-                .register_action(|workspace, action: &OpenPromptLibrary, window, cx| {
+                .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(action, window, cx)
+                            panel.deploy_rules_library(action, window, cx)
                         });
                     }
                 })
@@ -251,6 +251,7 @@ pub struct AssistantPanel {
     message_editor: Entity<MessageEditor>,
     _active_thread_subscriptions: Vec<Subscription>,
     context_store: Entity<assistant_context_editor::ContextStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
@@ -267,14 +268,25 @@ impl AssistantPanel {
     pub fn load(
         workspace: WeakEntity<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
-        cx: AsyncWindowContext,
+        mut cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
+        let prompt_store = cx.update(|_window, cx| PromptStore::global(cx));
         cx.spawn(async move |cx| {
+            let prompt_store = match prompt_store {
+                Ok(prompt_store) => prompt_store.await.ok(),
+                Err(_) => None,
+            };
             let tools = cx.new(|_| ToolWorkingSet::default())?;
             let thread_store = workspace
                 .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    ThreadStore::load(project, tools.clone(), prompt_builder.clone(), cx)
+                    ThreadStore::load(
+                        project,
+                        tools.clone(),
+                        prompt_store.clone(),
+                        prompt_builder.clone(),
+                        cx,
+                    )
                 })?
                 .await?;
 
@@ -292,7 +304,16 @@ impl AssistantPanel {
                 .await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
-                cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx))
+                cx.new(|cx| {
+                    Self::new(
+                        workspace,
+                        thread_store,
+                        context_store,
+                        prompt_store,
+                        window,
+                        cx,
+                    )
+                })
             })
         })
     }
@@ -301,6 +322,7 @@ impl AssistantPanel {
         workspace: &Workspace,
         thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context_editor::ContextStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -324,6 +346,7 @@ impl AssistantPanel {
                 fs.clone(),
                 workspace.clone(),
                 message_editor_context_store.clone(),
+                prompt_store.clone(),
                 thread_store.downgrade(),
                 thread.clone(),
                 window,
@@ -355,7 +378,6 @@ impl AssistantPanel {
                 thread.clone(),
                 thread_store.clone(),
                 language_registry.clone(),
-                message_editor_context_store.clone(),
                 workspace.clone(),
                 window,
                 cx,
@@ -384,6 +406,7 @@ impl AssistantPanel {
                 message_editor_subscription,
             ],
             context_store,
+            prompt_store,
             configuration: None,
             configuration_subscription: None,
             local_timezone: UtcOffset::from_whole_seconds(
@@ -415,6 +438,10 @@ impl AssistantPanel {
 
     pub(crate) fn local_timezone(&self) -> UtcOffset {
         self.local_timezone
+    }
+
+    pub(crate) fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
+        &self.prompt_store
     }
 
     pub(crate) fn thread_store(&self) -> &Entity<ThreadStore> {
@@ -473,7 +500,6 @@ impl AssistantPanel {
                 thread.clone(),
                 self.thread_store.clone(),
                 self.language_registry.clone(),
-                message_editor_context_store.clone(),
                 self.workspace.clone(),
                 window,
                 cx,
@@ -492,6 +518,7 @@ impl AssistantPanel {
                 self.fs.clone(),
                 self.workspace.clone(),
                 message_editor_context_store,
+                self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 thread,
                 window,
@@ -544,13 +571,13 @@ impl AssistantPanel {
         context_editor.focus_handle(cx).focus(window);
     }
 
-    fn deploy_prompt_library(
+    fn deploy_rules_library(
         &mut self,
-        action: &OpenPromptLibrary,
+        action: &OpenRulesLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        open_prompt_library(
+        open_rules_library(
             self.language_registry.clone(),
             Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
             Arc::new(|| {
@@ -560,9 +587,9 @@ impl AssistantPanel {
                     None,
                 ))
             }),
-            action.prompt_to_select.map(|uuid| PromptId::User {
-                uuid: UserPromptId(uuid),
-            }),
+            action
+                .prompt_to_select
+                .map(|uuid| UserPromptId(uuid).into()),
             cx,
         )
         .detach_and_log_err(cx);
@@ -657,7 +684,6 @@ impl AssistantPanel {
                         thread.clone(),
                         this.thread_store.clone(),
                         this.language_registry.clone(),
-                        message_editor_context_store.clone(),
                         this.workspace.clone(),
                         window,
                         cx,
@@ -676,6 +702,7 @@ impl AssistantPanel {
                         this.fs.clone(),
                         this.workspace.clone(),
                         message_editor_context_store,
+                        this.prompt_store.clone(),
                         this.thread_store.downgrade(),
                         thread,
                         window,
@@ -1184,7 +1211,7 @@ impl AssistantPanel {
                                                     "New Text Thread",
                                                     NewTextThread.boxed_clone(),
                                                 )
-                                                .action("Prompt Library", Box::new(OpenPromptLibrary::default()))
+                                                .action("Rules Library", Box::new(OpenRulesLibrary::default()))
                                                 .action("Settings", Box::new(OpenConfiguration))
                                                 .separator()
                                                 .header("MCPs")
@@ -1897,7 +1924,7 @@ impl Render for AssistantPanel {
                 this.open_configuration(window, cx);
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
-            .on_action(cx.listener(Self::deploy_prompt_library))
+            .on_action(cx.listener(Self::deploy_rules_library))
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::go_back))
             .child(self.render_toolbar(window, cx))
@@ -1926,13 +1953,13 @@ impl PromptLibraryInlineAssist {
     }
 }
 
-impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
+impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     fn assist(
         &self,
         prompt_editor: &Entity<Editor>,
         _initial_prompt: Option<String>,
         window: &mut Window,
-        cx: &mut Context<PromptLibrary>,
+        cx: &mut Context<RulesLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
             let Some(project) = self
@@ -1942,11 +1969,14 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             else {
                 return;
             };
+            let prompt_store = None;
+            let thread_store = None;
             assistant.assist(
                 &prompt_editor,
                 self.workspace.clone(),
                 project,
-                None,
+                prompt_store,
+                thread_store,
                 window,
                 cx,
             )
@@ -2025,8 +2055,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
                 if panel.has_active_thread() {
-                    panel.thread.update(cx, |thread, cx| {
-                        thread.context_store().update(cx, |store, cx| {
+                    panel.message_editor.update(cx, |message_editor, cx| {
+                        message_editor.context_store().update(cx, |store, cx| {
                             let buffer = buffer.read(cx);
                             let selection_ranges = selection_ranges
                                 .into_iter()
@@ -2043,9 +2073,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
                                 .collect::<Vec<_>>();
 
                             for (buffer, range) in selection_ranges {
-                                store
-                                    .add_selection(buffer, range, cx)
-                                    .detach_and_log_err(cx);
+                                store.add_selection(buffer, range, cx);
                             }
                         })
                     })

@@ -272,7 +272,7 @@ impl PickerDelegate for ToolPickerDelegate {
                 .get(id.as_ref())
                 .and_then(|preset| preset.tools.get(&tool.name))
                 .copied()
-                .unwrap_or(false),
+                .unwrap_or(self.profile.enable_all_context_servers),
         };
 
         Some(

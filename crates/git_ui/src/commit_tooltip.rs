@@ -27,22 +27,18 @@ pub struct CommitDetails {
     pub message: Option<ParsedCommitMessage>,
 }
 
-struct CommitAvatar<'a> {
+pub struct CommitAvatar<'a> {
     commit: &'a CommitDetails,
 }
 
 impl<'a> CommitAvatar<'a> {
-    fn new(details: &'a CommitDetails) -> Self {
+    pub fn new(details: &'a CommitDetails) -> Self {
         Self { commit: details }
     }
 }
 
 impl<'a> CommitAvatar<'a> {
-    fn render(
-        &'a self,
-        window: &mut Window,
-        cx: &mut Context<CommitTooltip>,
-    ) -> Option<impl IntoElement + use<>> {
+    pub fn render(&'a self, window: &mut Window, cx: &mut App) -> Option<impl IntoElement + use<>> {
         let remote = self
             .commit
             .message

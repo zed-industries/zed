@@ -12,9 +12,9 @@ use itertools::Itertools;
 use language::Buffer;
 use project::ProjectItem;
 use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
-use workspace::{Workspace, notifications::NotifyResultExt};
+use workspace::Workspace;
 
-use crate::context::{ContextId, ContextKind};
+use crate::context::{AgentContext, ContextKind};
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
@@ -32,6 +32,7 @@ pub struct ContextStrip {
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
     workspace: WeakEntity<Workspace>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
     _subscriptions: Vec<Subscription>,
     focused_index: Option<usize>,
     children_bounds: Option<Vec<Bounds<Pixels>>>,
@@ -73,9 +74,28 @@ impl ContextStrip {
             focus_handle,
             suggest_context_kind,
             workspace,
+            thread_store,
             _subscriptions: subscriptions,
             focused_index: None,
             children_bounds: None,
+        }
+    }
+
+    fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let project = workspace.read(cx).project().read(cx);
+            let prompt_store = self
+                .thread_store
+                .as_ref()
+                .and_then(|thread_store| thread_store.upgrade())
+                .and_then(|thread_store| thread_store.read(cx).prompt_store().as_ref());
+            self.context_store
+                .read(cx)
+                .context()
+                .flat_map(|context| AddedContext::new(context.clone(), prompt_store, project, cx))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
         }
     }
 
@@ -93,22 +113,19 @@ impl ContextStrip {
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
         let active_buffer_entity = editor.buffer().read(cx).as_singleton()?;
         let active_buffer = active_buffer_entity.read(cx);
-
         let project_path = active_buffer.project_path(cx)?;
 
         if self
             .context_store
             .read(cx)
-            .will_include_buffer(active_buffer.remote_id(), &project_path)
+            .file_path_included(&project_path, cx)
             .is_some()
         {
             return None;
         }
 
         let file_name = active_buffer.file()?.file_name(cx);
-
         let icon_path = FileIcons::get_icon(&Path::new(&file_name), cx);
-
         Some(SuggestedContext::File {
             name: file_name.to_string_lossy().into_owned().into(),
             buffer: active_buffer_entity.downgrade(),
@@ -135,7 +152,6 @@ impl ContextStrip {
             .context_store
             .read(cx)
             .includes_thread(active_thread.id())
-            .is_some()
         {
             return None;
         }
@@ -272,12 +288,12 @@ impl ContextStrip {
         best.map(|(index, _, _)| index)
     }
 
-    fn open_context(&mut self, id: ContextId, window: &mut Window, cx: &mut App) {
+    fn open_context(&mut self, context: &AgentContext, window: &mut Window, cx: &mut App) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 
-        crate::active_thread::open_context(id, self.context_store.clone(), workspace, window, cx);
+        crate::active_thread::open_context(context, workspace, window, cx);
     }
 
     fn remove_focused_context(
@@ -287,17 +303,17 @@ impl ContextStrip {
         cx: &mut Context<Self>,
     ) {
         if let Some(index) = self.focused_index {
-            let mut is_empty = false;
+            let added_contexts = self.added_contexts(cx);
+            let Some(context) = added_contexts.get(index) else {
+                return;
+            };
 
             self.context_store.update(cx, |this, cx| {
-                if let Some(item) = this.context().get(index) {
-                    this.remove_context(item.id(), cx);
-                }
-
-                is_empty = this.context().is_empty();
+                this.remove_context(&context.context, cx);
             });
 
-            if is_empty {
+            let is_now_empty = added_contexts.len() == 1;
+            if is_now_empty {
                 cx.emit(ContextStripEvent::BlurredEmpty);
             } else {
                 self.focused_index = Some(index.saturating_sub(1));
@@ -306,49 +322,28 @@ impl ContextStrip {
         }
     }
 
-    fn is_suggested_focused<T>(&self, context: &Vec<T>) -> bool {
+    fn is_suggested_focused(&self, added_contexts: &Vec<AddedContext>) -> bool {
         // We only suggest one item after the actual context
-        self.focused_index == Some(context.len())
+        self.focused_index == Some(added_contexts.len())
     }
 
     fn accept_suggested_context(
         &mut self,
         _: &AcceptSuggestedContext,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(suggested) = self.suggested_context(cx) {
-            let context_store = self.context_store.read(cx);
-
-            if self.is_suggested_focused(context_store.context()) {
-                self.add_suggested_context(&suggested, window, cx);
+            if self.is_suggested_focused(&self.added_contexts(cx)) {
+                self.add_suggested_context(&suggested, cx);
             }
         }
     }
 
-    fn add_suggested_context(
-        &mut self,
-        suggested: &SuggestedContext,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let task = self.context_store.update(cx, |context_store, cx| {
-            context_store.accept_suggested_context(&suggested, cx)
+    fn add_suggested_context(&mut self, suggested: &SuggestedContext, cx: &mut Context<Self>) {
+        self.context_store.update(cx, |context_store, cx| {
+            context_store.add_suggested_context(&suggested, cx)
         });
-
-        cx.spawn_in(window, async move |this, cx| {
-            match task.await.notify_async_err(cx) {
-                None => {}
-                Some(()) => {
-                    if let Some(this) = this.upgrade() {
-                        this.update(cx, |_, cx| cx.notify())?;
-                    }
-                }
-            }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-
         cx.notify();
     }
 }
@@ -361,17 +356,10 @@ impl Focusable for ContextStrip {
 
 impl Render for ContextStrip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let context_store = self.context_store.read(cx);
-        let context = context_store.context();
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
-        let suggested_context = self.suggested_context(cx);
-
-        let added_contexts = context
-            .iter()
-            .map(|c| AddedContext::new(c, cx))
-            .collect::<Vec<_>>();
+        let added_contexts = self.added_contexts(cx);
         let dupe_names = added_contexts
             .iter()
             .map(|c| c.name.clone())
@@ -380,6 +368,14 @@ impl Render for ContextStrip {
             .filter(|(a, b)| a == b)
             .map(|(a, _)| a)
             .collect::<HashSet<SharedString>>();
+        let no_added_context = added_contexts.is_empty();
+
+        let suggested_context = self.suggested_context(cx).map(|suggested_context| {
+            (
+                suggested_context,
+                self.is_suggested_focused(&added_contexts),
+            )
+        });
 
         h_flex()
             .flex_wrap()
@@ -436,7 +432,7 @@ impl Render for ContextStrip {
                     })
                     .with_handle(self.context_picker_menu_handle.clone()),
             )
-            .when(context.is_empty() && suggested_context.is_none(), {
+            .when(no_added_context && suggested_context.is_none(), {
                 |parent| {
                     parent.child(
                         h_flex()
@@ -466,16 +462,17 @@ impl Render for ContextStrip {
                     .enumerate()
                     .map(|(i, added_context)| {
                         let name = added_context.name.clone();
-                        let id = added_context.id;
+                        let context = added_context.context.clone();
                         ContextPill::added(
                             added_context,
                             dupe_names.contains(&name),
                             self.focused_index == Some(i),
                             Some({
+                                let context = context.clone();
                                 let context_store = self.context_store.clone();
                                 Rc::new(cx.listener(move |_this, _event, _window, cx| {
                                     context_store.update(cx, |this, cx| {
-                                        this.remove_context(id, cx);
+                                        this.remove_context(&context, cx);
                                     });
                                     cx.notify();
                                 }))
@@ -484,7 +481,7 @@ impl Render for ContextStrip {
                         .on_click({
                             Rc::new(cx.listener(move |this, event: &ClickEvent, window, cx| {
                                 if event.down.click_count > 1 {
-                                    this.open_context(id, window, cx);
+                                    this.open_context(&context, window, cx);
                                 } else {
                                     this.focused_index = Some(i);
                                 }
@@ -493,22 +490,22 @@ impl Render for ContextStrip {
                         })
                     }),
             )
-            .when_some(suggested_context, |el, suggested| {
+            .when_some(suggested_context, |el, (suggested, focused)| {
                 el.child(
                     ContextPill::suggested(
                         suggested.name().clone(),
                         suggested.icon_path(),
                         suggested.kind(),
-                        self.is_suggested_focused(&context),
+                        focused,
                     )
                     .on_click(Rc::new(cx.listener(
-                        move |this, _event, window, cx| {
-                            this.add_suggested_context(&suggested, window, cx);
+                        move |this, _event, _window, cx| {
+                            this.add_suggested_context(&suggested, cx);
                         },
                     ))),
                 )
             })
-            .when(!context.is_empty(), {
+            .when(!no_added_context, {
                 move |parent| {
                     parent.child(
                         IconButton::new("remove-all-context", IconName::Eraser)
@@ -534,6 +531,7 @@ impl Render for ContextStrip {
                     )
                 }
             })
+            .into_any()
     }
 }
 

@@ -2611,7 +2611,9 @@ impl AssistantContext {
                     .map(MessageContent::Text),
             );
 
-            completion_request.messages.push(request_message);
+            if !request_message.contents_empty() {
+                completion_request.messages.push(request_message);
+            }
         }
 
         if let RequestType::SuggestEdits = request_type {
