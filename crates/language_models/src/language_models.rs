@@ -71,7 +71,7 @@ fn register_language_model_providers(
     );
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
 
-    cx.observe_flag::<feature_flags::LanguageModels, _>(move |enabled, cx| {
+    cx.observe_flag::<feature_flags::LanguageModelsFeatureFlag, _>(move |enabled, cx| {
         let user_store = user_store.clone();
         let client = client.clone();
         LanguageModelRegistry::global(cx).update(cx, move |registry, cx| {

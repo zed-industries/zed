@@ -218,8 +218,14 @@ impl ExampleInstance {
         });
 
         let tools = cx.new(|_| ToolWorkingSet::default());
-        let thread_store =
-            ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
+        let prompt_store = None;
+        let thread_store = ThreadStore::load(
+            project.clone(),
+            tools,
+            prompt_store,
+            app_state.prompt_builder.clone(),
+            cx,
+        );
         let meta = self.thread.meta();
         let this = self.clone();
 

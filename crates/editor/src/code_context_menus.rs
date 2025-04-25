@@ -1,4 +1,4 @@
-use feature_flags::{Debugger, FeatureFlagAppExt as _};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,

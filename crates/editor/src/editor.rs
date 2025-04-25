@@ -71,7 +71,7 @@ use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layo
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
-use feature_flags::{Debugger, FeatureFlagAppExt};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
 use futures::{
     FutureExt,
     future::{self, Shared, join},
@@ -5181,7 +5181,7 @@ impl Editor {
                                 .as_ref()
                                 .map_or(true, |actions| actions.is_empty());
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
-                            let debug_scenarios = if cx.has_flag::<Debugger>() {
+                            let debug_scenarios = if cx.has_flag::<DebuggerFeatureFlag>() {
                                 maybe!({
                                     let project = editor.project.as_ref()?;
                                     let inventory =
@@ -9147,7 +9147,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<Debugger>() {
+        if !cx.has_flag::<DebuggerFeatureFlag>() {
             return;
         }
         let source = self
