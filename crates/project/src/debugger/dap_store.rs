@@ -250,9 +250,8 @@ impl DapStore {
                     .into();
 
                 cx.spawn(async move |this, cx| {
-                    let scenario = definition.try_into()?;
                     let mut binary = adapter
-                        .get_binary(&delegate, &scenario, user_installed_path, cx)
+                        .get_binary(&delegate, &definition, user_installed_path, cx)
                         .await?;
 
                     let env = this

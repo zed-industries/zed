@@ -832,7 +832,7 @@ impl Session {
     }
 
     pub fn adapter_name(&self) -> SharedString {
-        self.definition.adapter.clone().into()
+        self.definition.adapter.clone()
     }
 
     pub fn label(&self) -> SharedString {
