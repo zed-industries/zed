@@ -51,7 +51,7 @@ pub trait Asset: 'static {
     ) -> impl Future<Output = Self::Output> + Send + 'static;
 }
 
-/// An asset Loader that logs whatever errors pass through it
+/// An asset Loader which logs the [`Err`] variant of a [`Result`] during loading
 pub enum AssetLogger<T> {
     #[doc(hidden)]
     _Phantom(PhantomData<T>, &'static dyn crate::seal::Sealed),
