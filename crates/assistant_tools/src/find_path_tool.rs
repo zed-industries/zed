@@ -1,15 +1,21 @@
-use crate::schema::json_schema_for;
+use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
+use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use editor::Editor;
+use futures::channel::oneshot::{self, Receiver};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
+};
+use language;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{cmp, fmt::Write as _, path::PathBuf, sync::Arc};
-use ui::IconName;
-use util::paths::PathMatcher;
-use worktree::Snapshot;
+use std::fmt::Write;
+use std::{cmp, path::PathBuf, sync::Arc};
+use ui::{Disclosure, Tooltip, prelude::*};
+use util::{ResultExt, paths::PathMatcher};
+use workspace::Workspace;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FindPathToolInput {
@@ -29,7 +35,7 @@ pub struct FindPathToolInput {
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
-    pub offset: u32,
+    pub offset: usize,
 }
 
 const RESULTS_PER_PAGE: usize = 50;
@@ -77,12 +83,19 @@ impl Tool for FindPathTool {
             Ok(input) => (input.offset, input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
-        let offset = offset as usize;
-        let task = search_paths(&glob, project, cx);
-        cx.background_spawn(async move {
-            let matches = task.await?;
-            let paginated_matches = &matches[cmp::min(offset, matches.len())
+
+        let (sender, receiver) = oneshot::channel();
+
+        let card = cx.new(|cx| FindPathToolCard::new(glob.clone(), receiver, cx));
+
+        let search_paths_task = search_paths(&glob, project, cx);
+
+        let task = cx.background_spawn(async move {
+            let matches = search_paths_task.await?;
+            let paginated_matches: &[PathBuf] = &matches[cmp::min(offset, matches.len())
                 ..cmp::min(offset + RESULTS_PER_PAGE, matches.len())];
+
+            sender.send(paginated_matches.to_vec()).log_err();
 
             if matches.is_empty() {
                 Ok("No matches found".to_string())
@@ -102,8 +115,12 @@ impl Tool for FindPathTool {
                 }
                 Ok(message)
             }
-        })
-        .into()
+        });
+
+        ToolResult {
+            output: task,
+            card: Some(card.into()),
+        }
     }
 }
 
@@ -115,7 +132,7 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         Ok(matcher) => matcher,
         Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
     };
-    let snapshots: Vec<Snapshot> = project
+    let snapshots: Vec<_> = project
         .read(cx)
         .worktrees(cx)
         .map(|worktree| worktree.read(cx).snapshot())
@@ -133,6 +150,209 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
             })
             .collect())
     })
+}
+
+struct FindPathToolCard {
+    paths: Vec<PathBuf>,
+    expanded: bool,
+    glob: String,
+    _receiver_task: Option<Task<Result<()>>>,
+}
+
+impl FindPathToolCard {
+    fn new(glob: String, receiver: Receiver<Vec<PathBuf>>, cx: &mut Context<Self>) -> Self {
+        let _receiver_task = cx.spawn(async move |this, cx| {
+            let paths = receiver.await?;
+
+            this.update(cx, |this, _cx| {
+                this.paths = paths;
+            })
+            .log_err();
+
+            Ok(())
+        });
+
+        Self {
+            paths: Vec::new(),
+            expanded: false,
+            glob,
+            _receiver_task: Some(_receiver_task),
+        }
+    }
+}
+
+impl ToolCard for FindPathToolCard {
+    fn render(
+        &mut self,
+        _status: &ToolUseStatus,
+        _window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let matches_label: SharedString = if self.paths.len() == 0 {
+            "No matches".into()
+        } else if self.paths.len() == 1 {
+            "1 match".into()
+        } else {
+            format!("{} matches", self.paths.len()).into()
+        };
+
+        let glob_label = self.glob.to_string();
+
+        let content = if !self.paths.is_empty() && self.expanded {
+            Some(
+                v_flex()
+                    .relative()
+                    .ml_1p5()
+                    .px_1p5()
+                    .gap_0p5()
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .children(self.paths.iter().enumerate().map(|(index, path)| {
+                        let path_clone = path.clone();
+                        let workspace_clone = workspace.clone();
+                        let button_label = path.to_string_lossy().to_string();
+
+                        Button::new(("path", index), button_label)
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::End)
+                            .label_size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .tooltip(Tooltip::text("Jump to File"))
+                            .on_click(move |_, window, cx| {
+                                workspace_clone
+                                    .update(cx, |workspace, cx| {
+                                        let path = PathBuf::from(&path_clone);
+                                        let Some(project_path) = workspace
+                                            .project()
+                                            .read(cx)
+                                            .find_project_path(&path, cx)
+                                        else {
+                                            return;
+                                        };
+                                        let open_task = workspace.open_path(
+                                            project_path,
+                                            None,
+                                            true,
+                                            window,
+                                            cx,
+                                        );
+                                        window
+                                            .spawn(cx, async move |cx| {
+                                                let item = open_task.await?;
+                                                if let Some(active_editor) =
+                                                    item.downcast::<Editor>()
+                                                {
+                                                    active_editor
+                                                        .update_in(cx, |editor, window, cx| {
+                                                            editor.go_to_singleton_buffer_point(
+                                                                language::Point::new(0, 0),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .log_err();
+                                                }
+                                                anyhow::Ok(())
+                                            })
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+                            })
+                    }))
+                    .into_any(),
+            )
+        } else {
+            None
+        };
+
+        v_flex()
+            .mb_2()
+            .gap_1()
+            .child(
+                ToolCallCardHeader::new(IconName::SearchCode, matches_label)
+                    .with_code_path(glob_label)
+                    .disclosure_slot(
+                        Disclosure::new("path-search-disclosure", self.expanded)
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown)
+                            .disabled(self.paths.is_empty())
+                            .on_click(cx.listener(move |this, _, _, _cx| {
+                                this.expanded = !this.expanded;
+                            })),
+                    ),
+            )
+            .children(content)
+    }
+}
+
+impl Component for FindPathTool {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+
+    fn sort_name() -> &'static str {
+        "FindPathTool"
+    }
+
+    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let successful_card = cx.new(|_| FindPathToolCard {
+            paths: vec![
+                PathBuf::from("src/main.rs"),
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("tests/test.rs"),
+            ],
+            expanded: true,
+            glob: "*.rs".to_string(),
+            _receiver_task: None,
+        });
+
+        let empty_card = cx.new(|_| FindPathToolCard {
+            paths: Vec::new(),
+            expanded: false,
+            glob: "*.nonexistent".to_string(),
+            _receiver_task: None,
+        });
+
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group(vec![
+                    single_example(
+                        "With Paths",
+                        div()
+                            .size_full()
+                            .child(successful_card.update(cx, |tool, cx| {
+                                tool.render(
+                                    &ToolUseStatus::Finished("".into()),
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
+                            }))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "No Paths",
+                        div()
+                            .size_full()
+                            .child(empty_card.update(cx, |tool, cx| {
+                                tool.render(
+                                    &ToolUseStatus::Finished("".into()),
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
+                            }))
+                            .into_any_element(),
+                    ),
+                ])])
+                .into_any_element(),
+        )
+    }
 }
 
 #[cfg(test)]
