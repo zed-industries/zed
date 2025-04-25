@@ -531,7 +531,7 @@ impl CloudLanguageModel {
             {
                 request_builder.uri(completions_url)
             } else {
-                request_builder.uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
+                request_builder.uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
             };
             let request = request_builder
                 .header("Content-Type", "application/json")
