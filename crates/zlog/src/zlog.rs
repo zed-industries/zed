@@ -200,7 +200,7 @@ macro_rules! crate_name {
 pub mod private {
     use super::*;
 
-    pub const fn extract_crate_name_from_module_path(module_path: &'static str) -> &'static str {
+    pub const fn extract_crate_name_from_module_path(module_path: &str) -> &str {
         let mut i = 0;
         let mod_path_bytes = module_path.as_bytes();
         let mut index = mod_path_bytes.len();
