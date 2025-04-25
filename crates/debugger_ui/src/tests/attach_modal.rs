@@ -1,6 +1,6 @@
 use crate::{attach_modal::Candidate, tests::start_debug_session_with, *};
 use attach_modal::AttachModal;
-use dap::{FakeAdapter, client::SessionId};
+use dap::FakeAdapter;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
@@ -176,14 +176,4 @@ async fn test_show_attach_modal_and_select_process(
             assert!(workspace.active_modal::<AttachModal>(cx).is_none());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            let session = dap_store.session_by_id(SessionId(0)).unwrap();
-
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }

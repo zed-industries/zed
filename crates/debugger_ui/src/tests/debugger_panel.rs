@@ -398,14 +398,6 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
             assert!(running.read(cx).debug_terminal.read(cx).terminal.is_some());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -478,14 +470,6 @@ async fn test_handle_start_debugging_request(
         .unwrap();
 
     assert_eq!(&fake_config, launched_with.lock().as_ref().unwrap());
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 // // covers that we always send a response back, if something when wrong,
@@ -556,14 +540,6 @@ async fn test_handle_error_run_in_terminal_reverse_request(
             );
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -662,14 +638,6 @@ async fn test_handle_start_debugging_reverse_request(
         send_response.load(std::sync::atomic::Ordering::SeqCst),
         "Expected to receive response from reverse request"
     );
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(child_session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1093,14 +1061,6 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
                 .update(cx, |session, cx| session.continue_thread(thread_id, cx));
         });
     }
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1256,14 +1216,6 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
         "SetBreakpoint request must be called after editor is saved"
     );
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1383,14 +1335,6 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
 
     cx.dispatch_action(crate::ClearAllBreakpoints);
     cx.run_until_parked();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
