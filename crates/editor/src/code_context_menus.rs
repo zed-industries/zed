@@ -1037,19 +1037,7 @@ impl CodeActionsMenu {
                                 .inset(true)
                                 .toggle_state(selected)
                                 .when_some(action.as_code_action(), |this, action| {
-                                    this.on_click(cx.listener(move |editor, _, window, cx| {
-                                        cx.stop_propagation();
-                                        if let Some(task) = editor.confirm_code_action(
-                                            &ConfirmCodeAction {
-                                                item_ix: Some(item_ix),
-                                            },
-                                            window,
-                                            cx,
-                                        ) {
-                                            task.detach_and_log_err(cx)
-                                        }
-                                    }))
-                                    .child(
+                                    this.child(
                                         h_flex()
                                             .overflow_hidden()
                                             .child(
@@ -1062,19 +1050,7 @@ impl CodeActionsMenu {
                                     )
                                 })
                                 .when_some(action.as_task(), |this, task| {
-                                    this.on_click(cx.listener(move |editor, _, window, cx| {
-                                        cx.stop_propagation();
-                                        if let Some(task) = editor.confirm_code_action(
-                                            &ConfirmCodeAction {
-                                                item_ix: Some(item_ix),
-                                            },
-                                            window,
-                                            cx,
-                                        ) {
-                                            task.detach_and_log_err(cx)
-                                        }
-                                    }))
-                                    .child(
+                                    this.child(
                                         h_flex()
                                             .overflow_hidden()
                                             .child(task.resolved_label.replace("\n", ""))
@@ -1092,7 +1068,19 @@ impl CodeActionsMenu {
                                                 this.text_color(colors.text_accent)
                                             }),
                                     )
-                                }),
+                                })
+                                .on_click(cx.listener(move |editor, _, window, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(task) = editor.confirm_code_action(
+                                        &ConfirmCodeAction {
+                                            item_ix: Some(item_ix),
+                                        },
+                                        window,
+                                        cx,
+                                    ) {
+                                        task.detach_and_log_err(cx)
+                                    }
+                                })),
                         )
                     })
                     .collect()
