@@ -683,14 +683,17 @@ fn print_report(
 
     // Generate explorer HTML
     let explorer_output_path = run_dir.join("overview.html");
-    let json_paths: Vec<PathBuf> = results_by_example_name
+    let mut json_paths: Vec<PathBuf> = results_by_example_name
         .values()
         .flat_map(|results| {
-            results
-                .iter()
-                .map(|(example, _)| example.run_directory.join("last.messages.json"))
+            results.iter().map(|(example, _)| {
+                let absolute_path = example.run_directory.join("last.messages.json");
+                pathdiff::diff_paths(&absolute_path, run_dir)
+                    .unwrap_or_else(|| absolute_path.clone())
+            })
         })
-        .collect();
+        .collect::<Vec<_>>();
+    json_paths.sort();
     if let Err(err) = explorer::generate_explorer_html(&json_paths, &explorer_output_path) {
         eprintln!("Failed to generate explorer HTML: {}", err);
     }

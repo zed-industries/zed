@@ -4981,6 +4981,7 @@ dependencies = [
  "language_models",
  "languages",
  "node_runtime",
+ "pathdiff",
  "paths",
  "project",
  "prompt_store",

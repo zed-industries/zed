@@ -67,7 +67,9 @@ fn inject_thread_data(template: String, threads_data: Value) -> Result<String> {
     Ok(final_html)
 }
 
-pub fn main() -> Result<()> {
+#[cfg(not(any(test, doctest)))]
+#[allow(dead_code)]
+fn main() -> Result<()> {
     let args = Args::parse();
     generate_explorer_html(&args.input, &args.output).map(|_| ())
 }

@@ -32,6 +32,7 @@ language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
+pathdiff = "0.2"
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
