@@ -1036,6 +1036,10 @@ impl Clipboard {
         };
         return Ok(ClipboardItem::new_string(text));
     }
+
+    pub fn is_owner(&self, selection: LinuxClipboardKind) -> bool {
+        return self.inner.is_owner(selection).unwrap_or(false);
+    }
 }
 
 impl Drop for Clipboard {

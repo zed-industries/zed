@@ -1502,7 +1502,8 @@ impl LinuxClient for X11Client {
                 super::clipboard2::LinuxClipboardKind::Primary,
                 super::clipboard2::WaitConfig::None,
             )
-            .ok();
+            .context("Failed to write to clipboard (primary)")
+            .log_with_level(log::Level::Debug);
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
@@ -1514,7 +1515,8 @@ impl LinuxClient for X11Client {
                 super::clipboard2::LinuxClipboardKind::Clipboard,
                 super::clipboard2::WaitConfig::None,
             )
-            .ok();
+            .context("Failed to write to clipboard (clipboard)")
+            .log_with_level(log::Level::Debug);
         state.clipboard_item.replace(item);
     }
 
@@ -1523,31 +1525,25 @@ impl LinuxClient for X11Client {
         return state
             .clipboard
             .get_any(super::clipboard2::LinuxClipboardKind::Primary)
-            .ok();
+            .context("Failed to read from clipboard (primary)")
+            .log_with_level(log::Level::Debug);
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
-        // todo! support
         // if the last copy was from this app, return our cached item
         // which has metadata attached.
-        // if state
-        //     .clipboard
-        //     .clipboard
-        //     .setter
-        //     .connection
-        //     .get_selection_owner(state.clipboard.setter.atoms.clipboard)
-        //     .ok()
-        //     .and_then(|r| r.reply().ok())
-        //     .map(|reply| reply.owner == state.clipboard.setter.window)
-        //     .unwrap_or(false)
-        // {
-        //     return state.clipboard_item.clone();
-        // }
+        if state
+            .clipboard
+            .is_owner(super::clipboard2::LinuxClipboardKind::Clipboard)
+        {
+            return state.clipboard_item.clone();
+        }
         return state
             .clipboard
             .get_any(super::clipboard2::LinuxClipboardKind::Clipboard)
-            .ok();
+            .context("Failed to read from clipboard (clipboard)")
+            .log_with_level(log::Level::Debug);
     }
 
     fn run(&self) {
