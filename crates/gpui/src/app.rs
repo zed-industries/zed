@@ -28,7 +28,7 @@ use http_client::HttpClient;
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
@@ -387,6 +387,8 @@ impl App {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+
+        self.quitting = false;
     }
 
     /// Get the id of the current keyboard layout
@@ -1067,7 +1069,7 @@ impl App {
         R: 'static,
     {
         if self.quitting {
-            panic!("Can't spawn on main thread after on_app_quit")
+            debug_panic!("Can't spawn on main thread after on_app_quit")
         };
 
         let mut cx = self.to_async();
