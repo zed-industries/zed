@@ -1100,7 +1100,7 @@ fn possible_open_target(
 
         for path_with_position in &potential_paths {
             let path_to_check = if worktree_root.ends_with(&path_with_position.path) {
-                let root_path_with_posiition = PathWithPosition {
+                let root_path_with_position = PathWithPosition {
                     path: worktree_root.to_path_buf(),
                     row: path_with_position.row,
                     column: path_with_position.column,
@@ -1108,11 +1108,11 @@ fn possible_open_target(
                 match worktree.read(cx).root_entry() {
                     Some(root_entry) => {
                         return Task::ready(Some(OpenTarget::Worktree(
-                            root_path_with_posiition,
+                            root_path_with_position,
                             root_entry.clone(),
                         )));
                     }
-                    None => root_path_with_posiition,
+                    None => root_path_with_position,
                 }
             } else {
                 PathWithPosition {
@@ -1126,18 +1126,20 @@ fn possible_open_target(
                 }
             };
 
-            if let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path) {
-                return Task::ready(Some(OpenTarget::Worktree(
-                    PathWithPosition {
-                        path: worktree_root.join(&entry.path),
-                        row: path_to_check.row,
-                        column: path_to_check.column,
-                    },
-                    entry.clone(),
-                )));
-            } else {
-                paths_to_check.push(path_to_check);
+            if path_to_check.path.is_relative() {
+                if let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path) {
+                    return Task::ready(Some(OpenTarget::Worktree(
+                        PathWithPosition {
+                            path: worktree_root.join(&entry.path),
+                            row: path_to_check.row,
+                            column: path_to_check.column,
+                        },
+                        entry.clone(),
+                    )));
+                }
             }
+
+            paths_to_check.push(path_to_check);
         }
 
         if !paths_to_check.is_empty() {
