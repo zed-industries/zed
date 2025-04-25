@@ -57,8 +57,11 @@ pub enum AssetLogger<T> {
     _Phantom(PhantomData<T>, &'static dyn crate::seal::Sealed),
 }
 
-impl<R: Clone + Send, E: Clone + Send + std::fmt::Display, T: Asset<Output = Result<R, E>>> Asset
-    for AssetLogger<T>
+impl<T, R, E> Asset for AssetLogger<T>
+where
+    T: Asset<Output = Result<R, E>>,
+    R: Clone + Send,
+    E: Clone + Send + std::fmt::Display,
 {
     type Source = T::Source;
 
