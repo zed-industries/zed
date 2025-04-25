@@ -386,7 +386,6 @@ fn handle_syskeyup_msg(
         lock.suppress_next_char_msg = false;
         lock.callbacks.input.take()?
     };
-
     let result = !func(platform_input).propagate;
 
     state_ptr.state.borrow_mut().callbacks.input = Some(func);
@@ -400,7 +399,6 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("WM_KEYDOWN: {:?}\n", wparam.0);
     let Some(platform_input) = parse_keystroke(wparam, lparam, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
@@ -418,9 +416,7 @@ fn handle_keydown_msg(
         };
         func
     };
-
     let result = !func(platform_input).propagate;
-    println!("    WM_KEYDOWN handled: {}\n", result);
 
     let mut lock = state_ptr.state.borrow_mut();
     lock.callbacks.input = Some(func);
@@ -437,7 +433,6 @@ fn handle_keyup_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("WM_KEYUP: {:?}\n", wparam.0);
     let Some(platform_input) = parse_keystroke(wparam, lparam, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     }) else {
@@ -452,7 +447,6 @@ fn handle_keyup_msg(
         };
         func
     };
-
     let result = !func(platform_input).propagate;
 
     state_ptr.state.borrow_mut().callbacks.input = Some(func);
@@ -460,7 +454,6 @@ fn handle_keyup_msg(
 }
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    println!("WM_CHAR\n");
     let input = {
         let ch = char::from_u32(wparam.0 as u32)?;
         if ch.is_control() {
@@ -476,7 +469,6 @@ fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opti
 }
 
 fn handle_dead_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    println!("WM_DEADCHAR\n");
     let ch = char::from_u32(wparam.0 as u32)?.to_string();
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_and_mark_text_in_range(None, &ch, Some(1..1));
@@ -673,7 +665,6 @@ fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POIN
 }
 
 fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    println!("WM_IME_STARTCOMPOSITION\n");
     unsafe {
         let ctx = ImmGetContext(handle);
 
@@ -717,7 +708,6 @@ fn handle_ime_composition_inner(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("WM_IME_COMPOSITION\n");
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
         let (comp_string, string_len) = parse_ime_compostion_string(ctx)?;
@@ -1557,13 +1547,14 @@ fn with_input_handler<F, R>(state_ptr: &Rc<WindowsWindowStatePtr>, f: F) -> Opti
 where
     F: FnOnce(&mut PlatformInputHandler) -> R,
 {
-    let mut lock = state_ptr.state.borrow_mut();
-    if lock.suppress_next_char_msg {
-        lock.suppress_next_char_msg = false;
-        return None;
-    }
-    let mut input_handler = lock.input_handler.take()?;
-    drop(lock);
+    let mut input_handler = {
+        let mut lock = state_ptr.state.borrow_mut();
+        if lock.suppress_next_char_msg {
+            lock.suppress_next_char_msg = false;
+            return None;
+        }
+        lock.input_handler.take()?
+    };
     let result = f(&mut input_handler);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     Some(result)
@@ -1576,14 +1567,14 @@ fn with_input_handler_and_scale_factor<F, R>(
 where
     F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
 {
-    let mut lock = state_ptr.state.borrow_mut();
-    if lock.suppress_next_char_msg {
-        lock.suppress_next_char_msg = false;
-        return None;
-    }
-    let mut input_handler = lock.input_handler.take()?;
-    let scale_factor = lock.scale_factor;
-    drop(lock);
+    let (mut input_handler, scale_factor) = {
+        let mut lock = state_ptr.state.borrow_mut();
+        if lock.suppress_next_char_msg {
+            lock.suppress_next_char_msg = false;
+            return None;
+        }
+        (lock.input_handler.take()?, lock.scale_factor)
+    };
     let result = f(&mut input_handler, scale_factor);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     result
