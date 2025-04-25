@@ -154,6 +154,18 @@ pub struct RevealInProjectPanel {
 pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,
+    #[serde(default)]
+    pub filter_enabled: bool,
+    #[serde(default)]
+    pub whole_word_enabled: bool,
+    #[serde(default)]
+    pub match_case_enabled: bool,
+    #[serde(default)]
+    pub regex_enabled: bool,
+    #[serde(default)]
+    pub only_open_enabled: bool,
+    #[serde(default)]
+    pub include_ignored_enabled: bool,
 }
 
 impl_actions!(
@@ -3112,6 +3124,7 @@ fn default_render_tab_bar_buttons(
                                 "Search Project",
                                 DeploySearch {
                                     replace_enabled: false,
+                                    ..Default::default()
                                 }
                                 .boxed_clone(),
                             )
