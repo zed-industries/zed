@@ -735,7 +735,6 @@ dependencies = [
  "web_search",
  "workspace",
  "workspace-hack",
- "worktree",
  "zed_llm_client",
 ]
 
