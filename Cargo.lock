@@ -4975,7 +4975,7 @@ dependencies = [
  "client",
  "collections",
  "context_server",
- "dirs 5.0.1",
+ "dirs 4.0.0",
  "dotenv",
  "env_logger 0.11.8",
  "extension",
