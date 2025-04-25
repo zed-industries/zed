@@ -1517,10 +1517,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
             workspace.leader_for_pane(workspace.active_pane())
         );
         let item = workspace.active_item(cx).unwrap();
-        assert_eq!(
-            item.tab_content_text(0, cx),
-            SharedString::from("w.rs")
-        );
+        assert_eq!(item.tab_content_text(0, cx), SharedString::from("w.rs"));
     });
 
     // TODO: in app code, this would be done by the collab_ui.
@@ -1546,10 +1543,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     executor.run_until_parked();
     workspace_b_project_a.update(&mut cx_b2, |workspace, cx| {
         let item = workspace.active_item(cx).unwrap();
-        assert_eq!(
-            item.tab_content_text(0, cx),
-            SharedString::from("x.rs")
-        );
+        assert_eq!(item.tab_content_text(0, cx), SharedString::from("x.rs"));
     });
 
     workspace_a.update_in(cx_a, |workspace, window, cx| {
@@ -1617,7 +1611,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
         .root(cx_a)
         .unwrap();
 
-    workspace_a_project_b.update(cx_a2, |workspace,  cx| {
+    workspace_a_project_b.update(cx_a2, |workspace, cx| {
         assert_eq!(workspace.project().read(cx).remote_id(), Some(project_b_id));
         assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
         assert_eq!(
@@ -1625,10 +1619,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
             workspace.leader_for_pane(workspace.active_pane())
         );
         let item = workspace.active_item(cx).unwrap();
-        assert_eq!(
-            item.tab_content_text(0, cx),
-            SharedString::from("y.rs")
-        );
+        assert_eq!(item.tab_content_text(0, cx), SharedString::from("y.rs"));
     });
 }
 
@@ -1885,13 +1876,7 @@ fn pane_summaries(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> 
                     items: pane
                         .items()
                         .enumerate()
-                        .map(|(ix, item)| {
-                            (
-                                ix == active_ix,
-                                item.tab_content_text(0, cx)
-                                    .map_or(String::new(), |s| s.to_string()),
-                            )
-                        })
+                        .map(|(ix, item)| (ix == active_ix, item.tab_content_text(0, cx).into()))
                         .collect(),
                 }
             })
