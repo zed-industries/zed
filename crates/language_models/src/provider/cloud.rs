@@ -2,7 +2,7 @@ use anthropic::{AnthropicError, AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
+use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag, ZedProFeatureFlag};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, TryStreamExt as _, future::BoxFuture,
     stream::BoxStream,
@@ -324,7 +324,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             );
         }
 
-        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {
+        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBetaFeatureFlag>() {
             zed_cloud_provider_additional_models()
         } else {
             &[]
@@ -945,7 +945,7 @@ impl Render for ConfigurationView {
                         ),
                 ),
             )
-        } else if cx.has_flag::<ZedPro>() {
+        } else if cx.has_flag::<ZedProFeatureFlag>() {
             Some(
                 h_flex()
                     .gap_2()
