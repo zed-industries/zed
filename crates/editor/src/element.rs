@@ -5652,6 +5652,8 @@ impl EditorElement {
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
+        self.paint_scroll_wheel_listener(layout, window, cx);
+
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
