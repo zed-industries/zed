@@ -54,11 +54,12 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
     }
 
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
-        if is_immutable_key(keystroke.key.as_str()) || is_already_vim_style(&keystroke.modifiers) {
+        let key_str = keystroke.key.as_str();
+        if is_immutable_key(key_str) || is_already_vim_style(&keystroke.modifiers) {
             return Cow::Borrowed(keystroke);
         }
 
-        if is_alphabetic_key(keystroke.key.as_str()) {
+        if is_alphabetic_key(key_str) {
             if keystroke.modifiers.shift {
                 return Cow::Owned(Keystroke {
                     modifiers: keystroke.modifiers & !Modifiers::shift(),
@@ -72,7 +73,7 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
 
         // This handles case 1, case 4 and case 5, where the keystroke outputs a single character
         if let Some(key_char) = keystroke.key_char.as_ref() {
-            if key_char.len() == 1 {
+            if key_char.chars().count() == 1 {
                 return Cow::Owned(Keystroke {
                     modifiers: Modifiers::default(),
                     key: key_char.clone(),
@@ -81,12 +82,12 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
             }
         }
 
-        if keystroke.key.len() != 1 || !keystroke.modifiers.shift {
+        if keystroke.key.chars().count() != 1 || !keystroke.modifiers.shift {
             return Cow::Borrowed(keystroke);
         }
 
         // Below handles case 2 and case 3, `ctrl-shit-4` -> `ctrl-$`, `alt-shift-3` -> `alt-#`
-        if let Some(key) = get_shifted_character(keystroke.key.as_str()).log_err() {
+        if let Some(key) = get_shifted_character(key_str).log_err() {
             Cow::Owned(Keystroke {
                 modifiers: keystroke.modifiers & !Modifiers::shift(),
                 key,
