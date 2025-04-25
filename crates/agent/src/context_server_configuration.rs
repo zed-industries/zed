@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use gpui::{App, DismissEvent, EventEmitter, FocusHandle, Focusable};
+use editor::Editor;
+use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity};
+use settings::update_settings_file;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
 use workspace::{ModalView, Workspace};
 
@@ -57,11 +59,37 @@ struct ContextServerConfiguration {
     id: Arc<str>,
     installation_instructions: SharedString,
     settings_hint: SharedString,
+
+    settings_editor: Entity<Editor>,
 }
 
 struct ConfigureContextServerModal {
     context_servers_to_setup: Vec<ContextServerConfiguration>,
     focus_handle: FocusHandle,
+    workspace: WeakEntity<Workspace>,
+}
+
+impl ConfigureContextServerModal {
+    pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut Context<Self>) {
+        if self.context_servers_to_setup.is_empty() {
+            return;
+        }
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let configuration = self.context_servers_to_setup.remove(0);
+        let settings = configuration.settings_editor.read(cx).text(cx);
+
+        update_settings_file::<context_server::ContextServerSettings>(
+            workspace.read(cx).app_state().fs.clone(),
+            cx,
+            |settings, cx| {
+                settings.context_servers.insert(configuration.)
+            },
+        );
+    }
 }
 
 impl Render for ConfigureContextServerModal {
@@ -93,21 +121,37 @@ impl Render for ConfigureContextServerModal {
                         ),
                     )
                     .footer(
-                        ModalFooter::new().start_slot(
-                            Button::new("cancel", "Cancel")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &menu::Cancel,
-                                        &focus_handle,
-                                        window,
-                                        cx,
+                        ModalFooter::new()
+                            .start_slot(
+                                Button::new("cancel", "Cancel")
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &menu::Cancel,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.))),
                                     )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(
-                                    cx.listener(|_, _event, _window, cx| cx.emit(DismissEvent)),
-                                ),
-                        ),
+                                    .on_click(
+                                        cx.listener(|_, _event, _window, cx| cx.emit(DismissEvent)),
+                                    ),
+                            )
+                            .end_slot(
+                                Button::new("configure-server", "Configure")
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &menu::Confirm,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                    )
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.confirm(&menu::Confirm, cx)
+                                    })),
+                            ),
                     ),
             )
     }
