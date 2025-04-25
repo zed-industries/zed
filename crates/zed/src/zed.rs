@@ -20,7 +20,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
-use feature_flags::{Debugger, FeatureFlagAppExt, FeatureFlagViewExt};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
@@ -279,7 +279,7 @@ fn feature_gate_zed_pro_actions(cx: &mut App) {
         filter.hide_action_types(&zed_pro_actions);
     });
 
-    cx.observe_flag::<feature_flags::ZedPro, _>({
+    cx.observe_flag::<feature_flags::ZedProFeatureFlag, _>({
         move |is_enabled, cx| {
             CommandPaletteFilter::update_global(cx, |filter, _cx| {
                 if is_enabled {
@@ -439,7 +439,7 @@ fn initialize_panels(
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
-            cx.when_flag_enabled::<Debugger>(window, |_, window, cx| {
+            cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |_, window, cx| {
                 cx.spawn_in(
                     window,
                     async move |workspace: gpui::WeakEntity<Workspace>,

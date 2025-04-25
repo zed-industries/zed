@@ -2097,7 +2097,7 @@ impl Thread {
     }
 
     pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<feature_flags::ThreadAutoCapture>() {
+        if !cx.has_flag::<feature_flags::ThreadAutoCaptureFeatureFlag>() {
             return;
         }
 
