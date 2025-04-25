@@ -7,7 +7,7 @@ use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
-use task::SpawnInTerminal;
+use task::{ShellBuilder, SpawnInTerminal};
 
 pub(crate) struct CargoLocator;
 
@@ -59,9 +59,17 @@ impl DapLocator for CargoLocator {
             ));
         };
 
-        let mut child = Command::new("cargo")
-            .args(&build_config.args)
-            .arg("--message-format=json")
+        let args = build_config
+            .args
+            .iter()
+            .cloned()
+            .chain(Some("--message-format=json".to_owned()).into_iter())
+            .collect::<Vec<_>>();
+        let (command, args) =
+            ShellBuilder::new(true, &build_config.shell).build("cargo".into(), &args);
+        let mut child = Command::new(command)
+            .args(&args)
+            .envs(build_config.env.into_iter())
             .current_dir(cwd)
             .stdout(Stdio::piped())
             .spawn()?;
