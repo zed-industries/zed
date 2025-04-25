@@ -504,7 +504,7 @@ impl FakeAdapter {
         Self {}
     }
 
-    fn request_args(&self, config: &DebugScenario) -> StartDebuggingRequestArguments {
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         use serde_json::json;
         use task::DebugRequest;
 
