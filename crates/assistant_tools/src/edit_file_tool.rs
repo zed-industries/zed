@@ -362,7 +362,10 @@ impl ToolCard for EditFileToolCard {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let failed = matches!(status, ToolUseStatus::Error(_));
+        let (failed, error_message) = match status {
+            ToolUseStatus::Error(err) => (true, Some(err.to_string())),
+            _ => (false, None),
+        };
 
         let path_label_button = h_flex()
             .id(("edit-tool-path-label-button", self.editor_unique_id))
@@ -454,9 +457,26 @@ impl ToolCard for EditFileToolCard {
             .map(|container| {
                 if failed {
                     container.child(
-                        Icon::new(IconName::Close)
-                            .size(IconSize::Small)
-                            .color(Color::Error),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Close)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            )
+                            .child(
+                                Disclosure::new(
+                                    ("edit-file-error-disclosure", self.editor_unique_id),
+                                    self.preview_expanded,
+                                )
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown)
+                                .on_click(cx.listener(
+                                    move |this, _event, _window, _cx| {
+                                        this.preview_expanded = !this.preview_expanded;
+                                    },
+                                )),
+                            ),
                     )
                 } else {
                     container.child(
@@ -508,6 +528,33 @@ impl ToolCard for EditFileToolCard {
             .rounded_lg()
             .overflow_hidden()
             .child(codeblock_header)
+            .when(failed && self.error_expanded, |card| {
+                card.child(
+                    v_flex()
+                        .p_2()
+                        .gap_1()
+                        .border_t_1()
+                        .border_dashed()
+                        .border_color(border_color)
+                        .bg(cx.theme().colors().editor_background)
+                        .rounded_b_md()
+                        .child(
+                            Label::new("Error")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Error),
+                        )
+                        .child(
+                            div()
+                                .rounded_md()
+                                .text_ui_sm(cx)
+                                .bg(cx.theme().colors().editor_background)
+                                .children(
+                                    error_message
+                                        .map(|error| div().child(error).into_any_element()),
+                                ),
+                        ),
+                )
+            })
             .when(!failed && self.preview_expanded, |card| {
                 card.child(
                     v_flex()
