@@ -30,12 +30,12 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
         &workspace,
         cx,
         DebugScenario {
-            adapter: "fake-adapter".to_string(),
+            adapter: "fake-adapter".into(),
             request: Some(dap::DebugRequest::Attach(AttachRequest {
                 process_id: Some(10),
             })),
             build: None,
-            label: "label".to_string(),
+            label: "label".into(),
             initialize_args: None,
             tcp_connection: None,
             stop_on_entry: None,

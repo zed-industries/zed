@@ -40,6 +40,7 @@ pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
 pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
 pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
 
+#[expect(clippy::large_enum_variant)]
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
     CodeActions(CodeActionsMenu),

@@ -62,7 +62,7 @@ impl NewSessionModal {
     ) -> Self {
         let debugger = past_debug_definition
             .as_ref()
-            .map(|def| def.adapter.clone().into());
+            .map(|def| def.adapter.clone());
 
         let stop_on_entry = past_debug_definition
             .as_ref()
@@ -206,7 +206,7 @@ impl NewSessionModal {
                     move |window: &mut Window, cx: &mut App| {
                         weak.update(cx, |this, cx| {
                             this.last_selected_profile_name = Some(SharedString::from(&task.label));
-                            this.debugger = Some(task.adapter.clone().into());
+                            this.debugger = Some(task.adapter.clone());
                             this.initialize_args = task.initialize_args.clone();
                             match &task.request {
                                 Some(DebugRequest::Launch(launch_config)) => {
@@ -329,7 +329,7 @@ impl AttachMode {
         cx: &mut Context<NewSessionModal>,
     ) -> Entity<Self> {
         let definition = DebugTaskDefinition {
-            adapter: debugger.clone().unwrap_or_default().into(),
+            adapter: debugger.clone().unwrap_or_default(),
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
             initialize_args: None,
