@@ -934,7 +934,6 @@ impl Render for VariableList {
             .group("variable-list")
             .overflow_y_scroll()
             .size_full()
-            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_prev))

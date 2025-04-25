@@ -248,7 +248,7 @@ impl Render for Console {
 }
 
 impl Focusable for Console {
-    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }

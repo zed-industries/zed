@@ -70,16 +70,14 @@ impl StackFrameList {
         );
 
         let _subscription =
-            cx.subscribe_in(&session, window, |this, _, event, window, cx| {
-                match dbg!(event) {
-                    SessionEvent::Threads => {
-                        this.schedule_refresh(false, window, cx);
-                    }
-                    SessionEvent::Stopped(..) | SessionEvent::StackTrace => {
-                        this.schedule_refresh(true, window, cx);
-                    }
-                    _ => {}
+            cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
+                SessionEvent::Threads => {
+                    this.schedule_refresh(false, window, cx);
                 }
+                SessionEvent::Stopped(..) | SessionEvent::StackTrace => {
+                    this.schedule_refresh(true, window, cx);
+                }
+                _ => {}
             });
 
         let mut this = Self {
@@ -204,7 +202,6 @@ impl StackFrameList {
 
         if let Some(current_stack_frame) = current_stack_frame.filter(|_| select_first_stack_frame)
         {
-            dbg!("Select stack frame from build_entries");
             self.select_stack_frame(current_stack_frame, true, window, cx)
                 .detach_and_log_err(cx);
         }
@@ -245,12 +242,11 @@ impl StackFrameList {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        dbg!("select stack frame");
         self.selected_stack_frame_id = Some(stack_frame.id);
 
-        cx.emit(dbg!(StackFrameListEvent::SelectedStackFrameChanged(
+        cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
             stack_frame.id,
-        )));
+        ));
         cx.notify();
 
         if !go_to_stack_frame {

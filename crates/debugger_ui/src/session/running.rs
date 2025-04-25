@@ -625,7 +625,7 @@ impl RunningState {
     fn create_sub_view(
         &self,
         item_kind: DebuggerPaneItem,
-        pane: &Entity<Pane>,
+        _pane: &Entity<Pane>,
         cx: &mut Context<Self>,
     ) -> Box<dyn ItemHandle> {
         match item_kind {
@@ -793,7 +793,6 @@ impl RunningState {
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
-<<<<<<< HEAD
             Event::Focus => {
                 this.active_pane = Some(source_pane.clone());
             }
