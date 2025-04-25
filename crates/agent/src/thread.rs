@@ -1964,7 +1964,7 @@ impl Thread {
                             };
 
                             let remote_url = backend.remote_url("origin");
-                            let head_sha = backend.head_sha();
+                            let head_sha = backend.head_sha().await;
                             let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
 
                             GitState {
