@@ -167,7 +167,23 @@
   // Default: not set, defaults to "bar"
   "cursor_shape": null,
   // Determines when the mouse cursor should be hidden in an editor or input box.
+  //
+  // 1. Never hide the mouse cursor:
+  //    "never"
+  // 2. Hide only when typing:
+  //    "on_typing"
+  // 3. Hide on both typing and cursor movement:
+  //    "on_typing_and_movement"
   "hide_mouse": "on_typing_and_movement",
+  // Determines how snippets are sorted relative to other completion items.
+  //
+  // 1. Place snippets at the top of the completion list:
+  //    "top"
+  // 2. Place snippets normally without any preference:
+  //    "inline"
+  // 3. Place snippets at the bottom of the completion list:
+  //    "bottom"
+  "snippet_sort_order": "inline",
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:

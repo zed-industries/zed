@@ -1,4 +1,7 @@
-use crate::code_context_menus::{CompletionsMenu, SortableMatch};
+use crate::{
+    code_context_menus::{CompletionsMenu, SortableMatch},
+    editor_settings::SnippetSortOrder,
+};
 use fuzzy::StringMatch;
 use gpui::TestAppContext;
 
@@ -74,7 +77,7 @@ fn test_sort_matches_local_variable_over_global_variable(_cx: &mut TestAppContex
             sort_key: (2, "floorf128"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "foo_bar_qux",
@@ -122,7 +125,7 @@ fn test_sort_matches_local_variable_over_global_variable(_cx: &mut TestAppContex
             sort_key: (1, "foo_bar_qux"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "foo_bar_qux",
@@ -185,7 +188,7 @@ fn test_sort_matches_local_variable_over_global_enum(_cx: &mut TestAppContext) {
             sort_key: (0, "while let"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "element_type",
@@ -234,7 +237,7 @@ fn test_sort_matches_local_variable_over_global_enum(_cx: &mut TestAppContext) {
             sort_key: (2, "REPLACEMENT_CHARACTER"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "element_type",
@@ -272,7 +275,7 @@ fn test_sort_matches_local_variable_over_global_enum(_cx: &mut TestAppContext) {
             sort_key: (1, "element_type"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "ElementType",
@@ -335,7 +338,7 @@ fn test_sort_matches_for_unreachable(_cx: &mut TestAppContext) {
             sort_key: (2, "unreachable_unchecked"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "unreachable!(…)",
@@ -379,7 +382,7 @@ fn test_sort_matches_for_unreachable(_cx: &mut TestAppContext) {
             sort_key: (3, "unreachable_unchecked"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "unreachable!(…)",
@@ -423,7 +426,7 @@ fn test_sort_matches_for_unreachable(_cx: &mut TestAppContext) {
             sort_key: (2, "unreachable_unchecked"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "unreachable!(…)",
@@ -467,7 +470,7 @@ fn test_sort_matches_for_unreachable(_cx: &mut TestAppContext) {
             sort_key: (2, "unreachable_unchecked"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "unreachable!(…)",
@@ -503,7 +506,7 @@ fn test_sort_matches_variable_and_constants_over_function(_cx: &mut TestAppConte
             sort_key: (1, "var"), // variable
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.candidate_id, 1,
         "Match order not expected"
@@ -539,7 +542,7 @@ fn test_sort_matches_variable_and_constants_over_function(_cx: &mut TestAppConte
             sort_key: (2, "var"), // constant
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.candidate_id, 1,
         "Match order not expected"
@@ -622,7 +625,7 @@ fn test_sort_matches_jsx_event_handler(_cx: &mut TestAppContext) {
             sort_key: (3, "className?"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string, "onCut?",
         "Match order not expected"
@@ -944,7 +947,7 @@ fn test_sort_matches_jsx_event_handler(_cx: &mut TestAppContext) {
             sort_key: (3, "onLoadedData?"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches
             .iter()
@@ -996,7 +999,7 @@ fn test_sort_matches_for_snippets(_cx: &mut TestAppContext) {
             sort_key: (2, "println!(…)"),
         },
     ];
-    CompletionsMenu::sort_matches(&mut matches, query);
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::Top);
     assert_eq!(
         matches[0].string_match.string.as_str(),
         "println!(…)",
