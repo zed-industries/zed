@@ -301,7 +301,7 @@ impl EditFileToolCard {
             editor.disable_inline_diagnostics();
             editor.disable_expand_excerpt_buttons(cx);
             editor.set_soft_wrap_mode(SoftWrap::None, cx);
-            editor.scroll_manager.forbid_vertical_scroll();
+            editor.scroll_manager.set_forbid_vertical_scroll(true);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
