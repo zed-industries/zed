@@ -7,7 +7,9 @@ use collections::HashMap;
 use dap::OutputEvent;
 use editor::{CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
-use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
+use gpui::{
+    Context, Entity, FocusHandle, Focusable, Render, Subscription, Task, TextStyle, WeakEntity,
+};
 use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
 use project::{
@@ -28,6 +30,7 @@ pub struct Console {
     stack_frame_list: Entity<StackFrameList>,
     last_token: OutputToken,
     update_output_task: Task<()>,
+    focus_handle: FocusHandle,
 }
 
 impl Console {
@@ -56,6 +59,7 @@ impl Console {
             editor.set_show_edit_predictions(Some(false), window, cx);
             editor
         });
+        let focus_handle = cx.focus_handle();
 
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
@@ -82,6 +86,7 @@ impl Console {
             stack_frame_list,
             update_output_task: Task::ready(()),
             last_token: OutputToken(0),
+            focus_handle,
         }
     }
 
@@ -239,6 +244,12 @@ impl Render for Console {
                     .child(self.render_query_bar(cx))
             })
             .border_2()
+    }
+}
+
+impl Focusable for Console {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 

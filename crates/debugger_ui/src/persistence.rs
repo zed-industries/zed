@@ -229,13 +229,21 @@ pub(crate) fn deserialize_pane_layout(
                 .children
                 .iter()
                 .map(|child| match child {
-                    DebuggerPaneItem::Frames => Box::new(SubView::new(
-                        stack_frame_list.focus_handle(cx),
-                        stack_frame_list.clone().into(),
-                        DebuggerPaneItem::Frames,
-                        None,
-                        cx,
-                    )),
+                    DebuggerPaneItem::Frames => {
+                        let subview = SubView::new(
+                            stack_frame_list.focus_handle(cx),
+                            stack_frame_list.clone().into(),
+                            DebuggerPaneItem::Frames,
+                            None,
+                            cx,
+                        );
+                        window
+                            .on_focus_out(&stack_frame_list.focus_handle(cx), cx, |_, _, _| {
+                                dbg!("FOCUS OUT OF STACK FRAME LIST");
+                            })
+                            .detach();
+                        Box::new(subview)
+                    }
                     DebuggerPaneItem::Variables => Box::new(SubView::new(
                         variable_list.focus_handle(cx),
                         variable_list.clone().into(),

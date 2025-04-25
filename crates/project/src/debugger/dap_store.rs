@@ -55,6 +55,7 @@ use task::{DebugTaskDefinition, DebugTaskTemplate};
 use util::ResultExt as _;
 use worktree::Worktree;
 
+#[derive(Debug)]
 pub enum DapStoreEvent {
     DebugClientStarted(SessionId),
     DebugSessionInitialized(SessionId),

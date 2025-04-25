@@ -45,6 +45,7 @@ impl Focusable for BreakpointList {
         self.focus_handle.clone()
     }
 }
+
 impl BreakpointList {
     pub(super) fn new(
         session: Entity<Session>,

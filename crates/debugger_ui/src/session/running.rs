@@ -162,6 +162,7 @@ impl Render for SubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
+            .track_focus(&self.pane_focus_handle)
             .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
                 // FIXME
                 el.border_1().border_color(gpui::red())
@@ -584,7 +585,7 @@ impl RunningState {
                 let weak_console = self._console.clone().downgrade();
 
                 Box::new(SubView::new(
-                    pane.focus_handle(cx),
+                    self._console.focus_handle(cx),
                     self._console.clone().into(),
                     item_kind,
                     Some(Box::new(move |cx| {
@@ -738,7 +739,7 @@ impl RunningState {
         cx: &mut Context<RunningState>,
     ) {
         this.serialize_layout(window, cx);
-        match event {
+        match dbg!(event) {
             Event::Remove { .. } => {
                 let _did_find_pane = this.panes.remove(&source_pane).is_ok();
                 debug_assert!(_did_find_pane);
