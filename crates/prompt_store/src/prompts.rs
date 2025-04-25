@@ -78,8 +78,11 @@ pub struct WorktreeContext {
 #[derive(Debug, Clone, Serialize)]
 pub struct RulesFileContext {
     pub path_in_worktree: Arc<Path>,
-    pub abs_path: Arc<Path>,
     pub text: String,
+    // This used for opening rules files. TODO: Since it isn't related to prompt templating, this
+    // should be moved elsewhere.
+    #[serde(skip)]
+    pub project_entry_id: usize,
 }
 
 #[derive(Serialize)]
@@ -455,8 +458,8 @@ mod test {
             root_name: "path".into(),
             rules_file: Some(RulesFileContext {
                 path_in_worktree: Path::new(".rules").into(),
-                abs_path: Path::new("/some/path/.rules").into(),
                 text: "".into(),
+                project_entry_id: 0,
             }),
         }];
         let default_user_rules = vec![UserRulesContext {

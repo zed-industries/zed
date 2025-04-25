@@ -30,7 +30,7 @@ use language_model::{
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
-use project::ProjectItem as _;
+use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
 use settings::{Settings as _, update_settings_file};
 use std::path::Path;
@@ -44,7 +44,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownString;
-use workspace::{OpenOptions, Workspace};
+use workspace::Workspace;
 use zed_actions::assistant::OpenRulesLibrary;
 
 pub struct ActiveThread {
@@ -3048,21 +3048,30 @@ impl ActiveThread {
             return;
         };
 
-        let abs_paths = project_context
+        let project_entry_ids = project_context
             .worktrees
             .iter()
             .flat_map(|worktree| worktree.rules_file.as_ref())
-            .map(|rules_file| rules_file.abs_path.to_path_buf())
+            .map(|rules_file| ProjectEntryId::from_usize(rules_file.project_entry_id))
             .collect::<Vec<_>>();
 
-        if let Ok(task) = self.workspace.update(cx, move |workspace, cx| {
-            // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
-            // files clear. For example, if rules file 1 is already open but rules file 2 is not,
-            // this would open and focus rules file 2 in a tab that is not next to rules file 1.
-            workspace.open_paths(abs_paths, OpenOptions::default(), None, window, cx)
-        }) {
-            task.detach();
-        }
+        self.workspace
+            .update(cx, move |workspace, cx| {
+                // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
+                // files clear. For example, if rules file 1 is already open but rules file 2 is not,
+                // this would open and focus rules file 2 in a tab that is not next to rules file 1.
+                let project = workspace.project().read(cx);
+                let project_paths = project_entry_ids
+                    .into_iter()
+                    .flat_map(|entry_id| project.path_for_entry(entry_id, cx))
+                    .collect::<Vec<_>>();
+                for project_path in project_paths {
+                    workspace
+                        .open_path(project_path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                }
+            })
+            .ok();
     }
 
     fn dismiss_notifications(&mut self, cx: &mut Context<ActiveThread>) {
