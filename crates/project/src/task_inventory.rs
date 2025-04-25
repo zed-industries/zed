@@ -37,10 +37,71 @@ pub struct Inventory {
     scenarios_from_settings: InventoryFor<DebugScenario>,
 }
 
+// Helper trait for better error messages in [InventoryFor]
+trait InventoryContents: Clone {
+    const GLOBAL_SOURCE_FILE: &'static str;
+    const LABEL: &'static str;
+}
+
+impl InventoryContents for TaskTemplate {
+    const GLOBAL_SOURCE_FILE: &'static str = "tasks.json";
+    const LABEL: &'static str = "tasks";
+}
+
+impl InventoryContents for DebugScenario {
+    const GLOBAL_SOURCE_FILE: &'static str = "debug.json";
+
+    const LABEL: &'static str = "debug scenarios";
+}
+
 #[derive(Debug)]
 struct InventoryFor<T> {
     global: HashMap<PathBuf, Vec<T>>,
     worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<T>>>,
+}
+
+impl<T: InventoryContents> InventoryFor<T> {
+    fn worktree_scenarios(
+        &self,
+        worktree: Option<WorktreeId>,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
+        worktree.into_iter().flat_map(|worktree| {
+            self.worktree
+                .get(&worktree)
+                .into_iter()
+                .flatten()
+                .flat_map(|(directory, templates)| {
+                    templates.iter().map(move |template| (directory, template))
+                })
+                .map(move |(directory, template)| {
+                    (
+                        TaskSourceKind::Worktree {
+                            id: worktree,
+                            directory_in_worktree: directory.to_path_buf(),
+                            id_base: Cow::Owned(format!(
+                                "local worktree {} from directory {directory:?}",
+                                T::LABEL
+                            )),
+                        },
+                        template.clone(),
+                    )
+                })
+        })
+    }
+
+    fn global_scenarios(&self) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
+        self.global.iter().flat_map(|(file_path, templates)| {
+            templates.into_iter().map(|template| {
+                (
+                    TaskSourceKind::AbsPath {
+                        id_base: Cow::Owned(format!("global {}", T::GLOBAL_SOURCE_FILE)),
+                        abs_path: file_path.clone(),
+                    },
+                    template.clone(),
+                )
+            })
+        })
+    }
 }
 
 impl<T> Default for InventoryFor<T> {
@@ -145,16 +206,13 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
-    pub fn list_debug_tasks(&self) -> Vec<DebugScenario> {
-        self.scenarios_from_settings
-            .worktree
-            .values()
-            .flat_map(|values_for_path| {
-                values_for_path
-                    .values()
-                    .flat_map(|scenarios| scenarios.iter())
-            })
-            .cloned()
+    pub fn list_debug_scenarios(&self, worktree: Option<WorktreeId>) -> Vec<DebugScenario> {
+        let global_scenarios = self.global_debug_scenarios_from_settings();
+        let worktree_scenarios = self.worktree_scenarios_from_settings(worktree);
+
+        worktree_scenarios
+            .chain(global_scenarios)
+            .map(|(_, scenario)| scenario)
             .collect()
     }
 
@@ -180,10 +238,11 @@ impl Inventory {
         worktree: Option<WorktreeId>,
         cx: &App,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
+        let global_tasks = self.global_templates_from_settings();
+        let worktree_tasks = self.worktree_templates_from_settings(worktree);
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
-        let global_tasks = self.global_templates_from_settings();
         let language_tasks = language
             .filter(|language| {
                 language_settings(Some(language.name()), file.as_ref(), cx)
@@ -193,11 +252,11 @@ impl Inventory {
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.clone()?, task)))
-            .chain(global_tasks);
+            .flat_map(|task| Some((task_source_kind.clone()?, task)));
 
-        self.worktree_templates_from_settings(worktree)
+        worktree_tasks
             .chain(language_tasks)
+            .chain(global_tasks)
             .collect()
     }
 
@@ -378,67 +437,27 @@ impl Inventory {
     fn global_templates_from_settings(
         &self,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
-        self.templates_from_settings
-            .global
-            .iter()
-            .flat_map(|(file_path, templates)| {
-                templates.into_iter().map(|template| {
-                    (
-                        TaskSourceKind::AbsPath {
-                            id_base: Cow::Borrowed("global tasks.json"),
-                            abs_path: file_path.clone(),
-                        },
-                        template.clone(),
-                    )
-                })
-            })
+        self.templates_from_settings.global_scenarios()
     }
 
     fn global_debug_scenarios_from_settings(
         &self,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, DebugScenario)> {
-        self.scenarios_from_settings
-            .global
-            .iter()
-            .flat_map(|(file_path, templates)| {
-                templates.into_iter().map(|template| {
-                    (
-                        TaskSourceKind::AbsPath {
-                            id_base: Cow::Borrowed("global debug.json"),
-                            abs_path: file_path.clone(),
-                        },
-                        template.clone(),
-                    )
-                })
-            })
+        self.scenarios_from_settings.global_scenarios()
+    }
+
+    fn worktree_scenarios_from_settings(
+        &self,
+        worktree: Option<WorktreeId>,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, DebugScenario)> {
+        self.scenarios_from_settings.worktree_scenarios(worktree)
     }
 
     fn worktree_templates_from_settings(
         &self,
         worktree: Option<WorktreeId>,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
-        worktree.into_iter().flat_map(|worktree| {
-            self.templates_from_settings
-                .worktree
-                .get(&worktree)
-                .into_iter()
-                .flatten()
-                .flat_map(|(directory, templates)| {
-                    templates.iter().map(move |template| (directory, template))
-                })
-                .map(move |(directory, template)| {
-                    (
-                        TaskSourceKind::Worktree {
-                            id: worktree,
-                            directory_in_worktree: directory.to_path_buf(),
-                            id_base: Cow::Owned(format!(
-                                "local worktree tasks from directory {directory:?}"
-                            )),
-                        },
-                        template.clone(),
-                    )
-                })
-        })
+        self.templates_from_settings.worktree_scenarios(worktree)
     }
 
     /// Updates in-memory task metadata from the JSON string given.

@@ -249,7 +249,9 @@ impl NewSessionModal {
                             .read(cx)
                             .task_inventory()
                             .iter()
-                            .flat_map(|task_inventory| task_inventory.read(cx).list_debug_tasks())
+                            .flat_map(|task_inventory| {
+                                task_inventory.read(cx).list_debug_scenarios(None)
+                            })
                             .collect()
                     })
                     .ok()

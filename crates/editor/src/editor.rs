@@ -5188,7 +5188,7 @@ impl Editor {
                                     let project = editor.project.as_ref()?;
                                     let inventory =
                                         project.read(cx).task_store().read(cx).task_inventory()?;
-                                    Some(inventory.read(cx).list_debug_tasks())
+                                    Some(inventory.read(cx).list_debug_scenarios(None))
                                 })
                                 .unwrap_or_default()
                             } else {
