@@ -287,7 +287,7 @@ async fn create_billing_subscription(
         }
     }
 
-    let customer_id = if let Some(existing_customer) = existing_billing_customer {
+    let customer_id = if let Some(existing_customer) = &existing_billing_customer {
         CustomerId::from_str(&existing_customer.stripe_customer_id)
             .context("failed to parse customer ID")?
     } else {
@@ -320,6 +320,15 @@ async fn create_billing_subscription(
                 .await?
         }
         Some(ProductCode::ZedProTrial) => {
+            if let Some(existing_billing_customer) = &existing_billing_customer {
+                if existing_billing_customer.trial_started_at.is_some() {
+                    return Err(Error::http(
+                        StatusCode::FORBIDDEN,
+                        "user already used free trial".into(),
+                    ));
+                }
+            }
+
             stripe_billing
                 .checkout_with_zed_pro_trial(
                     app.config.zed_pro_price_id()?,
@@ -449,6 +458,29 @@ async fn manage_billing_subscription(
             let stripe_subscription =
                 Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
 
+            let is_on_zed_pro_trial = stripe_subscription.status == SubscriptionStatus::Trialing
+                && stripe_subscription.items.data.iter().any(|item| {
+                    item.price
+                        .as_ref()
+                        .map_or(false, |price| price.id == zed_pro_price_id)
+                });
+            if is_on_zed_pro_trial {
+                // If the user is already on a Zed Pro trial and wants to upgrade to Pro, we just need to end their trial early.
+                Subscription::update(
+                    &stripe_client,
+                    &stripe_subscription.id,
+                    stripe::UpdateSubscription {
+                        trial_end: Some(stripe::Scheduled::now()),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+
+                return Ok(Json(ManageBillingSubscriptionResponse {
+                    billing_portal_session_url: None,
+                }));
+            }
+
             let subscription_item_to_update = stripe_subscription
                 .items
                 .data
@@ -456,10 +488,7 @@ async fn manage_billing_subscription(
                 .find_map(|item| {
                     let price = item.price.as_ref()?;
 
-                    if price.id == zed_free_price_id
-                        || (price.id == zed_pro_price_id
-                            && stripe_subscription.status == SubscriptionStatus::Trialing)
-                    {
+                    if price.id == zed_free_price_id {
                         Some(item.id.clone())
                     } else {
                         None
@@ -797,6 +826,24 @@ async fn handle_customer_subscription_event(
             .await?
             .ok_or_else(|| anyhow!("billing customer not found"))?;
 
+    if let Some(SubscriptionKind::ZedProTrial) = subscription_kind {
+        if subscription.status == SubscriptionStatus::Trialing {
+            let current_period_start =
+                DateTime::from_timestamp(subscription.current_period_start, 0)
+                    .ok_or_else(|| anyhow!("No trial subscription period start"))?;
+
+            app.db
+                .update_billing_customer(
+                    billing_customer.id,
+                    &UpdateBillingCustomerParams {
+                        trial_started_at: ActiveValue::set(Some(current_period_start.naive_utc())),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+        }
+    }
+
     let was_canceled_due_to_payment_failure = subscription.status == SubscriptionStatus::Canceled
         && subscription
             .cancellation_details
@@ -823,6 +870,28 @@ async fn handle_customer_subscription_event(
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
         .await?
     {
+        let llm_db = app
+            .llm_db
+            .clone()
+            .ok_or_else(|| anyhow!("LLM DB not initialized"))?;
+
+        let new_period_start_at =
+            chrono::DateTime::from_timestamp(subscription.current_period_start, 0)
+                .ok_or_else(|| anyhow!("No subscription period start"))?;
+        let new_period_end_at =
+            chrono::DateTime::from_timestamp(subscription.current_period_end, 0)
+                .ok_or_else(|| anyhow!("No subscription period end"))?;
+
+        llm_db
+            .transfer_existing_subscription_usage(
+                billing_customer.user_id,
+                &existing_subscription,
+                subscription_kind,
+                new_period_start_at,
+                new_period_end_at,
+            )
+            .await?;
+
         app.db
             .update_billing_subscription(
                 existing_subscription.id,

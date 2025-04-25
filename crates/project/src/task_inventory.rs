@@ -19,7 +19,7 @@ use language::{
 use lsp::{LanguageServerId, LanguageServerName};
 use settings::{InvalidSettingsError, TaskKind, parse_json_with_comments};
 use task::{
-    DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
+    DebugTaskTemplate, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
     TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
@@ -435,9 +435,9 @@ impl Inventory {
             .into_iter()
             .filter_map(|raw_template| match &task_kind {
                 TaskKind::Script => serde_json::from_value::<TaskTemplate>(raw_template).log_err(),
-                TaskKind::Debug => serde_json::from_value::<DebugTaskDefinition>(raw_template)
+                TaskKind::Debug => serde_json::from_value::<DebugTaskTemplate>(raw_template)
                     .log_err()
-                    .and_then(|content| content.to_zed_format().log_err()),
+                    .map(|content| content.to_zed_format()),
             });
 
         let parsed_templates = &mut self.templates_from_settings;

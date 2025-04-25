@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
-use crate::context::format_context_as_string;
+use crate::context::{AssistantContext, format_context_as_string};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
-use editor::actions::MoveUp;
+use editor::actions::{MoveUp, Paste};
 use editor::{
     ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, MultiBuffer,
@@ -14,8 +14,8 @@ use editor::{
 use file_icons::FileIcons;
 use fs::Fs;
 use gpui::{
-    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, ClipboardEntry, Entity, EventEmitter, Focusable, Subscription,
+    Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
 use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage};
@@ -34,7 +34,7 @@ use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::{ContextStore, refresh_context_store_text};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
-use crate::thread::{RequestKind, Thread, TokenUsageRatio};
+use crate::thread::{Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
@@ -195,6 +195,7 @@ impl MessageEditor {
                 editor.set_mode(EditorMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
+                    sized_by_content: false,
                 })
             } else {
                 editor.set_mode(EditorMode::AutoHeight {
@@ -234,7 +235,7 @@ impl MessageEditor {
         }
 
         self.set_editor_is_expanded(false, cx);
-        self.send_to_model(RequestKind::Chat, window, cx);
+        self.send_to_model(window, cx);
 
         cx.notify();
     }
@@ -249,12 +250,7 @@ impl MessageEditor {
             .is_some()
     }
 
-    fn send_to_model(
-        &mut self,
-        request_kind: RequestKind,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(ConfiguredModel { model, provider }) = model_registry.default_model() else {
             return;
@@ -276,20 +272,43 @@ impl MessageEditor {
 
         let refresh_task =
             refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
+        let wait_for_images = self.context_store.read(cx).wait_for_images(cx);
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
+        let window_handle = window.window_handle();
 
         cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await.ok();
             refresh_task.await;
+            wait_for_images.await;
 
             thread
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).context().clone();
                     thread.insert_user_message(user_message, context, checkpoint, cx);
+                })
+                .log_err();
+
+            context_store
+                .update(cx, |context_store, cx| {
+                    let excerpt_ids = context_store
+                        .context()
+                        .iter()
+                        .filter(|ctx| {
+                            matches!(
+                                ctx,
+                                AssistantContext::Selection(_) | AssistantContext::Image(_)
+                            )
+                        })
+                        .map(|ctx| ctx.id())
+                        .collect::<Vec<_>>();
+
+                    for id in excerpt_ids {
+                        context_store.remove_context(id, cx);
+                    }
                 })
                 .log_err();
 
@@ -315,7 +334,8 @@ impl MessageEditor {
             // Send to model after summaries are done
             thread
                 .update(cx, |thread, cx| {
-                    thread.send_to_model(model, request_kind, cx);
+                    thread.advance_prompt_id();
+                    thread.send_to_model(model, Some(window_handle), cx);
                 })
                 .log_err();
         })
@@ -323,13 +343,13 @@ impl MessageEditor {
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let cancelled = self
-            .thread
-            .update(cx, |thread, cx| thread.cancel_last_completion(cx));
+        let cancelled = self.thread.update(cx, |thread, cx| {
+            thread.cancel_last_completion(Some(window.window_handle()), cx)
+        });
 
         if cancelled {
             self.set_editor_is_expanded(false, cx);
-            self.send_to_model(RequestKind::Chat, window, cx);
+            self.send_to_model(window, cx);
         }
     }
 
@@ -359,8 +379,38 @@ impl MessageEditor {
         }
     }
 
-    fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        let images = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.into_entries()
+                    .filter_map(|entry| {
+                        if let ClipboardEntry::Image(image) = entry {
+                            Some(image)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if images.is_empty() {
+            return;
+        }
+        cx.stop_propagation();
+
+        self.context_store.update(cx, |store, cx| {
+            for image in images {
+                store.add_image(Arc::new(image), cx);
+            }
+        });
+    }
+
+    fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.edits_expanded = true;
         AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+        cx.notify();
     }
 
     fn handle_file_click(
@@ -434,6 +484,7 @@ impl MessageEditor {
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::toggle_chat_mode))
             .on_action(cx.listener(Self::expand_message_editor))
+            .capture_action(cx.listener(Self::paste))
             .gap_2()
             .p_2()
             .bg(editor_bg_color)
@@ -998,6 +1049,8 @@ impl MessageEditor {
                 }
 
                 let request = language_model::LanguageModelRequest {
+                    thread_id: None,
+                    prompt_id: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: language_model::Role::User,
                         content: vec![content.into()],

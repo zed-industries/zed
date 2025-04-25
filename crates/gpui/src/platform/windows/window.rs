@@ -34,6 +34,7 @@ pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
     pub logical_size: Size<Pixels>,
+    pub min_size: Option<Size<Pixels>>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
@@ -79,6 +80,7 @@ impl WindowsWindowState {
         current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
         gpu_context: &BladeContext,
+        min_size: Option<Size<Pixels>>,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -113,6 +115,7 @@ impl WindowsWindowState {
             border_offset,
             scale_factor,
             restore_from_minimized,
+            min_size,
             callbacks,
             input_handler,
             system_key_handled,
@@ -229,6 +232,7 @@ impl WindowsWindowStatePtr {
             context.current_cursor,
             context.display,
             context.gpu_context,
+            context.min_size,
         )?);
 
         Ok(Rc::new_cyclic(|this| Self {
@@ -350,6 +354,7 @@ struct WindowCreateContext<'a> {
     display: WindowsDisplay,
     transparent: bool,
     is_movable: bool,
+    min_size: Option<Size<Pixels>>,
     executor: ForegroundExecutor,
     current_cursor: Option<HCURSOR>,
     windows_version: WindowsVersion,
@@ -412,6 +417,7 @@ impl WindowsWindow {
             display,
             transparent: true,
             is_movable: params.is_movable,
+            min_size: params.window_min_size,
             executor,
             current_cursor,
             windows_version,
@@ -1025,8 +1031,8 @@ type Color = (u8, u8, u8, u8);
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct WindowBorderOffset {
-    width_offset: i32,
-    height_offset: i32,
+    pub(crate) width_offset: i32,
+    pub(crate) height_offset: i32,
 }
 
 impl WindowBorderOffset {

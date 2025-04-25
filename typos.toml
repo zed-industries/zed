@@ -45,9 +45,7 @@ extend-exclude = [
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
     # Eval examples for prompts and criteria
-    "crates/eval/examples/checkpoint_stability/criteria.md",
-    "crates/eval/examples/tax_id_validation/prompt.md",
-    "crates/eval/examples/tax_id_validation/criteria.md"
+    "crates/eval/src/examples/",
 ]
 
 [default]

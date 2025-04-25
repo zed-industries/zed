@@ -411,13 +411,26 @@ impl RunningState {
                             .log_err();
 
                         if let Some(thread_id) = thread_id {
-                            this.select_thread(*thread_id, cx);
+                            this.select_thread(*thread_id, window, cx);
                         }
                     }
                     SessionEvent::Threads => {
                         let threads = this.session.update(cx, |this, cx| this.threads(cx));
-                        this.select_current_thread(&threads, cx);
+                        this.select_current_thread(&threads, window, cx);
                     }
+                    SessionEvent::CapabilitiesLoaded => {
+                        let capabilities = this.capabilities(cx);
+                        if !capabilities.supports_modules_request.unwrap_or(false) {
+                            this.remove_pane_item(DebuggerPaneItem::Modules, window, cx);
+                        }
+                        if !capabilities
+                            .supports_loaded_sources_request
+                            .unwrap_or(false)
+                        {
+                            this.remove_pane_item(DebuggerPaneItem::LoadedSources, window, cx);
+                        }
+                    }
+
                     _ => {}
                 }
                 cx.notify()
@@ -447,12 +460,14 @@ impl RunningState {
             workspace::PaneGroup::with_root(root)
         } else {
             pane_close_subscriptions.clear();
+
             let root = Self::default_pane_layout(
                 project,
                 &workspace,
                 &stack_frame_list,
                 &variable_list,
                 &module_list,
+                &loaded_source_list,
                 &console,
                 &breakpoint_list,
                 &mut pane_close_subscriptions,
@@ -489,11 +504,6 @@ impl RunningState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        debug_assert!(
-            item_kind.is_supported(self.session.read(cx).capabilities()),
-            "We should only allow removing supported item kinds"
-        );
-
         if let Some((pane, item_id)) = self.panes.panes().iter().find_map(|pane| {
             Some(pane).zip(
                 pane.read(cx)
@@ -721,6 +731,7 @@ impl RunningState {
     pub fn select_current_thread(
         &mut self,
         threads: &Vec<(Thread, ThreadStatus)>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let selected_thread = self
@@ -733,7 +744,7 @@ impl RunningState {
         };
 
         if Some(ThreadId(selected_thread.id)) != self.thread_id {
-            self.select_thread(ThreadId(selected_thread.id), cx);
+            self.select_thread(ThreadId(selected_thread.id), window, cx);
         }
     }
 
@@ -746,7 +757,7 @@ impl RunningState {
             .map(|id| self.session().read(cx).thread_status(id))
     }
 
-    fn select_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+    fn select_thread(&mut self, thread_id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some_and(|id| id == thread_id) {
             return;
         }
@@ -754,8 +765,7 @@ impl RunningState {
         self.thread_id = Some(thread_id);
 
         self.stack_frame_list
-            .update(cx, |list, cx| list.refresh(cx));
-        cx.notify();
+            .update(cx, |list, cx| list.schedule_refresh(true, window, cx));
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {
@@ -907,9 +917,9 @@ impl RunningState {
                 for (thread, _) in threads {
                     let state = state.clone();
                     let thread_id = thread.id;
-                    this = this.entry(thread.name, None, move |_, cx| {
+                    this = this.entry(thread.name, None, move |window, cx| {
                         state.update(cx, |state, cx| {
-                            state.select_thread(ThreadId(thread_id), cx);
+                            state.select_thread(ThreadId(thread_id), window, cx);
                         });
                     });
                 }
@@ -924,6 +934,7 @@ impl RunningState {
         stack_frame_list: &Entity<StackFrameList>,
         variable_list: &Entity<VariableList>,
         module_list: &Entity<ModuleList>,
+        loaded_source_list: &Entity<LoadedSourceList>,
         console: &Entity<Console>,
         breakpoints: &Entity<BreakpointList>,
         subscriptions: &mut HashMap<EntityId, Subscription>,
@@ -963,6 +974,7 @@ impl RunningState {
             this.activate_item(0, false, false, window, cx);
         });
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+
         center_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
@@ -980,7 +992,7 @@ impl RunningState {
             );
             this.add_item(
                 Box::new(SubView::new(
-                    this.focus_handle(cx),
+                    module_list.focus_handle(cx),
                     module_list.clone().into(),
                     DebuggerPaneItem::Modules,
                     None,
@@ -992,8 +1004,24 @@ impl RunningState {
                 window,
                 cx,
             );
+
+            this.add_item(
+                Box::new(SubView::new(
+                    loaded_source_list.focus_handle(cx),
+                    loaded_source_list.clone().into(),
+                    DebuggerPaneItem::LoadedSources,
+                    None,
+                    cx,
+                )),
+                false,
+                false,
+                None,
+                window,
+                cx,
+            );
             this.activate_item(0, false, false, window, cx);
         });
+
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         rightmost_pane.update(cx, |this, cx| {
             let weak_console = console.downgrade();

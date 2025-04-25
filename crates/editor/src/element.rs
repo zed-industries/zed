@@ -1,6 +1,7 @@
 use crate::{
     ActiveDiagnostic, BlockId, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
-    ChunkRendererContext, ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId,
+    ChunkRendererContext, ChunkReplacement, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
+    ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
     DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
     EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
@@ -88,6 +89,7 @@ struct LineHighlightSpec {
     _active_stack_frame: bool,
 }
 
+#[derive(Debug)]
 struct SelectionLayout {
     head: DisplayPoint,
     cursor_shape: CursorShape,
@@ -1081,7 +1083,12 @@ impl EditorElement {
         let mut selections: Vec<(PlayerColor, Vec<SelectionLayout>)> = Vec::new();
         let mut active_rows = BTreeMap::new();
         let mut newest_selection_head = None;
-        self.editor.update(cx, |editor, cx| {
+
+        let Some(editor_with_selections) = self.editor_with_selections(cx) else {
+            return (selections, active_rows, newest_selection_head);
+        };
+
+        editor_with_selections.update(cx, |editor, cx| {
             if editor.show_local_selections {
                 let mut layouts = Vec::new();
                 let newest = editor.selections.newest(cx);
@@ -1476,7 +1483,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<MinimapLayout> {
-        let minimap_editor = self.editor.read_with(cx, |editor, _| editor.minimap())?;
+        let minimap_editor = self
+            .editor
+            .read_with(cx, |editor, _| editor.minimap().cloned())?;
 
         let minimap_settings = self
             .editor
@@ -1509,8 +1518,11 @@ impl EditorElement {
             }),
         };
 
-        let minimap_bounds =
-            Self::get_minimap_bounds(minimap_width, top_right_anchor, &editor_bounds);
+        let minimap_bounds = Bounds::from_corner_and_size(
+            Corner::TopRight,
+            top_right_anchor,
+            size(minimap_width, editor_bounds.size.height),
+        );
         let minimap_line_height = self.get_minimap_line_height(window, &minimap_settings, cx);
         let minimap_height = minimap_bounds.size.height;
 
@@ -1539,16 +1551,16 @@ impl EditorElement {
             editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
         });
 
-        let mut minimap_elem = minimap_editor.update(cx, |editor, cx| {
+        let mut minimap = minimap_editor.update(cx, |editor, cx| {
             editor.render(window, cx).into_any_element()
         });
-        _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
+        minimap.layout_as_root(minimap_bounds.size.into(), window, cx);
         window.with_absolute_element_offset(minimap_bounds.origin, |window| {
-            minimap_elem.prepaint(window, cx)
+            minimap.prepaint(window, cx)
         });
 
         Some(MinimapLayout {
-            minimap: minimap_elem,
+            minimap,
             thumb_layout: layout,
             show_thumb,
             minimap_line_height,
@@ -1568,18 +1580,6 @@ impl EditorElement {
                 ShowMinimap::Never => false,
                 ShowMinimap::Auto => scrollbar_layout.is_some_and(|layout| layout.visible),
             }
-    }
-
-    fn get_minimap_bounds(
-        minimap_width: Pixels,
-        top_right_anchor: gpui::Point<Pixels>,
-        editor_bounds: &Bounds<Pixels>,
-    ) -> Bounds<Pixels> {
-        Bounds::from_corner_and_size(
-            Corner::TopRight,
-            top_right_anchor,
-            size(minimap_width, editor_bounds.size.height),
-        )
     }
 
     fn get_minimap_line_height(
@@ -2229,8 +2229,7 @@ impl EditorElement {
                 })) = editor.context_menu.borrow().as_ref()
                 {
                     actions
-                        .tasks
-                        .as_ref()
+                        .tasks()
                         .map(|tasks| tasks.position.to_display_point(snapshot).row())
                         .or(*deployed_from_indicator)
                 } else {
@@ -2321,6 +2320,10 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Option<(AnyElement, gpui::Point<Pixels>)>> {
+        if self.editor.read(cx).disable_expand_excerpt_buttons {
+            return vec![];
+        }
+
         let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
 
         let scroll_top = scroll_position.y * line_height;
@@ -2720,7 +2723,7 @@ impl EditorElement {
                 &style,
                 MAX_LINE_LEN,
                 rows.len(),
-                snapshot.mode,
+                &snapshot.mode,
                 editor_width,
                 is_row_soft_wrapped,
                 window,
@@ -4174,6 +4177,7 @@ impl EditorElement {
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        highlighted_rows: &BTreeMap<DisplayRow, LineHighlight>,
         editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
@@ -4199,6 +4203,22 @@ impl EditorElement {
             {
                 if display_row_range.start < row_range.start
                     || display_row_range.start >= row_range.end
+                {
+                    continue;
+                }
+                if highlighted_rows
+                    .get(&display_row_range.start)
+                    .and_then(|highlight| highlight.type_id)
+                    .is_some_and(|type_id| {
+                        [
+                            TypeId::of::<ConflictsOuter>(),
+                            TypeId::of::<ConflictsOursMarker>(),
+                            TypeId::of::<ConflictsOurs>(),
+                            TypeId::of::<ConflictsTheirs>(),
+                            TypeId::of::<ConflictsTheirsMarker>(),
+                        ]
+                        .contains(&type_id)
+                    })
                 {
                     continue;
                 }
@@ -4396,14 +4416,21 @@ impl EditorElement {
                                            highlight_row_end: DisplayRow,
                                            highlight: crate::LineHighlight,
                                            edges| {
+                    let mut origin_x = layout.hitbox.left();
+                    let mut width = layout.hitbox.size.width;
+                    if !highlight.include_gutter {
+                        origin_x += layout.gutter_hitbox.size.width;
+                        width -= layout.gutter_hitbox.size.width;
+                    }
+
                     let origin = point(
-                        layout.hitbox.origin.x,
+                        origin_x,
                         layout.hitbox.origin.y
                             + (highlight_row_start.as_f32() - scroll_top)
                                 * layout.position_map.line_height,
                     );
                     let size = size(
-                        layout.hitbox.size.width,
+                        width,
                         layout.position_map.line_height
                             * highlight_row_end.next_row().minus(highlight_row_start) as f32,
                     );
@@ -5785,7 +5812,9 @@ impl EditorElement {
             return;
         }
 
-        self.paint_scroll_wheel_listener(layout, window, cx);
+        if !self.editor.read(cx).disable_scrolling {
+            self.paint_scroll_wheel_listener(layout, window, cx);
+        }
 
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
@@ -6197,7 +6226,7 @@ impl LineWithInvisibles {
         editor_style: &EditorStyle,
         max_line_len: usize,
         max_line_count: usize,
-        editor_mode: EditorMode,
+        editor_mode: &EditorMode,
         text_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         window: &mut Window,
@@ -6717,7 +6746,7 @@ impl EditorElement {
                 scale_ui_elements_with_buffer_font_size: true,
                 ..
             }
-            | EditorMode::Minimap => {
+            | EditorMode::Minimap { .. } => {
                 let buffer_font_size = self.style.text.font_size;
                 match buffer_font_size {
                     AbsoluteLength::Pixels(pixels) => {
@@ -6746,6 +6775,14 @@ impl EditorElement {
             // so we don't want to scale everything with the buffer font size, as it
             // ends up looking off.
             _ => None,
+        }
+    }
+
+    fn editor_with_selections(&self, cx: &App) -> Option<Entity<Editor>> {
+        if let EditorMode::Minimap { parent } = self.editor.read(cx).mode() {
+            parent.upgrade()
+        } else {
+            Some(self.editor.clone())
         }
     }
 }
@@ -6834,10 +6871,27 @@ impl Element for EditorElement {
                             },
                         )
                     }
-                    EditorMode::Minimap | EditorMode::Full { .. } => {
+                    EditorMode::Minimap { .. } => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         style.size.height = relative(1.).into();
+                        window.request_layout(style, None, cx)
+                    }
+                    EditorMode::Full {
+                        sized_by_content, ..
+                    } => {
+                        let mut style = Style::default();
+                        style.size.width = relative(1.).into();
+                        if sized_by_content {
+                            let snapshot = editor.snapshot(window, cx);
+                            let line_height =
+                                self.style.text.line_height_in_pixels(window.rem_size());
+                            let scroll_height =
+                                (snapshot.max_point().row().next_row().0 as f32) * line_height;
+                            style.size.height = scroll_height.into();
+                        } else {
+                            style.size.height = relative(1.).into();
+                        }
                         window.request_layout(style, None, cx)
                     }
                 };
@@ -6899,7 +6953,7 @@ impl Element for EditorElement {
                         .unwrap_or_default();
                     let minimap_width = self
                         .editor
-                        .read_with(cx, |editor, _| editor.has_minimap())
+                        .read_with(cx, |editor, _| editor.minimap().is_some())
                         .then(|| match settings.minimap.show {
                             ShowMinimap::Never => None,
                             ShowMinimap::Always => Some(px(settings.minimap.width)),
@@ -6923,7 +6977,7 @@ impl Element for EditorElement {
 
                         if matches!(
                             editor.mode,
-                            EditorMode::AutoHeight { .. } | EditorMode::Minimap
+                            EditorMode::AutoHeight { .. } | EditorMode::Minimap { .. }
                         ) {
                             snapshot
                         } else {
@@ -6977,7 +7031,10 @@ impl Element for EditorElement {
                     let max_row = snapshot.max_point().row().as_f32();
 
                     // The max scroll position for the top of the window
-                    let max_scroll_top = if matches!(snapshot.mode, EditorMode::AutoHeight { .. }) {
+                    let max_scroll_top = if matches!(
+                        snapshot.mode,
+                        EditorMode::AutoHeight { .. } | EditorMode::SingleLine { .. }
+                    ) {
                         (max_row - height_in_lines + 1.).max(0.)
                     } else {
                         let settings = EditorSettings::get_global(cx);
@@ -7082,10 +7139,16 @@ impl Element for EditorElement {
                             } else {
                                 background_color.opacity(0.36)
                             }),
+                            include_gutter: true,
+                            type_id: None,
                         };
 
-                        let filled_highlight =
-                            solid_background(background_color.opacity(hunk_opacity)).into();
+                        let filled_highlight = LineHighlight {
+                            background: solid_background(background_color.opacity(hunk_opacity)),
+                            border: None,
+                            include_gutter: true,
+                            type_id: None,
+                        };
 
                         let background = if Self::diff_hunk_hollow(diff_status, cx) {
                             hollow_highlight
@@ -7098,11 +7161,16 @@ impl Element for EditorElement {
                             .or_insert(background);
                     }
 
-                    let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
-                        start_anchor..end_anchor,
-                        &snapshot.display_snapshot,
-                        cx.theme().colors(),
-                    );
+                    let highlighted_ranges = self
+                        .editor_with_selections(cx)
+                        .map(|editor| {
+                            editor.read(cx).background_highlights_in_range(
+                                start_anchor..end_anchor,
+                                &snapshot.display_snapshot,
+                                cx.theme().colors(),
+                            )
+                        })
+                        .unwrap_or_default();
                     let highlighted_gutter_ranges =
                         self.editor.read(cx).gutter_highlights_in_range(
                             start_anchor..end_anchor,
@@ -7119,34 +7187,40 @@ impl Element for EditorElement {
                     let (local_selections, selected_buffer_ids): (
                         Vec<Selection<Point>>,
                         Vec<BufferId>,
-                    ) = self.editor.update(cx, |editor, cx| {
-                        let all_selections = editor.selections.all::<Point>(cx);
-                        let selected_buffer_ids = if editor.is_singleton(cx) {
-                            Vec::new()
-                        } else {
-                            let mut selected_buffer_ids = Vec::with_capacity(all_selections.len());
+                    ) = self
+                        .editor_with_selections(cx)
+                        .map(|editor| {
+                            editor.update(cx, |editor, cx| {
+                                let all_selections = editor.selections.all::<Point>(cx);
+                                let selected_buffer_ids = if editor.is_singleton(cx) {
+                                    Vec::new()
+                                } else {
+                                    let mut selected_buffer_ids =
+                                        Vec::with_capacity(all_selections.len());
 
-                            for selection in all_selections {
-                                for buffer_id in snapshot
-                                    .buffer_snapshot
-                                    .buffer_ids_for_range(selection.range())
-                                {
-                                    if selected_buffer_ids.last() != Some(&buffer_id) {
-                                        selected_buffer_ids.push(buffer_id);
+                                    for selection in all_selections {
+                                        for buffer_id in snapshot
+                                            .buffer_snapshot
+                                            .buffer_ids_for_range(selection.range())
+                                        {
+                                            if selected_buffer_ids.last() != Some(&buffer_id) {
+                                                selected_buffer_ids.push(buffer_id);
+                                            }
+                                        }
                                     }
-                                }
-                            }
 
-                            selected_buffer_ids
-                        };
+                                    selected_buffer_ids
+                                };
 
-                        let mut selections = editor
-                            .selections
-                            .disjoint_in_range(start_anchor..end_anchor, cx);
-                        selections.extend(editor.selections.pending(cx));
+                                let mut selections = editor
+                                    .selections
+                                    .disjoint_in_range(start_anchor..end_anchor, cx);
+                                selections.extend(editor.selections.pending(cx));
 
-                        (selections, selected_buffer_ids)
-                    });
+                                (selections, selected_buffer_ids)
+                            })
+                        })
+                        .unwrap_or_default();
 
                     let (selections, mut active_rows, newest_selection_head) = self
                         .layout_selections(
@@ -7823,7 +7897,7 @@ impl Element for EditorElement {
                         )
                         .unwrap();
 
-                    let mode = snapshot.mode;
+                    let mode = snapshot.mode.clone();
 
                     let position_map = Rc::new(PositionMap {
                         size: bounds.size,
@@ -7855,6 +7929,7 @@ impl Element for EditorElement {
                             line_height,
                             scroll_pixel_position,
                             &display_hunks,
+                            &highlighted_rows,
                             self.editor.clone(),
                             window,
                             cx,
@@ -8497,7 +8572,7 @@ pub fn layout_line(
         &style,
         MAX_LINE_LEN,
         1,
-        snapshot.mode,
+        &snapshot.mode,
         text_width,
         is_row_soft_wrapped,
         window,
@@ -9165,7 +9240,7 @@ mod tests {
             for show_line_numbers in [true, false] {
                 let invisibles = collect_invisibles_from_new_editor(
                     cx,
-                    editor_mode_without_invisibles,
+                    editor_mode_without_invisibles.clone(),
                     "\t\t\t| | a b",
                     px(500.0),
                     show_line_numbers,
