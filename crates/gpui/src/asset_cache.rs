@@ -1,5 +1,5 @@
 use crate::{App, SharedString, SharedUri};
-use futures::Future;
+use futures::{Future, TryFutureExt};
 
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
@@ -72,10 +72,7 @@ where
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let load = T::load(source, cx);
-        async {
-            load.await
-                .inspect_err(|e| log::error!("Failed to load asset: {}", e))
-        }
+        load.inspect_err(|e| log::error!("Failed to load asset: {}", e))
     }
 }
 
