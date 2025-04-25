@@ -112,11 +112,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         });
 
     running_state.update_in(cx, |this, window, cx| {
-        this.activate_item(
-            crate::persistence::DebuggerPaneItem::BreakpointList,
-            window,
-            cx,
-        );
+        this.activate_item(crate::persistence::DebuggerPaneItem::Modules, window, cx);
         cx.refresh_windows();
     });
 

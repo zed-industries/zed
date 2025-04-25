@@ -95,6 +95,7 @@ impl Render for LoadedSourceList {
         }
 
         div()
+            .track_focus(&self.focus_handle)
             .size_full()
             .p_1()
             .child(list(self.list.clone()).size_full())

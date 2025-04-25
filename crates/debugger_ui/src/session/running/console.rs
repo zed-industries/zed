@@ -235,6 +235,7 @@ impl Render for Console {
         });
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))
             .size_full()

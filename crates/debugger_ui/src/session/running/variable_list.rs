@@ -929,6 +929,7 @@ impl Render for VariableList {
         self.build_entries(cx);
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")

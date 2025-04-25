@@ -171,7 +171,6 @@ impl Render for SubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .track_focus(&self.pane_focus_handle)
             .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
                 // TODO better way of showing focus?
                 el.border_1().border_color(gpui::red())
