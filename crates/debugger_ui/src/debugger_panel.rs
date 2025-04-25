@@ -20,8 +20,9 @@ use gpui::{
     actions, anchored, deferred,
 };
 
-use project::WorktreeId;
+use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
+use project::{Location, WorktreeId};
 use project::{
     Project,
     debugger::{
@@ -256,6 +257,7 @@ impl DebugPanel {
     pub fn start_session(
         &mut self,
         scenario: DebugScenario,
+        active_buffer: Option<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -267,18 +269,17 @@ impl DebugPanel {
             .ok();
 
         cx.spawn_in(window, async move |this, cx| {
-            let (worktree_id, task_context) = if let Some(task) = task_contexts {
-                task.await.active_worktree_context.map_or(
-                    (None, task::TaskContext::default()),
-                    |(worktree_id, context)| (Some(worktree_id), context),
-                )
+            let task_context = if let Some(task) = task_contexts {
+                task.await
+                    .active_item_context
+                    .map_or(task::TaskContext::default(), |(_, _, context)| context)
             } else {
-                (None, task::TaskContext::default())
+                task::TaskContext::default()
             };
 
             let definition = this
                 .update_in(cx, |this, window, cx| {
-                    this.resolve_scenario(scenario, worktree_id, task_context, window, cx)
+                    this.resolve_scenario(scenario, active_buffer, task_context, window, cx)
                 })?
                 .await?;
             this.update_in(cx, |this, window, cx| {
@@ -474,7 +475,7 @@ impl DebugPanel {
     pub fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-        worktree_id: Option<WorktreeId>,
+        buffer: Option<Entity<Buffer>>,
         task_context: TaskContext,
         window: &Window,
         cx: &mut Context<Self>,
@@ -503,14 +504,14 @@ impl DebugPanel {
                     this.task_inventory().and_then(|inventory| {
                         inventory
                             .read(cx)
-                            .task_template_by_label(worktree_id, &build, cx)
+                            .task_template_by_label(buffer, &build, cx)
                     })
                 })?
                 else {
                     anyhow::bail!("Couldn't find task template for {:?}", build)
                 };
                 let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
-                    anyhow::bail!("Could not resolve task variables within a task");
+                    anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
                 let run_build = workspace.update_in(cx, |workspace, window, cx| {
@@ -1229,10 +1230,16 @@ impl Render for DebugPanel {
 struct DebuggerProvider(Entity<DebugPanel>);
 
 impl workspace::DebuggerProvider for DebuggerProvider {
-    fn start_session(&self, definition: DebugScenario, window: &mut Window, cx: &mut App) {
+    fn start_session(
+        &self,
+        definition: DebugScenario,
+        active_buffer: Option<Entity<Buffer>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         self.0.update(cx, |_, cx| {
             cx.defer_in(window, |this, window, cx| {
-                this.start_session(definition, window, cx);
+                this.start_session(definition, active_buffer, window, cx);
             })
         })
     }

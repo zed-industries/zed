@@ -1,7 +1,8 @@
 use std::process::ExitStatus;
 
 use anyhow::{Result, anyhow};
-use gpui::{Context, Task};
+use gpui::{Context, Entity, Task};
+use language::Buffer;
 use project::TaskSourceKind;
 use remote::ConnectionState;
 use task::{DebugScenario, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
@@ -76,11 +77,12 @@ impl Workspace {
     pub fn start_debug_session(
         &mut self,
         scenario: DebugScenario,
+        active_buffer: Option<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(provider) = self.debugger_provider.as_mut() {
-            provider.start_session(scenario, window, cx)
+            provider.start_session(scenario, active_buffer, window, cx)
         }
     }
 

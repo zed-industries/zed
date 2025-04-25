@@ -13,7 +13,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{
-    ContextProvider, File, Language, LanguageToolchainStore, Location,
+    Buffer, ContextProvider, File, Language, LanguageToolchainStore, Location,
     language_settings::language_settings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
@@ -218,11 +218,23 @@ impl Inventory {
 
     pub fn task_template_by_label(
         &self,
-        worktree_id: Option<WorktreeId>,
+        buffer: Option<Entity<Buffer>>,
         label: &str,
         cx: &App,
     ) -> Option<TaskTemplate> {
-        self.list_tasks(None, None, worktree_id, cx)
+        let (worktree_id, file, language) = buffer
+            .map(|buffer| {
+                let buffer = buffer.read(cx);
+                let file = buffer.file().cloned();
+                (
+                    file.as_ref().map(|file| file.worktree_id(cx)),
+                    file,
+                    buffer.language().cloned(),
+                )
+            })
+            .unwrap_or((None, None, None));
+
+        self.list_tasks(file, language, worktree_id, cx)
             .iter()
             .find(|(_, template)| template.label == label)
             .map(|val| val.1.clone())

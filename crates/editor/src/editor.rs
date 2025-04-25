@@ -5194,6 +5194,9 @@ impl Editor {
                                             scenario_tasks.push(
                                                 this.debug_scenario_for_build_task(
                                                     task.resolved.clone(),
+                                                    SharedString::from(
+                                                        task.original_task().label.clone(),
+                                                    ),
                                                     "CodeLLDB".into(),
                                                 ),
                                             );
@@ -5311,7 +5314,7 @@ impl Editor {
                 }))
             }
             CodeActionsItem::DebugScenario(scenario) => workspace.update(cx, |workspace, cx| {
-                workspace.start_debug_session(scenario, window, cx);
+                workspace.start_debug_session(scenario, Some(buffer), window, cx);
                 Some(Task::ready(Ok(())))
             }),
         }

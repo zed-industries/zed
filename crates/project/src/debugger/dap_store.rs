@@ -332,6 +332,7 @@ impl DapStore {
     pub fn debug_scenario_for_build_task(
         &self,
         build: SpawnInTerminal,
+        unresoved_label: SharedString,
         adapter: SharedString,
     ) -> Task<Option<DebugScenario>> {
         match &self.mode {
@@ -343,7 +344,7 @@ impl DapStore {
                     .map(|_| DebugScenario {
                         adapter,
                         label: format!("Debug `{}`", build.label).into(),
-                        build: Some(build.label.into()),
+                        build: Some(unresoved_label),
                         request: None,
                         initialize_args: None,
                         tcp_connection: None,
