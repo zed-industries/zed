@@ -242,16 +242,16 @@ pub enum HideMouseMode {
 
 /// Determines how snippets are sorted relative to other completion items.
 ///
-/// Default: bottom
+/// Default: inline
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SnippetSortOrder {
     /// Place snippets at the top of the completion list
     Top,
     /// Sort snippets normally using the default comparison logic
+    #[default]
     Inline,
     /// Place snippets at the bottom of the completion list
-    #[default]
     Bottom,
 }
 
@@ -272,7 +272,7 @@ pub struct EditorSettingsContent {
     pub hide_mouse: Option<HideMouseMode>,
     /// Determines how snippets are sorted relative to other completion items.
     ///
-    /// Default: bottom
+    /// Default: inline
     pub snippet_sort_order: Option<SnippetSortOrder>,
     /// How to highlight the current line in the editor.
     ///

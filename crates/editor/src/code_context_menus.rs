@@ -714,8 +714,8 @@ impl CompletionsMenu {
             } else {
                 let sort_score_int = Reverse(if score >= FUZZY_THRESHOLD { 1 } else { 0 });
                 let sort_snippet = match snippet_sort_order {
-                    SnippetSortOrder::Top => Reverse(if mat.is_snippet { 0 } else { 1 }),
-                    SnippetSortOrder::Bottom => Reverse(if mat.is_snippet { 1 } else { 0 }),
+                    SnippetSortOrder::Top => Reverse(if mat.is_snippet { 1 } else { 0 }),
+                    SnippetSortOrder::Bottom => Reverse(if mat.is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
                 };
                 MatchTier::WordStartMatch {

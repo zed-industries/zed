@@ -614,7 +614,7 @@ List of `string` values
 
 - Description: Determines how snippets are sorted relative to other completion items.
 - Setting: `snippet_sort_order`
-- Default: `bottom`
+- Default: `inline`
 
 **Options**
 
