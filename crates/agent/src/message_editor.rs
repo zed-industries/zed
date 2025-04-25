@@ -20,7 +20,9 @@ use gpui::{
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage};
+use language_model::{
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage, MessageContent,
+};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
@@ -1087,6 +1089,12 @@ impl MessageEditor {
 
                 if let Some(loaded_context) = loaded_context {
                     loaded_context.add_to_request_message(&mut request_message);
+                }
+
+                if !message_text.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text(message_text));
                 }
 
                 let request = language_model::LanguageModelRequest {
