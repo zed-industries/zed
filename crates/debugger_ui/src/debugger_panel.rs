@@ -39,7 +39,7 @@ use task::{DebugScenario, HideStrategy, RevealStrategy, RevealTarget, TaskContex
 use terminal_view::TerminalView;
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::{
-    Workspace,
+    Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
@@ -1136,9 +1136,14 @@ impl Panel for DebugPanel {
         Box::new(ToggleFocus)
     }
 
+    fn pane(&self) -> Option<Entity<Pane>> {
+        None
+    }
+
     fn activation_priority(&self) -> u32 {
         9
     }
+
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
 }
 

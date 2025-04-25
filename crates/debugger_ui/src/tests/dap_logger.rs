@@ -103,16 +103,4 @@ async fn test_dap_logger_captures_all_session_rpc_messages(
             hit_breakpoint_ids: None,
         }))
         .await;
-
-    cx.run_until_parked();
-
-    // Shutdown the debug session
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
-    cx.run_until_parked();
 }

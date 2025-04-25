@@ -437,6 +437,7 @@ dashmap = "6.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a016ba710191b9fdded28c8b042af4b617f7" }
 derive_more = "0.99.17"
 dirs = "4.0"
+dotenv = "0.15.0"
 ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"

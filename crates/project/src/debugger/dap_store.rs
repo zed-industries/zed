@@ -136,8 +136,6 @@ impl DapStore {
         breakpoint_store: Entity<BreakpointStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.on_app_quit(Self::shutdown_sessions).detach();
-
         let locators = FxHashMap::from_iter([(
             "cargo".to_string(),
             Arc::new(super::locators::cargo::CargoLocator {}) as _,

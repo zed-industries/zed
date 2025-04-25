@@ -64,11 +64,6 @@ impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
 }
 
-pub struct LanguageModelsFeatureFlag {}
-impl FeatureFlag for LanguageModelsFeatureFlag {
-    const NAME: &'static str = "language-models";
-}
-
 pub struct LlmClosedBetaFeatureFlag {}
 impl FeatureFlag for LlmClosedBetaFeatureFlag {
     const NAME: &'static str = "llm-closed-beta";
