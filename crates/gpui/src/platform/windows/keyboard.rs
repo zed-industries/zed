@@ -124,6 +124,41 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
         Cow::Borrowed(keystroke)
     }
 
+    fn key_to_shifted(&self, key: &str) -> String {
+        if is_immutable_key(key) {
+            return key.to_string();
+        }
+        if is_letter_key(key) {
+            return key.to_uppercase();
+        }
+        if key.len() != 1 {
+            return key.to_string();
+        }
+        let mut modifiers = Modifiers::default();
+        let Some(vkey) = get_vkey_from_char(key, &mut modifiers).log_err() else {
+            log::error!(
+                "Failed to get virtual key from char while key_to_shifted: {}",
+                key
+            );
+            return key.to_string();
+        };
+        let mut state = [0; 256];
+        state[VK_SHIFT.0 as usize] = 0x80;
+
+        let scan_code = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_VSC) };
+        let mut buffer = [0; 4];
+        let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 0) };
+
+        if len > 0 {
+            let candidate = String::from_utf16_lossy(&buffer[..len as usize]);
+            if !candidate.is_empty() && !candidate.chars().next().unwrap().is_control() {
+                return candidate;
+            }
+        }
+
+        key.to_string()
+    }
+
     fn get_equivalents(&self) -> Option<&collections::HashMap<String, String>> {
         None
     }

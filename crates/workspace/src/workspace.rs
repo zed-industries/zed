@@ -2046,6 +2046,7 @@ impl Workspace {
             .0
             .split(' ')
             .flat_map(|k| Keystroke::parse(k).log_err())
+            .map(|keystroke| cx.keyboard_mapper().map_keystroke(keystroke, false))
             .collect();
         keystrokes.reverse();
 

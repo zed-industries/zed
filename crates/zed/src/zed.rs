@@ -3977,10 +3977,19 @@ mod tests {
 
         executor.run_until_parked();
 
+        #[cfg(not(target_os = "windows"))]
         assert_key_bindings_for(
             workspace.into(),
             cx,
             vec![("backspace", &B), ("{", &ActivatePreviousItem)],
+            line!(),
+        );
+        #[cfg(target_os = "windows")]
+        // Windows prefers to use `shift-[` instead of `{`.
+        assert_key_bindings_for(
+            workspace.into(),
+            cx,
+            vec![("backspace", &B), ("[", &ActivatePreviousItem)],
             line!(),
         );
     }

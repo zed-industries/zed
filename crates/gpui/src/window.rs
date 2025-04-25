@@ -3043,7 +3043,7 @@ impl Window {
     /// Dispatch a given keystroke as though the user had typed it.
     /// You can create a keystroke with Keystroke::parse("").
     pub fn dispatch_keystroke(&mut self, keystroke: Keystroke, cx: &mut App) -> bool {
-        let keystroke = keystroke.with_simulated_ime();
+        let keystroke = keystroke.with_simulated_ime(cx.keyboard_mapper());
         let result = self.dispatch_event(
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke: keystroke.clone(),

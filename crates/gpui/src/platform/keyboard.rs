@@ -34,6 +34,9 @@ pub trait PlatformKeyboardMapper {
     /// `Cow` to avoid unnecessary allocations when no conversion is needed.
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke>;
 
+    /// Converts a key to its shifted representation.
+    fn key_to_shifted(&self, key: &str) -> String;
+
     /// Returns the keyboard layout's key equivalents mapping, if available.
     ///
     /// Currently only implemented and used on macOS. The HashMap contains
@@ -52,6 +55,10 @@ impl PlatformKeyboardMapper for EmptyKeyboardMapper {
 
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
         Cow::Borrowed(keystroke)
+    }
+
+    fn key_to_shifted(&self, key: &str) -> String {
+        key.to_uppercase()
     }
 
     fn get_equivalents(&self) -> Option<&HashMap<String, String>> {
@@ -94,6 +101,10 @@ impl PlatformKeyboardMapper for TestKeyboardMapper {
 
     fn to_vim_keystroke<'a>(&self, keystroke: &'a Keystroke) -> Cow<'a, Keystroke> {
         self.mapper.to_vim_keystroke(keystroke)
+    }
+
+    fn key_to_shifted(&self, key: &str) -> String {
+        self.mapper.key_to_shifted(key)
     }
 
     fn get_equivalents(&self) -> Option<&HashMap<String, String>> {
