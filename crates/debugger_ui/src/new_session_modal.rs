@@ -138,7 +138,7 @@ impl NewSessionModal {
 
                 this.attach_picker.update(cx, |this, cx| {
                     this.picker.update(cx, |this, cx| {
-                        this.delegate.scenario.adapter = adapter;
+                        this.delegate.definition.adapter = adapter;
                         this.focus(window, cx);
                     })
                 });

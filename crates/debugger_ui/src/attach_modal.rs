@@ -25,7 +25,7 @@ pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
-    pub(crate) scenario: DebugTaskDefinition,
+    pub(crate) definition: DebugTaskDefinition,
     workspace: WeakEntity<Workspace>,
     candidates: Arc<[Candidate]>,
 }
@@ -33,12 +33,12 @@ pub(crate) struct AttachModalDelegate {
 impl AttachModalDelegate {
     fn new(
         workspace: Entity<Workspace>,
-        scenario: DebugTaskDefinition,
+        definition: DebugTaskDefinition,
         candidates: Arc<[Candidate]>,
     ) -> Self {
         Self {
             workspace: workspace.downgrade(),
-            scenario,
+            definition,
             candidates,
             selected_index: 0,
             matches: Vec::default(),
@@ -54,7 +54,7 @@ pub struct AttachModal {
 
 impl AttachModal {
     pub fn new(
-        scenario: DebugTaskDefinition,
+        definition: DebugTaskDefinition,
         workspace: Entity<Workspace>,
         modal: bool,
         window: &mut Window,
@@ -78,12 +78,12 @@ impl AttachModal {
             .collect();
         processes.sort_by_key(|k| k.name.clone());
         let processes = processes.into_iter().collect();
-        Self::with_processes(workspace, scenario, processes, modal, window, cx)
+        Self::with_processes(workspace, definition, processes, modal, window, cx)
     }
 
     pub(super) fn with_processes(
         workspace: Entity<Workspace>,
-        debug_scenario: DebugTaskDefinition,
+        definition: DebugTaskDefinition,
         processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,
@@ -91,7 +91,7 @@ impl AttachModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                AttachModalDelegate::new(workspace, debug_scenario, processes),
+                AttachModalDelegate::new(workspace, definition, processes),
                 window,
                 cx,
             )
@@ -218,7 +218,7 @@ impl PickerDelegate for AttachModalDelegate {
             return cx.emit(DismissEvent);
         };
 
-        match &mut self.scenario.request {
+        match &mut self.definition.request {
             DebugRequest::Attach(config) => {
                 config.process_id = Some(candidate.pid);
             }
@@ -228,7 +228,7 @@ impl PickerDelegate for AttachModalDelegate {
             }
         }
 
-        let scenario = self.scenario.to_scenario();
+        let scenario = self.definition.to_scenario();
 
         let panel = self
             .workspace
