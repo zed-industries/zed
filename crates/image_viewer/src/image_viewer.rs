@@ -261,6 +261,7 @@ impl SerializableItem for ImageView {
 
         Some(cx.background_spawn({
             async move {
+                log::debug!("Saving image at path {image_path:?}");
                 IMAGE_VIEWER
                     .save_image_path(item_id, workspace_id, image_path)
                     .await
@@ -399,18 +400,6 @@ mod persistence {
     }
 
     impl ImageViewerDb {
-        query! {
-           pub async fn update_workspace_id(
-                new_id: WorkspaceId,
-                old_id: WorkspaceId,
-                item_id: ItemId
-            ) -> Result<()> {
-                UPDATE image_viewers
-                SET workspace_id = ?
-                WHERE workspace_id = ? AND item_id = ?
-            }
-        }
-
         query! {
             pub async fn save_image_path(
                 item_id: ItemId,
