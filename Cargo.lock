@@ -446,6 +446,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
+ "shlex",
  "smol",
  "tempfile",
  "util",
