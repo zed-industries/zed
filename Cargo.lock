@@ -61,7 +61,6 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "client",
- "clock",
  "collections",
  "command_palette_hooks",
  "component",
@@ -96,12 +95,13 @@ dependencies = [
  "paths",
  "picker",
  "project",
- "prompt_library",
  "prompt_store",
  "proto",
  "rand 0.8.5",
+ "ref-cast",
  "release_channel",
  "rope",
+ "rules_library",
  "schemars",
  "serde",
  "serde_json",
@@ -498,11 +498,11 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
- "prompt_library",
  "prompt_store",
  "proto",
  "rand 0.8.5",
  "rope",
+ "rules_library",
  "schemars",
  "search",
  "serde",
@@ -735,7 +735,6 @@ dependencies = [
  "web_search",
  "workspace",
  "workspace-hack",
- "worktree",
  "zed_llm_client",
 ]
 
@@ -2998,7 +2997,6 @@ dependencies = [
  "git",
  "git_hosting_providers",
  "git_ui",
- "google_ai",
  "gpui",
  "gpui_tokio",
  "hex",
@@ -3017,7 +3015,6 @@ dependencies = [
  "nanoid",
  "node_runtime",
  "notifications",
- "open_ai",
  "parking_lot",
  "pretty_assertions",
  "project",
@@ -3160,6 +3157,7 @@ dependencies = [
  "go_to_line",
  "gpui",
  "language",
+ "log",
  "menu",
  "picker",
  "postage",
@@ -3210,6 +3208,7 @@ dependencies = [
  "db",
  "gpui",
  "languages",
+ "log",
  "notifications",
  "project",
  "serde",
@@ -4039,6 +4038,7 @@ dependencies = [
  "http_client",
  "language",
  "log",
+ "lsp-types",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -4073,6 +4073,7 @@ dependencies = [
  "dap",
  "gpui",
  "language",
+ "lsp-types",
  "paths",
  "serde",
  "serde_json",
@@ -4547,6 +4548,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dotenv"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
+
+[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4967,7 +4974,8 @@ dependencies = [
  "client",
  "collections",
  "context_server",
- "dirs 5.0.1",
+ "dirs 4.0.0",
+ "dotenv",
  "env_logger 0.11.8",
  "extension",
  "fs",
@@ -4981,6 +4989,7 @@ dependencies = [
  "language_models",
  "languages",
  "node_runtime",
+ "pathdiff",
  "paths",
  "project",
  "prompt_store",
@@ -7100,6 +7109,7 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
+ "log",
  "project",
  "schemars",
  "serde",
@@ -8363,7 +8373,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=1fff0dd12e2071c5667327394cfec163d2a466ab#1fff0dd12e2071c5667327394cfec163d2a466ab"
+source = "git+https://github.com/zed-industries/lsp-types?rev=c9c189f1c5dd53c624a419ce35bc77ad6a908d18#c9c189f1c5dd53c624a419ce35bc77ad6a908d18"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -11084,32 +11094,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prompt_library"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "editor",
- "gpui",
- "language",
- "language_model",
- "log",
- "menu",
- "picker",
- "prompt_store",
- "release_channel",
- "rope",
- "serde",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
- "workspace-hack",
- "zed_actions",
-]
-
-[[package]]
 name = "prompt_store"
 version = "0.1.0"
 dependencies = [
@@ -11743,6 +11727,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ref-cast"
+version = "1.0.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a0ae411dbe946a674d89546582cea4ba2bb8defac896622d6496f14c23ba5cf"
+dependencies = [
+ "ref-cast-impl",
+]
+
+[[package]]
+name = "ref-cast-impl"
+version = "1.0.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1165225c21bff1f3bbce98f5a1f889949bc902d3575308cc7b0de30b4f6d27c7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "refineable"
 version = "0.1.0"
 dependencies = [
@@ -12269,6 +12273,32 @@ dependencies = [
  "spki 0.7.3",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rules_library"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "gpui",
+ "language",
+ "language_model",
+ "log",
+ "menu",
+ "picker",
+ "prompt_store",
+ "release_channel",
+ "rope",
+ "serde",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -18536,9 +18566,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c1666cd923c5eb4635f3743e69c6920d0ed71f29b26920616a5d220607df7c4"
+checksum = "cc9ec491b7112cb8c2fba3c17d9a349d8ab695fb1a4ef6c5c4b9fd8d7aa975c1"
 dependencies = [
  "anyhow",
  "serde",

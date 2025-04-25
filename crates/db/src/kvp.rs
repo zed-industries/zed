@@ -18,8 +18,13 @@ impl KeyValueStore {
         }
     }
 
+    pub async fn write_kvp(&self, key: String, value: String) -> anyhow::Result<()> {
+        log::debug!("Writing key-value pair for key {key}");
+        self.write_kvp_inner(key, value).await
+    }
+
     query! {
-        pub async fn write_kvp(key: String, value: String) -> Result<()> {
+        async fn write_kvp_inner(key: String, value: String) -> Result<()> {
             INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))
         }
     }
@@ -78,8 +83,13 @@ impl GlobalKeyValueStore {
         }
     }
 
+    pub async fn write_kvp(&self, key: String, value: String) -> anyhow::Result<()> {
+        log::debug!("Writing global key-value pair for key {key}");
+        self.write_kvp_inner(key, value).await
+    }
+
     query! {
-        pub async fn write_kvp(key: String, value: String) -> Result<()> {
+        async fn write_kvp_inner(key: String, value: String) -> Result<()> {
             INSERT OR REPLACE INTO kv_store(key, value) VALUES ((?), (?))
         }
     }

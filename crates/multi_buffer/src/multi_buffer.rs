@@ -5950,6 +5950,29 @@ impl MultiBufferSnapshot {
         .map(|(range, diagnostic, _)| DiagnosticEntry { diagnostic, range })
     }
 
+    pub fn diagnostics_with_buffer_ids_in_range<'a, T>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (BufferId, DiagnosticEntry<T>)> + 'a
+    where
+        T: 'a
+            + text::ToOffset
+            + text::FromAnchor
+            + TextDimension
+            + Ord
+            + Sub<T, Output = T>
+            + fmt::Debug,
+    {
+        self.lift_buffer_metadata(range, move |buffer, buffer_range| {
+            Some(
+                buffer
+                    .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
+                    .map(|entry| (entry.range, entry.diagnostic)),
+            )
+        })
+        .map(|(range, diagnostic, b)| (b.buffer_id, DiagnosticEntry { diagnostic, range }))
+    }
+
     pub fn syntax_ancestor<T: ToOffset>(
         &self,
         range: Range<T>,

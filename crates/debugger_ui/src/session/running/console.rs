@@ -141,14 +141,16 @@ impl Console {
             expression
         });
 
-        self.session.update(cx, |state, cx| {
-            state.evaluate(
-                expression,
-                Some(dap::EvaluateArgumentsContext::Variables),
-                self.stack_frame_list.read(cx).selected_stack_frame_id(),
-                None,
-                cx,
-            );
+        self.session.update(cx, |session, cx| {
+            session
+                .evaluate(
+                    expression,
+                    Some(dap::EvaluateArgumentsContext::Variables),
+                    self.stack_frame_list.read(cx).selected_stack_frame_id(),
+                    None,
+                    cx,
+                )
+                .detach();
         });
     }
 

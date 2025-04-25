@@ -71,25 +71,26 @@ use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layo
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
-use feature_flags::{Debugger, FeatureFlagAppExt};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
 use futures::{
     FutureExt,
     future::{self, Shared, join},
 };
 use fuzzy::StringMatchCandidate;
 
-use ::git::Restore;
+use ::git::blame::BlameEntry;
+use ::git::{Restore, blame::ParsedCommitMessage};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
 };
 use git::blame::{GitBlame, GlobalBlameRenderer};
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, AnyWeakEntity, App, AppContext,
-    AsyncWindowContext, AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry,
-    ClipboardItem, Context, DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter,
-    FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
-    KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render,
+    Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
+    AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
+    DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
+    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
+    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
     SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
     UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
     div, impl_actions, point, prelude::*, pulsating_between, px, relative, size,
@@ -117,12 +118,16 @@ use language::{
 };
 use language::{BufferRow, CharClassifier, Runnable, RunnableRange, point_to_lsp};
 use linked_editing_ranges::refresh_linked_ranges;
+use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
     ProjectPath,
-    debugger::breakpoint_store::{
-        BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
+    debugger::{
+        breakpoint_store::{
+            BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
+        },
+        session::{Session, SessionEvent},
     },
 };
 
@@ -248,10 +253,27 @@ const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
     function: false,
 };
 
+struct InlineValueCache {
+    enabled: bool,
+    inlays: Vec<InlayId>,
+    refresh_task: Task<Option<()>>,
+}
+
+impl InlineValueCache {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            inlays: Vec::new(),
+            refresh_task: Task::ready(None),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {
     InlineCompletion(usize),
     Hint(usize),
+    DebuggerValue(usize),
 }
 
 impl InlayId {
@@ -259,6 +281,7 @@ impl InlayId {
         match self {
             Self::InlineCompletion(id) => *id,
             Self::Hint(id) => *id,
+            Self::DebuggerValue(id) => *id,
         }
     }
 }
@@ -373,9 +396,31 @@ pub trait DiagnosticRenderer {
         editor: WeakEntity<Editor>,
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>>;
+
+    fn render_hover(
+        &self,
+        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        range: Range<Point>,
+        buffer_id: BufferId,
+        cx: &mut App,
+    ) -> Option<Entity<markdown::Markdown>>;
+
+    fn open_link(
+        &self,
+        editor: &mut Editor,
+        link: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    );
 }
 
 pub(crate) struct GlobalDiagnosticRenderer(pub Arc<dyn DiagnosticRenderer>);
+
+impl GlobalDiagnosticRenderer {
+    fn global(cx: &App) -> Option<Arc<dyn DiagnosticRenderer>> {
+        cx.try_global::<Self>().map(|g| g.0.clone())
+    }
+}
 
 impl gpui::Global for GlobalDiagnosticRenderer {}
 pub fn set_diagnostic_renderer(renderer: impl DiagnosticRenderer + 'static, cx: &mut App) {
@@ -755,6 +800,21 @@ impl ChangeList {
     }
 }
 
+#[derive(Clone)]
+struct InlineBlamePopoverState {
+    scroll_handle: ScrollHandle,
+    commit_message: Option<ParsedCommitMessage>,
+    markdown: Entity<Markdown>,
+}
+
+struct InlineBlamePopover {
+    position: gpui::Point<Pixels>,
+    show_task: Option<Task<()>>,
+    hide_task: Option<Task<()>>,
+    popover_bounds: Option<Bounds<Pixels>>,
+    popover_state: InlineBlamePopoverState,
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -823,6 +883,7 @@ pub struct Editor {
     context_menu_options: Option<ContextMenuOptions>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    inline_blame_popover: Option<InlineBlamePopover>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
@@ -846,7 +907,7 @@ pub struct Editor {
     read_only: bool,
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
-    hover_state: HoverState,
+    pub hover_state: HoverState,
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
@@ -879,7 +940,6 @@ pub struct Editor {
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
-    pub git_blame_inline_tooltip: Option<AnyWeakEntity>,
     git_blame_inline_enabled: bool,
     render_diff_hunk_controls: RenderDiffHunkControlsFn,
     serialize_dirty_buffers: bool,
@@ -923,6 +983,7 @@ pub struct Editor {
     mouse_cursor_hidden: bool,
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
+    inline_value_cache: InlineValueCache,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1517,6 +1578,8 @@ impl Editor {
                             if editor.go_to_active_debug_line(window, cx) {
                                 cx.stop_propagation();
                             }
+
+                            editor.refresh_inline_values(cx);
                         }
                         _ => {}
                     },
@@ -1594,7 +1657,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             show_scrollbars: true,
-            disable_scrolling: true,
+            disable_scrolling: false,
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
@@ -1619,6 +1682,7 @@ impl Editor {
             context_menu_options: None,
             mouse_context_menu: None,
             completion_tasks: Default::default(),
+            inline_blame_popover: Default::default(),
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
@@ -1659,6 +1723,7 @@ impl Editor {
                 released_too_fast: false,
             },
             inline_diagnostics_enabled: mode.is_full(),
+            inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -1683,7 +1748,6 @@ impl Editor {
             show_git_blame_inline: false,
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
-            git_blame_inline_tooltip: None,
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
             serialize_dirty_buffers: ProjectSettings::get_global(cx)
@@ -1759,6 +1823,7 @@ impl Editor {
                             );
                         });
                         editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
+                        editor.inline_blame_popover.take();
                     }
                 }
                 EditorEvent::Edited { .. } => {
@@ -1787,6 +1852,33 @@ impl Editor {
                 _ => (),
             },
         ));
+
+        if let Some(dap_store) = this
+            .project
+            .as_ref()
+            .map(|project| project.read(cx).dap_store())
+        {
+            let weak_editor = cx.weak_entity();
+
+            this._subscriptions
+                .push(
+                    cx.observe_new::<project::debugger::session::Session>(move |_, _, cx| {
+                        let session_entity = cx.entity();
+                        weak_editor
+                            .update(cx, |editor, cx| {
+                                editor._subscriptions.push(
+                                    cx.subscribe(&session_entity, Self::on_debug_session_event),
+                                );
+                            })
+                            .ok();
+                    }),
+                );
+
+            for session in dap_store.read(cx).sessions().cloned().collect::<Vec<_>>() {
+                this._subscriptions
+                    .push(cx.subscribe(&session, Self::on_debug_session_event));
+            }
+        }
 
         this.end_selection(window, cx);
         this.scroll_manager.show_scrollbars(window, cx);
@@ -2529,6 +2621,7 @@ impl Editor {
             self.update_visible_inline_completion(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
+            self.inline_blame_popover.take();
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(window, cx);
             }
@@ -4195,6 +4288,17 @@ impl Editor {
         }
     }
 
+    pub fn toggle_inline_values(
+        &mut self,
+        _: &ToggleInlineValues,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.inline_value_cache.enabled = !self.inline_value_cache.enabled;
+
+        self.refresh_inline_values(cx);
+    }
+
     pub fn toggle_inlay_hints(
         &mut self,
         _: &ToggleInlayHints,
@@ -4209,6 +4313,10 @@ impl Editor {
 
     pub fn inlay_hints_enabled(&self) -> bool {
         self.inlay_hint_cache.enabled
+    }
+
+    pub fn inline_values_enabled(&self) -> bool {
+        self.inline_value_cache.enabled
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
@@ -4625,6 +4733,8 @@ impl Editor {
             .as_ref()
             .map_or(true, |provider| provider.filter_completions());
 
+        let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
+
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_in(window, async move |editor, cx| {
             async move {
@@ -4672,6 +4782,7 @@ impl Editor {
                         position,
                         buffer.clone(),
                         completions.into(),
+                        snippet_sort_order,
                     );
 
                     menu.filter(
@@ -5051,7 +5162,7 @@ impl Editor {
                                 Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
                             });
 
-                    let debugger_flag = cx.has_flag::<Debugger>();
+                    let debugger_flag = cx.has_flag::<DebuggerFeatureFlag>();
 
                     Some(cx.spawn_in(window, async move |editor, cx| {
                         let task_context = match task_context {
@@ -5391,6 +5502,82 @@ impl Editor {
                     })
                     .log_err();
                 }));
+        }
+    }
+
+    fn show_blame_popover(
+        &mut self,
+        blame_entry: &BlameEntry,
+        position: gpui::Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(state) = &mut self.inline_blame_popover {
+            state.hide_task.take();
+            cx.notify();
+        } else {
+            let delay = EditorSettings::get_global(cx).hover_popover_delay;
+            let show_task = cx.spawn(async move |editor, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(delay))
+                    .await;
+                editor
+                    .update(cx, |editor, cx| {
+                        if let Some(state) = &mut editor.inline_blame_popover {
+                            state.show_task = None;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+            });
+            let Some(blame) = self.blame.as_ref() else {
+                return;
+            };
+            let blame = blame.read(cx);
+            let details = blame.details_for_entry(&blame_entry);
+            let markdown = cx.new(|cx| {
+                Markdown::new(
+                    details
+                        .as_ref()
+                        .map(|message| message.message.clone())
+                        .unwrap_or_default(),
+                    None,
+                    None,
+                    cx,
+                )
+            });
+            self.inline_blame_popover = Some(InlineBlamePopover {
+                position,
+                show_task: Some(show_task),
+                hide_task: None,
+                popover_bounds: None,
+                popover_state: InlineBlamePopoverState {
+                    scroll_handle: ScrollHandle::new(),
+                    commit_message: details,
+                    markdown,
+                },
+            });
+        }
+    }
+
+    fn hide_blame_popover(&mut self, cx: &mut Context<Self>) {
+        if let Some(state) = &mut self.inline_blame_popover {
+            if state.show_task.is_some() {
+                self.inline_blame_popover.take();
+                cx.notify();
+            } else {
+                let hide_task = cx.spawn(async move |editor, cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(100))
+                        .await;
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.inline_blame_popover.take();
+                            cx.notify();
+                        })
+                        .ok();
+                });
+                state.hide_task = Some(hide_task);
+            }
         }
     }
 
@@ -8045,10 +8232,18 @@ impl Editor {
         let buffer_id = selection.start.buffer_id.unwrap();
         let buffer = self.buffer().read(cx).buffer(buffer_id);
         let id = post_inc(&mut self.next_completion_id);
+        let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
 
         if let Some(buffer) = buffer {
             *self.context_menu.borrow_mut() = Some(CodeContextMenu::Completions(
-                CompletionsMenu::new_snippet_choices(id, true, choices, selection, buffer),
+                CompletionsMenu::new_snippet_choices(
+                    id,
+                    true,
+                    choices,
+                    selection,
+                    buffer,
+                    snippet_sort_order,
+                ),
             ));
         }
     }
@@ -8966,7 +9161,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<Debugger>() {
+        if !cx.has_flag::<DebuggerFeatureFlag>() {
             return;
         }
         let source = self
@@ -14721,25 +14916,17 @@ impl Editor {
         }
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
-        let Some(diagnostic_renderer) = cx
-            .try_global::<GlobalDiagnosticRenderer>()
-            .map(|g| g.0.clone())
-        else {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let Some(renderer) = GlobalDiagnosticRenderer::global(cx) else {
             return;
         };
-        let buffer = self.buffer.read(cx).snapshot(cx);
 
         let diagnostic_group = buffer
             .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
             .collect::<Vec<_>>();
 
-        let blocks = diagnostic_renderer.render_group(
-            diagnostic_group,
-            buffer_id,
-            snapshot,
-            cx.weak_entity(),
-            cx,
-        );
+        let blocks =
+            renderer.render_group(diagnostic_group, buffer_id, snapshot, cx.weak_entity(), cx);
 
         let blocks = self.display_map.update(cx, |display_map, cx| {
             display_map.insert_blocks(blocks, cx).into_iter().collect()
@@ -16343,34 +16530,33 @@ impl Editor {
         maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
 
-            let Some((_, _, active_position)) =
-                breakpoint_store.read(cx).active_position().cloned()
+            let Some(active_stack_frame) = breakpoint_store.read(cx).active_position().cloned()
             else {
                 self.clear_row_highlights::<DebugCurrentRowHighlight>();
                 return None;
             };
 
+            let position = active_stack_frame.position;
+            let buffer_id = position.buffer_id?;
             let snapshot = self
                 .project
                 .as_ref()?
                 .read(cx)
-                .buffer_for_id(active_position.buffer_id?, cx)?
+                .buffer_for_id(buffer_id, cx)?
                 .read(cx)
                 .snapshot();
 
             let mut handled = false;
-            for (id, ExcerptRange { context, .. }) in self
-                .buffer
-                .read(cx)
-                .excerpts_for_buffer(active_position.buffer_id?, cx)
+            for (id, ExcerptRange { context, .. }) in
+                self.buffer.read(cx).excerpts_for_buffer(buffer_id, cx)
             {
-                if context.start.cmp(&active_position, &snapshot).is_ge()
-                    || context.end.cmp(&active_position, &snapshot).is_lt()
+                if context.start.cmp(&position, &snapshot).is_ge()
+                    || context.end.cmp(&position, &snapshot).is_lt()
                 {
                     continue;
                 }
                 let snapshot = self.buffer.read(cx).snapshot(cx);
-                let multibuffer_anchor = snapshot.anchor_in_excerpt(id, active_position)?;
+                let multibuffer_anchor = snapshot.anchor_in_excerpt(id, position)?;
 
                 handled = true;
                 self.clear_row_highlights::<DebugCurrentRowHighlight>();
@@ -16383,6 +16569,7 @@ impl Editor {
 
                 cx.notify();
             }
+
             handled.then_some(())
         })
         .is_some()
@@ -16576,12 +16763,7 @@ impl Editor {
 
     pub fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
         self.show_git_blame_inline
-            && (self.focus_handle.is_focused(window)
-                || self
-                    .git_blame_inline_tooltip
-                    .as_ref()
-                    .and_then(|t| t.upgrade())
-                    .is_some())
+            && (self.focus_handle.is_focused(window) || self.inline_blame_popover.is_some())
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
     }
@@ -17372,6 +17554,87 @@ impl Editor {
 
     fn on_buffer_changed(&mut self, _: Entity<MultiBuffer>, cx: &mut Context<Self>) {
         cx.notify();
+    }
+
+    fn on_debug_session_event(
+        &mut self,
+        _session: Entity<Session>,
+        event: &SessionEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            SessionEvent::InvalidateInlineValue => {
+                self.refresh_inline_values(cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+            return;
+        };
+        if !self.inline_value_cache.enabled {
+            let inlays = std::mem::take(&mut self.inline_value_cache.inlays);
+            self.splice_inlays(&inlays, Vec::new(), cx);
+            return;
+        }
+
+        let current_execution_position = self
+            .highlighted_rows
+            .get(&TypeId::of::<DebugCurrentRowHighlight>())
+            .and_then(|lines| lines.last().map(|line| line.range.start));
+
+        self.inline_value_cache.refresh_task = cx.spawn(async move |editor, cx| {
+            let snapshot = editor
+                .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                .ok()?;
+
+            let inline_values = editor
+                .update(cx, |_, cx| {
+                    let Some(current_execution_position) = current_execution_position else {
+                        return Some(Task::ready(Ok(Vec::new())));
+                    };
+
+                    // todo(debugger) when introducing multi buffer inline values check execution position's buffer id to make sure the text
+                    // anchor is in the same buffer
+                    let range =
+                        buffer.read(cx).anchor_before(0)..current_execution_position.text_anchor;
+                    project.inline_values(buffer, range, cx)
+                })
+                .ok()
+                .flatten()?
+                .await
+                .context("refreshing debugger inlays")
+                .log_err()?;
+
+            let (excerpt_id, buffer_id) = snapshot
+                .excerpts()
+                .next()
+                .map(|excerpt| (excerpt.0, excerpt.1.remote_id()))?;
+            editor
+                .update(cx, |editor, cx| {
+                    let new_inlays = inline_values
+                        .into_iter()
+                        .map(|debugger_value| {
+                            Inlay::debugger_hint(
+                                post_inc(&mut editor.next_inlay_id),
+                                Anchor::in_buffer(excerpt_id, buffer_id, debugger_value.position),
+                                debugger_value.text(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let mut inlay_ids = new_inlays.iter().map(|inlay| inlay.id).collect();
+                    std::mem::swap(&mut editor.inline_value_cache.inlays, &mut inlay_ids);
+
+                    editor.splice_inlays(&inlay_ids, new_inlays, cx);
+                })
+                .ok()?;
+            Some(())
+        });
     }
 
     fn on_buffer_event(
@@ -18909,6 +19172,13 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<Vec<project::Hover>>>;
 
+    fn inline_values(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>>;
+
     fn inlay_hints(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -19366,10 +19636,30 @@ impl SemanticsProvider for Entity<Project> {
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         // TODO: make this work for remote projects
-        self.update(cx, |this, cx| {
+        self.update(cx, |project, cx| {
+            if project
+                .active_debug_session(cx)
+                .is_some_and(|(session, _)| session.read(cx).any_stopped_thread())
+            {
+                return true;
+            }
+
             buffer.update(cx, |buffer, cx| {
-                this.any_language_server_supports_inlay_hints(buffer, cx)
+                project.any_language_server_supports_inlay_hints(buffer, cx)
             })
+        })
+    }
+
+    fn inline_values(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
+        self.update(cx, |project, cx| {
+            let (session, active_stack_frame) = project.active_debug_session(cx)?;
+
+            Some(project.inline_values(session, active_stack_frame, buffer_handle, range, cx))
         })
     }
 

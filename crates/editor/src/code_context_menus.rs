@@ -1,4 +1,4 @@
-use feature_flags::{Debugger, FeatureFlagAppExt as _};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,
@@ -25,6 +25,7 @@ use task::ResolvedTask;
 use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
 use util::ResultExt;
 
+use crate::editor_settings::SnippetSortOrder;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
     CodeActionProvider, CompletionId, CompletionItemKind, CompletionProvider, DisplayRow, Editor,
@@ -184,6 +185,7 @@ pub struct CompletionsMenu {
     pub(super) ignore_completion_provider: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
     markdown_element: Option<Entity<Markdown>>,
+    snippet_sort_order: SnippetSortOrder,
 }
 
 impl CompletionsMenu {
@@ -195,6 +197,7 @@ impl CompletionsMenu {
         initial_position: Anchor,
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
+        snippet_sort_order: SnippetSortOrder,
     ) -> Self {
         let match_candidates = completions
             .iter()
@@ -217,6 +220,7 @@ impl CompletionsMenu {
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
             markdown_element: None,
+            snippet_sort_order,
         }
     }
 
@@ -226,6 +230,7 @@ impl CompletionsMenu {
         choices: &Vec<String>,
         selection: Range<Anchor>,
         buffer: Entity<Buffer>,
+        snippet_sort_order: SnippetSortOrder,
     ) -> Self {
         let completions = choices
             .iter()
@@ -275,6 +280,7 @@ impl CompletionsMenu {
             ignore_completion_provider: false,
             last_rendered_range: RefCell::new(None).into(),
             markdown_element: None,
+            snippet_sort_order,
         }
     }
 
@@ -657,7 +663,11 @@ impl CompletionsMenu {
         )
     }
 
-    pub fn sort_matches(matches: &mut Vec<SortableMatch<'_>>, query: Option<&str>) {
+    pub fn sort_matches(
+        matches: &mut Vec<SortableMatch<'_>>,
+        query: Option<&str>,
+        snippet_sort_order: SnippetSortOrder,
+    ) {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
@@ -703,7 +713,11 @@ impl CompletionsMenu {
                 MatchTier::OtherMatch { sort_score }
             } else {
                 let sort_score_int = Reverse(if score >= FUZZY_THRESHOLD { 1 } else { 0 });
-                let sort_snippet = Reverse(if mat.is_snippet { 1 } else { 0 });
+                let sort_snippet = match snippet_sort_order {
+                    SnippetSortOrder::Top => Reverse(if mat.is_snippet { 1 } else { 0 }),
+                    SnippetSortOrder::Bottom => Reverse(if mat.is_snippet { 0 } else { 1 }),
+                    SnippetSortOrder::Inline => Reverse(0),
+                };
                 MatchTier::WordStartMatch {
                     sort_score_int,
                     sort_snippet,
@@ -770,7 +784,7 @@ impl CompletionsMenu {
                 })
                 .collect();
 
-            Self::sort_matches(&mut sortable_items, query);
+            Self::sort_matches(&mut sortable_items, query, self.snippet_sort_order);
 
             matches = sortable_items
                 .into_iter()
@@ -812,7 +826,7 @@ impl CodeActionContents {
         actions: Option<Rc<[AvailableCodeAction]>>,
         cx: &App,
     ) -> Self {
-        if !cx.has_flag::<Debugger>() {
+        if !cx.has_flag::<DebuggerFeatureFlag>() {
             if let Some(tasks) = &mut tasks {
                 tasks
                     .templates

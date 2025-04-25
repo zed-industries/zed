@@ -915,8 +915,9 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
-        const REMOTE_NAME: &str = "origin";
-        let remote_url = self.remote_url(REMOTE_NAME);
+        let remote_url = self
+            .remote_url("upstream")
+            .or_else(|| self.remote_url("origin"));
 
         self.executor
             .spawn(async move {
