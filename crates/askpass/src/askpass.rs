@@ -10,7 +10,6 @@ use futures::{AsyncBufReadExt as _, io::BufReader};
 use futures::{AsyncWriteExt as _, FutureExt as _, select_biased};
 use futures::{SinkExt, StreamExt};
 use gpui::{AsyncApp, BackgroundExecutor, Task};
-use shlex;
 #[cfg(unix)]
 use smol::fs;
 #[cfg(unix)]
