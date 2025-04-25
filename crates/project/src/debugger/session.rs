@@ -253,7 +253,6 @@ impl LocalMode {
         &self,
         filters: Vec<ExceptionBreakpointsFilter>,
         supports_filter_options: bool,
-        cx: &App,
     ) -> Task<Result<Vec<dap::Breakpoint>>> {
         let arg = if supports_filter_options {
             SetExceptionBreakpoints::WithOptions {
@@ -390,15 +389,9 @@ impl LocalMode {
                     }
                 })?;
 
-                cx.update(|cx| {
-                    this.send_exception_breakpoints(
-                        exception_filters,
-                        supports_exception_filters,
-                        cx,
-                    )
-                })?
-                .await
-                .ok();
+                this.send_exception_breakpoints(exception_filters, supports_exception_filters)
+                    .await
+                    .ok();
                 let ret = if configuration_done_supported {
                     this.request(ConfigurationDone {})
                 } else {
@@ -1380,7 +1373,7 @@ impl Session {
                 .supports_exception_filter_options
                 .unwrap_or_default();
             local
-                .send_exception_breakpoints(exception_filters, supports_exception_filters, cx)
+                .send_exception_breakpoints(exception_filters, supports_exception_filters)
                 .detach_and_log_err(cx);
         } else {
             debug_assert!(false, "Not implemented");
