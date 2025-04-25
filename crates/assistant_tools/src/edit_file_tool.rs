@@ -587,7 +587,7 @@ impl ToolCard for EditFileToolCard {
                         .border_t_1()
                         .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
-                        .child(div().id("a").overflow_x_scroll().pl_1().child(editor))
+                        .child(div().pl_1().child(editor))
                         .when(
                             !self.full_height_expanded && is_collapsible,
                             |editor_container| editor_container.child(gradient_overlay),
