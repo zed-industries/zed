@@ -135,6 +135,7 @@ fn task_type_to_adapter_name(task_type: &str) -> SharedString {
 
 #[cfg(test)]
 mod tests {
+
     use collections::FxHashMap;
 
     use crate::{DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest, TcpArgumentsTemplate};

@@ -796,6 +796,10 @@ impl ContextProvider for BasicContextProvider {
 
         Task::ready(Ok(task_variables))
     }
+
+    fn debug_adapter(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A ContextProvider that doesn't provide any task variables on it's own, though it has some associated tasks.
@@ -818,6 +822,10 @@ impl ContextProvider for ContextProviderWithTasks {
         _: &App,
     ) -> Option<TaskTemplates> {
         Some(self.templates.clone())
+    }
+
+    fn debug_adapter(&self) -> Option<String> {
+        None
     }
 }
 

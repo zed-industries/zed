@@ -816,6 +816,10 @@ impl ContextProvider for RustContextProvider {
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
         Some(SERVER_NAME)
     }
+
+    fn debug_adapter(&self) -> Option<String> {
+        Some("CodeLLDB".to_owned())
+    }
 }
 
 /// Part of the data structure of Cargo metadata

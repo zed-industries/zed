@@ -5192,6 +5192,12 @@ impl Editor {
                                     let dap_store = project.read(cx).dap_store();
                                     let mut scenarios = vec![];
                                     let resolved_tasks = resolved_tasks.as_ref()?;
+                                    let debug_adapter: SharedString = buffer
+                                        .read(cx)
+                                        .language()?
+                                        .context_provider()?
+                                        .debug_adapter()?
+                                        .into();
                                     dap_store.update(cx, |this, cx| {
                                         for (_, task) in &resolved_tasks.templates {
                                             if let Some(scenario) = this
@@ -5200,7 +5206,7 @@ impl Editor {
                                                     SharedString::from(
                                                         task.original_task().label.clone(),
                                                     ),
-                                                    "CodeLLDB".into(),
+                                                    debug_adapter.clone(),
                                                     cx,
                                                 )
                                             {
