@@ -99,7 +99,7 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
     }
 
     fn get_shifted_key(&self, key: &str) -> String {
-        if is_immutable_key(key) || key.len() != 1 {
+        if is_immutable_key(key) || key.chars().count() != 1 {
             return key.to_string();
         }
         if is_alphabetic_key(key) {
