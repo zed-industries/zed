@@ -184,6 +184,7 @@ pub fn parse_markdown(
                         (range, MarkdownEvent::SubstitutedText(str.to_owned()))
                     }
                 }
+                #[derive(Debug)]
                 struct TextRange<'a> {
                     source_range: Range<usize>,
                     merged_range: Range<usize>,
@@ -236,7 +237,9 @@ pub fn parse_markdown(
                             events.push(event_for(text, range.source_range, &range.parsed));
                         }
 
-                        let range = ranges.peek_mut().unwrap();
+                        let Some(range) = ranges.peek_mut() else {
+                            continue;
+                        };
                         let prefix_len = link_start_in_merged - range.merged_range.start;
                         if prefix_len > 0 {
                             let (head, tail) = range.parsed.split_at(prefix_len);
@@ -251,6 +254,7 @@ pub fn parse_markdown(
                         }
 
                         let link_start_in_source = range.source_range.start;
+                        let mut link_end_in_source = range.source_range.end;
                         let mut link_events = Vec::new();
 
                         while ranges
@@ -258,23 +262,26 @@ pub fn parse_markdown(
                             .is_some_and(|range| range.merged_range.end <= link_end_in_merged)
                         {
                             let range = ranges.next().unwrap();
+                            link_end_in_source = range.source_range.end;
                             link_events.push(event_for(text, range.source_range, &range.parsed));
                         }
 
-                        let range = ranges.peek_mut().unwrap();
-                        let prefix_len = link_end_in_merged - range.merged_range.start;
-                        if prefix_len > 0 {
-                            let (head, tail) = range.parsed.split_at(prefix_len);
-                            link_events.push(event_for(
-                                text,
-                                range.source_range.start..range.source_range.start + prefix_len,
-                                head,
-                            ));
-                            range.parsed = CowStr::Boxed(tail.into());
-                            range.merged_range.start += prefix_len;
-                            range.source_range.start += prefix_len;
+                        if let Some(range) = ranges.peek_mut() {
+                            let prefix_len = link_end_in_merged - range.merged_range.start;
+                            if prefix_len > 0 {
+                                let (head, tail) = range.parsed.split_at(prefix_len);
+                                link_events.push(event_for(
+                                    text,
+                                    range.source_range.start..range.source_range.start + prefix_len,
+                                    head,
+                                ));
+                                range.parsed = CowStr::Boxed(tail.into());
+                                range.merged_range.start += prefix_len;
+                                range.source_range.start += prefix_len;
+                                link_end_in_source = range.source_range.start;
+                            }
                         }
-                        let link_range = link_start_in_source..range.source_range.start;
+                        let link_range = link_start_in_source..link_end_in_source;
 
                         events.push((
                             link_range.clone(),
@@ -561,6 +568,33 @@ mod tests {
                 HashSet::new(),
                 HashSet::new()
             )
+        );
+    }
+
+    #[test]
+    fn test_incomplete_link() {
+        assert_eq!(
+            parse_markdown("You can use the [GitHub Search API](https://docs.github.com/en").0,
+            vec![
+                (0..62, Start(Paragraph)),
+                (0..16, Text),
+                (16..17, Text),
+                (17..34, Text),
+                (34..35, Text),
+                (35..36, Text),
+                (
+                    36..62,
+                    Start(Link {
+                        link_type: LinkType::Autolink,
+                        dest_url: "https://docs.github.com/en".into(),
+                        title: "".into(),
+                        id: "".into()
+                    })
+                ),
+                (36..62, Text),
+                (36..62, End(MarkdownTagEnd::Link)),
+                (0..62, End(MarkdownTagEnd::Paragraph))
+            ],
         );
     }
 
