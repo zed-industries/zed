@@ -214,12 +214,20 @@ pub struct TabContentParams {
     pub detail: Option<usize>,
     pub selected: bool,
     pub preview: bool,
+    /// Tab content should be deemphasized when active pane does not have focus.
+    pub deemphasized: bool,
 }
 
 impl TabContentParams {
     /// Returns the text color to be used for the tab content.
     pub fn text_color(&self) -> Color {
-        if self.selected {
+        if self.deemphasized {
+            if self.selected {
+                Color::Muted
+            } else {
+                Color::Hidden
+            }
+        } else if self.selected {
             Color::Default
         } else {
             Color::Muted
