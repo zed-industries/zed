@@ -1,7 +1,3 @@
-use std::pin::Pin;
-use std::str::FromStr as _;
-use std::sync::Arc;
-
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
@@ -23,7 +19,11 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelToolUse, MessageContent, RateLimiter, Role,
     StopReason,
 };
+use partial_json_fixer;
 use settings::SettingsStore;
+use std::collections::HashSet;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::prelude::*;
@@ -240,7 +240,7 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn stream_completion(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -248,19 +248,40 @@ impl LanguageModel for CopilotChatLanguageModel {
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
         >,
     > {
-        if let Some(message) = request.messages.last() {
-            if message.contents_empty() {
-                const EMPTY_PROMPT_MSG: &str =
-                    "Empty prompts aren't allowed. Please provide a non-empty prompt.";
-                return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
-            }
+        let has_tools = !request.tools.is_empty()
+            || request.messages.iter().any(|msg| {
+                msg.content.iter().any(|content| {
+                    matches!(
+                        content,
+                        MessageContent::ToolUse(_) | MessageContent::ToolResult(_)
+                    )
+                })
+            });
 
-            // Copilot Chat has a restriction that the final message must be from the user.
-            // While their API does return an error message for this, we can catch it earlier
-            // and provide a more helpful error message.
-            if !matches!(message.role, Role::User) {
-                const USER_ROLE_MSG: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
-                return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG))).boxed();
+        if !has_tools {
+            if let Some(message) = request.messages.last() {
+                if message.contents_empty() {
+                    const EMPTY_PROMPT_MSG: &str =
+                        "Empty prompts aren't allowed. Please provide a non-empty prompt.";
+                    return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
+                }
+
+                if !matches!(message.role, Role::User) {
+                    const USER_ROLE_MSG: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
+                    return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG))).boxed();
+                }
+            }
+        }
+
+        if has_tools {
+            if let Some(message) = request.messages.last() {
+                if !matches!(message.role, Role::User) {
+                    request.messages.push(LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![MessageContent::Text("".into())],
+                        cache: false,
+                    });
+                }
             }
         }
 
@@ -301,12 +322,14 @@ pub fn map_to_language_model_completion_events(
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
         tool_calls_by_index: HashMap<usize, RawToolCall>,
+        processed_tool_ids: HashSet<String>,
     }
 
     futures::stream::unfold(
         State {
             events,
             tool_calls_by_index: HashMap::default(),
+            processed_tool_ids: HashSet::default(),
         },
         move |mut state| async move {
             if let Some(event) = state.events.next().await {
@@ -354,6 +377,22 @@ pub fn map_to_language_model_completion_events(
 
                                 if let Some(arguments) = function.arguments.clone() {
                                     entry.arguments.push_str(&arguments);
+
+                                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&entry.arguments) {
+                                        if value.is_object() && !entry.id.is_empty() && !entry.name.is_empty() {
+                                            if !state.processed_tool_ids.contains(&entry.id) {
+                                                events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                                    LanguageModelToolUse {
+                                                        id: entry.id.clone().into(),
+                                                        name: entry.name.as_str().into(),
+                                                        is_input_complete: false, // Mark as not complete yet
+                                                        input: value.clone(),
+                                                        raw_input: entry.arguments.clone(),
+                                                    },
+                                                )));
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -365,30 +404,57 @@ pub fn map_to_language_model_completion_events(
                                 )));
                             }
                             Some("tool_calls") => {
-                                events.extend(state.tool_calls_by_index.drain().map(
-                                    |(_, tool_call)| match serde_json::Value::from_str(
-                                        &tool_call.arguments,
-                                    ) {
-                                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                                            LanguageModelToolUse {
-                                                id: tool_call.id.clone().into(),
-                                                name: tool_call.name.as_str().into(),
-                                                is_input_complete: true,
-                                                input,
-                                                raw_input: tool_call.arguments.clone(),
-                                            },
-                                        )),
-                                        Err(error) => {
-                                            Err(LanguageModelCompletionError::BadInputJson {
-                                                id: tool_call.id.into(),
-                                                tool_name: tool_call.name.as_str().into(),
-                                                raw_input: tool_call.arguments.into(),
-                                                json_parse_error: error.to_string(),
-                                            })
-                                        }
-                                    },
-                                ));
+                                let mut tool_events = Vec::new();
 
+                                for (_, tool_call) in state.tool_calls_by_index.drain() {
+                                    if state.processed_tool_ids.contains(&tool_call.id) {
+                                        continue;
+                                    }
+
+                                    let fixed_arguments = if tool_call.arguments.trim().is_empty() {
+                                        "{}".to_string()
+                                    } else {
+                                        partial_json_fixer::fix_json(&tool_call.arguments)
+                                    };
+
+                                    match serde_json::from_str(&fixed_arguments) {
+                                        Ok(input) => {
+                                            state.processed_tool_ids.insert(tool_call.id.clone());
+                                            tool_events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_call.id.clone().into(),
+                                                    name: tool_call.name.as_str().into(),
+                                                    is_input_complete: true,
+                                                    input,
+                                                    raw_input: tool_call.arguments.clone(),
+                                                },
+                                            )));
+                                        }
+                                        Err(error) => {
+                                            log::error!(
+                                                "Invalid JSON from Copilot Chat tool call. Tool ID: {}, Name: {}, Arguments: {}, Error: {}",
+                                                tool_call.id,
+                                                tool_call.name,
+                                                tool_call.arguments,
+                                                error
+                                            );
+
+                                            let empty_json = serde_json::json!({});
+                                            state.processed_tool_ids.insert(tool_call.id.clone());
+                                            tool_events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_call.id.clone().into(),
+                                                    name: tool_call.name.as_str().into(),
+                                                    is_input_complete: true,
+                                                    input: empty_json,
+                                                    raw_input: tool_call.arguments.clone(),
+                                                },
+                                            )));
+                                        }
+                                    }
+                                }
+
+                                events.extend(tool_events);
                                 events.push(Ok(LanguageModelCompletionEvent::Stop(
                                     StopReason::ToolUse,
                                 )));
