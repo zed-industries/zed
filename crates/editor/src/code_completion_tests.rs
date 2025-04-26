@@ -433,7 +433,51 @@ fn test_sort_matches_for_unreachable(_cx: &mut TestAppContext) {
         "Match order not expected"
     );
 
-    // Case 4: "unreachable"
+    // Case 4: "unreachabl"
+    let query: Option<&str> = Some("unreachable");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.9090909090909092,
+                positions: vec![],
+                string: "unreachable".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "unreachable"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.6666666666666666,
+                positions: vec![],
+                string: "unreachable!(…)".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "unreachable!(…)"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.47619047619047616,
+                positions: vec![],
+                string: "unreachable_unchecked".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "unreachable_unchecked"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
+    assert_eq!(
+        matches[0].string_match.string.as_str(),
+        "unreachable!(…)",
+        "Match order not expected"
+    );
+
+    // Case 5: "unreachable"
     let query: Option<&str> = Some("unreachable");
     let mut matches: Vec<SortableMatch<'_>> = vec![
         SortableMatch {
@@ -985,7 +1029,7 @@ fn test_sort_matches_for_snippets(_cx: &mut TestAppContext) {
             },
             is_snippet: false,
             sort_text: Some("80000000"),
-            sort_key: (2, "unreachable"),
+            sort_key: (2, "println"),
         },
         SortableMatch {
             string_match: StringMatch {
