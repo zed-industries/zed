@@ -673,9 +673,10 @@ impl CompletionsMenu {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
-                sort_bucket: Reverse<i32>,
+                sort_prefix: Reverse<usize>,
                 sort_snippet: Reverse<i32>,
                 sort_text: Option<&'a str>,
+                sort_score: Reverse<OrderedFloat<f64>>,
                 sort_key: (usize, &'a str),
             },
             OtherMatch {
@@ -685,10 +686,6 @@ impl CompletionsMenu {
 
         // Our goal here is to intelligently sort completion suggestions. We want to
         // balance the raw fuzzy match score with hints from the language server
-        //
-        // We first primary sort using fuzzy score by putting matches into multiple
-        // buckets. Among these buckets matches are then compared by
-        // various criteria like snippet, LSP hints, kind, label text etc.
 
         let query_start_lower = query
             .and_then(|q| q.chars().next())
@@ -696,8 +693,9 @@ impl CompletionsMenu {
 
         matches.sort_unstable_by_key(|mat| {
             let score = mat.string_match.score;
+            let sort_score = Reverse(OrderedFloat(score));
 
-            let is_other_match = query_start_lower
+            let query_start_doesnt_match_split_words = query_start_lower
                 .map(|query_char| {
                     !split_words(&mat.string_match.string).any(|word| {
                         word.chars()
@@ -708,26 +706,38 @@ impl CompletionsMenu {
                 })
                 .unwrap_or(false);
 
-            if is_other_match {
-                let sort_score = Reverse(OrderedFloat(score));
+            if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }
             } else {
-                // Convert fuzzy match score (0.0-1.0) to a priority bucket (0-3)
-                let sort_bucket = Reverse(match (score * 10.0).floor() as i32 {
-                    s if s >= 7 => 3,
-                    s if s >= 1 => 2,
-                    s if s > 0 => 1,
-                    _ => 0,
-                });
                 let sort_snippet = match snippet_sort_order {
                     SnippetSortOrder::Top => Reverse(if mat.is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if mat.is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
                 };
+                let mixed_case_prefix_length = Reverse(
+                    query
+                        .map(|q| {
+                            q.chars()
+                                .zip(mat.string_match.string.chars())
+                                .enumerate()
+                                .take_while(|(i, (q_char, match_char))| {
+                                    if *i == 0 {
+                                        // Case-sensitive comparison for first character
+                                        q_char == match_char
+                                    } else {
+                                        // Case-insensitive comparison for other characters
+                                        q_char.to_lowercase().eq(match_char.to_lowercase())
+                                    }
+                                })
+                                .count()
+                        })
+                        .unwrap_or(0),
+                );
                 MatchTier::WordStartMatch {
-                    sort_bucket,
+                    sort_prefix: mixed_case_prefix_length,
                     sort_snippet,
                     sort_text: mat.sort_text,
+                    sort_score,
                     sort_key: mat.sort_key,
                 }
             }
