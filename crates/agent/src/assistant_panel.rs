@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    AssistantPanelDelegate, ConfigurationError, ContextEditor, SlashCommandCompletionProvider,
-    humanize_token_count, make_lsp_adapter_delegate, render_remaining_tokens,
+    AssistantContext, AssistantPanelDelegate, ConfigurationError, ContextEditor, ContextEvent,
+    SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
+    render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -192,21 +193,38 @@ impl ActiveView {
             editor
         });
 
+        // This is a workaround for `editor.set_text` emitting a `BufferEdited` event, which would
+        // cause a custom summary to be set. The presence of this custom summary would cause
+        // summarization to not happen.
+        let mut suppress_first_edit = true;
+
         let subscriptions = vec![
             window.subscribe(&editor, cx, {
                 {
                     let context_editor = context_editor.clone();
                     move |editor, event, window, cx| match event {
                         EditorEvent::BufferEdited => {
+                            if suppress_first_edit {
+                                suppress_first_edit = false;
+                                return;
+                            }
                             let new_summary = editor.read(cx).text(cx);
 
                             context_editor.update(cx, |context_editor, cx| {
-                                context_editor.set_summary(new_summary, cx);
+                                context_editor
+                                    .context()
+                                    .update(cx, |assistant_context, cx| {
+                                        assistant_context.set_custom_summary(new_summary, cx);
+                                    })
                             })
                         }
                         EditorEvent::Blurred => {
                             if editor.read(cx).text(cx).is_empty() {
-                                let summary = context_editor.read(cx).summary_or_default();
+                                let summary = context_editor
+                                    .read(cx)
+                                    .context()
+                                    .read(cx)
+                                    .summary_or_default();
 
                                 editor.update(cx, |editor, cx| {
                                     editor.set_text(summary, window, cx);
@@ -217,14 +235,14 @@ impl ActiveView {
                     }
                 }
             }),
-            window.subscribe(&context_editor, cx, {
+            window.subscribe(&context_editor.read(cx).context().clone(), cx, {
                 let editor = editor.clone();
-                move |context_editor, event, window, cx| match event {
-                    EditorEvent::TitleChanged => {
-                        let title = context_editor.read(cx).title(cx).to_string();
+                move |assistant_context, event, window, cx| match event {
+                    ContextEvent::SummaryGenerated => {
+                        let summary = assistant_context.read(cx).summary_or_default();
 
                         editor.update(cx, |editor, cx| {
-                            editor.set_text(title, window, cx);
+                            editor.set_text(summary, window, cx);
                         })
                     }
                     _ => {}
@@ -1049,13 +1067,33 @@ impl AssistantPanel {
             }
             ActiveView::PromptEditor {
                 title_editor,
-                context_editor: _,
+                context_editor,
                 ..
-            } => div()
-                .ml_2()
-                .w_full()
-                .child(title_editor.clone())
-                .into_any_element(),
+            } => {
+                let context_editor = context_editor.read(cx);
+                let summary = context_editor.context().read(cx).summary();
+
+                match summary {
+                    None => Label::new(AssistantContext::DEFAULT_SUMMARY.clone())
+                        .truncate()
+                        .ml_2()
+                        .into_any_element(),
+                    Some(summary) => {
+                        if summary.done {
+                            div()
+                                .ml_2()
+                                .w_full()
+                                .child(title_editor.clone())
+                                .into_any_element()
+                        } else {
+                            Label::new(LOADING_SUMMARY_PLACEHOLDER)
+                                .ml_2()
+                                .truncate()
+                                .into_any_element()
+                        }
+                    }
+                }
+            }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
             ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
         };

@@ -48,7 +48,7 @@ use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::{any::TypeId, borrow::Cow, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{any::TypeId, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use text::SelectionGoal;
 use ui::{
     ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
@@ -182,7 +182,6 @@ impl Global for GlobalAssistantPanelDelegate {}
 pub struct ContextEditor {
     context: Entity<AssistantContext>,
     fs: Arc<dyn Fs>,
-    summary: Option<SharedString>,
     slash_commands: Arc<SlashCommandWorkingSet>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -271,7 +270,6 @@ impl ContextEditor {
         let mut this = Self {
             context,
             slash_commands,
-            summary: None,
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
@@ -620,6 +618,7 @@ impl ContextEditor {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
+            ContextEvent::SummaryGenerated => {}
             ContextEvent::StartedThoughtProcess(range) => {
                 let creases = self.insert_thought_process_output_sections(
                     [(
@@ -2181,43 +2180,8 @@ impl ContextEditor {
         });
     }
 
-    pub fn title(&self, cx: &App) -> Cow<str> {
-        self.context
-            .read(cx)
-            .summary()
-            .map(|summary| summary.text.clone())
-            .map(Cow::Owned)
-            .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
-    }
-
-    pub fn set_title(&mut self, title: impl Into<String>, cx: &mut Context<Self>) {
-        self.context.update(cx, |context, cx| {
-            context.custom_summary(title.into(), cx);
-        });
-    }
-
-    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Chat");
-
-    pub fn summary_or_default(&self) -> SharedString {
-        self.summary.clone().unwrap_or(Self::DEFAULT_SUMMARY)
-    }
-
-    pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
-        let Some(current_summary) = &self.summary else {
-            // Don't allow setting summary until generated
-            return;
-        };
-
-        let mut new_summary = new_summary.into();
-
-        if new_summary.is_empty() {
-            new_summary = Self::DEFAULT_SUMMARY;
-        }
-
-        if current_summary != &new_summary {
-            self.summary = Some(new_summary);
-            cx.emit(EditorEvent::TitleChanged);
-        }
+    pub fn title(&self, cx: &App) -> SharedString {
+        self.context.read(cx).summary_or_default()
     }
 
     fn render_patch_block(
