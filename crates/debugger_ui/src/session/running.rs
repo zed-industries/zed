@@ -168,8 +168,15 @@ impl Item for SubView {
 }
 
 impl Render for SubView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        v_flex().size_full().child(self.inner.clone())
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            // Add border uncoditionally to prevent layout shifts on focus changes.
+            .border_1()
+            .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
+                el.border_color(cx.theme().colors().pane_focused_border)
+            })
+            .child(self.inner.clone())
     }
 }
 
@@ -356,6 +363,7 @@ pub(crate) fn new_debugger_pane(
                                     .child(item.tab_content(
                                         TabContentParams {
                                             selected,
+                                            deemphasized: !pane.has_focus(window, cx),
                                             ..Default::default()
                                         },
                                         window,
