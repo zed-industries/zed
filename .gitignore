@@ -23,6 +23,7 @@
 /crates/theme/schemas/theme.json
 /crates/zed/resources/flatpak/flatpak-cargo-sources.json
 /dev.zed.Zed*.json
+/node_modules/
 /plugins/bin
 /script/node_modules
 /snap
