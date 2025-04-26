@@ -129,7 +129,9 @@ impl PaneGroup {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        self.root.render(0, zoomed, render_cx, window, cx)
+        // Extract just the element from the tuple
+        let (element, _contains_active_pane) = self.root.render(0, zoomed, render_cx, window, cx);
+        element
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
@@ -378,40 +380,42 @@ impl Member {
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
-    ) -> impl IntoElement {
+    ) -> (AnyElement, bool) {
         match self {
             Member::Pane(pane) => {
                 if zoomed == Some(&pane.downgrade().into()) {
-                    return div().into_any();
+                    return (div().into_any(), false);
                 }
 
                 let decoration = render_cx.decorate(pane, cx);
+                let is_active = pane == render_cx.active_pane();
 
-                div()
-                    .relative()
-                    .flex_1()
-                    .size_full()
-                    .child(
-                        AnyView::from(pane.clone())
-                            .cached(StyleRefinement::default().v_flex().size_full()),
-                    )
-                    .when_some(decoration.border, |this, color| {
-                        this.child(
-                            div()
-                                .absolute()
-                                .size_full()
-                                .left_0()
-                                .top_0()
-                                .border_2()
-                                .border_color(color),
+                (
+                    div()
+                        .relative()
+                        .flex_1()
+                        .size_full()
+                        .child(
+                            AnyView::from(pane.clone())
+                                .cached(StyleRefinement::default().v_flex().size_full()),
                         )
-                    })
-                    .children(decoration.status_box)
-                    .into_any()
+                        .when_some(decoration.border, |this, color| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .size_full()
+                                    .left_0()
+                                    .top_0()
+                                    .border_2()
+                                    .border_color(color),
+                            )
+                        })
+                        .children(decoration.status_box)
+                        .into_any(),
+                    is_active,
+                )
             }
-            Member::Axis(axis) => axis
-                .render(basis + 1, zoomed, render_cx, window, cx)
-                .into_any(),
+            Member::Axis(axis) => axis.render(basis + 1, zoomed, render_cx, window, cx),
         }
     }
 
@@ -463,6 +467,13 @@ impl PaneAxis {
             flexes,
             bounding_boxes,
         }
+    }
+
+    pub fn contains_pane(&self, target_pane: &Entity<Pane>) -> bool {
+        self.members.iter().any(|member| match member {
+            Member::Pane(pane) => pane == target_pane,
+            Member::Axis(axis) => axis.contains_pane(target_pane),
+        })
     }
 
     fn split(
@@ -720,27 +731,52 @@ impl PaneAxis {
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
-    ) -> gpui::AnyElement {
+    ) -> (gpui::AnyElement, bool) {
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
+        let mut contains_active_pane = false;
 
-        pane_axis(
+        // Track which children contain the active pane
+        let mut children_with_active_pane = vec![false; self.members.len()];
+
+        let active_pane = render_cx.active_pane().clone();
+
+        // First pass: render all children and collect information about which ones contain active panes
+        let rendered_children = self
+            .members
+            .iter()
+            .enumerate()
+            .map(|(ix, member)| {
+                if matches!(member, Member::Pane(pane) if pane == render_cx.active_pane()) {
+                    active_pane_ix = Some(ix);
+                    children_with_active_pane[ix] = true;
+                    contains_active_pane = true;
+                }
+
+                let (element, is_active) =
+                    member.render((basis + ix) * 10, zoomed, render_cx, window, cx);
+                if is_active {
+                    children_with_active_pane[ix] = true;
+                    contains_active_pane = true;
+                }
+                element.into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        let element = pane_axis(
             self.axis,
             basis,
             self.flexes.clone(),
             self.bounding_boxes.clone(),
             render_cx.workspace().clone(),
         )
-        .children(self.members.iter().enumerate().map(|(ix, member)| {
-            if matches!(member, Member::Pane(pane) if pane == render_cx.active_pane()) {
-                active_pane_ix = Some(ix);
-            }
-            member
-                .render((basis + ix) * 10, zoomed, render_cx, window, cx)
-                .into_any_element()
-        }))
+        .with_active_pane_reference(active_pane.clone())
+        .with_contains_active_pane_mask(children_with_active_pane)
+        .children(rendered_children.into_iter())
         .with_active_pane(active_pane_ix)
-        .into_any_element()
+        .into_any_element();
+
+        (element, contains_active_pane)
     }
 }
 
@@ -833,9 +869,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId, IntoElement,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakEntity, Window, px, relative, size,
+        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, Entity, GlobalElementId,
+        IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+        Size, Style, WeakEntity, Window, px, relative, size,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -844,7 +880,7 @@ mod element {
     use ui::prelude::*;
     use util::ResultExt;
 
-    use crate::Workspace;
+    use crate::{Pane, Workspace};
 
     use crate::WorkspaceSettings;
 
@@ -867,6 +903,8 @@ mod element {
             children: SmallVec::new(),
             active_pane_ix: None,
             workspace,
+            active_pane: None,
+            contains_active_pane_mask: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -878,6 +916,9 @@ mod element {
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
         workspace: WeakEntity<Workspace>,
+        active_pane: Option<Entity<Pane>>,
+        // Tracks which children contain the active pane (either directly or nested)
+        contains_active_pane_mask: Arc<Mutex<Vec<bool>>>,
     }
 
     pub struct PaneAxisLayout {
@@ -889,6 +930,7 @@ mod element {
         bounds: Bounds<Pixels>,
         element: AnyElement,
         handle: Option<PaneAxisHandleLayout>,
+        contains_active_pane: bool,
     }
 
     struct PaneAxisHandleLayout {
@@ -899,6 +941,16 @@ mod element {
     impl PaneAxisElement {
         pub fn with_active_pane(mut self, active_pane_ix: Option<usize>) -> Self {
             self.active_pane_ix = active_pane_ix;
+            self
+        }
+
+        pub fn with_contains_active_pane_mask(self, mask: Vec<bool>) -> Self {
+            *self.contains_active_pane_mask.lock() = mask;
+            self
+        }
+
+        pub fn with_active_pane_reference(mut self, active_pane: Entity<Pane>) -> Self {
+            self.active_pane = Some(active_pane);
             self
         }
 
@@ -1118,10 +1170,22 @@ mod element {
                 child.prepaint_at(origin, window, cx);
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
+                // We store whether it is the active pane directly, but more complex nested
+                // active pane detection is done during painting
+                // Get the information about which children contain the active pane from the mask
+                let contains_active_pane_mask = self.contains_active_pane_mask.lock();
+                let contains_active_pane = if ix < contains_active_pane_mask.len() {
+                    contains_active_pane_mask[ix]
+                } else {
+                    // Fallback to the direct active pane index if the mask isn't populated
+                    self.active_pane_ix == Some(ix)
+                };
+
                 layout.children.push(PaneAxisChildLayout {
                     bounds: child_bounds,
                     element: child,
                     handle: None,
+                    contains_active_pane,
                 })
             }
 
@@ -1148,6 +1212,7 @@ mod element {
             window: &mut Window,
             cx: &mut App,
         ) {
+            // First pass: Paint all elements
             for child in &mut layout.children {
                 child.element.paint(window, cx);
             }
@@ -1168,6 +1233,7 @@ mod element {
                 .border_size
                 .and_then(|val| (val >= 0.).then_some(val));
 
+            // Second pass: Draw overlays for inactive panes
             for (ix, child) in &mut layout.children.iter_mut().enumerate() {
                 if overlay_opacity.is_some() || overlay_border.is_some() {
                     // the overlay has to be painted in origin+1px with size width-1px
@@ -1183,12 +1249,14 @@ mod element {
                             .apply_along(Axis::Horizontal, |val| val - Pixels(1.)),
                     };
 
-                    if overlay_opacity.is_some() && self.active_pane_ix != Some(ix) {
+                    // Apply overlay only to inactive panes (those not directly active or containing the active pane)
+                    // This uses the contains_active_pane field we set in the prepaint step
+                    if overlay_opacity.is_some() && !child.contains_active_pane {
                         window.paint_quad(gpui::fill(overlay_bounds, overlay_background));
                     }
 
                     if let Some(border) = overlay_border {
-                        if self.active_pane_ix == Some(ix) {
+                        if child.contains_active_pane {
                             window.paint_quad(gpui::quad(
                                 overlay_bounds,
                                 0.,
