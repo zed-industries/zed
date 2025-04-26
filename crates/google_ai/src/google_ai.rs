@@ -52,7 +52,10 @@ pub async fn stream_generate_content(
                         if let Some(line) = line.strip_prefix("data: ") {
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(error))),
+                                Err(error) => Some(Err(anyhow!(format!(
+                                    "Error parsing JSON: {:?}\n{:?}",
+                                    error, line
+                                )))),
                             }
                         } else {
                             None
@@ -156,6 +159,7 @@ pub struct GenerateContentCandidate {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Content {
+    #[serde(default)]
     pub parts: Vec<Part>,
     pub role: Role,
 }
