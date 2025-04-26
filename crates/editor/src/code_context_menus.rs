@@ -720,7 +720,7 @@ impl CompletionsMenu {
                                 .enumerate()
                                 .take_while(|(i, (q_char, match_char))| {
                                     if *i == 0 {
-                                        // Ccase-sensitive comparison for first character
+                                        // Case-sensitive comparison for first character
                                         q_char == match_char
                                     } else {
                                         // Case-insensitive comparison for other characters
