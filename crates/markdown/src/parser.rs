@@ -184,6 +184,7 @@ pub fn parse_markdown(
                         (range, MarkdownEvent::SubstitutedText(str.to_owned()))
                     }
                 }
+                #[derive(Debug)]
                 struct TextRange<'a> {
                     source_range: Range<usize>,
                     merged_range: Range<usize>,
@@ -557,6 +558,25 @@ mod tests {
                     (45..46, Text), // Escaped backtick
                     (46..51, Text),
                     (0..51, End(MarkdownTagEnd::Paragraph))
+                ],
+                HashSet::new(),
+                HashSet::new()
+            )
+        );
+    }
+
+    #[test]
+    fn test_incomplete_link() {
+        // todo! This test currently panics:
+        // thread 'parser::tests::test_markdown_with_incomplete_link' panicked at crates/markdown/src/parser.rs:265:55:
+        // called `Option::unwrap()` on a `None` value
+        assert_eq!(
+            parse_markdown("You can use the [GitHub Search API](https://docs.github.com/en"),
+            (
+                vec![
+                    (0..62, Start(Paragraph)),
+                    (0..62, Text),
+                    (0..62, End(MarkdownTagEnd::Paragraph))
                 ],
                 HashSet::new(),
                 HashSet::new()
