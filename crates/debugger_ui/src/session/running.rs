@@ -316,12 +316,12 @@ pub(crate) fn new_debugger_pane(
                     .justify_between()
                     .bg(cx.theme().colors().tab_bar_background)
                     .border_b_1()
+                    .px_2()
                     .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
                     .child(
                         h_flex()
                             .w_full()
-                            .px_2()
                             .gap_1()
                             .h(Tab::container_height(cx))
                             .drag_over::<DraggedTab>(|bar, _, _, cx| {
@@ -405,7 +405,7 @@ pub(crate) fn new_debugger_pane(
                                 IconName::Maximize
                             },
                         )
-                        .icon_size(IconSize::Small)
+                        .icon_size(IconSize::XSmall)
                         .on_click(cx.listener(move |pane, _, window, cx| {
                             pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
                         }))
