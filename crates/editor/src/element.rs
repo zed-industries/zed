@@ -5805,9 +5805,7 @@ impl EditorElement {
                         let event_position = event.position;
 
                         editor.update(cx, |editor, cx| {
-                            if thumb_bounds.contains(&event_position) {
-                                editor.scroll_manager.set_is_dragging_minimap(true, cx);
-                            } else {
+                            if !thumb_bounds.contains(&event_position) {
                                 let click_position =
                                     event_position.relative_to(&minimap_hitbox.origin).y;
 
@@ -5824,6 +5822,8 @@ impl EditorElement {
                                     .apply_along(minimap_axis, |_| scroll_offset);
                                 editor.set_scroll_position(scroll_position, window, cx);
                             }
+
+                            editor.scroll_manager.set_is_dragging_minimap(true, cx);
                             cx.stop_propagation();
                         });
                     }
