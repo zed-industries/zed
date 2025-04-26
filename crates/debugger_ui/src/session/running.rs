@@ -168,14 +168,8 @@ impl Item for SubView {
 }
 
 impl Render for SubView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .size_full()
-            .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
-                // TODO better way of showing focus?
-                el.border_1().border_color(gpui::red())
-            })
-            .child(self.inner.clone())
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        v_flex().size_full().child(self.inner.clone())
     }
 }
 
