@@ -235,13 +235,17 @@ mod tests {
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
     use language_model::LanguageModelRegistry;
+    use rand::prelude::*;
     use reqwest_client::ReqwestClient;
     use serde_json::json;
     use std::{
         fmt::Write as _,
         io::Write as _,
         path::Path,
-        sync::atomic::{self, AtomicUsize},
+        sync::{
+            atomic::{self, AtomicUsize},
+            mpsc,
+        },
     };
     use util::path;
 
@@ -280,11 +284,10 @@ mod tests {
         .await;
     }
 
-    #[gpui::test]
-    async fn test_delete_run_git_blame(cx: &mut TestAppContext) {
-        eval(100, 0.9, cx, async |cx| {
-            let mut cx = TestAppContext::build(cx.dispatcher.clone(), None);
-            let test = agent_test(&mut cx).await;
+    #[test]
+    fn test_delete_run_git_blame() {
+        eval(100, 0.9, async |cx| {
+            let test = agent_test(cx).await;
             let new_content = apply_edits(
                 "root/blame.rs",
                 include_str!("fixtures/delete_run_git_blame/before.rs"),
@@ -300,46 +303,43 @@ mod tests {
                     // ... existing code ...
                "#},
                 &test,
-                &mut cx,
+                cx,
             )
             .await;
             (
                 new_content,
                 include_str!("fixtures/delete_run_git_blame/after.rs").into(),
             )
-        })
-        .await;
+        });
     }
 
-    async fn eval<F>(iterations: usize, expected_pass_ratio: f32, cx: &mut TestAppContext, f: F)
+    fn eval<F>(iterations: usize, expected_pass_ratio: f32, f: F)
     where
-        F: 'static + AsyncFn(&mut TestAppContext) -> (String, String),
+        F: 'static + Send + Sync + AsyncFn(&mut TestAppContext) -> (String, String),
     {
-        fn report_progress(count: usize, iterations: usize) {
-            print!("\r\x1b[KFinished {}/{}", count, iterations);
-            std::io::stdout().flush().unwrap();
-        }
-
+        let executor = gpui::background_executor();
         let f = Arc::new(f);
-        let mut evals = Vec::new();
-        let finished = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = mpsc::channel();
         for _ in 0..iterations {
             let f = f.clone();
-            let dispatcher = cx.dispatcher.clone();
-            let finished = finished.clone();
-            evals.push(cx.spawn(async move |_| {
-                let mut cx = TestAppContext::build(dispatcher, None);
-                let result = f(&mut cx).await;
-                let count = finished.fetch_add(1, atomic::Ordering::SeqCst);
-                report_progress(count, iterations);
-                result
-            }));
+            let tx = tx.clone();
+            executor
+                .spawn(async move {
+                    let dispatcher = gpui::TestDispatcher::new(StdRng::from_entropy());
+                    let mut cx = TestAppContext::build(dispatcher, None);
+                    let result = cx.executor().block_test(f(&mut cx));
+                    tx.send(result).unwrap();
+                })
+                .detach();
         }
+        drop(tx);
 
-        let evals = futures::future::join_all(evals).await;
+        let mut finished_count = 0;
+        report_progress(finished_count, iterations);
+
         let mut failed_count = 0;
         let mut failed = String::new();
-        for (actual, expected) in evals {
+        while let Ok((actual, expected)) = rx.recv() {
             if actual != expected {
                 failed_count += 1;
                 writeln!(
@@ -349,16 +349,24 @@ mod tests {
                 )
                 .unwrap();
             }
+
+            finished_count += 1;
+            report_progress(finished_count, iterations);
         }
 
         let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
         assert!(
             actual_pass_ratio >= expected_pass_ratio,
-            "Expected pass ratio: {}, Actual pass ratio: {}. Failures: {}",
+            "Expected pass ratio: {}\nActual pass ratio: {}\nFailures: {}",
             expected_pass_ratio,
             actual_pass_ratio,
             failed.trim_end()
         );
+    }
+
+    fn report_progress(finished_count: usize, iterations: usize) {
+        print!("\r\x1b[KFinished {}/{}", finished_count, iterations);
+        std::io::stdout().flush().unwrap();
     }
 
     // #[gpui::test]
