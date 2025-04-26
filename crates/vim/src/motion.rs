@@ -904,10 +904,22 @@ impl Motion {
                 movement::start_of_paragraph(map, point, times),
                 SelectionGoal::None,
             ),
-            EndOfParagraph => (
-                map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
-                SelectionGoal::None,
-            ),
+            EndOfParagraph => {
+                let mut display_point =
+                    map.clip_at_line_end(movement::end_of_paragraph(map, point, times));
+
+                // If the point's column is not `0`, that means that the point is not at the beginning of a line.
+                // This can happen, for example, when using the `d}` vim command
+                // on a buffer with no newlines at the end. In that case, we
+                // want to extend the point's column 1 position to the right,
+                // ensuring that all characters are deleted.
+                if display_point.column() != 0 {
+                    display_point =
+                        DisplayPoint::new(display_point.row(), display_point.column() + 1);
+                }
+
+                (display_point, SelectionGoal::None)
+            }
             CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
             StartOfDocument => (
                 start_of_document(map, point, maybe_times),
