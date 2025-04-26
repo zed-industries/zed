@@ -46,7 +46,8 @@ use workspace::{
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
 
-struct IncludeWarnings(bool);
+#[derive(Default)]
+pub(crate) struct IncludeWarnings(bool);
 impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut App) {
@@ -209,6 +210,7 @@ impl ProjectDiagnosticsEditor {
         .detach();
         cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
             this.include_warnings = cx.global::<IncludeWarnings>().0;
+            this.diagnostics.clear();
             this.update_all_excerpts(window, cx);
         })
         .detach();
@@ -300,11 +302,8 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn toggle_warnings(&mut self, _: &ToggleWarnings, window: &mut Window, cx: &mut Context<Self>) {
-        self.include_warnings = !self.include_warnings;
-        cx.set_global(IncludeWarnings(self.include_warnings));
-        self.update_all_excerpts(window, cx);
-        cx.notify();
+    fn toggle_warnings(&mut self, _: &ToggleWarnings, _: &mut Window, cx: &mut Context<Self>) {
+        cx.set_global(IncludeWarnings(!self.include_warnings));
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -381,7 +380,6 @@ impl ProjectDiagnosticsEditor {
                     Point::zero()..buffer_snapshot.max_point(),
                     false,
                 )
-                .filter(|d| !(d.diagnostic.is_primary && d.diagnostic.is_unnecessary))
                 .collect::<Vec<_>>();
             let unchanged = this.update(cx, |this, _| {
                 if this.diagnostics.get(&buffer_id).is_some_and(|existing| {
@@ -418,6 +416,7 @@ impl ProjectDiagnosticsEditor {
                         group,
                         buffer_snapshot.remote_id(),
                         Some(this.clone()),
+                        true,
                         cx,
                     )
                 })?;
@@ -482,7 +481,10 @@ impl ProjectDiagnosticsEditor {
                             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                                 s.select_anchor_ranges([range_to_select]);
                             })
-                        })
+                        });
+                        if this.focus_handle.is_focused(window) {
+                            this.editor.read(cx).focus_handle(cx).focus(window);
+                        }
                     }
                 }
 

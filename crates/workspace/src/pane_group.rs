@@ -142,6 +142,10 @@ impl PaneGroup {
         self.root.first_pane()
     }
 
+    pub fn last_pane(&self) -> Entity<Pane> {
+        self.root.last_pane()
+    }
+
     pub fn find_pane_in_direction(
         &mut self,
         active_pane: &Entity<Pane>,
@@ -360,6 +364,13 @@ impl Member {
         }
     }
 
+    fn last_pane(&self) -> Entity<Pane> {
+        match self {
+            Member::Axis(axis) => axis.members.last().unwrap().last_pane(),
+            Member::Pane(pane) => pane.clone(),
+        }
+    }
+
     pub fn render(
         &self,
         basis: usize,
@@ -437,8 +448,12 @@ impl PaneAxis {
     }
 
     pub fn load(axis: Axis, members: Vec<Member>, flexes: Option<Vec<f32>>) -> Self {
-        let flexes = flexes.unwrap_or_else(|| vec![1.; members.len()]);
-        // debug_assert!(members.len() == flexes.len());
+        let mut flexes = flexes.unwrap_or_else(|| vec![1.; members.len()]);
+        if flexes.len() != members.len()
+            || (flexes.iter().copied().sum::<f32>() - flexes.len() as f32).abs() >= 0.001
+        {
+            flexes = vec![1.; members.len()];
+        }
 
         let flexes = Arc::new(Mutex::new(flexes));
         let bounding_boxes = Arc::new(Mutex::new(vec![None; members.len()]));

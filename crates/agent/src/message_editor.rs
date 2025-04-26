@@ -2,24 +2,31 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::ModelType;
+use crate::context::{ContextLoadResult, load_context};
+use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
-use editor::actions::MoveUp;
+use editor::actions::{MoveUp, Paste};
 use editor::{
-    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode, EditorStyle,
-    MultiBuffer,
+    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent, EditorMode,
+    EditorStyle, MultiBuffer,
 };
 use file_icons::FileIcons;
 use fs::Fs;
+use futures::future::Shared;
+use futures::{FutureExt as _, future};
 use gpui::{
-    Animation, AnimationExt, App, Entity, Focusable, Subscription, TextStyle, WeakEntity,
-    linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, ClipboardEntry, Entity, EventEmitter, Focusable, Subscription,
+    Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRegistry};
+use language_model::{
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage, MessageContent,
+};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
+use prompt_store::PromptStore;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -29,10 +36,10 @@ use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
-use crate::context_store::{ContextStore, refresh_context_store_text};
+use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
-use crate::thread::{RequestKind, Thread, TokenUsageRatio};
+use crate::thread::{Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
@@ -41,18 +48,24 @@ use crate::{
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
+    incompatible_tools_state: Entity<IncompatibleToolsState>,
     editor: Entity<Editor>,
     #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     context_store: Entity<ContextStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
+    last_loaded_context: Option<ContextLoadResult>,
+    context_load_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
     editor_is_expanded: bool,
     waiting_for_summaries_to_send: bool,
+    last_estimated_token_count: Option<usize>,
+    update_token_count_task: Option<Task<anyhow::Result<()>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -63,6 +76,7 @@ impl MessageEditor {
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
         context_store: Entity<ContextStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
         thread: Entity<Thread>,
         window: &mut Window,
@@ -124,17 +138,32 @@ impl MessageEditor {
             )
         });
 
-        let subscriptions =
-            vec![cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event)];
+        let incompatible_tools =
+            cx.new(|cx| IncompatibleToolsState::new(thread.read(cx).tools().clone(), cx));
+
+        let subscriptions = vec![
+            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
+            cx.subscribe(&editor, |this, _, event, cx| match event {
+                EditorEvent::BufferEdited => this.handle_message_changed(cx),
+                _ => {}
+            }),
+            cx.observe(&context_store, |this, _, cx| {
+                let _ = this.start_context_load(cx);
+            }),
+        ];
 
         Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
             thread,
+            incompatible_tools_state: incompatible_tools.clone(),
             workspace,
             context_store,
+            prompt_store,
             context_strip,
             context_picker_menu_handle,
+            context_load_task: None,
+            last_loaded_context: None,
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs.clone(),
@@ -150,8 +179,14 @@ impl MessageEditor {
             waiting_for_summaries_to_send: false,
             profile_selector: cx
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
+            last_estimated_token_count: None,
+            update_token_count_task: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    pub fn context_store(&self) -> &Entity<ContextStore> {
+        &self.context_store
     }
 
     fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
@@ -174,6 +209,7 @@ impl MessageEditor {
                 editor.set_mode(EditorMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
+                    sized_by_content: false,
                 })
             } else {
                 editor.set_mode(EditorMode::AutoHeight {
@@ -192,6 +228,7 @@ impl MessageEditor {
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
+
     pub fn remove_all_context(
         &mut self,
         _: &RemoveAllContext,
@@ -208,11 +245,12 @@ impl MessageEditor {
         }
 
         if self.thread.read(cx).is_generating() {
+            self.stop_current_and_send_new_message(window, cx);
             return;
         }
 
         self.set_editor_is_expanded(false, cx);
-        self.send_to_model(RequestKind::Chat, window, cx);
+        self.send_to_model(window, cx);
 
         cx.notify();
     }
@@ -227,12 +265,7 @@ impl MessageEditor {
             .is_some()
     }
 
-    fn send_to_model(
-        &mut self,
-        request_kind: RequestKind,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(ConfiguredModel { model, provider }) = model_registry.default_model() else {
             return;
@@ -249,34 +282,47 @@ impl MessageEditor {
             text
         });
 
-        let refresh_task =
-            refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
+        self.last_estimated_token_count.take();
+        cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
         let thread = self.thread.clone();
-        let context_store = self.context_store.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
+        let context_task = self.load_context(cx);
+        let window_handle = window.window_handle();
 
-        cx.spawn(async move |this, cx| {
-            let checkpoint = checkpoint.await.ok();
-            refresh_task.await;
+        cx.spawn(async move |_this, cx| {
+            let (checkpoint, loaded_context) = future::join(checkpoint, context_task).await;
+            let loaded_context = loaded_context.unwrap_or_default();
 
             thread
                 .update(cx, |thread, cx| {
-                    let context = context_store.read(cx).context().clone();
-                    thread.insert_user_message(user_message, context, checkpoint, cx);
+                    thread.insert_user_message(user_message, loaded_context, checkpoint.ok(), cx);
                 })
                 .log_err();
 
+            thread
+                .update(cx, |thread, cx| {
+                    thread.advance_prompt_id();
+                    thread.send_to_model(model, Some(window_handle), cx);
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
+    fn wait_for_summaries(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let context_store = self.context_store.clone();
+        cx.spawn(async move |this, cx| {
             if let Some(wait_for_summaries) = context_store
                 .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
-                .log_err()
+                .ok()
             {
                 this.update(cx, |this, cx| {
                     this.waiting_for_summaries_to_send = true;
                     cx.notify();
                 })
-                .log_err();
+                .ok();
 
                 wait_for_summaries.await;
 
@@ -284,17 +330,20 @@ impl MessageEditor {
                     this.waiting_for_summaries_to_send = false;
                     cx.notify();
                 })
-                .log_err();
+                .ok();
             }
-
-            // Send to model after summaries are done
-            thread
-                .update(cx, |thread, cx| {
-                    thread.send_to_model(model, request_kind, cx);
-                })
-                .log_err();
         })
-        .detach();
+    }
+
+    fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cancelled = self.thread.update(cx, |thread, cx| {
+            thread.cancel_last_completion(Some(window.window_handle()), cx)
+        });
+
+        if cancelled {
+            self.set_editor_is_expanded(false, cx);
+            self.send_to_model(window, cx);
+        }
     }
 
     fn handle_context_strip_event(
@@ -323,8 +372,38 @@ impl MessageEditor {
         }
     }
 
-    fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        let images = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.into_entries()
+                    .filter_map(|entry| {
+                        if let ClipboardEntry::Image(image) = entry {
+                            Some(image)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if images.is_empty() {
+            return;
+        }
+        cx.stop_propagation();
+
+        self.context_store.update(cx, |store, cx| {
+            for image in images {
+                store.add_image(Arc::new(image), cx);
+            }
+        });
+    }
+
+    fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.edits_expanded = true;
         AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+        cx.notify();
     }
 
     fn handle_file_click(
@@ -356,6 +435,23 @@ impl MessageEditor {
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
 
+        let model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.model.clone());
+
+        let incompatible_tools = model
+            .as_ref()
+            .map(|model| {
+                self.incompatible_tools_state.update(cx, |state, cx| {
+                    state
+                        .incompatible_tools(model, cx)
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
+
         let is_editor_expanded = self.editor_is_expanded;
         let expand_icon = if is_editor_expanded {
             IconName::Minimize
@@ -381,6 +477,7 @@ impl MessageEditor {
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::toggle_chat_mode))
             .on_action(cx.listener(Self::expand_message_editor))
+            .capture_action(cx.listener(Self::paste))
             .gap_2()
             .p_2()
             .bg(editor_bg_color)
@@ -460,84 +557,150 @@ impl MessageEditor {
                             .flex_none()
                             .justify_between()
                             .child(h_flex().gap_2().child(self.profile_selector.clone()))
-                            .child(h_flex().gap_1().child(self.model_selector.clone()).map({
-                                let focus_handle = focus_handle.clone();
-                                move |parent| {
-                                    if is_generating {
-                                        parent.child(
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .when(!incompatible_tools.is_empty(), |this| {
+                                        this.child(
                                             IconButton::new(
-                                                "stop-generation",
-                                                IconName::StopFilled,
+                                                "tools-incompatible-warning",
+                                                IconName::Warning,
                                             )
-                                            .icon_color(Color::Error)
-                                            .style(ButtonStyle::Tinted(ui::TintColor::Error))
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::for_action(
-                                                    "Stop Generation",
-                                                    &editor::actions::Cancel,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click({
-                                                let focus_handle = focus_handle.clone();
-                                                move |_event, window, cx| {
-                                                    focus_handle.dispatch_action(
-                                                        &editor::actions::Cancel,
-                                                        window,
-                                                        cx,
-                                                    );
+                                            .icon_color(Color::Warning)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                move |_, cx| {
+                                                    cx.new(|_| IncompatibleToolsTooltip {
+                                                        incompatible_tools: incompatible_tools
+                                                            .clone(),
+                                                    })
+                                                    .into()
                                                 }
-                                            })
-                                            .with_animation(
-                                                "pulsating-label",
-                                                Animation::new(Duration::from_secs(2))
-                                                    .repeat()
-                                                    .with_easing(pulsating_between(0.4, 1.0)),
-                                                |icon_button, delta| icon_button.alpha(delta),
-                                            ),
+                                            }),
                                         )
-                                    } else {
-                                        parent.child(
-                                            IconButton::new("send-message", IconName::Send)
-                                                .icon_color(Color::Accent)
-                                                .style(ButtonStyle::Filled)
-                                                .disabled(
-                                                    is_editor_empty
-                                                        || !is_model_selected
-                                                        || self.waiting_for_summaries_to_send,
-                                                )
-                                                .on_click({
-                                                    let focus_handle = focus_handle.clone();
-                                                    move |_event, window, cx| {
-                                                        focus_handle
-                                                            .dispatch_action(&Chat, window, cx);
-                                                    }
-                                                })
-                                                .when(
-                                                    !is_editor_empty && is_model_selected,
-                                                    |button| {
-                                                        button.tooltip(move |window, cx| {
-                                                            Tooltip::for_action(
-                                                                "Send", &Chat, window, cx,
+                                    })
+                                    .child(self.model_selector.clone())
+                                    .map({
+                                        let focus_handle = focus_handle.clone();
+                                        move |parent| {
+                                            if is_generating {
+                                                parent
+                                                    .when(is_editor_empty, |parent| {
+                                                        parent.child(
+                                                            IconButton::new(
+                                                                "stop-generation",
+                                                                IconName::StopFilled,
                                                             )
+                                                            .icon_color(Color::Error)
+                                                            .style(ButtonStyle::Tinted(
+                                                                ui::TintColor::Error,
+                                                            ))
+                                                            .tooltip(move |window, cx| {
+                                                                Tooltip::for_action(
+                                                                    "Stop Generation",
+                                                                    &editor::actions::Cancel,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                            })
+                                                            .on_click({
+                                                                let focus_handle =
+                                                                    focus_handle.clone();
+                                                                move |_event, window, cx| {
+                                                                    focus_handle.dispatch_action(
+                                                                        &editor::actions::Cancel,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                }
+                                                            })
+                                                            .with_animation(
+                                                                "pulsating-label",
+                                                                Animation::new(
+                                                                    Duration::from_secs(2),
+                                                                )
+                                                                .repeat()
+                                                                .with_easing(pulsating_between(
+                                                                    0.4, 1.0,
+                                                                )),
+                                                                |icon_button, delta| {
+                                                                    icon_button.alpha(delta)
+                                                                },
+                                                            ),
+                                                        )
+                                                    })
+                                                    .when(!is_editor_empty, |parent| {
+                                                        parent.child(
+                                                    IconButton::new("send-message", IconName::Send)
+                                                        .icon_color(Color::Accent)
+                                                        .style(ButtonStyle::Filled)
+                                                        .disabled(
+                                                            !is_model_selected
+                                                                || self
+                                                                    .waiting_for_summaries_to_send,
+                                                        )
+                                                        .on_click({
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |_event, window, cx| {
+                                                                focus_handle.dispatch_action(
+                                                                    &Chat, window, cx,
+                                                                );
+                                                            }
                                                         })
-                                                    },
+                                                        .tooltip(move |window, cx| {
+                                                            Tooltip::for_action(
+                                                                "Stop and Send New Message",
+                                                                &Chat,
+                                                                window,
+                                                                cx,
+                                                            )
+                                                        }),
                                                 )
-                                                .when(is_editor_empty, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Type a message to submit",
-                                                    ))
-                                                })
-                                                .when(!is_model_selected, |button| {
-                                                    button.tooltip(Tooltip::text(
-                                                        "Select a model to continue",
-                                                    ))
-                                                }),
-                                        )
-                                    }
-                                }
-                            })),
+                                                    })
+                                            } else {
+                                                parent.child(
+                                                    IconButton::new("send-message", IconName::Send)
+                                                        .icon_color(Color::Accent)
+                                                        .style(ButtonStyle::Filled)
+                                                        .disabled(
+                                                            is_editor_empty
+                                                                || !is_model_selected
+                                                                || self
+                                                                    .waiting_for_summaries_to_send,
+                                                        )
+                                                        .on_click({
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |_event, window, cx| {
+                                                                focus_handle.dispatch_action(
+                                                                    &Chat, window, cx,
+                                                                );
+                                                            }
+                                                        })
+                                                        .when(
+                                                            !is_editor_empty && is_model_selected,
+                                                            |button| {
+                                                                button.tooltip(move |window, cx| {
+                                                                    Tooltip::for_action(
+                                                                        "Send", &Chat, window, cx,
+                                                                    )
+                                                                })
+                                                            },
+                                                        )
+                                                        .when(is_editor_empty, |button| {
+                                                            button.tooltip(Tooltip::text(
+                                                                "Type a message to submit",
+                                                            ))
+                                                        })
+                                                        .when(!is_model_selected, |button| {
+                                                            button.tooltip(Tooltip::text(
+                                                                "Select a model to continue",
+                                                            ))
+                                                        }),
+                                                )
+                                            }
+                                        }
+                                    }),
+                            ),
                     ),
             )
     }
@@ -836,6 +999,134 @@ impl MessageEditor {
                     .label_size(LabelSize::Small),
             )
     }
+
+    pub fn last_estimated_token_count(&self) -> Option<usize> {
+        self.last_estimated_token_count
+    }
+
+    pub fn is_waiting_to_update_token_count(&self) -> bool {
+        self.update_token_count_task.is_some()
+    }
+
+    fn handle_message_changed(&mut self, cx: &mut Context<Self>) {
+        self.message_or_context_changed(true, cx);
+    }
+
+    fn start_context_load(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
+        let summaries_task = self.wait_for_summaries(cx);
+        let load_task = cx.spawn(async move |this, cx| {
+            // Waits for detailed summaries before `load_context`, as it directly reads these from
+            // the thread. TODO: Would be cleaner to have context loading await on summarization.
+            summaries_task.await;
+            let Ok(load_task) = this.update(cx, |this, cx| {
+                let new_context = this.context_store.read_with(cx, |context_store, cx| {
+                    context_store.new_context_for_thread(this.thread.read(cx))
+                });
+                load_context(new_context, &this.project, &this.prompt_store, cx)
+            }) else {
+                return;
+            };
+            let result = load_task.await;
+            this.update(cx, |this, cx| {
+                this.last_loaded_context = Some(result);
+                this.context_load_task = None;
+                this.message_or_context_changed(false, cx);
+            })
+            .ok();
+        });
+        // Replace existing load task, if any, causing it to be cancelled.
+        let load_task = load_task.shared();
+        self.context_load_task = Some(load_task.clone());
+        load_task
+    }
+
+    fn load_context(&mut self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
+        let context_load_task = self.start_context_load(cx);
+        cx.spawn(async move |this, cx| {
+            context_load_task.await;
+            this.read_with(cx, |this, _cx| this.last_loaded_context.clone())
+                .ok()
+                .flatten()
+        })
+    }
+
+    fn message_or_context_changed(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        cx.emit(MessageEditorEvent::Changed);
+        self.update_token_count_task.take();
+
+        let Some(default_model) = LanguageModelRegistry::read_global(cx).default_model() else {
+            self.last_estimated_token_count.take();
+            return;
+        };
+
+        let editor = self.editor.clone();
+
+        self.update_token_count_task = Some(cx.spawn(async move |this, cx| {
+            if debounce {
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+            }
+
+            let token_count = if let Some(task) = this.update(cx, |this, cx| {
+                let loaded_context = this
+                    .last_loaded_context
+                    .as_ref()
+                    .map(|context_load_result| &context_load_result.loaded_context);
+                let message_text = editor.read(cx).text(cx);
+
+                if message_text.is_empty()
+                    && loaded_context.map_or(true, |loaded_context| loaded_context.is_empty())
+                {
+                    return None;
+                }
+
+                let mut request_message = LanguageModelRequestMessage {
+                    role: language_model::Role::User,
+                    content: Vec::new(),
+                    cache: false,
+                };
+
+                if let Some(loaded_context) = loaded_context {
+                    loaded_context.add_to_request_message(&mut request_message);
+                }
+
+                if !message_text.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text(message_text));
+                }
+
+                let request = language_model::LanguageModelRequest {
+                    thread_id: None,
+                    prompt_id: None,
+                    messages: vec![request_message],
+                    tools: vec![],
+                    stop: vec![],
+                    temperature: None,
+                };
+
+                Some(default_model.model.count_tokens(request, cx))
+            })? {
+                task.await?
+            } else {
+                0
+            };
+
+            this.update(cx, |this, cx| {
+                this.last_estimated_token_count = Some(token_count);
+                cx.emit(MessageEditorEvent::EstimatedTokenCount);
+                this.update_token_count_task.take();
+            })
+        }));
+    }
+}
+
+impl EventEmitter<MessageEditorEvent> for MessageEditor {}
+
+pub enum MessageEditorEvent {
+    EstimatedTokenCount,
+    Changed,
 }
 
 impl Focusable for MessageEditor {
@@ -848,6 +1139,7 @@ impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = self.thread.read(cx);
         let total_token_usage = thread.total_token_usage(cx);
+        let token_usage_ratio = total_token_usage.ratio();
 
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
@@ -896,15 +1188,8 @@ impl Render for MessageEditor {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
             .child(self.render_editor(font_size, line_height, window, cx))
-            .when(
-                total_token_usage.ratio != TokenUsageRatio::Normal,
-                |parent| {
-                    parent.child(self.render_token_limit_callout(
-                        line_height,
-                        total_token_usage.ratio,
-                        cx,
-                    ))
-                },
-            )
+            .when(token_usage_ratio != TokenUsageRatio::Normal, |parent| {
+                parent.child(self.render_token_limit_callout(line_height, token_usage_ratio, cx))
+            })
     }
 }

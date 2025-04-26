@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{self, Anchor, Buffer, ToPointUtf16};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{self, LspAction, Project};
@@ -140,6 +140,7 @@ impl Tool for CodeActionTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CodeActionToolInput>(input) {
@@ -159,7 +160,7 @@ impl Tool for CodeActionTool {
             };
 
             action_log.update(cx, |action_log, cx| {
-                action_log.buffer_read(buffer.clone(), cx);
+                action_log.track_buffer(buffer.clone(), cx);
             })?;
 
             let range = {

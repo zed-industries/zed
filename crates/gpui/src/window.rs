@@ -1,5 +1,5 @@
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
+    Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
@@ -617,6 +617,7 @@ pub struct Window {
     pub(crate) element_opacity: Option<f32>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     pub(crate) next_hitbox_id: HitboxId,
@@ -646,6 +647,7 @@ pub struct Window {
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
+    pub(crate) client_inset: Option<Pixels>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -931,6 +933,8 @@ impl Window {
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
+            client_inset: None,
+            image_cache_stack: Vec::new(),
         })
     }
 
@@ -1150,6 +1154,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         action: Option<Box<dyn Action>>,
+        context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
         let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
@@ -1161,6 +1166,7 @@ impl Window {
                 &KeystrokeEvent {
                     keystroke: key_down_event.keystroke.clone(),
                     action: action.as_ref().map(|action| action.boxed_clone()),
+                    context_stack: context_stack.clone(),
                 },
                 self,
                 cx,
@@ -1220,7 +1226,7 @@ impl Window {
         Evt: 'static,
     {
         let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
+        let handle = entity.downgrade();
         let window_handle = self.handle;
         cx.new_subscription(
             entity_id,
@@ -1229,9 +1235,9 @@ impl Window {
                 Box::new(move |event, cx| {
                     window_handle
                         .update(cx, |_, window, cx| {
-                            if let Some(handle) = Entity::<Emitter>::upgrade_from(&entity) {
+                            if let Some(entity) = handle.upgrade() {
                                 let event = event.downcast_ref().expect("invalid event type");
-                                on_event(handle, event, window, cx);
+                                on_event(entity, event, window, cx);
                                 true
                             } else {
                                 false
@@ -1387,8 +1393,14 @@ impl Window {
     }
 
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
-    pub fn set_client_inset(&self, inset: Pixels) {
+    pub fn set_client_inset(&mut self, inset: Pixels) {
+        self.client_inset = Some(inset);
         self.platform_window.set_client_inset(inset);
+    }
+
+    /// Returns the client_inset value by [`Self::set_client_inset`].
+    pub fn client_inset(&self) -> Option<Pixels> {
+        self.client_inset
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
@@ -1455,6 +1467,20 @@ impl Window {
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
         self.rem_size = rem_size.into();
+    }
+
+    /// Acquire a globally unique identifier for the given ElementId.
+    /// Only valid for the duration of the provided closure.
+    pub fn with_global_id<R>(
+        &mut self,
+        element_id: ElementId,
+        f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
+    ) -> R {
+        self.element_id_stack.push(element_id);
+        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let result = f(&global_id, self);
+        self.element_id_stack.pop();
+        result
     }
 
     /// Executes the provided function with the specified rem size.
@@ -2651,7 +2677,9 @@ impl Window {
             order: 0,
             pad: 0,
             grayscale,
-            bounds,
+            bounds: bounds
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil()),
             content_mask,
             corner_radii,
             tile,
@@ -2844,6 +2872,17 @@ impl Window {
         self.rendered_entity_stack.push(id);
         let result = f(self);
         self.rendered_entity_stack.pop();
+        result
+    }
+
+    /// Executes the provided function with the specified image cache.
+    pub(crate) fn with_image_cache<F, R>(&mut self, image_cache: AnyImageCache, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.image_cache_stack.push(image_cache);
+        let result = f(self);
+        self.image_cache_stack.pop();
         result
     }
 
@@ -3238,7 +3277,7 @@ impl Window {
         }
 
         let Some(keystroke) = keystroke else {
-            self.finish_dispatch_key_event(event, dispatch_path, cx);
+            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
             return;
         };
 
@@ -3292,13 +3331,18 @@ impl Window {
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
             if !cx.propagate_event {
-                self.dispatch_keystroke_observers(event, Some(binding.action), cx);
+                self.dispatch_keystroke_observers(
+                    event,
+                    Some(binding.action),
+                    match_result.context_stack.clone(),
+                    cx,
+                );
                 self.pending_input_changed(cx);
                 return;
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path, cx);
+        self.finish_dispatch_key_event(event, dispatch_path, match_result.context_stack, cx);
         self.pending_input_changed(cx);
     }
 
@@ -3306,6 +3350,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         dispatch_path: SmallVec<[DispatchNodeId; 32]>,
+        context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
         self.dispatch_key_down_up_event(event, &dispatch_path, cx);
@@ -3318,7 +3363,7 @@ impl Window {
             return;
         }
 
-        self.dispatch_keystroke_observers(event, None, cx);
+        self.dispatch_keystroke_observers(event, None, context_stack, cx);
     }
 
     fn pending_input_changed(&mut self, cx: &mut App) {
@@ -3416,7 +3461,12 @@ impl Window {
             for binding in replay.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !cx.propagate_event {
-                    self.dispatch_keystroke_observers(&event, Some(binding.action), cx);
+                    self.dispatch_keystroke_observers(
+                        &event,
+                        Some(binding.action),
+                        Vec::default(),
+                        cx,
+                    );
                     continue 'replay;
                 }
             }

@@ -276,6 +276,7 @@ impl EditorDb {
         workspace_id: WorkspaceId,
         selections: Vec<(usize, usize)>,
     ) -> Result<()> {
+        log::debug!("Saving selections for editor {editor_id} in workspace {workspace_id:?}");
         let mut first_selection;
         let mut last_selection = 0_usize;
         for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")
@@ -327,6 +328,7 @@ VALUES {placeholders};
         workspace_id: WorkspaceId,
         folds: Vec<(usize, usize)>,
     ) -> Result<()> {
+        log::debug!("Saving folds for editor {editor_id} in workspace {workspace_id:?}");
         let mut first_fold;
         let mut last_fold = 0_usize;
         for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")

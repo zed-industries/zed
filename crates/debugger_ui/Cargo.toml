@@ -20,6 +20,9 @@ test-support = [
     "project/test-support",
     "util/test-support",
     "workspace/test-support",
+    "env_logger",
+    "unindent",
+    "debugger_tools"
 ]
 
 [dependencies]
@@ -37,6 +40,7 @@ gpui.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
+parking_lot.workspace = true
 picker.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
@@ -53,9 +57,13 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
+env_logger = { workspace = true, optional = true }
+debugger_tools = { workspace = true, optional = true }
+unindent = { workspace = true, optional = true }
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
+debugger_tools = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

@@ -132,7 +132,15 @@ fn scroll_editor(
             let max_visible_row = top.row().0.saturating_add(
                 (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
             );
-            let max_row = DisplayRow(map.max_point().row().0.max(max_visible_row));
+            // scroll off the end.
+            let max_row = if top.row().0 + visible_line_count as u32 >= map.max_point().row().0 {
+                map.max_point().row()
+            } else {
+                DisplayRow(
+                    (top.row().0 + visible_line_count as u32)
+                        .saturating_sub(1 + vertical_scroll_margin),
+                )
+            };
 
             let new_row = if full_page_up {
                 // Special-casing ctrl-b/page-up, which is special-cased by Vim, it seems
@@ -372,14 +380,14 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_scroll_height(10).await;
-        cx.neovim.set_option(&format!("scrolloff={}", 0)).await;
 
         let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
         cx.set_shared_state(&content).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<EditorSettings>(cx, |s| {
-                s.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off)
+                s.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off);
+                // s.vertical_scroll_margin = Some(0.);
             });
         });
 
@@ -394,5 +402,25 @@ mod test {
         cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("ctrl-u").await;
         cx.shared_state().await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_ctrl_y_e(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_scroll_height(10).await;
+
+        let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
+        cx.set_shared_state(&content).await;
+
+        for _ in 0..8 {
+            cx.simulate_shared_keystrokes("ctrl-e").await;
+            cx.shared_state().await.assert_matches();
+        }
+
+        for _ in 0..8 {
+            cx.simulate_shared_keystrokes("ctrl-y").await;
+            cx.shared_state().await.assert_matches();
+        }
     }
 }

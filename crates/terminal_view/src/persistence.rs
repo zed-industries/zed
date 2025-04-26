@@ -429,6 +429,9 @@ impl TerminalDb {
         workspace_id: WorkspaceId,
         working_directory: PathBuf,
     ) -> Result<()> {
+        log::debug!(
+            "Saving working directory {working_directory:?} for item {item_id} in workspace {workspace_id:?}"
+        );
         let query =
             "INSERT INTO terminals(item_id, workspace_id, working_directory, working_directory_path)
             VALUES (?1, ?2, ?3, ?4)

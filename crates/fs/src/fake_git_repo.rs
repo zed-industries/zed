@@ -35,6 +35,7 @@ pub struct FakeGitRepositoryState {
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
     pub simulated_index_write_error_message: Option<String>,
+    pub refs: HashMap<String, String>,
 }
 
 impl FakeGitRepositoryState {
@@ -48,6 +49,7 @@ impl FakeGitRepositoryState {
             current_branch_name: Default::default(),
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
+            refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
         }
     }
 }
@@ -132,16 +134,23 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn head_sha(&self) -> Option<String> {
-        None
+    fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<Result<Vec<Option<String>>>> {
+        self.with_state_async(false, |state| {
+            Ok(revs
+                .into_iter()
+                .map(|rev| state.refs.get(&rev).cloned())
+                .collect())
+        })
     }
 
-    fn merge_head_shas(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn show(&self, _commit: String) -> BoxFuture<Result<CommitDetails>> {
-        unimplemented!()
+    fn show(&self, commit: String) -> BoxFuture<Result<CommitDetails>> {
+        async {
+            Ok(CommitDetails {
+                sha: commit.into(),
+                ..Default::default()
+            })
+        }
+        .boxed()
     }
 
     fn reset(
@@ -428,10 +437,6 @@ impl GitRepository for FakeGitRepository {
         _left: GitRepositoryCheckpoint,
         _right: GitRepositoryCheckpoint,
     ) -> BoxFuture<Result<bool>> {
-        unimplemented!()
-    }
-
-    fn delete_checkpoint(&self, _checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
 

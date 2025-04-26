@@ -201,7 +201,8 @@ impl Render for WelcomePage {
                                                     zed_actions::OpenSettings,
                                                 ), cx);
                                             })),
-                                    ),
+                                    )
+
                             )
                             .child(
                                 v_flex()
