@@ -555,6 +555,7 @@ impl Inventory {
                 });
             }
         };
+
         let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
             serde_json::from_value::<DebugScenario>(raw_template).log_err()
         });

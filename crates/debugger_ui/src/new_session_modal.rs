@@ -197,6 +197,11 @@ impl NewSessionModal {
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
         let last_profile = self.last_selected_profile_name.clone();
+        let worktree = workspace
+            .update(cx, |this, cx| {
+                this.project().read(cx).visible_worktrees(cx).next()
+            })
+            .unwrap_or_default();
         DropdownMenu::new(
             "debug-config-menu",
             last_profile.unwrap_or_else(|| SELECT_SCENARIO_LABEL.clone()),
@@ -250,7 +255,9 @@ impl NewSessionModal {
                             .task_inventory()
                             .iter()
                             .flat_map(|task_inventory| {
-                                task_inventory.read(cx).list_debug_scenarios(None)
+                                task_inventory.read(cx).list_debug_scenarios(
+                                    worktree.as_ref().map(|worktree| worktree.read(cx).id()),
+                                )
                             })
                             .collect()
                     })
