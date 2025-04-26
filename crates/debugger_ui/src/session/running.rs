@@ -337,6 +337,7 @@ pub(crate) fn new_debugger_pane(
                                 let selected = active_pane_item
                                     .as_ref()
                                     .map_or(false, |active| active.item_id() == item.item_id());
+                                let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()
                                     .id(SharedString::from(format!(
@@ -347,10 +348,17 @@ pub(crate) fn new_debugger_pane(
                                     .rounded_md()
                                     .cursor_pointer()
                                     .map(|this| {
+                                        let theme = cx.theme();
                                         if selected {
-                                            this.bg(cx.theme().colors().tab_active_background)
+                                            let color = theme.colors().tab_active_background;
+                                            let color = if deemphasized {
+                                                color.opacity(0.5)
+                                            } else {
+                                                color
+                                            };
+                                            this.bg(color)
                                         } else {
-                                            let hover_color = cx.theme().colors().element_hover;
+                                            let hover_color = theme.colors().element_hover;
                                             this.hover(|style| style.bg(hover_color))
                                         }
                                     })
@@ -363,7 +371,7 @@ pub(crate) fn new_debugger_pane(
                                     .child(item.tab_content(
                                         TabContentParams {
                                             selected,
-                                            deemphasized: !pane.has_focus(window, cx),
+                                            deemphasized,
                                             ..Default::default()
                                         },
                                         window,
