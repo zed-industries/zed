@@ -1556,11 +1556,23 @@ impl EditorElement {
             editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
         });
 
-        let mut minimap = minimap_editor.update(cx, |editor, cx| {
-            editor.render(window, cx).into_any_element()
+        // Required for the drop shadow to be visible
+        const PADDING_OFFSET: Pixels = px(4.);
+
+        let mut minimap = div()
+            .size_full()
+            .shadow_sm()
+            .px(PADDING_OFFSET)
+            .child(minimap_editor)
+            .into_any_element();
+
+        let extended_bounds = minimap_bounds.extend(Edges {
+            right: PADDING_OFFSET,
+            left: PADDING_OFFSET,
+            ..Default::default()
         });
-        minimap.layout_as_root(minimap_bounds.size.into(), window, cx);
-        window.with_absolute_element_offset(minimap_bounds.origin, |window| {
+        minimap.layout_as_root(extended_bounds.size.into(), window, cx);
+        window.with_absolute_element_offset(extended_bounds.origin, |window| {
             minimap.prepaint(window, cx)
         });
 
