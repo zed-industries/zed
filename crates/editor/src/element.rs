@@ -14,8 +14,9 @@ use crate::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, MinimapThumb, MultiCursorModifier,
-        ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
+        CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, MinimapThumb, MinimapThumbBorder,
+        MultiCursorModifier, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics,
+        ShowMinimap, ShowScrollbar,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
@@ -1580,6 +1581,7 @@ impl EditorElement {
             minimap,
             thumb_layout: layout,
             show_thumb,
+            thumb_border_style: minimap_settings.thumb_border,
             minimap_line_height,
             minimap_scroll_top,
             max_scroll_top: total_editor_lines,
@@ -5704,17 +5706,33 @@ impl EditorElement {
                 window.with_element_namespace("minimap", |window| {
                     layout.minimap.paint(window, cx);
                     if layout.show_thumb {
+                        let minimap_thumb_border = match layout.thumb_border_style {
+                            MinimapThumbBorder::Full => Edges::all(ScrollbarLayout::BORDER_WIDTH),
+                            MinimapThumbBorder::LeftOnly => Edges {
+                                left: ScrollbarLayout::BORDER_WIDTH,
+                                ..Default::default()
+                            },
+                            MinimapThumbBorder::LeftOpen => Edges {
+                                right: ScrollbarLayout::BORDER_WIDTH,
+                                top: ScrollbarLayout::BORDER_WIDTH,
+                                bottom: ScrollbarLayout::BORDER_WIDTH,
+                                ..Default::default()
+                            },
+                            MinimapThumbBorder::RightOpen => Edges {
+                                left: ScrollbarLayout::BORDER_WIDTH,
+                                top: ScrollbarLayout::BORDER_WIDTH,
+                                bottom: ScrollbarLayout::BORDER_WIDTH,
+                                ..Default::default()
+                            },
+                            MinimapThumbBorder::None => Default::default(),
+                        };
+
                         window.paint_layer(minimap_hitbox.bounds, |window| {
                             window.paint_quad(quad(
                                 thumb_bounds,
                                 Corners::default(),
                                 cx.theme().colors().scrollbar_thumb_background,
-                                Edges {
-                                    top: ScrollbarLayout::BORDER_WIDTH,
-                                    right: ScrollbarLayout::BORDER_WIDTH,
-                                    bottom: ScrollbarLayout::BORDER_WIDTH,
-                                    left: Pixels::ZERO,
-                                },
+                                minimap_thumb_border,
                                 cx.theme().colors().scrollbar_thumb_border,
                                 BorderStyle::Solid,
                             ));
@@ -8605,6 +8623,7 @@ struct MinimapLayout {
     pub thumb_layout: ScrollbarLayout,
     pub minimap_scroll_top: f32,
     pub minimap_line_height: Pixels,
+    pub thumb_border_style: MinimapThumbBorder,
     pub show_thumb: bool,
     pub max_scroll_top: f32,
 }

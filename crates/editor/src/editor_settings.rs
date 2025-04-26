@@ -120,6 +120,7 @@ pub struct Scrollbar {
 pub struct Minimap {
     pub show: ShowMinimap,
     pub thumb: MinimapThumb,
+    pub thumb_border: MinimapThumbBorder,
     pub width: f32,
     pub font_size: f32,
 }
@@ -186,6 +187,25 @@ pub enum MinimapThumb {
     /// Always show the minimap thumb.
     #[default]
     Always,
+}
+
+/// Defines the border style for the minimap's scrollbar thumb.
+///
+/// Default: left_open
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapThumbBorder {
+    /// Displays a border on all sides of the thumb.
+    Full,
+    /// Displays a border on all sides except the left side of the thumb.
+    #[default]
+    LeftOpen,
+    /// Displays a border on all sides except the right side of the thumb.
+    RightOpen,
+    /// Displays a border only on the left side of the thumb.
+    LeftOnly,
+    /// Displays the thumb without any border.
+    None,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -503,6 +523,11 @@ pub struct MinimapContent {
     ///
     /// Default: always
     pub thumb: Option<MinimapThumb>,
+
+    /// Defines the border style for the minimap's scrollbar thumb.
+    ///
+    /// Default: left_open
+    pub thumb_border: Option<MinimapThumbBorder>,
 
     /// The width of the minimap in pixels.
     ///

@@ -361,6 +361,19 @@
     // 2. Always show the minimap thumb:
     //    "always" (default)
     "thumb": "always",
+    // How the minimap thumb border should look.
+    // This setting can take five values:
+    // 1. Display a border on all sides of the thumb:
+    //    "thumb_border": "full"
+    // 2. Display a border on all sides except the left side of the thumb:
+    //    "thumb_border": "left_open" (default)
+    // 3. Display a border on all sides except the right side of the thumb:
+    //    "thumb_border": "right_open"
+    // 4. Display a border only on the left side of the thumb:
+    //    "thumb_border": "left_only"
+    // 5. Display the thumb without any border:
+    //    "thumb_border": "none"
+    "thumb_border": "left_open",
     // The width of the minimap in pixels.
     "width": 100,
     // The font size of the minimap in pixels.
