@@ -20334,9 +20334,8 @@ impl Render for Editor {
         let background = match self.mode {
             EditorMode::SingleLine { .. } => cx.theme().system().transparent,
             EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
-            EditorMode::Full { .. } | EditorMode::Minimap { .. } => {
-                cx.theme().colors().editor_background
-            }
+            EditorMode::Full { .. } => cx.theme().colors().editor_background,
+            EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
         };
 
         let show_underlines = !self.mode.is_minimap();
