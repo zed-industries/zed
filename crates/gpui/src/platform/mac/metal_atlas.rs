@@ -94,7 +94,7 @@ impl PlatformAtlas for MetalAtlas {
         let textures = match id.kind {
             AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
-            AtlasTextureKind::Path => &mut lock.polychrome_textures,
+            AtlasTextureKind::Path => &mut lock.path_textures,
         };
 
         let Some(texture_slot) = textures
