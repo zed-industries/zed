@@ -16322,7 +16322,7 @@ async fn test_indent_guide_tabs(cx: &mut TestAppContext) {
     assert_indent_guides(
         0..6,
         vec![
-            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 1, 5, 0),
             indent_guide(buffer_id, 3, 4, 1),
         ],
         None,
