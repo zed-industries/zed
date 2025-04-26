@@ -7070,9 +7070,12 @@ impl Element for EditorElement {
                     let settings = EditorSettings::get_global(cx);
                     let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
                     let vertical_scrollbar_width = (scrollbars_shown
-                        && settings.scrollbar.axes.vertical)
-                        .then_some(style.scrollbar_width)
-                        .unwrap_or_default();
+                        && settings.scrollbar.axes.vertical
+                        && self
+                            .editor
+                            .read_with(cx, |editor, _| editor.show_scrollbars))
+                    .then_some(style.scrollbar_width)
+                    .unwrap_or_default();
                     let minimap_width = self
                         .editor
                         .read_with(cx, |editor, _| editor.minimap().is_some())
