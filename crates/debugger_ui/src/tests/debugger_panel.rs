@@ -1,4 +1,4 @@
-use crate::{tests::start_debug_session, *};
+use crate::{persistence::DebuggerPaneItem, tests::start_debug_session, *};
 use dap::{
     ErrorResponse, Message, RunInTerminalRequestArguments, SourceBreakpoint,
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
@@ -25,7 +25,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
 use workspace::{Item, dock::Panel};
@@ -385,32 +385,19 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
 
     workspace
         .update(cx, |workspace, _window, cx| {
-            let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
-
-            let panel = terminal_panel.read(cx).pane().unwrap().read(cx);
-
-            assert_eq!(1, panel.items_len());
-            assert!(
-                panel
-                    .active_item()
-                    .unwrap()
-                    .downcast::<TerminalView>()
-                    .unwrap()
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let session = debug_panel.read(cx).active_session().unwrap();
+            let running = session.read(cx).running_state();
+            assert_eq!(
+                running
                     .read(cx)
-                    .terminal()
-                    .read(cx)
-                    .debug_terminal()
+                    .pane_items_status(cx)
+                    .get(&DebuggerPaneItem::Terminal),
+                Some(&true)
             );
+            assert!(running.read(cx).debug_terminal.read(cx).terminal.is_some());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -483,14 +470,6 @@ async fn test_handle_start_debugging_request(
         .unwrap();
 
     assert_eq!(&fake_config, launched_with.lock().as_ref().unwrap());
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 // // covers that we always send a response back, if something when wrong,
@@ -561,14 +540,6 @@ async fn test_handle_error_run_in_terminal_reverse_request(
             );
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -667,14 +638,6 @@ async fn test_handle_start_debugging_reverse_request(
         send_response.load(std::sync::atomic::Ordering::SeqCst),
         "Expected to receive response from reverse request"
     );
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(child_session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1098,14 +1061,6 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
                 .update(cx, |session, cx| session.continue_thread(thread_id, cx));
         });
     }
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1261,14 +1216,6 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
         "SetBreakpoint request must be called after editor is saved"
     );
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1388,14 +1335,6 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
 
     cx.dispatch_action(crate::ClearAllBreakpoints);
     cx.run_until_parked();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]

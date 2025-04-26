@@ -2,7 +2,7 @@ use anthropic::{AnthropicError, AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
+use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag, ZedProFeatureFlag};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, TryStreamExt as _, future::BoxFuture,
     stream::BoxStream,
@@ -10,11 +10,11 @@ use futures::{
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
-    AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
-    LanguageModelKnownError, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
-    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter, RequestUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolSchemaFormat,
+    ModelRequestLimitReachedError, RateLimiter, RequestUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
@@ -324,7 +324,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             );
         }
 
-        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {
+        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBetaFeatureFlag>() {
             zed_cloud_provider_additional_models()
         } else {
             &[]
@@ -531,7 +531,7 @@ impl CloudLanguageModel {
             {
                 request_builder.uri(completions_url)
             } else {
-                request_builder.uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
+                request_builder.uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
             };
             let request = request_builder
                 .header("Content-Type", "application/json")
@@ -745,7 +745,12 @@ impl LanguageModel for CloudLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         self.stream_completion_with_usage(request, cx)
             .map(|result| result.map(|(stream, _)| stream))
             .boxed()
@@ -758,7 +763,7 @@ impl LanguageModel for CloudLanguageModel {
     ) -> BoxFuture<
         'static,
         Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent>>,
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
             Option<RequestUsage>,
         )>,
     > {
@@ -940,7 +945,7 @@ impl Render for ConfigurationView {
                         ),
                 ),
             )
-        } else if cx.has_flag::<ZedPro>() {
+        } else if cx.has_flag::<ZedProFeatureFlag>() {
             Some(
                 h_flex()
                     .gap_2()

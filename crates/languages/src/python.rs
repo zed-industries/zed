@@ -503,6 +503,10 @@ impl ContextProvider for PythonContextProvider {
 
         Some(TaskTemplates(tasks))
     }
+
+    fn debug_adapter(&self) -> Option<String> {
+        Some("Debugpy".into())
+    }
 }
 
 fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {

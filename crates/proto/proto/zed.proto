@@ -377,8 +377,8 @@ message Envelope {
 
         GetDebugAdapterBinary get_debug_adapter_binary = 339;
         DebugAdapterBinary debug_adapter_binary = 340;
-        RunDebugLocator run_debug_locator = 341;
-        DebugTaskDefinition debug_task_definition = 342; // current max
+        RunDebugLocators run_debug_locators = 341;
+        DebugRequest debug_request = 342; // current max
     }
 
     reserved 87 to 88;

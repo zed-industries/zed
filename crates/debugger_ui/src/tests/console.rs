@@ -157,14 +157,6 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
             );
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 // #[gpui::test]
