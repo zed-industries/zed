@@ -186,6 +186,7 @@ fn button(
         .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
 }
 
+th::scale` to return Self to used to give a base scale.)
 impl Render for PaintingViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
@@ -228,7 +229,7 @@ impl Render for PaintingViewer {
                             move |_, _, _| {},
                             move |_, _, window, _| {
                                 for (path, color) in default_lines {
-                                     window.paint_path(path.scale(scale), color);
+                                    window.paint_path(path.scale(scale), color);
                                 }
 
                                 for points in lines {
