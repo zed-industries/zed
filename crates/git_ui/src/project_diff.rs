@@ -30,10 +30,7 @@ use project::{
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
-use std::{
-    any::{Any, TypeId},
-    ops::Range,
-};
+use std::ops::Range;
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;

@@ -608,11 +608,12 @@ impl GitPanel {
         cx.notify();
     }
 
-    pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
+    pub fn entry_by_path(&self, path: &RepoPath, cx: &App) -> Option<usize> {
         if GitPanelSettings::get_global(cx).sort_by_path {
             return self
                 .entries
-                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path));
+                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
+                .ok();
         }
 
         if self.conflicted_count > 0 {
@@ -2544,10 +2545,6 @@ impl GitPanel {
         self.tracked_count > self.tracked_staged_count
             || self.new_count > self.new_staged_count
             || self.conflicted_count > self.conflicted_staged_count
-    }
-
-    fn has_conflicts(&self) -> bool {
-        self.conflicted_count > 0
     }
 
     fn has_tracked_changes(&self) -> bool {
