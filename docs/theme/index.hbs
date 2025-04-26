@@ -200,6 +200,23 @@
                       </div>
                       {{{ content }}}
                     </main>
+
+                    <!-- Navigation arrows -->
+                    <div class="nav-wrapper">
+                      <div class="nav-buttons">
+                        {{#previous}}
+                          <a rel="prev" href="{{link}}" class="nav-button" title="{{title}}" aria-label="Previous chapter">
+                            <i class="fa fa-angle-left"></i>
+                          </a>
+                        {{/previous}}
+
+                        {{#next}}
+                          <a rel="next" href="{{link}}" class="nav-button" title="{{title}}" aria-label="Next chapter">
+                            <i class="fa fa-angle-right"></i>
+                          </a>
+                        {{/next}}
+                      </div>
+                    </div>
                 </div>
             </div>
         </div>
