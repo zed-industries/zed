@@ -870,6 +870,7 @@ pub struct Editor {
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_scrollbars: bool,
+    show_minimap: bool,
     disable_scrolling: bool,
     disable_expand_excerpt_buttons: bool,
     show_line_numbers: Option<bool>,
@@ -1686,7 +1687,8 @@ impl Editor {
             project,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
-            show_scrollbars: true,
+            show_scrollbars: full_mode,
+            show_minimap: full_mode,
             disable_scrolling: false,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
@@ -16300,7 +16302,7 @@ impl Editor {
     }
 
     pub fn minimap(&self) -> Option<&Entity<Self>> {
-        self.minimap.as_ref()
+        self.minimap.as_ref().filter(|_| self.show_minimap)
     }
 
     pub fn wrap_guides(&self, cx: &App) -> SmallVec<[(usize, bool); 2]> {
@@ -16495,6 +16497,16 @@ impl Editor {
     pub fn set_show_scrollbars(&mut self, show_scrollbars: bool, cx: &mut Context<Self>) {
         self.show_scrollbars = show_scrollbars;
         cx.notify();
+    }
+
+    pub fn set_show_minimap(&mut self, show_minimap: bool, cx: &mut Context<Self>) {
+        self.show_minimap = show_minimap;
+        cx.notify();
+    }
+
+    pub fn disable_scrollbars_and_minimap(&mut self, cx: &mut Context<Self>) {
+        self.set_show_scrollbars(false, cx);
+        self.set_show_minimap(false, cx);
     }
 
     pub fn disable_scrolling(&mut self, cx: &mut Context<Self>) {
@@ -17966,7 +17978,7 @@ impl Editor {
             let old_minimap_settings = self.minimap_settings;
             self.minimap_settings = EditorSettings::get_global(cx).minimap;
             if self.minimap_settings != old_minimap_settings {
-                if self.minimap().is_some() != self.minimap_settings.minimap_enabled() {
+                if self.minimap.as_ref().is_some() != self.minimap_settings.minimap_enabled() {
                     self.minimap = self.create_minimap(window, cx);
                 } else if let Some(minimap_entity) = self.minimap.as_ref().filter(|_| {
                     self.minimap_settings

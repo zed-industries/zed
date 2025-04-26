@@ -293,7 +293,7 @@ impl EditFileToolCard {
                 window,
                 cx,
             );
-            editor.set_show_scrollbars(false, cx);
+            editor.disable_scrollbars_and_minimap(cx);
             editor.set_show_gutter(false, cx);
             editor.disable_inline_diagnostics();
             editor.disable_scrolling(cx);
