@@ -1,8 +1,9 @@
 use crate::actions::ShowSignatureHelp;
+use crate::hover_popover::open_markdown_url;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp, hover_markdown_style};
 use gpui::{
-    App, AppContext, Context, Entity, HighlightStyle, MouseButton, Size, StyledText, Task,
-    TextStyle, Window, combine_highlights,
+    App, AppContext, Context, Entity, HighlightStyle, MouseButton, ScrollHandle, Size, Stateful,
+    StyledText, Task, TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
 use markdown::{Markdown, MarkdownElement};
@@ -14,9 +15,9 @@ use std::rc::Rc;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, Button, ButtonCommon, ButtonSize, Clickable, FluentBuilder,
-    InteractiveElement, IntoElement, Label, ParentElement, Pixels, SharedString, Styled, StyledExt,
-    div, relative,
+    ActiveTheme, AnyElement, Button, ButtonCommon, ButtonSize, Clickable, Div, FluentBuilder,
+    InteractiveElement, IntoElement, Label, ParentElement, Pixels, Scrollbar, ScrollbarState,
+    SharedString, StatefulInteractiveElement, Styled, StyledExt, div, px, relative,
 };
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
@@ -219,6 +220,7 @@ impl Editor {
                             line_height: relative(settings.buffer_line_height.value()),
                             ..Default::default()
                         };
+                        let scroll_handle = ScrollHandle::new();
                         let signature_help_popover = SignatureHelpPopover {
                             style: text_style,
                             signature: signature_help
@@ -242,6 +244,8 @@ impl Editor {
                             current_signature: Rc::new(RefCell::new(
                                 signature_help.active_signature,
                             )),
+                            scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                            scroll_handle,
                         };
                         editor
                             .signature_help_state
@@ -329,11 +333,13 @@ pub struct SignatureHelpData {
     highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct SignatureHelpPopover {
     pub style: TextStyle,
     pub signature: Vec<SignatureHelpData>,
     pub current_signature: Rc<RefCell<usize>>,
+    pub(crate) scroll_handle: ScrollHandle,
+    pub(crate) scrollbar_state: ScrollbarState,
 }
 
 impl SignatureHelpPopover {
@@ -361,6 +367,9 @@ impl SignatureHelpPopover {
             )
             .into_any_element();
         let signature = div()
+            .id("signature_help_documentation")
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
             .flex()
             .flex_col()
             .max_h(max_size.height)
@@ -374,7 +383,11 @@ impl SignatureHelpPopover {
                         .py_0p5()
                         .child(
                             MarkdownElement::new(description, hover_markdown_style(window, cx))
-                                .into_any_element(),
+                                .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                    copy_button: false,
+                                    border: false,
+                                })
+                                .on_url_click(open_markdown_url),
                         )
                         .into_any_element(),
                 ])
@@ -438,11 +451,47 @@ impl SignatureHelpPopover {
             .flex_row()
             .when_some(controls, |this, controls| {
                 this.children(vec![
-                    div().flex().items_end().child(controls).into_any_element(),
-                    div().border_primary(cx).border_1().into_any_element(),
+                    div().flex().items_end().child(controls),
+                    div().border_primary(cx).border_1(),
                 ])
             })
-            .child(signature)
+            .children(vec![
+                signature,
+                self.render_vertical_scrollbar(cx).into_any_element(),
+            ])
             .into_any_element()
+    }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Editor>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("signature_help_scroll")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 }
