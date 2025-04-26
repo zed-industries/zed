@@ -204,6 +204,7 @@ impl RenderOnce for Label {
 }
 
 impl Component for Label {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Typography
     }
@@ -212,7 +213,11 @@ impl Component for Label {
         Some("A text label component that supports various styles, sizes, and formatting options.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

@@ -77,6 +77,7 @@ impl ParentElement for AlertModal {
 }
 
 impl Component for AlertModal {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Notification
     }
@@ -85,7 +86,11 @@ impl Component for AlertModal {
         Some("A modal dialog that presents an alert message with primary and dismiss actions.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

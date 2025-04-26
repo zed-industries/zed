@@ -445,6 +445,7 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
 }
 
 impl Component for KeyBinding {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Typography
     }
@@ -459,7 +460,11 @@ impl Component for KeyBinding {
         )
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

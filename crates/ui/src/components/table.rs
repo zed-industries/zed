@@ -152,6 +152,7 @@ where
 }
 
 impl Component for Table {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Layout
     }
@@ -160,7 +161,11 @@ impl Component for Table {
         Some("A table component for displaying data in rows and columns with optional styling.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

@@ -3192,6 +3192,7 @@ version = "0.1.0"
 dependencies = [
  "collections",
  "gpui",
+ "itertools 0.14.0",
  "linkme",
  "parking_lot",
  "theme",

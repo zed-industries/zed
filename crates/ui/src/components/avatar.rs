@@ -221,6 +221,7 @@ impl RenderOnce for AvatarAvailabilityIndicator {
 
 // View this component preview using `workspace: open component-preview`
 impl Component for Avatar {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Collaboration
     }
@@ -229,7 +230,11 @@ impl Component for Avatar {
         Some(Avatar::DOCS)
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let example_avatar = "https://avatars.githubusercontent.com/u/1714999?v=4";
 
         Some(

@@ -266,6 +266,7 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl Component for Icon {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Images
     }
@@ -276,7 +277,11 @@ impl Component for Icon {
         )
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

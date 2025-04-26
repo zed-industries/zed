@@ -85,6 +85,7 @@ impl RenderOnce for Indicator {
 }
 
 impl Component for Indicator {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Status
     }
@@ -95,7 +96,11 @@ impl Component for Indicator {
         )
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

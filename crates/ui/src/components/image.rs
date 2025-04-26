@@ -84,6 +84,7 @@ impl RenderOnce for Vector {
 }
 
 impl Component for Vector {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Images
     }
@@ -96,7 +97,11 @@ impl Component for Vector {
         Some("A vector image component that can be displayed at specific sizes.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

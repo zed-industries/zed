@@ -168,11 +168,16 @@ impl Render for SingleLineInput {
 }
 
 impl Component for SingleLineInput {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Input
     }
 
-    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let input_1 =
             cx.new(|cx| SingleLineInput::new(window, cx, "placeholder").label("Some Label"));
 

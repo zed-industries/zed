@@ -88,6 +88,7 @@ pub const EXAMPLE_FACES: [&'static str; 6] = [
 ];
 
 impl Component for Facepile {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Collaboration
     }
@@ -98,7 +99,11 @@ impl Component for Facepile {
         )
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

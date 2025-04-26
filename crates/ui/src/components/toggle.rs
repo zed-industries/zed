@@ -599,6 +599,7 @@ impl RenderOnce for SwitchWithLabel {
 }
 
 impl Component for Checkbox {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Input
     }
@@ -607,7 +608,11 @@ impl Component for Checkbox {
         Some("A checkbox component that can be used for multiple choice selections")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()
@@ -704,6 +709,7 @@ impl Component for Checkbox {
 }
 
 impl Component for Switch {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Input
     }
@@ -712,7 +718,11 @@ impl Component for Switch {
         Some("A switch component that represents binary states like on/off")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()
@@ -823,6 +833,7 @@ impl Component for Switch {
 }
 
 impl Component for CheckboxWithLabel {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Input
     }
@@ -831,7 +842,11 @@ impl Component for CheckboxWithLabel {
         Some("A checkbox component with an attached label")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

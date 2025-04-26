@@ -98,11 +98,16 @@ impl RenderOnce for UsageBanner {
 }
 
 impl Component for UsageBanner {
+    type InitialState = ();
     fn sort_name() -> &'static str {
         "AgentUsageBanner"
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> AnyElement {
         let trial_limit = Plan::ZedProTrial.model_requests_limit();
         let trial_examples = vec![
             single_example(

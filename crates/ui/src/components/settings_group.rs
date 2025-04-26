@@ -38,6 +38,7 @@ impl RenderOnce for SettingsGroup {
 }
 
 impl Component for SettingsGroup {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Layout
     }
@@ -50,7 +51,11 @@ impl Component for SettingsGroup {
         Some("A group of settings with a header, used to organize related settings.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

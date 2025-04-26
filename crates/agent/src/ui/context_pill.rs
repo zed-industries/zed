@@ -497,6 +497,7 @@ impl Render for ContextPillPreview {
 // TODO: Component commented out due to new dependency on `Project`.
 /*
 impl Component for AddedContext {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Agent
     }

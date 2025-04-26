@@ -247,6 +247,7 @@ impl RenderOnce for LabelLike {
 }
 
 impl Component for LabelLike {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Typography
     }
@@ -261,7 +262,11 @@ impl Component for LabelLike {
         )
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

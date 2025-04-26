@@ -493,11 +493,16 @@ impl RenderOnce for GitStatusIcon {
 
 // View this component preview using `workspace: open component-preview`
 impl Component for GitStatusIcon {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::VersionControl
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         fn tracked_file_status(code: StatusCode) -> FileStatus {
             FileStatus::Tracked(git::status::TrackedStatus {
                 index_status: code,

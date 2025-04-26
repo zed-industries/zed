@@ -227,6 +227,7 @@ impl Render for LinkPreview {
 }
 
 impl Component for Tooltip {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::None
     }
@@ -237,7 +238,11 @@ impl Component for Tooltip {
         )
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             example_group(vec![single_example(
                 "Text only",

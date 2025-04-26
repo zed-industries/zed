@@ -186,11 +186,16 @@ impl ToolCard for WebSearchToolCard {
 }
 
 impl Component for WebSearchToolCard {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Agent
     }
 
-    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let in_progress_search = cx.new(|cx| WebSearchToolCard {
             response: None,
             _task: cx.spawn(async move |_this, cx| {

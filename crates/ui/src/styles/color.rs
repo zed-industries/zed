@@ -125,6 +125,7 @@ impl From<Hsla> for Color {
 }
 
 impl Component for Color {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::None
     }
@@ -133,7 +134,15 @@ impl Component for Color {
         Some(Color::DOCS)
     }
 
-    fn preview(_window: &mut gpui::Window, _cx: &mut App) -> Option<gpui::AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(
+        _state: &mut (),
+        _window: &mut gpui::Window,
+        _cx: &mut App,
+    ) -> Option<gpui::AnyElement> {
         Some(
             v_flex()
                 .gap_6()

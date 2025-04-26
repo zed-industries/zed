@@ -136,6 +136,7 @@ impl RenderOnce for HighlightedLabel {
 }
 
 impl Component for HighlightedLabel {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Typography
     }
@@ -148,7 +149,11 @@ impl Component for HighlightedLabel {
         Some("A label with highlighted characters based on specified indices.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

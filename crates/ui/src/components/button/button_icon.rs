@@ -120,6 +120,7 @@ impl RenderOnce for ButtonIcon {
 }
 
 impl Component for ButtonIcon {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Input
     }
@@ -132,7 +133,11 @@ impl Component for ButtonIcon {
         Some("An icon component specifically designed for use within buttons.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()

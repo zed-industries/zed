@@ -135,11 +135,16 @@ impl Focusable for StatusToast {
 impl EventEmitter<DismissEvent> for StatusToast {}
 
 impl Component for StatusToast {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Notification
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let text_example = StatusToast::new("Operation completed", cx, |this, _| this);
 
         let action_example = StatusToast::new("Update ready to install", cx, |this, _cx| {

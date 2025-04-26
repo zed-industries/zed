@@ -206,6 +206,7 @@ impl RenderOnce for KeybindingHint {
 }
 
 impl Component for KeybindingHint {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::None
     }
@@ -214,7 +215,11 @@ impl Component for KeybindingHint {
         Some("Displays a keyboard shortcut hint with optional prefix and suffix text")
     }
 
-    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let enter_fallback = gpui::KeyBinding::new("enter", menu::Confirm, None);
         let enter = KeyBinding::for_action(&menu::Confirm, window, cx)
             .unwrap_or(KeyBinding::new(enter_fallback, cx));

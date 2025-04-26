@@ -25,6 +25,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl Component for DecoratedIcon {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Images
     }
@@ -35,7 +36,11 @@ impl Component for DecoratedIcon {
         )
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let decoration_x = IconDecoration::new(
             IconDecorationKind::X,
             cx.theme().colors().surface_background,

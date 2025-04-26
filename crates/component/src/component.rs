@@ -1,3 +1,5 @@
+use std::any::Any;
+use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
@@ -7,11 +9,14 @@ use gpui::{
     AnyElement, App, IntoElement, RenderOnce, SharedString, Window, div, pattern_slash, prelude::*,
     px, rems,
 };
+use itertools::Itertools;
 use linkme::distributed_slice;
 use parking_lot::RwLock;
 use theme::ActiveTheme;
 
 pub trait Component {
+    type InitialState;
+
     fn scope() -> ComponentScope {
         ComponentScope::None
     }
@@ -37,7 +42,14 @@ pub trait Component {
     fn description() -> Option<&'static str> {
         None
     }
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    /// State for `preview`, should be `()` for stateless components.
+    fn initial_state(_cx: &mut App) -> Self::InitialState;
+    /// Render the component.
+    fn preview(
+        _initial_state: &mut Self::InitialState,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<AnyElement> {
         None
     }
 }
@@ -46,28 +58,16 @@ pub trait Component {
 pub static __ALL_COMPONENTS: [fn()] = [..];
 
 pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
-    LazyLock::new(|| RwLock::new(ComponentRegistry::new()));
+    LazyLock::new(|| RwLock::new(BTreeMap::default()));
 
-pub struct ComponentRegistry {
-    components: Vec<(
-        ComponentScope,
-        // name
-        &'static str,
-        // sort name
-        &'static str,
-        // description
-        Option<&'static str>,
-    )>,
-    previews: HashMap<&'static str, fn(&mut Window, &mut App) -> Option<AnyElement>>,
-}
+pub type ComponentRegistry = BTreeMap<&'static str, ComponentRegistryItem>;
 
-impl ComponentRegistry {
-    fn new() -> Self {
-        ComponentRegistry {
-            components: Vec::new(),
-            previews: HashMap::default(),
-        }
-    }
+#[derive(Clone)]
+pub struct ComponentRegistryItem {
+    scope: ComponentScope,
+    sort_name: &'static str,
+    description: Option<&'static str>,
+    preview_helper_creator: PreviewHelperCreator,
 }
 
 pub fn init() {
@@ -77,24 +77,69 @@ pub fn init() {
     }
 }
 
-pub fn register_component<T: Component>() {
-    let component_data = (T::scope(), T::name(), T::sort_name(), T::description());
-    let mut data = COMPONENT_DATA.write();
-    data.components.push(component_data);
-    data.previews.insert(T::name(), T::preview);
+pub fn register_component<T: Component + 'static>() {
+    let component_data = ComponentRegistryItem {
+        scope: T::scope(),
+        sort_name: T::sort_name(),
+        description: T::description(),
+        preview_helper_creator: PreviewHelperCreator::new::<T>(),
+    };
+
+    COMPONENT_DATA.write().insert(T::name(), component_data);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ComponentId(pub &'static str);
 
 #[derive(Clone)]
+struct PreviewHelperCreator {
+    state_initializer: fn(&mut App) -> Box<dyn Any>,
+    preview_fn: fn(Box<dyn Any>, &mut Window, &mut App) -> Option<AnyElement>,
+}
+
+impl PreviewHelperCreator {
+    fn new<T: Component + Any>() -> Self {
+        PreviewHelperCreator {
+            state_initializer: state_initializer_type_erased::<T>,
+            preview_fn: access_state_and_preview::<T>,
+        }
+    }
+}
+
+fn state_initializer_type_erased<T: Component + 'static>(cx: &mut App) -> Box<dyn Any> {
+    Box::new(T::initial_state(cx))
+}
+
+fn access_state_and_preview<T: Component + 'static>(
+    mut initial_state: Box<dyn Any>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
+    let mut state = initial_state.downcast_mut::<T::InitialState>()?;
+    T::preview(&mut state, window, cx)
+}
+
+impl PreviewHelperCreator {
+    fn create(&self, cx: &mut App) -> PreviewHelper {
+        PreviewHelper {
+            state: (self.state_initializer)(cx),
+            preview_fn: self.preview_fn,
+        }
+    }
+}
+
+struct PreviewHelper {
+    state: Box<dyn Any>,
+    preview_fn: fn(Box<dyn Any>, &mut Window, &mut App) -> Option<AnyElement>,
+}
+
 pub struct ComponentMetadata {
     id: ComponentId,
     name: SharedString,
     sort_name: SharedString,
     scope: ComponentScope,
     description: Option<SharedString>,
-    preview: Option<fn(&mut Window, &mut App) -> Option<AnyElement>>,
+    preview_helper: PreviewHelper,
 }
 
 impl ComponentMetadata {
@@ -125,33 +170,43 @@ impl ComponentMetadata {
     pub fn description(&self) -> Option<SharedString> {
         self.description.clone()
     }
-    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> Option<AnyElement>> {
-        self.preview
-    }
+    // pub fn preview_helper(&self, cx: &mut App) -> PreviewHelper {
+    //     self.preview_helper_creator.create(cx)
+    // }
 }
 
-pub struct AllComponents(pub HashMap<ComponentId, ComponentMetadata>);
+pub struct AllComponents(HashMap<ComponentId, ComponentMetadata>);
 
 impl AllComponents {
-    pub fn new() -> Self {
-        AllComponents(HashMap::default())
+    pub fn new(cx: &mut App) -> Self {
+        let data = COMPONENT_DATA.read();
+        let mut map = HashMap::new();
+        for (name, item) in data.iter() {
+            let ComponentRegistryItem {
+                scope,
+                sort_name,
+                description,
+                preview_helper_creator,
+            } = item.clone();
+
+            let id = ComponentId(name);
+
+            map.insert(
+                id.clone(),
+                ComponentMetadata {
+                    id,
+                    name: SharedString::new(name.to_owned()),
+                    sort_name: SharedString::new(sort_name.to_owned()),
+                    scope,
+                    description: description.map(Into::into),
+                    preview_helper: preview_helper_creator.create(cx),
+                },
+            );
+        }
+        Self(map)
     }
-    pub fn all_previews(&self) -> Vec<&ComponentMetadata> {
-        self.0.values().filter(|c| c.preview.is_some()).collect()
-    }
-    pub fn all_previews_sorted(&self) -> Vec<ComponentMetadata> {
-        let mut previews: Vec<ComponentMetadata> =
-            self.all_previews().into_iter().cloned().collect();
-        previews.sort_by_key(|a| a.name());
-        previews
-    }
-    pub fn all(&self) -> Vec<&ComponentMetadata> {
-        self.0.values().collect()
-    }
-    pub fn all_sorted(&self) -> Vec<ComponentMetadata> {
-        let mut components: Vec<ComponentMetadata> = self.all().into_iter().cloned().collect();
-        components.sort_by_key(|a| a.name());
-        components
+    pub fn all_sorted(&self) -> Vec<&ComponentMetadata> {
+        self.values().sorted_by_key(|a| a.name()).collect()
     }
 }
 
@@ -166,29 +221,6 @@ impl DerefMut for AllComponents {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
-}
-
-pub fn components() -> AllComponents {
-    let data = COMPONENT_DATA.read();
-    let mut all_components = AllComponents::new();
-    for (scope, name, sort_name, description) in &data.components {
-        let preview = data.previews.get(name).cloned();
-        let component_name = SharedString::new_static(name);
-        let sort_name = SharedString::new_static(sort_name);
-        let id = ComponentId(name);
-        all_components.insert(
-            id.clone(),
-            ComponentMetadata {
-                id,
-                name: component_name,
-                sort_name,
-                scope: scope.clone(),
-                description: description.map(Into::into),
-                preview,
-            },
-        );
-    }
-    all_components
 }
 
 // #[derive(Debug, Clone, PartialEq, Eq, Hash)]

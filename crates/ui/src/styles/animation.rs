@@ -98,6 +98,7 @@ impl<E: Styled> DefaultAnimations for E {}
 struct Animation {}
 
 impl Component for Animation {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::None
     }
@@ -106,7 +107,11 @@ impl Component for Animation {
         Some("Demonstrates various animation patterns and transitions available in the UI system.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         let container_size = 128.0;
         let element_size = 32.0;
         let left_offset = element_size - container_size / 2.0;

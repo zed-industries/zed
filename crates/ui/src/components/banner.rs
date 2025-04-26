@@ -137,11 +137,16 @@ impl RenderOnce for Banner {
 }
 
 impl Component for Banner {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Notification
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         let severity_examples = vec![
             single_example(
                 "Default",

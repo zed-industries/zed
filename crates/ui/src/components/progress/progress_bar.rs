@@ -81,6 +81,7 @@ impl RenderOnce for ProgressBar {
 }
 
 impl Component for ProgressBar {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Status
     }
@@ -89,7 +90,11 @@ impl Component for ProgressBar {
         Some(Self::DOCS)
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), _window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let max_value = 180.0;
 
         Some(

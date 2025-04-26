@@ -1142,11 +1142,16 @@ mod preview {
 
     // View this component preview using `workspace: open component-preview`
     impl Component for ProjectDiffEmptyState {
+        type InitialState = ();
         fn scope() -> ComponentScope {
             ComponentScope::VersionControl
         }
 
-        fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        fn initial_state(_cx: &mut App) -> Self::InitialState {
+            ()
+        }
+
+        fn preview(_state: &mut (), _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
             let unknown_upstream: Option<UpstreamTracking> = None;
             let ahead_of_upstream: Option<UpstreamTracking> = Some(
                 UpstreamTrackingStatus {

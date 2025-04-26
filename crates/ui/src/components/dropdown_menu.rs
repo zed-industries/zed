@@ -73,6 +73,7 @@ impl RenderOnce for DropdownMenu {
 }
 
 impl Component for DropdownMenu {
+    type InitialState = ();
     fn scope() -> ComponentScope {
         ComponentScope::Input
     }
@@ -87,7 +88,11 @@ impl Component for DropdownMenu {
         )
     }
 
-    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn initial_state(_cx: &mut App) -> Self::InitialState {
+        ()
+    }
+
+    fn preview(_state: &mut (), window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let menu = ContextMenu::build(window, cx, |this, _, _| {
             this.entry("Option 1", None, |_, _| {})
                 .entry("Option 2", None, |_, _| {})

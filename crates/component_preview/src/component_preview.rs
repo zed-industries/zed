@@ -191,8 +191,8 @@ impl ComponentPreview {
         cx.notify();
     }
 
-    fn get_component(&self, ix: usize) -> ComponentMetadata {
-        self.components[ix].clone()
+    fn get_component(&self, ix: usize) -> Option<ComponentMetadata> {
+        self.components.get(ix)
     }
 
     fn filtered_components(&self) -> Vec<ComponentMetadata> {
