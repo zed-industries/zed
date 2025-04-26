@@ -4,6 +4,9 @@ use gpui::{
     div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
 };
 
+const DEFAULT_WINDOW_WIDTH: Pixels = px(800.0);
+const DEFAULT_WINDOW_HEIGHT: Pixels = px(600.0);
+
 struct PaintingViewer {
     default_lines: Vec<(Path<Pixels>, Background)>,
     lines: Vec<Vec<Point<Pixels>>>,
@@ -165,11 +168,7 @@ impl PaintingViewer {
     }
 }
 
-fn button(
-    text: &str,
-    cx: &mut Context<PaintingViewer>,
-    on_click: impl Fn(&mut PaintingViewer, &mut Context<PaintingViewer>) + 'static,
-) -> impl IntoElement {
+fn button(text: &str, cx: &mut Context<PaintingViewer>) -> impl IntoElement {
     div()
         .id(SharedString::from(text.to_string()))
         .child(text.to_string())
@@ -183,9 +182,7 @@ fn button(
 }
 
 impl Render for PaintingViewer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let default_lines = self.default_lines.clone();
-        let lines = self.lines.clone();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dashed = self.dashed;
 
         div()
@@ -222,7 +219,7 @@ impl Render for PaintingViewer {
                             move |_, _, _| {},
                             move |_, _, window, _| {
                                 for (path, color) in default_lines {
-                                    window.paint_path(path, color);
+                                    window.paint_path(path.scale(scale), color);
                                 }
 
                                 for points in lines {
@@ -298,6 +295,11 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 focus: true,
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT),
+                    cx,
+                ))),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),
