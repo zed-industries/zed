@@ -1,11 +1,11 @@
 use crate::actions::ShowSignatureHelp;
-use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
+use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp, hover_markdown_style};
 use gpui::{
     App, AppContext, Context, Entity, HighlightStyle, MouseButton, Size, StyledText, Task,
     TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::cell::RefCell;
@@ -16,7 +16,7 @@ use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, Button, ButtonCommon, ButtonSize, Clickable, FluentBuilder,
     InteractiveElement, IntoElement, Label, ParentElement, Pixels, SharedString, Styled, StyledExt,
-    div, px, relative,
+    div, relative,
 };
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
@@ -337,34 +337,14 @@ pub struct SignatureHelpPopover {
 }
 
 impl SignatureHelpPopover {
-    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut Context<Editor>) -> AnyElement {
+    pub fn render(
+        &mut self,
+        max_size: Size<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> AnyElement {
         let Some(signature) = self.signature.get(*self.current_signature.borrow()) else {
             return div().into_any_element();
-        };
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.buffer_font.family.clone(),
-            font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: settings.buffer_font_size(cx).into(),
-            font_weight: settings.buffer_font.weight,
-            line_height: relative(settings.buffer_line_height.value()),
-            ..Default::default()
-        };
-        let markdown_style = MarkdownStyle {
-            base_text_style: text_style.clone(),
-            syntax: cx.theme().syntax().clone(),
-            selection_background_color: cx.theme().players().local().selection,
-            code_block_overflow_x_scroll: true,
-            link: gpui::TextStyleRefinement {
-                underline: Some(gpui::UnderlineStyle {
-                    thickness: px(1.),
-                    color: Some(cx.theme().colors().editor_foreground),
-                    wavy: false,
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
         };
         let label = signature
             .label
@@ -373,7 +353,6 @@ impl SignatureHelpPopover {
         let signature_count = self.signature.len();
         let signature_label = div()
             .max_w(max_size.width)
-            .id("signature_help_label")
             .px_2()
             .py_0p5()
             .child(
@@ -391,10 +370,12 @@ impl SignatureHelpPopover {
                     div().border_primary(cx).border_1().into_any_element(),
                     div()
                         .max_w(max_size.width)
-                        .id("signature_help_description")
                         .px_2()
                         .py_0p5()
-                        .child(MarkdownElement::new(description, markdown_style))
+                        .child(
+                            MarkdownElement::new(description, hover_markdown_style(window, cx))
+                                .into_any_element(),
+                        )
                         .into_any_element(),
                 ])
             })
