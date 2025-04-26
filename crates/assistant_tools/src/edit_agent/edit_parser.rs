@@ -31,6 +31,7 @@ impl EditParser {
 
     pub fn push(&mut self, chunk: &str) -> SmallVec<[Edit; 1]> {
         self.buffer.push_str(chunk);
+
         let mut edits = SmallVec::new();
         loop {
             match &mut self.state {

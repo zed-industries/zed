@@ -4,14 +4,15 @@ You are an expert text editor. Taking the following file as an input:
 {{file_content}}
 ```
 
-Produce a series of edits following the given instructions:
+Produce a series of edits following the given user instructions:
 
-<instructions>
+<user_instructions>
 {{instructions}}
-</instructions>
+</user_instructions>
 
 Your response must be a series of edits in the following format:
 
+<edits>
 <old_text>
 OLD TEXT 1 HERE
 </old_text>
@@ -32,12 +33,15 @@ OLD TEXT 3 HERE
 <new_text>
 NEW TEXT 3 HERE
 </new_text>
+</edits>
 
-And so on.
+Rules for editing:
 
-`old_text` represents full lines (including indentation) in the input file that will be replaced with `new_text`.
-It's crucial that `old_text` is unique and unambiguous.
-Always include enough context around the lines you want to replace such that it's impossible to mistake them for other lines.
-If you want to replace all occurrences, repeat the same `old_text`/`new_text` pair multiple times and I will apply them sequentially, one occurrence at a time.
+- `old_text` represents full lines (including indentation) in the input file that will be replaced with `new_text`
+- It is crucial that `old_text` is unique and unambiguous.
+- Always include enough context around the lines you want to replace in `old_text` such that it's impossible to mistake them for other lines.
+- If you want to replace all occurrences, repeat the same `old_text`/`new_text` pair multiple times and I will apply them sequentially, one occurrence at a time.
+- Don't explain why you made a change, just report the edits.
+- Make sure you follow the instructions carefully and thoroughly, avoid doing *less* or *more* than instructed.
 
-Don't explain why you made a change, just report the edits.
+<edits>

@@ -5,18 +5,18 @@ use anyhow::{Result, anyhow};
 use edit_parser::EditParser;
 use futures::{Stream, StreamExt, TryStreamExt, stream};
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Bias, BufferSnapshot};
+use language::{Anchor, Bias, Buffer, BufferSnapshot};
 use language_model::{
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use project::{Project, ProjectPath};
 use serde::Serialize;
 use smallvec::{SmallVec, smallvec};
-use std::{ops::Range, path::Path, sync::Arc};
+use std::{ops::Range, path::PathBuf, sync::Arc};
 
 #[derive(Serialize)]
 pub struct EditAgentTemplate {
-    path: Arc<Path>,
+    path: Option<PathBuf>,
     file_content: String,
     instructions: String,
 }
@@ -46,18 +46,15 @@ impl EditAgent {
 
     pub async fn interpret(
         &self,
-        path: ProjectPath,
+        buffer: Entity<Buffer>,
         instructions: String,
         cx: &mut AsyncApp,
     ) -> Result<impl Stream<Item = Result<(Range<Anchor>, String)>>> {
-        let buffer = self
-            .project
-            .update(cx, |project, cx| project.open_buffer(path.clone(), cx))?
-            .await?;
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+        let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
         // todo!("move to background")
         let prompt = EditAgentTemplate {
-            path: path.path.clone(),
+            path,
             file_content: snapshot.text(),
             instructions,
         }
@@ -77,7 +74,10 @@ impl EditAgent {
             let mut error = None;
             let snapshot = snapshot.clone();
             match chunk {
-                Ok(chunk) => edits = parser.push(&chunk),
+                Ok(chunk) => {
+                    edits = parser.push(&chunk);
+                    // print!("{}", chunk);
+                }
                 Err(err) => error = Some(Err(anyhow!(err))),
             }
             stream::iter(
@@ -237,6 +237,12 @@ mod tests {
     use language_model::LanguageModelRegistry;
     use reqwest_client::ReqwestClient;
     use serde_json::json;
+    use std::{
+        fmt::Write as _,
+        io::Write as _,
+        path::Path,
+        sync::atomic::{self, AtomicUsize},
+    };
     use util::path;
 
     #[gpui::test]
@@ -275,13 +281,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_remove_function(cx: &mut TestAppContext) {
-        for _ in 0..10 {
+    async fn test_delete_run_git_blame(cx: &mut TestAppContext) {
+        eval(100, 0.9, cx, async |cx| {
             let mut cx = TestAppContext::build(cx.dispatcher.clone(), None);
             let test = agent_test(&mut cx).await;
             let new_content = apply_edits(
                 "root/blame.rs",
-                include_str!("fixtures/blame.rs"),
+                include_str!("fixtures/delete_run_git_blame/before.rs"),
                 indoc! {r#"
                     Let's delete the `run_git_blame` function while keeping all other code intact:
 
@@ -297,11 +303,62 @@ mod tests {
                 &mut cx,
             )
             .await;
-            // pretty_assertions::assert_str_eq!(
-            //     new_content,
-            //     include_str!("fixtures/remove_run_git_blame/blame.rs")
-            // );
+            (
+                new_content,
+                include_str!("fixtures/delete_run_git_blame/after.rs").into(),
+            )
+        })
+        .await;
+    }
+
+    async fn eval<F>(iterations: usize, expected_pass_ratio: f32, cx: &mut TestAppContext, f: F)
+    where
+        F: 'static + AsyncFn(&mut TestAppContext) -> (String, String),
+    {
+        fn report_progress(count: usize, iterations: usize) {
+            print!("\r\x1b[KFinished {}/{}", count, iterations);
+            std::io::stdout().flush().unwrap();
         }
+
+        let f = Arc::new(f);
+        let mut evals = Vec::new();
+        let finished = Arc::new(AtomicUsize::new(0));
+        for _ in 0..iterations {
+            let f = f.clone();
+            let dispatcher = cx.dispatcher.clone();
+            let finished = finished.clone();
+            evals.push(cx.spawn(async move |_| {
+                let mut cx = TestAppContext::build(dispatcher, None);
+                let result = f(&mut cx).await;
+                let count = finished.fetch_add(1, atomic::Ordering::SeqCst);
+                report_progress(count, iterations);
+                result
+            }));
+        }
+
+        let evals = futures::future::join_all(evals).await;
+        let mut failed_count = 0;
+        let mut failed = String::new();
+        for (actual, expected) in evals {
+            if actual != expected {
+                failed_count += 1;
+                writeln!(
+                    failed,
+                    "=======\n{}\n=======",
+                    pretty_assertions::StrComparison::new(&actual, &expected)
+                )
+                .unwrap();
+            }
+        }
+
+        let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
+        assert!(
+            actual_pass_ratio >= expected_pass_ratio,
+            "Expected pass ratio: {}, Actual pass ratio: {}. Failures: {}",
+            expected_pass_ratio,
+            actual_pass_ratio,
+            failed.trim_end()
+        );
     }
 
     // #[gpui::test]
@@ -383,42 +440,9 @@ mod tests {
     //         .unwrap();
     // }
 
-    // #[gpui::test]
-    // async fn test_delete_method(cx: &mut TestAppContext) {
-    //     let EditAgentTest { fs, agent } = agent_test(cx).await;
-    //     fs.insert_file(
-    //         "/root/blame.rs",
-    //         include_bytes!("../../git/src/blame.rs").into(),
-    //     )
-    //     .await;
-    //     let path = agent
-    //         .project
-    //         .read_with(cx, |project, cx| {
-    //             project.find_project_path("root/blame.rs", cx)
-    //         })
-    //         .unwrap();
-    //     agent
-    //         .interpret(
-    //             path,
-    //             indoc! {r#"
-    //                 Delete the `run_git_blame` function
-
-    //                 // ... existing code ...
-    //                 const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
-    //                 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
-
-    //                 // ... existing code ...
-    //             "#}
-    //             .into(),
-    //             &mut cx.to_async(),
-    //         )
-    //         .await
-    //         .unwrap();
-    // }
-
     async fn apply_edits(
         path: impl AsRef<Path>,
-        content: impl Into<String>,
+        content: impl Into<Arc<str>>,
         instructions: impl Into<String>,
         test: &EditAgentTest,
         cx: &mut TestAppContext,
@@ -428,26 +452,27 @@ mod tests {
             .project
             .read_with(cx, |project, cx| project.find_project_path(path, cx))
             .unwrap();
-        let abs_path = test
+        let buffer = test
             .agent
             .project
-            .read_with(cx, |project, cx| project.absolute_path(&path, cx))
+            .update(cx, |project, cx| project.open_buffer(path, cx))
+            .await
             .unwrap();
-        test.fs
-            .insert_file(abs_path, content.into().into_bytes())
-            .await;
+        buffer.update(cx, |buffer, cx| buffer.set_text(content, cx));
         let edits = test
             .agent
-            .interpret(path, instructions.into(), &mut cx.to_async())
+            .interpret(buffer.clone(), instructions.into(), &mut cx.to_async())
             .await
             .unwrap()
             .collect::<Vec<_>>()
             .await
             .into_iter()
-            .collect::<Result<Vec<_>>>();
-        dbg!(&edits);
-
-        "".into()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(edits, None, cx);
+            buffer.text()
+        })
     }
 
     struct EditAgentTest {
