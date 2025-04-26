@@ -2395,7 +2395,7 @@ impl Window {
         path.color = color.opacity(opacity);
         self.next_frame
             .scene
-            .insert_primitive(path.scale(scale_factor));
+            .insert_primitive(path.apply_scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.

@@ -686,6 +686,7 @@ pub struct Path<P: Clone + Default + Debug> {
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
+    base_scale: f32,
 }
 
 impl Path<Pixels> {
@@ -704,25 +705,35 @@ impl Path<Pixels> {
             content_mask: Default::default(),
             color: Default::default(),
             contour_count: 0,
+            base_scale: 1.0,
         }
     }
 
-    /// Scale this path by the given factor.
-    pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
+    /// Set the base scale of the path.
+    pub fn scale(mut self, factor: f32) -> Self {
+        self.base_scale = factor;
+        self
+    }
+
+    /// Apply a scale to the path.
+    pub(crate) fn apply_scale(&self, factor: f32) -> Path<ScaledPixels> {
         Path {
             id: self.id,
             order: self.order,
-            bounds: self.bounds.scale(factor),
-            content_mask: self.content_mask.scale(factor),
+            bounds: self.bounds.scale(self.base_scale * factor),
+            content_mask: self.content_mask.scale(self.base_scale * factor),
             vertices: self
                 .vertices
                 .iter()
-                .map(|vertex| vertex.scale(factor))
+                .map(|vertex| vertex.scale(self.base_scale * factor))
                 .collect(),
-            start: self.start.map(|start| start.scale(factor)),
-            current: self.current.scale(factor),
+            start: self
+                .start
+                .map(|start| start.scale(self.base_scale * factor)),
+            current: self.current.scale(self.base_scale * factor),
             contour_count: self.contour_count,
             color: self.color,
+            base_scale: 1.0,
         }
     }
 

@@ -1,8 +1,11 @@
 use gpui::{
     Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
-    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
+    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowBounds, WindowOptions, canvas,
+    div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
 };
+
+const DEFAULT_WINDOW_WIDTH: Pixels = px(800.0);
+const DEFAULT_WINDOW_HEIGHT: Pixels = px(600.0);
 
 struct PaintingViewer {
     default_lines: Vec<(Path<Pixels>, Background)>,
@@ -115,10 +118,13 @@ impl PaintingViewer {
         cx.notify();
     }
 }
+
 impl Render for PaintingViewer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
+        let window_size = window.bounds().size;
+        let scale = window_size.width / DEFAULT_WINDOW_WIDTH;
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
@@ -155,9 +161,8 @@ impl Render for PaintingViewer {
                         canvas(
                             move |_, _, _| {},
                             move |_, _, window, _| {
-
                                 for (path, color) in default_lines {
-                                    window.paint_path(path, color);
+                                    window.paint_path(path.scale(scale), color);
                                 }
 
                                 for points in lines {
@@ -230,6 +235,11 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 focus: true,
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT),
+                    cx,
+                ))),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),
