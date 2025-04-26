@@ -54,7 +54,7 @@ pub struct RunningState {
     loaded_sources_list: Entity<LoadedSourceList>,
     pub debug_terminal: Entity<DebugTerminal>,
     module_list: Entity<module_list::ModuleList>,
-    _console: Entity<Console>,
+    console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
     active_pane: Option<Entity<Pane>>,
@@ -595,7 +595,7 @@ impl RunningState {
             panes,
             active_pane: None,
             module_list,
-            _console: console,
+            console,
             breakpoint_list,
             loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
@@ -639,11 +639,11 @@ impl RunningState {
     ) -> Box<dyn ItemHandle> {
         match item_kind {
             DebuggerPaneItem::Console => {
-                let weak_console = self._console.clone().downgrade();
+                let weak_console = self.console.clone().downgrade();
 
                 Box::new(SubView::new(
-                    self._console.focus_handle(cx),
-                    self._console.clone().into(),
+                    self.console.focus_handle(cx),
+                    self.console.clone().into(),
                     item_kind,
                     Some(Box::new(move |cx| {
                         weak_console
@@ -872,7 +872,7 @@ impl RunningState {
 
     #[cfg(test)]
     pub fn console(&self) -> &Entity<Console> {
-        &self._console
+        &self.console
     }
 
     #[cfg(test)]
