@@ -3088,7 +3088,8 @@ impl GitPanel {
         div()
             .id("commit-wrapper")
             .on_hover(cx.listener(move |this, hovered, _, cx| {
-                this.show_placeholders = *hovered && can_commit && !this.has_staged_changes();
+                this.show_placeholders =
+                    *hovered && !this.has_staged_changes() && !this.has_unstaged_conflicts();
                 cx.notify()
             }))
             .when(self.amend_pending, {
@@ -3809,7 +3810,7 @@ impl GitPanel {
         &self,
         ix: usize,
         entry: &GitStatusEntry,
-        mut has_write_access: bool,
+        has_write_access: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -3857,7 +3858,6 @@ impl GitPanel {
         let mut is_staged: ToggleState = self.entry_staging(entry).as_bool().into();
         if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
-            has_write_access = false;
         }
 
         let handle = cx.weak_entity();
