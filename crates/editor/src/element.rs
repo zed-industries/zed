@@ -5752,6 +5752,12 @@ impl EditorElement {
 
                             if minimap_hitbox.is_hovered(window) {
                                 editor.scroll_manager.show_minimap_thumb(cx);
+
+                                // Stop hover events from propagating to the
+                                // underlying if the minimap hitbox is hovered
+                                if !event.dragging() {
+                                    cx.stop_propagation();
+                                }
                             } else {
                                 editor.scroll_manager.hide_minimap_thumb(cx);
                             }
