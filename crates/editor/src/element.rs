@@ -4129,9 +4129,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if !self.editor.focus_handle(cx).is_focused(window) {
-            return;
-        }
         let Some(newest_selection_head) = newest_selection_head else {
             return;
         };
@@ -4147,7 +4144,7 @@ impl EditorElement {
 
         let maybe_element = self.editor.update(cx, |editor, cx| {
             if let Some(popover) = editor.signature_help_state.popover_mut() {
-                let element = popover.render(max_size, cx);
+                let element = popover.render(max_size, window, cx);
                 Some(element)
             } else {
                 None
