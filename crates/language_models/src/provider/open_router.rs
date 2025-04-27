@@ -151,7 +151,7 @@ impl State {
                 .into_iter()
                 .map(|entry| {
                     // Safely unwrap context_length with a default value
-                    let max_tokens = entry.context_length.unwrap_or(2048) as usize;
+                    let max_tokens = entry.context_length.unwrap_or(2048);
                     open_router::Model::new(
                         &entry.id,
                         Some(&entry.name),
