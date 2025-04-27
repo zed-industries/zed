@@ -42,7 +42,7 @@ use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
     Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
-    InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
+    InteractiveElement, IntoElement, IsZero, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
     Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
@@ -1499,7 +1499,13 @@ impl EditorElement {
             .editor
             .read_with(cx, |editor, _| editor.minimap_settings);
 
-        if !Self::should_show_minimap(snapshot, &minimap_settings, scrollbar_layout) {
+        if !snapshot.mode.is_full()
+            || minimap_width.is_zero()
+            || matches!(
+                minimap_settings.show,
+                ShowMinimap::Never | ShowMinimap::Auto if scrollbar_layout.is_none_or(|layout| !layout.visible)
+            )
+        {
             return None;
         }
 
@@ -1538,21 +1544,20 @@ impl EditorElement {
         let total_editor_lines = scroll_range.height / line_height;
         let minimap_lines = minimap_height / minimap_line_height;
 
-        let minimap_content_height = total_editor_lines * minimap_line_height;
-        let minimap_thumb_height = visible_editor_lines * minimap_line_height;
-        let scroll_percentage =
-            (scroll_position / (total_editor_lines - visible_editor_lines)).clamp(0., 1.);
-        let minimap_scroll_top = (total_editor_lines - minimap_lines).max(0.) * scroll_percentage;
-
-        let layout = ScrollbarLayout::new_with_hitbox_and_track_length(
-            window.insert_hitbox(minimap_bounds, false),
-            minimap_content_height,
-            minimap_thumb_height,
-            minimap_content_height,
-            minimap_line_height,
-            -minimap_scroll_top * minimap_line_height,
+        let minimap_scroll_top = MinimapLayout::calculate_minimap_top_offset(
+            total_editor_lines,
+            visible_editor_lines,
+            minimap_lines,
             scroll_position,
-            MINIMAP_AXIS,
+        );
+
+        let layout = ScrollbarLayout::for_minimap(
+            window.insert_hitbox(minimap_bounds, false),
+            visible_editor_lines,
+            total_editor_lines,
+            minimap_line_height,
+            scroll_position,
+            minimap_scroll_top,
         );
 
         minimap_editor.update(cx, |editor, cx| {
@@ -1588,19 +1593,6 @@ impl EditorElement {
             minimap_scroll_top,
             max_scroll_top: total_editor_lines,
         })
-    }
-
-    fn should_show_minimap(
-        snapshot: &EditorSnapshot,
-        minimap_settings: &Minimap,
-        scrollbar_layout: Option<&EditorScrollbars>,
-    ) -> bool {
-        snapshot.mode.is_full()
-            && match minimap_settings.show {
-                ShowMinimap::Always => true,
-                ShowMinimap::Never => false,
-                ShowMinimap::Auto => scrollbar_layout.is_some_and(|layout| layout.visible),
-            }
     }
 
     fn get_minimap_line_height(
@@ -5786,7 +5778,7 @@ impl EditorElement {
                                 editor.scroll_manager.show_minimap_thumb(cx);
 
                                 // Stop hover events from propagating to the
-                                // underlying if the minimap hitbox is hovered
+                                // underlying editor if the minimap hitbox is hovered
                                 if !event.dragging() {
                                     cx.stop_propagation();
                                 }
@@ -8495,6 +8487,45 @@ impl ScrollbarLayout {
         )
     }
 
+    fn for_minimap(
+        minimap_track_hitbox: Hitbox,
+        visible_lines: f32,
+        total_editor_lines: f32,
+        minimap_line_height: Pixels,
+        scroll_position: f32,
+        minimap_scroll_top: f32,
+    ) -> Self {
+        // The scrollbar thumb size is calculated as
+        // (visible_content/total_content) × scrollbar_track_length.
+        //
+        // For the minimap's thumb layout, we leverage this by setting the
+        // scrollbar track length to the entire document size (using minimap line
+        // height). This creates a thumb that exactly represents the editor
+        // viewport scaled to minimap proportions.
+        //
+        // We adjust the thumb position relative to `minimap_scroll_top` to
+        // accommodate for the deliberately oversized track.
+        //
+        // This approach ensures that the minimap thumb accurately reflects the
+        // editor's current scroll position whilst nicely synchronizing the minimap
+        // thumb and scrollbar thumb.
+        let scroll_range = total_editor_lines * minimap_line_height;
+        let viewport_size = visible_lines * minimap_line_height;
+
+        let track_top_offset = -minimap_scroll_top * minimap_line_height;
+
+        Self::new_with_hitbox_and_track_length(
+            minimap_track_hitbox,
+            scroll_range,
+            viewport_size,
+            scroll_range,
+            minimap_line_height,
+            track_top_offset,
+            scroll_position,
+            ScrollbarAxis::Vertical,
+        )
+    }
+
     fn new_with_hitbox_and_track_length(
         scrollbar_track_hitbox: Hitbox,
         track_length: Pixels,
@@ -8632,6 +8663,21 @@ struct MinimapLayout {
     pub thumb_border_style: MinimapThumbBorder,
     pub show_thumb: bool,
     pub max_scroll_top: f32,
+}
+
+impl MinimapLayout {
+    /// Calculates the scroll top offset the minimap editor has to have based on the
+    /// current scroll progress.
+    fn calculate_minimap_top_offset(
+        document_lines: f32,
+        visible_editor_lines: f32,
+        visible_minimap_lines: f32,
+        scroll_position: f32,
+    ) -> f32 {
+        let scroll_percentage =
+            (scroll_position / (document_lines - visible_editor_lines)).clamp(0., 1.);
+        scroll_percentage * (document_lines - visible_minimap_lines).max(0.)
+    }
 }
 
 struct CreaseTrailerLayout {
