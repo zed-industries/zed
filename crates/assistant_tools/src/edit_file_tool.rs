@@ -1,4 +1,5 @@
 use crate::{
+    Templates,
     edit_agent::EditAgent,
     replace::{replace_exact, replace_with_flexible_indent},
     schema::json_schema_for,

@@ -11,7 +11,7 @@ Use this tool to propose an edit to an existing file. This will be read by a les
 
 For example:
 
-One paragraph describing the nature of the change in English. Then some code to indicate where and how to make the change.
+One paragraph of clear instructions describing the nature of the change in English. Then some code to indicate where and how to make the change.
 
 // ... existing code ...
 FIRST_EDIT
@@ -24,6 +24,8 @@ THIRD_EDIT
 You should still bias towards repeating as few lines of the original file as possible to convey the change. But, each edit should contain sufficient context of unchanged lines around the code you're editing to resolve ambiguity.
 
 DO NOT omit spans of pre-existing code (or comments) without using the `// ... existing code ...` comment to indicate its absence. If you omit the existing code comment, the model may inadvertently delete these lines. Make sure it is clear what the edit should be, and where it should be applied.
+
+When you want to delete a piece of code, it's enough to indicate a few lines above and below the code you want to delete.
 
 You should specify the arguments in the following order:
 

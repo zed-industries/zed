@@ -1,3 +1,3 @@
-pub mod basic;
+pub mod delete_run_git_blame;
 
-pub use basic::*;
+pub use delete_run_git_blame::*;
