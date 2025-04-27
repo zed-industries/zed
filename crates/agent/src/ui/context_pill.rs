@@ -292,7 +292,7 @@ impl AddedContext {
             ContextHandle::File(handle) => Self::new_file(handle, cx),
             ContextHandle::Directory(handle) => Self::new_directory(handle, project, cx),
             ContextHandle::Symbol(handle) => Some(Self::new_symbol(handle)),
-            ContextHandle::Selection(handle) => Self::new_selection(handle, cx),
+            ContextHandle::Selection(handle) => Self::new_selection(handle, None, cx),
             ContextHandle::FetchedUrl(handle) => Some(Self::new_fetched_url(handle)),
             ContextHandle::Thread(handle) => Some(Self::new_thread(handle, cx)),
             ContextHandle::Rules(handle) => Self::new_rules(handle, prompt_store, cx),
@@ -310,7 +310,9 @@ impl AddedContext {
             AgentContext::File(context) => Self::new_file(context.handle, cx),
             AgentContext::Directory(context) => Self::new_directory(context.handle, project, cx),
             AgentContext::Symbol(context) => Some(Self::new_symbol(context.handle)),
-            AgentContext::Selection(context) => Self::new_selection(context.handle, cx),
+            AgentContext::Selection(context) => {
+                Self::new_selection(context.handle, Some(context.fenced_codeblock), cx)
+            }
             AgentContext::FetchedUrl(handle) => Some(Self::new_fetched_url(handle)),
             AgentContext::Thread(context) => Some(Self::new_thread(context.handle, cx)),
             AgentContext::Rules(context) => Self::new_rules(context.handle, prompt_store, cx),
@@ -385,7 +387,11 @@ impl AddedContext {
         }
     }
 
-    fn new_selection(selection_context: SelectionContextHandle, cx: &App) -> Option<AddedContext> {
+    fn new_selection(
+        selection_context: SelectionContextHandle,
+        loaded_fenced_codeblock: Option<SharedString>,
+        cx: &App,
+    ) -> Option<AddedContext> {
         let buffer = selection_context.buffer.read(cx);
         let full_path = buffer.file()?.full_path(cx);
         let mut full_path_string = full_path.to_string_lossy().into_owned();
@@ -413,10 +419,27 @@ impl AddedContext {
             tooltip: None,
             icon_path: FileIcons::get_icon(&full_path, cx),
             status: ContextStatus::Ready,
-            render_preview: Some(Rc::new({
+            render_preview: if let Some(text) = loaded_fenced_codeblock {
+                Some(Rc::new(
+                    // todo! Weird to show fenced codeblock format only when loaded
+                    move |_, cx| {
+                        let text = text.clone();
+                        ContextPillPreview::new(cx, move |_, cx| {
+                            div()
+                                .id("context-pill-selection-preview")
+                                .overflow_scroll()
+                                .max_w_128()
+                                .max_h_96()
+                                .child(Label::new(text.clone()).buffer_font(cx))
+                                .into_any_element()
+                        })
+                        .into()
+                    },
+                ))
+            } else {
                 let buffer = selection_context.buffer.clone();
                 let range = selection_context.range.clone();
-                move |_, cx| {
+                Some(Rc::new(move |_, cx| {
                     let text: SharedString = buffer
                         .read(cx)
                         .text_for_range(range.clone())
@@ -432,8 +455,8 @@ impl AddedContext {
                             .into_any_element()
                     })
                     .into()
-                }
-            })),
+                }))
+            },
             handle: ContextHandle::Selection(selection_context),
         })
     }
