@@ -571,6 +571,7 @@ fn providers_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schem
             "zed.dev".into(),
             "copilot_chat".into(),
             "deepseek".into(),
+            "openrouter".into(),
         ]),
         ..Default::default()
     }
