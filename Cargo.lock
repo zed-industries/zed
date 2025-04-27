@@ -7813,6 +7813,7 @@ dependencies = [
  "mistral",
  "ollama",
  "open_ai",
+ "open_router",
  "partial-json-fixer",
  "project",
  "proto",
@@ -9664,6 +9665,19 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.27.1",
+ "workspace-hack",
+]
+
+[[package]]
+name = "open_router"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
  "workspace-hack",
 ]
 

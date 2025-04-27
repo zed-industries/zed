@@ -228,7 +228,14 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 5,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
+  "private_files": [
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.cert",
+    "**/*.crt",
+    "**/secrets.yml"
+  ],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -983,7 +990,15 @@
     // Any addition to this list will be merged with the default list.
     // Globs are matched relative to the worktree root,
     // except when starting with a slash (/) or equivalent in Windows.
-    "disabled_globs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"],
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/.dev.vars",
+      "**/secrets.yml"
+    ],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
     // 1. Display predictions inline when there are no language server completions available.
@@ -1180,7 +1195,12 @@
   // }
   //
   "file_types": {
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
+    "JSONC": [
+      "**/.zed/**/*.json",
+      "**/zed/**/*.json",
+      "**/Zed/**/*.json",
+      "**/.vscode/**/*.json"
+    ],
     "Shell Script": [".env.*"]
   },
   // By default use a recent system version of node, or install our own.
@@ -1446,6 +1466,9 @@
     "openai": {
       "version": "1",
       "api_url": "https://api.openai.com/v1"
+    },
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1"
     },
     "lmstudio": {
       "api_url": "http://localhost:1234/api/v0"
