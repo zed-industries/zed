@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 /// If the model requests to read a file whose size exceeds this, then
 /// the tool will return an error along with the model's symbol outline,
@@ -71,7 +71,7 @@ impl Tool for ReadFileTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::inline_code(&input.path);
+                let path = MarkdownInlineCode(&input.path);
                 match (input.start_line, input.end_line) {
                     (Some(start), None) => format!("Read file {path} (from line {start})"),
                     (Some(start), Some(end)) => format!("Read file {path} (lines {start}-{end})"),
