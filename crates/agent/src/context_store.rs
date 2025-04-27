@@ -17,8 +17,9 @@ use util::ResultExt as _;
 
 use crate::ThreadStore;
 use crate::context::{
-    AgentContextKey, ContextHandle, ContextId, DirectoryContext, FetchedUrlContext, FileContext,
-    ImageContext, RulesContext, SelectionContext, SymbolContext, ThreadContext,
+    AgentContextKey, ContextHandle, ContextId, DirectoryContextHandle, FetchedUrlContext,
+    FileContextHandle, ImageContext, RulesContextHandle, SelectionContextHandle,
+    SymbolContextHandle, ThreadContextHandle,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -59,8 +60,13 @@ impl ContextStore {
     pub fn new_context_for_thread(&self, thread: &Thread) -> Vec<ContextHandle> {
         let existing_context = thread
             .messages()
-            .flat_map(|message| &message.loaded_context.contexts)
-            .map(AgentContextKey::ref_cast)
+            .flat_map(|message| {
+                message
+                    .loaded_context
+                    .contexts
+                    .iter()
+                    .map(|context| AgentContextKey(context.handle()))
+            })
             .collect::<HashSet<_>>();
         self.context_set
             .iter()
@@ -98,7 +104,7 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) {
         let context_id = self.next_context_id.post_inc();
-        let context = ContextHandle::File(FileContext { buffer, context_id });
+        let context = ContextHandle::File(FileContextHandle { buffer, context_id });
 
         let already_included = if self.has_context(&context) {
             if remove_if_exists {
@@ -133,7 +139,7 @@ impl ContextStore {
         };
 
         let context_id = self.next_context_id.post_inc();
-        let context = ContextHandle::Directory(DirectoryContext {
+        let context = ContextHandle::Directory(DirectoryContextHandle {
             entry_id,
             context_id,
         });
@@ -159,7 +165,7 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) -> bool {
         let context_id = self.next_context_id.post_inc();
-        let context = ContextHandle::Symbol(SymbolContext {
+        let context = ContextHandle::Symbol(SymbolContextHandle {
             buffer,
             symbol,
             range,
@@ -184,7 +190,7 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) {
         let context_id = self.next_context_id.post_inc();
-        let context = ContextHandle::Thread(ThreadContext { thread, context_id });
+        let context = ContextHandle::Thread(ThreadContextHandle { thread, context_id });
 
         if self.has_context(&context) {
             if remove_if_exists {
@@ -241,7 +247,7 @@ impl ContextStore {
         cx: &mut Context<ContextStore>,
     ) {
         let context_id = self.next_context_id.post_inc();
-        let context = ContextHandle::Rules(RulesContext {
+        let context = ContextHandle::Rules(RulesContextHandle {
             prompt_id,
             context_id,
         });
@@ -287,7 +293,7 @@ impl ContextStore {
         cx: &mut Context<ContextStore>,
     ) {
         let context_id = self.next_context_id.post_inc();
-        let context = ContextHandle::Selection(SelectionContext {
+        let context = ContextHandle::Selection(SelectionContextHandle {
             buffer,
             range,
             context_id,
@@ -309,7 +315,7 @@ impl ContextStore {
                 if let Some(buffer) = buffer.upgrade() {
                     let context_id = self.next_context_id.post_inc();
                     self.insert_context(
-                        ContextHandle::File(FileContext { buffer, context_id }),
+                        ContextHandle::File(FileContextHandle { buffer, context_id }),
                         cx,
                     );
                 };
@@ -318,7 +324,7 @@ impl ContextStore {
                 if let Some(thread) = thread.upgrade() {
                     let context_id = self.next_context_id.post_inc();
                     self.insert_context(
-                        ContextHandle::Thread(ThreadContext { thread, context_id }),
+                        ContextHandle::Thread(ThreadContextHandle { thread, context_id }),
                         cx,
                     );
                 }
@@ -417,7 +423,7 @@ impl ContextStore {
 
     pub fn includes_user_rules(&self, prompt_id: UserPromptId) -> bool {
         self.context_set
-            .contains(&RulesContext::lookup_key(prompt_id))
+            .contains(&RulesContextHandle::lookup_key(prompt_id))
     }
 
     pub fn includes_url(&self, url: impl Into<SharedString>) -> bool {
@@ -454,7 +460,7 @@ pub enum FileInclusion {
 }
 
 impl FileInclusion {
-    fn check_file(file_context: &FileContext, path: &ProjectPath, cx: &App) -> Option<Self> {
+    fn check_file(file_context: &FileContextHandle, path: &ProjectPath, cx: &App) -> Option<Self> {
         let file_path = file_context.buffer.read(cx).project_path(cx)?;
         if path == &file_path {
             Some(FileInclusion::Direct)
@@ -464,7 +470,7 @@ impl FileInclusion {
     }
 
     fn check_directory(
-        directory_context: &DirectoryContext,
+        directory_context: &DirectoryContextHandle,
         path: &ProjectPath,
         project: &Project,
         cx: &App,

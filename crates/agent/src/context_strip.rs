@@ -92,7 +92,9 @@ impl ContextStrip {
             self.context_store
                 .read(cx)
                 .context()
-                .flat_map(|context| AddedContext::new(context.clone(), prompt_store, project, cx))
+                .flat_map(|context| {
+                    AddedContext::new_from_handle(context.clone(), prompt_store, project, cx)
+                })
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
@@ -309,7 +311,7 @@ impl ContextStrip {
             };
 
             self.context_store.update(cx, |this, cx| {
-                this.remove_context(&context.context, cx);
+                this.remove_context(&context.handle, cx);
             });
 
             let is_now_empty = added_contexts.len() == 1;
@@ -462,7 +464,7 @@ impl Render for ContextStrip {
                     .enumerate()
                     .map(|(i, added_context)| {
                         let name = added_context.name.clone();
-                        let context = added_context.context.clone();
+                        let context = added_context.handle.clone();
                         ContextPill::added(
                             added_context,
                             dupe_names.contains(&name),

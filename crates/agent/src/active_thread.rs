@@ -1494,7 +1494,9 @@ impl ActiveThread {
             let project = workspace.read(cx).project().read(cx);
             thread
                 .context_for_message(message_id)
-                .flat_map(|context| AddedContext::new(context.clone(), prompt_store, project, cx))
+                .flat_map(|context| {
+                    AddedContext::new_from_loaded(context.clone(), prompt_store, project, cx)
+                })
                 .collect::<Vec<_>>()
         } else {
             return Empty.into_any();
@@ -1702,7 +1704,7 @@ impl ActiveThread {
                 .when(!added_context.is_empty(), |parent| {
                     parent.child(h_flex().flex_wrap().gap_1().children(
                         added_context.into_iter().map(|added_context| {
-                            let context = added_context.context.clone();
+                            let context = added_context.handle.clone();
                             ContextPill::added(added_context, false, false, None).on_click(Rc::new(
                                 cx.listener({
                                     let workspace = workspace.clone();
