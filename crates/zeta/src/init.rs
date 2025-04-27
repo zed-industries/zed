@@ -5,6 +5,8 @@ use feature_flags::{FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFl
 use gpui::actions;
 use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
 use settings::update_settings_file;
+use crate::{ZetaSettings};
+use settings::Settings;
 use ui::App;
 use workspace::Workspace;
 
@@ -13,6 +15,8 @@ use crate::{RateCompletionModal, onboarding_modal::ZedPredictModal};
 actions!(edit_prediction, [ResetOnboarding, RateCompletions]);
 
 pub fn init(cx: &mut App) {
+    ZetaSettings::register(cx);
+
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
             if cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>() {

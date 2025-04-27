@@ -1586,5 +1586,7 @@
     "stepping_granularity": "line",
     "save_breakpoints": true,
     "button": true
-  }
+  },
+  // Specifies the URL of the endpoint that will be used for edit prediction requests.
+  "predict_edits_url": ""
 }

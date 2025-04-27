@@ -18781,6 +18781,7 @@ dependencies = [
  "release_channel",
  "reqwest_client",
  "rpc",
+ "schemars",
  "serde",
  "serde_json",
  "settings",

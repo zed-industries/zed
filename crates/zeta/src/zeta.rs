@@ -33,6 +33,9 @@ use postage::watch;
 use project::Project;
 use release_channel::AppVersion;
 use settings::WorktreeId;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsSources};
 use std::str::FromStr;
 use std::{
     borrow::Cow,
@@ -44,6 +47,7 @@ use std::{
     path::Path,
     rc::Rc,
     sync::Arc,
+    sync::LazyLock,
     time::{Duration, Instant},
 };
 use telemetry_events::InlineCompletionRating;
@@ -73,6 +77,35 @@ const MAX_EVENT_TOKENS: usize = 500;
 const MAX_EVENT_COUNT: usize = 16;
 
 actions!(edit_prediction, [ClearHistory]);
+
+static ZED_PREDICT_EDITS_URL: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("ZED_PREDICT_EDITS_URL").ok());
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ZetaSettingsContent {
+    predict_edits_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ZetaSettings {
+    pub predict_edits_url: String,
+}
+
+impl Settings for ZetaSettings {
+    const KEY: Option<&'static str> = None;
+
+    type FileContent = ZetaSettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        let mut result = sources.json_merge::<Self>()?;
+        if let Some(predict_edits_url) = &*ZED_PREDICT_EDITS_URL {
+            result.predict_edits_url.clone_from(predict_edits_url)
+        }
+        Ok(result)
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+}
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineCompletionId(Uuid);
@@ -464,11 +497,14 @@ impl Zeta {
                 }),
             };
 
+            let predict_edits_url = cx.update(|cx| ZetaSettings::get_global(cx).predict_edits_url.clone()).unwrap_or_default();
+
             let response = perform_predict_edits(PerformPredictEditsParams {
                 client,
                 llm_token,
                 app_version,
                 body,
+                predict_edits_url,
             })
             .await;
             let (response, usage) = match response {
@@ -732,6 +768,7 @@ and then another
                 llm_token,
                 app_version,
                 body,
+                predict_edits_url,
                 ..
             } = params;
 
@@ -742,8 +779,8 @@ and then another
             loop {
                 let request_builder = http_client::Request::builder().method(Method::POST);
                 let request_builder =
-                    if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
-                        request_builder.uri(predict_edits_url)
+                    if predict_edits_url != "" {
+                        request_builder.uri(&predict_edits_url)
                     } else {
                         request_builder.uri(
                             http_client
@@ -1042,6 +1079,7 @@ struct PerformPredictEditsParams {
     pub llm_token: LlmApiToken,
     pub app_version: SemanticVersion,
     pub body: PredictEditsBody,
+    pub predict_edits_url: String,
 }
 
 #[derive(Error, Debug)]
