@@ -1420,6 +1420,7 @@ impl EditorElement {
         scroll_position: &gpui::Point<f32>,
         non_visible_cursors: bool,
         minimap_width: Pixels,
+        editor_width: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
@@ -1474,6 +1475,7 @@ impl EditorElement {
             scroll_position,
             self.style.scrollbar_width,
             minimap_width,
+            editor_width,
             show_scrollbars,
             window,
         ))
@@ -7830,6 +7832,7 @@ impl Element for EditorElement {
                         &scroll_position,
                         non_visible_cursors,
                         minimap_width,
+                        editor_width,
                         window,
                         cx,
                     );
@@ -8364,6 +8367,7 @@ impl EditorScrollbars {
         scroll_position: &gpui::Point<f32>,
         scrollbar_width: Pixels,
         minimap_width: Pixels,
+        editor_width: Pixels,
         show_scrollbars: bool,
         window: &mut Window,
     ) -> Self {
@@ -8373,20 +8377,22 @@ impl EditorScrollbars {
             glyph_grid_cell,
         } = layout_information;
 
-        let viewport_size = size(
-            if settings_visibility.vertical {
-                editor_bounds.size.width - minimap_width - scrollbar_width
-            } else {
-                editor_bounds.size.width - minimap_width
-            },
-            editor_bounds.size.height,
-        );
+        let viewport_size = size(editor_width, editor_bounds.size.height);
 
         let scrollbar_bounds_for = |axis: ScrollbarAxis| match axis {
             ScrollbarAxis::Horizontal => Bounds::from_corner_and_size(
                 Corner::BottomLeft,
                 editor_bounds.bottom_left(),
-                size(viewport_size.width, scrollbar_width),
+                size(
+                    // The horizontal viewport size differs from the space available for the
+                    // horizontal scrollbar, so we have to manually stich it together here.
+                    if settings_visibility.vertical {
+                        editor_bounds.size.width - minimap_width - scrollbar_width
+                    } else {
+                        editor_bounds.size.width - minimap_width
+                    },
+                    scrollbar_width,
+                ),
             ),
             ScrollbarAxis::Vertical => Bounds::from_corner_and_size(
                 Corner::TopRight,
