@@ -60,13 +60,17 @@ pub enum PromptId {
 
 impl PromptId {
     pub fn new() -> PromptId {
-        PromptId::User {
-            uuid: UserPromptId::new(),
-        }
+        UserPromptId::new().into()
     }
 
     pub fn is_built_in(&self) -> bool {
         !matches!(self, PromptId::User { .. })
+    }
+}
+
+impl From<UserPromptId> for PromptId {
+    fn from(uuid: UserPromptId) -> Self {
+        PromptId::User { uuid }
     }
 }
 
@@ -227,9 +231,7 @@ impl PromptStore {
             .collect::<heed::Result<HashMap<_, _>>>()?;
 
         for (prompt_id_v1, metadata_v1) in metadata_v1 {
-            let prompt_id_v2 = PromptId::User {
-                uuid: UserPromptId(prompt_id_v1.0),
-            };
+            let prompt_id_v2 = UserPromptId(prompt_id_v1.0).into();
             let Some(body_v1) = bodies_v1.remove(&prompt_id_v1) else {
                 continue;
             };

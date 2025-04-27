@@ -61,7 +61,6 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "client",
- "clock",
  "collections",
  "command_palette_hooks",
  "component",
@@ -96,12 +95,13 @@ dependencies = [
  "paths",
  "picker",
  "project",
- "prompt_library",
  "prompt_store",
  "proto",
  "rand 0.8.5",
+ "ref-cast",
  "release_channel",
  "rope",
+ "rules_library",
  "schemars",
  "serde",
  "serde_json",
@@ -530,11 +530,11 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
- "prompt_library",
  "prompt_store",
  "proto",
  "rand 0.8.5",
  "rope",
+ "rules_library",
  "schemars",
  "search",
  "serde",
@@ -742,24 +742,31 @@ dependencies = [
  "collections",
  "component",
  "editor",
+ "fs",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
+ "handlebars 4.5.0",
  "html_to_markdown",
  "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
  "language_model",
+ "language_models",
  "linkme",
  "open",
  "pretty_assertions",
  "project",
  "rand 0.8.5",
  "regex",
+ "reqwest_client",
+ "rust-embed",
  "schemars",
  "serde",
  "serde_json",
  "settings",
+ "smallvec",
  "tree-sitter-rust",
  "ui",
  "unindent",
@@ -5014,6 +5021,7 @@ dependencies = [
  "languages",
  "node_runtime",
  "paths",
+ "pretty_assertions",
  "project",
  "prompt_store",
  "regex",
@@ -11117,32 +11125,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prompt_library"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "editor",
- "gpui",
- "language",
- "language_model",
- "log",
- "menu",
- "picker",
- "prompt_store",
- "release_channel",
- "rope",
- "serde",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
- "workspace-hack",
- "zed_actions",
-]
-
-[[package]]
 name = "prompt_store"
 version = "0.1.0"
 dependencies = [
@@ -11776,6 +11758,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ref-cast"
+version = "1.0.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a0ae411dbe946a674d89546582cea4ba2bb8defac896622d6496f14c23ba5cf"
+dependencies = [
+ "ref-cast-impl",
+]
+
+[[package]]
+name = "ref-cast-impl"
+version = "1.0.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1165225c21bff1f3bbce98f5a1f889949bc902d3575308cc7b0de30b4f6d27c7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "refineable"
 version = "0.1.0"
 dependencies = [
@@ -12302,6 +12304,32 @@ dependencies = [
  "spki 0.7.3",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rules_library"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "gpui",
+ "language",
+ "language_model",
+ "log",
+ "menu",
+ "picker",
+ "prompt_store",
+ "release_channel",
+ "rope",
+ "serde",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -18569,9 +18597,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c1666cd923c5eb4635f3743e69c6920d0ed71f29b26920616a5d220607df7c4"
+checksum = "cc9ec491b7112cb8c2fba3c17d9a349d8ab695fb1a4ef6c5c4b9fd8d7aa975c1"
 dependencies = [
  "anyhow",
  "serde",

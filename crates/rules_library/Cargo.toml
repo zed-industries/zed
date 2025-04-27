@@ -1,5 +1,5 @@
 [package]
-name = "prompt_library"
+name = "rules_library"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/prompt_library.rs"
+path = "src/rules_library.rs"
 
 [dependencies]
 anyhow.workspace = true

@@ -7,9 +7,10 @@ use anyhow::{anyhow, Result};
 use futures::{channel::mpsc, future};
 use gpui::{App, Context, Entity, SharedString, Task};
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, Role, StopReason,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
+    Role, StopReason,
 };
 use project::Project;
 use schemars::{schema::RootSchema, JsonSchema};
@@ -75,9 +76,10 @@ impl Agent {
         model: Arc<dyn LanguageModel>,
         content: impl Into<MessageContent>,
         cx: &mut Context<Self>,
-    ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent>> {
+    ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>> {
         cx.notify();
-        let (events_tx, events_rx) = mpsc::unbounded();
+        let (events_tx, events_rx) =
+            mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
 
         let system_message = self.build_system_message(cx);
         self.messages.extend(system_message);
@@ -140,7 +142,7 @@ impl Agent {
                         .ok();
                 }
 
-                anyhow::Ok(())
+                Ok(())
             }
             .await;
 
@@ -174,7 +176,7 @@ impl Agent {
     fn handle_streamed_completion_event(
         &mut self,
         event: LanguageModelCompletionEvent,
-        events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent>>,
+        events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent, LanguageModelCompletionError>>,
         cx: &mut Context<Self>,
     ) -> Option<Task<LanguageModelToolResult>> {
         use LanguageModelCompletionEvent::*;

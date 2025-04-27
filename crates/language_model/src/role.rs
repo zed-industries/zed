@@ -36,6 +36,29 @@ impl Role {
     }
 }
 
+impl From<anthropic::Role> for Role {
+    fn from(role: anthropic::Role) -> Self {
+        match role {
+            anthropic::Role::User => Role::User,
+            anthropic::Role::Assistant => Role::Assistant,
+        }
+    }
+}
+
+impl TryFrom<Role> for anthropic::Role {
+    type Error = anyhow::Error;
+
+    fn try_from(role: Role) -> Result<Self, Self::Error> {
+        match role {
+            Role::User => Ok(anthropic::Role::User),
+            Role::Assistant => Ok(anthropic::Role::Assistant),
+            Role::System => Err(anyhow::anyhow!(
+                "System role is not supported in anthropic API"
+            )),
+        }
+    }
+}
+
 impl Display for Role {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

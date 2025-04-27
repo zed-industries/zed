@@ -1,4 +1,4 @@
-use feature_flags::{Debugger, FeatureFlagAppExt as _};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,
@@ -812,7 +812,7 @@ impl CodeActionContents {
         actions: Option<Rc<[AvailableCodeAction]>>,
         cx: &App,
     ) -> Self {
-        if !cx.has_flag::<Debugger>() {
+        if !cx.has_flag::<DebuggerFeatureFlag>() {
             if let Some(tasks) = &mut tasks {
                 tasks
                     .templates

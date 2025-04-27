@@ -10,6 +10,11 @@ pub fn adapt_schema_to_format(
     json: &mut Value,
     format: LanguageModelToolSchemaFormat,
 ) -> Result<()> {
+    if let Value::Object(obj) = json {
+        obj.remove("$schema");
+        obj.remove("title");
+    }
+
     match format {
         LanguageModelToolSchemaFormat::JsonSchema => Ok(()),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => adapt_to_json_schema_subset(json),
@@ -30,10 +35,7 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             }
         }
 
-        const KEYS_TO_REMOVE: [&str; 2] = ["format", "$schema"];
-        for key in KEYS_TO_REMOVE {
-            obj.remove(key);
-        }
+        obj.remove("format");
 
         if let Some(default) = obj.get("default") {
             let is_null = default.is_null();

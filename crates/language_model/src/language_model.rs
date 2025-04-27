@@ -77,6 +77,19 @@ pub enum LanguageModelCompletionEvent {
     UsageUpdate(TokenUsage),
 }
 
+#[derive(Error, Debug)]
+pub enum LanguageModelCompletionError {
+    #[error("received bad input JSON")]
+    BadInputJson {
+        id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        raw_input: Arc<str>,
+        json_parse_error: String,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 /// Indicates the format used to define the input schema for a language model tool.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum LanguageModelToolSchemaFormat {
@@ -194,7 +207,7 @@ pub struct LanguageModelToolUse {
 
 pub struct LanguageModelTextStream {
     pub message_id: Option<String>,
-    pub stream: BoxStream<'static, Result<String>>,
+    pub stream: BoxStream<'static, Result<String, LanguageModelCompletionError>>,
     // Has complete token usage after the stream has finished
     pub last_token_usage: Arc<Mutex<TokenUsage>>,
 }
@@ -247,7 +260,12 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    >;
 
     fn stream_completion_with_usage(
         &self,
@@ -256,7 +274,7 @@ pub trait LanguageModel: Send + Sync {
     ) -> BoxFuture<
         'static,
         Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent>>,
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
             Option<RequestUsage>,
         )>,
     > {

@@ -1,4 +1,5 @@
 use crate::{
+    edit_agent::EditAgent,
     replace::{replace_exact, replace_with_flexible_indent},
     schema::json_schema_for,
 };
@@ -56,11 +57,9 @@ pub struct EditFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// The text to replace.
-    pub old_string: String,
-
-    /// The text to replace it with.
-    pub new_string: String,
+    /// Edit instructions that a less intelligent model will interpret to modify
+    /// the given path.
+    pub edit_instructions: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -107,21 +106,21 @@ impl Tool for EditFileTool {
         }
     }
 
-    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
-        if let Some(input) = serde_json::from_value::<PartialInput>(input.clone()).ok() {
-            let description = input.display_description.trim();
-            if !description.is_empty() {
-                return description.to_string();
-            }
+    // fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
+    //     if let Some(input) = serde_json::from_value::<PartialInput>(input.clone()).ok() {
+    //         let description = input.display_description.trim();
+    //         if !description.is_empty() {
+    //             return description.to_string();
+    //         }
 
-            let path = input.path.trim();
-            if !path.is_empty() {
-                return path.to_string();
-            }
-        }
+    //         let path = input.path.trim();
+    //         if !path.is_empty() {
+    //             return path.to_string();
+    //         }
+    //     }
 
-        DEFAULT_UI_TEXT.to_string()
-    }
+    //     DEFAULT_UI_TEXT.to_string()
+    // }
 
     fn run(
         self: Arc<Self>,
@@ -137,133 +136,137 @@ impl Tool for EditFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        let card = window.and_then(|window| {
-            window
-                .update(cx, |_, window, cx| {
-                    cx.new(|cx| {
-                        EditFileToolCard::new(input.path.clone(), project.clone(), window, cx)
-                    })
-                })
-                .ok()
-        });
+        println!("{}", input.display_description);
+        println!("{}", input.edit_instructions);
+        panic!();
 
-        let card_clone = card.clone();
-        let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let project_path = project.read_with(cx, |project, cx| {
-                project
-                    .find_project_path(&input.path, cx)
-                    .context("Path not found in project")
-            })??;
+        // let card = window.and_then(|window| {
+        //     window
+        //         .update(cx, |_, window, cx| {
+        //             cx.new(|cx| {
+        //                 EditFileToolCard::new(input.path.clone(), project.clone(), window, cx)
+        //             })
+        //         })
+        //         .ok()
+        // });
 
-            let buffer = project
-                .update(cx, |project, cx| {
-                    project.open_buffer(project_path.clone(), cx)
-                })?
-                .await?;
+        // let card_clone = card.clone();
+        // let task = cx.spawn(async move |cx: &mut AsyncApp| {
+        //     let project_path = project.read_with(cx, |project, cx| {
+        //         project
+        //             .find_project_path(&input.path, cx)
+        //             .context("Path not found in project")
+        //     })??;
 
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+        //     let buffer = project
+        //         .update(cx, |project, cx| {
+        //             project.open_buffer(project_path.clone(), cx)
+        //         })?
+        //         .await?;
 
-            if input.old_string.is_empty() {
-                return Err(anyhow!(
-                    "`old_string` can't be empty, use another tool if you want to create a file."
-                ));
-            }
+        //     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
-            if input.old_string == input.new_string {
-                return Err(anyhow!(
-                    "The `old_string` and `new_string` are identical, so no changes would be made."
-                ));
-            }
+        //     if input.old_string.is_empty() {
+        //         return Err(anyhow!(
+        //             "`old_string` can't be empty, use another tool if you want to create a file."
+        //         ));
+        //     }
 
-            let result = cx
-                .background_spawn(async move {
-                    // Try to match exactly
-                    let diff = replace_exact(&input.old_string, &input.new_string, &snapshot)
-                        .await
-                        // If that fails, try being flexible about indentation
-                        .or_else(|| {
-                            replace_with_flexible_indent(
-                                &input.old_string,
-                                &input.new_string,
-                                &snapshot,
-                            )
-                        })?;
+        //     if input.old_string == input.new_string {
+        //         return Err(anyhow!(
+        //             "The `old_string` and `new_string` are identical, so no changes would be made."
+        //         ));
+        //     }
 
-                    if diff.edits.is_empty() {
-                        return None;
-                    }
+        //     let result = cx
+        //         .background_spawn(async move {
+        //             // Try to match exactly
+        //             let diff = replace_exact(&input.old_string, &input.new_string, &snapshot)
+        //                 .await
+        //                 // If that fails, try being flexible about indentation
+        //                 .or_else(|| {
+        //                     replace_with_flexible_indent(
+        //                         &input.old_string,
+        //                         &input.new_string,
+        //                         &snapshot,
+        //                     )
+        //                 })?;
 
-                    let old_text = snapshot.text();
+        //             if diff.edits.is_empty() {
+        //                 return None;
+        //             }
 
-                    Some((old_text, diff))
-                })
-                .await;
+        //             let old_text = snapshot.text();
 
-            let Some((old_text, diff)) = result else {
-                let err = buffer.read_with(cx, |buffer, _cx| {
-                    let file_exists = buffer
-                        .file()
-                        .map_or(false, |file| file.disk_state().exists());
+        //             Some((old_text, diff))
+        //         })
+        //         .await;
 
-                    if !file_exists {
-                        anyhow!("{} does not exist", input.path.display())
-                    } else if buffer.is_empty() {
-                        anyhow!(
-                            "{} is empty, so the provided `old_string` wasn't found.",
-                            input.path.display()
-                        )
-                    } else {
-                        anyhow!("Failed to match the provided `old_string`")
-                    }
-                })?;
+        //     let Some((old_text, diff)) = result else {
+        //         let err = buffer.read_with(cx, |buffer, _cx| {
+        //             let file_exists = buffer
+        //                 .file()
+        //                 .map_or(false, |file| file.disk_state().exists());
 
-                return Err(err);
-            };
+        //             if !file_exists {
+        //                 anyhow!("{} does not exist", input.path.display())
+        //             } else if buffer.is_empty() {
+        //                 anyhow!(
+        //                     "{} is empty, so the provided `old_string` wasn't found.",
+        //                     input.path.display()
+        //                 )
+        //             } else {
+        //                 anyhow!("Failed to match the provided `old_string`")
+        //             }
+        //         })?;
 
-            let snapshot = cx.update(|cx| {
-                action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+        //         return Err(err);
+        //     };
 
-                let snapshot = buffer.update(cx, |buffer, cx| {
-                    buffer.finalize_last_transaction();
-                    buffer.apply_diff(diff, cx);
-                    buffer.finalize_last_transaction();
-                    buffer.snapshot()
-                });
-                action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-                snapshot
-            })?;
+        //     let snapshot = cx.update(|cx| {
+        //         action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
 
-            project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
-                .await?;
+        //         let snapshot = buffer.update(cx, |buffer, cx| {
+        //             buffer.finalize_last_transaction();
+        //             buffer.apply_diff(diff, cx);
+        //             buffer.finalize_last_transaction();
+        //             buffer.snapshot()
+        //         });
+        //         action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        //         snapshot
+        //     })?;
 
-            let new_text = snapshot.text();
-            let diff_str = cx
-                .background_spawn({
-                    let old_text = old_text.clone();
-                    let new_text = new_text.clone();
-                    async move { language::unified_diff(&old_text, &new_text) }
-                })
-                .await;
+        //     project
+        //         .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+        //         .await?;
 
-            if let Some(card) = card_clone {
-                card.update(cx, |card, cx| {
-                    card.set_diff(project_path.path.clone(), old_text, new_text, cx);
-                })
-                .log_err();
-            }
+        //     let new_text = snapshot.text();
+        //     let diff_str = cx
+        //         .background_spawn({
+        //             let old_text = old_text.clone();
+        //             let new_text = new_text.clone();
+        //             async move { language::unified_diff(&old_text, &new_text) }
+        //         })
+        //         .await;
 
-            Ok(format!(
-                "Edited {}:\n\n```diff\n{}\n```",
-                input.path.display(),
-                diff_str
-            ))
-        });
+        //     if let Some(card) = card_clone {
+        //         card.update(cx, |card, cx| {
+        //             card.set_diff(project_path.path.clone(), old_text, new_text, cx);
+        //         })
+        //         .log_err();
+        //     }
 
-        ToolResult {
-            output: task,
-            card: card.map(AnyToolCard::from),
-        }
+        //     Ok(format!(
+        //         "Edited {}:\n\n```diff\n{}\n```",
+        //         input.path.display(),
+        //         diff_str
+        //     ))
+        // });
+
+        // ToolResult {
+        //     output: task,
+        //     card: card.map(AnyToolCard::from),
+        // }
     }
 }
 

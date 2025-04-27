@@ -10,7 +10,7 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent::ThreadEvent;
+use agent::{ContextLoadResult, ThreadEvent};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
@@ -115,7 +115,12 @@ impl ExampleContext {
     pub fn push_user_message(&mut self, text: impl ToString) {
         self.app
             .update_entity(&self.agent_thread, |thread, cx| {
-                thread.insert_user_message(text.to_string(), vec![], None, cx);
+                thread.insert_user_message(
+                    text.to_string(),
+                    ContextLoadResult::default(),
+                    None,
+                    cx,
+                );
             })
             .unwrap();
     }
@@ -155,7 +160,11 @@ impl ExampleContext {
             if left == right {
                 Ok(())
             } else {
-                println!("{}{:#?} != {:#?}", self.log_prefix, left, right);
+                println!(
+                    "{}{}",
+                    self.log_prefix,
+                    pretty_assertions::Comparison::new(&left, &right)
+                );
                 Err(anyhow::Error::from(FailedAssertion(message.clone())))
             },
             message,
@@ -253,6 +262,9 @@ impl ExampleContext {
                         }
                     });
                 }
+                ThreadEvent::InvalidToolInput { .. } => {
+                    println!("{log_prefix} invalid tool input");
+                }
                 ThreadEvent::ToolConfirmationNeeded => {
                     panic!(
                         "{}Bug: Tool confirmation should not be required in eval",
@@ -325,8 +337,8 @@ impl ExampleContext {
     }
 
     pub fn edits(&self) -> HashMap<Arc<Path>, FileEdits> {
-        self.app
-            .read_entity(&self.agent_thread, |thread, cx| {
+        self.agent_thread
+            .read_with(&self.app, |thread, cx| {
                 let action_log = thread.action_log().read(cx);
                 HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
                     |(buffer, diff)| {
@@ -405,16 +417,16 @@ impl ToolUse {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct FileEdits {
-    hunks: Vec<FileEditHunk>,
+    pub hunks: Vec<FileEditHunk>,
 }
 
-#[derive(Debug)]
-struct FileEditHunk {
-    base_text: String,
-    text: String,
-    status: DiffHunkStatus,
+#[derive(Debug, Eq, PartialEq)]
+pub struct FileEditHunk {
+    pub base_text: String,
+    pub text: String,
+    pub status: DiffHunkStatus,
 }
 
 impl FileEdits {

@@ -110,7 +110,7 @@ members = [
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
-    "crates/prompt_library",
+    "crates/rules_library",
     "crates/prompt_store",
     "crates/proto",
     "crates/recent_projects",
@@ -320,7 +320,7 @@ prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
-prompt_library = { path = "crates/prompt_library" }
+rules_library = { path = "crates/rules_library" }
 prompt_store = { path = "crates/prompt_store" }
 proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
@@ -501,6 +501,7 @@ prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
 rand = "0.8.5"
+ref-cast = "1.0.24"
 rayon = "1.8"
 regex = "1.5"
 repair_json = "0.1.0"
@@ -607,7 +608,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.7.0"
+zed_llm_client = "0.7.1"
 zstd = "0.11"
 metal = "0.29"
 

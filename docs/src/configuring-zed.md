@@ -2178,7 +2178,7 @@ Examples:
 
 ## Show Whitespaces
 
-- Description: Whether or not to show render whitespace characters in the editor.
+- Description: Whether or not to render whitespace characters in the editor.
 - Setting: `show_whitespaces`
 - Default: `selection`
 

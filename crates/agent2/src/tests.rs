@@ -184,7 +184,9 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
 }
 
 /// Filters out the stop events for asserting against in tests
-fn stop_events(result_events: Vec<Result<AgentResponseEvent>>) -> Vec<StopReason> {
+fn stop_events(
+    result_events: Vec<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+) -> Vec<StopReason> {
     result_events
         .into_iter()
         .filter_map(|event| match event.unwrap() {

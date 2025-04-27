@@ -9,10 +9,10 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use open_ai::{Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::{ResultExt, maybe};
+use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
@@ -321,7 +321,12 @@ impl LanguageModel for OpenAiLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
+        >,
     > {
         let request = into_open_ai(request, &self.model, self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
@@ -419,7 +424,7 @@ pub fn into_open_ai(
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     #[derive(Default)]
     struct RawToolCall {
         id: String,
@@ -443,7 +448,9 @@ pub fn map_to_language_model_completion_events(
                     Ok(event) => {
                         let Some(choice) = event.choices.first() else {
                             return Some((
-                                vec![Err(anyhow!("Response contained no choices"))],
+                                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                                    "Response contained no choices"
+                                )))],
                                 state,
                             ));
                         };
@@ -484,20 +491,26 @@ pub fn map_to_language_model_completion_events(
                             }
                             Some("tool_calls") => {
                                 events.extend(state.tool_calls_by_index.drain().map(
-                                    |(_, tool_call)| {
-                                        maybe!({
-                                            Ok(LanguageModelCompletionEvent::ToolUse(
-                                                LanguageModelToolUse {
-                                                    id: tool_call.id.into(),
-                                                    name: tool_call.name.as_str().into(),
-                                                    is_input_complete: true,
-                                                    raw_input: tool_call.arguments.clone(),
-                                                    input: serde_json::Value::from_str(
-                                                        &tool_call.arguments,
-                                                    )?,
-                                                },
-                                            ))
-                                        })
+                                    |(_, tool_call)| match serde_json::Value::from_str(
+                                        &tool_call.arguments,
+                                    ) {
+                                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                            LanguageModelToolUse {
+                                                id: tool_call.id.clone().into(),
+                                                name: tool_call.name.as_str().into(),
+                                                is_input_complete: true,
+                                                input,
+                                                raw_input: tool_call.arguments.clone(),
+                                            },
+                                        )),
+                                        Err(error) => {
+                                            Err(LanguageModelCompletionError::BadInputJson {
+                                                id: tool_call.id.into(),
+                                                tool_name: tool_call.name.as_str().into(),
+                                                raw_input: tool_call.arguments.into(),
+                                                json_parse_error: error.to_string(),
+                                            })
+                                        }
                                     },
                                 ));
 
@@ -516,7 +529,9 @@ pub fn map_to_language_model_completion_events(
 
                         return Some((events, state));
                     }
-                    Err(err) => return Some((vec![Err(err)], state)),
+                    Err(err) => {
+                        return Some((vec![Err(LanguageModelCompletionError::Other(err))], state));
+                    }
                 }
             }
 
