@@ -29,41 +29,34 @@ impl SignatureHelp {
                 .active_parameter
                 .unwrap_or_else(|| help.active_parameter.unwrap_or(0))
                 as usize;
-            let str_for_join = ", ";
             let mut highlights = Vec::new();
-            let mut highlight_start = 0;
-            let parameters: Vec<_> = signature
-                .parameters
-                .as_ref()?
-                .iter()
-                .enumerate()
-                .map(|(i, parameter_information)| {
-                    let label = match parameter_information.label.clone() {
-                        lsp::ParameterLabel::Simple(string) => string,
-                        lsp::ParameterLabel::LabelOffsets(offset) => signature
-                            .label
-                            .chars()
-                            .skip(offset[0] as usize)
-                            .take((offset[1] - offset[0]) as usize)
-                            .collect::<String>(),
-                    };
-                    let label_length = label.len();
-
-                    if i == active_parameter {
-                        highlights.push((
-                            highlight_start..(highlight_start + label_length),
+            signature.parameters.as_ref().map(|parameters| {
+                parameters
+                    .get(active_parameter)
+                    .map(|parameter| match &parameter.label {
+                        lsp::ParameterLabel::LabelOffsets(offset) => highlights.push((
+                            offset[0] as usize..offset[1] as usize,
                             HighlightStyle {
                                 font_weight: Some(FontWeight::EXTRA_BOLD),
                                 ..Default::default()
                             },
-                        ));
-                    }
-                    highlight_start += label_length + str_for_join.len();
-                    label
-                })
-                .collect();
+                        )),
+                        lsp::ParameterLabel::Simple(string) => {
+                            let Some(start) = signature.label.find(string) else {
+                                return;
+                            };
+                            highlights.push((
+                                start..start + string.len(),
+                                HighlightStyle {
+                                    font_weight: Some(FontWeight::EXTRA_BOLD),
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                    })
+            });
 
-            let label = parameters.join(str_for_join);
+            let label = signature.label.clone();
             let documentation = signature.documentation.clone().map(|doc| match doc {
                 lsp::Documentation::String(string) => string,
                 lsp::Documentation::MarkupContent(markup) => markup.value,
@@ -238,8 +231,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
-                vec![(0..7, current_parameter())]
+                "fn test(foo: u8, bar: &str)".to_string(),
+                vec![(8..15, current_parameter())]
             )
         );
     }
@@ -274,8 +267,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
-                vec![(9..18, current_parameter())]
+                "fn test(foo: u8, bar: &str)".to_string(),
+                vec![(17..26, current_parameter())]
             )
         );
     }
@@ -327,8 +320,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
-                vec![(0..7, current_parameter())]
+                "fn test1(foo: u8, bar: &str)".to_string(),
+                vec![(9..16, current_parameter())]
             )
         );
     }
@@ -380,8 +373,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool".to_string(),
-                vec![(0..12, current_parameter())]
+                "fn test2(hoge: String, fuga: bool)".to_string(),
+                vec![(9..21, current_parameter())]
             )
         );
     }
@@ -433,8 +426,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool".to_string(),
-                vec![(14..24, current_parameter())]
+                "fn test2(hoge: String, fuga: bool)".to_string(),
+                vec![(23..33, current_parameter())]
             )
         );
     }
@@ -486,8 +479,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool".to_string(),
-                vec![(0..12, current_parameter())]
+                "fn test2(hoge: String, fuga: bool)".to_string(),
+                vec![(9..21, current_parameter())]
             )
         );
     }
@@ -554,8 +547,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "one: usize, two: u32".to_string(),
-                vec![(12..20, current_parameter())]
+                "fn test3(one: usize, two: u32)".to_string(),
+                vec![(21..29, current_parameter())]
             )
         );
     }
@@ -601,8 +594,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
-                vec![(0..7, current_parameter())]
+                "fn test(foo: u8, bar: &str)".to_string(),
+                vec![(8..15, current_parameter())]
             )
         );
     }
