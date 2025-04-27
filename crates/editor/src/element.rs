@@ -8195,8 +8195,8 @@ impl Element for EditorElement {
                         }
                     });
 
-                    self.paint_scrollbars(layout, window, cx);
                     self.paint_minimap(layout, window, cx);
+                    self.paint_scrollbars(layout, window, cx);
                     self.paint_inline_completion_popover(layout, window, cx);
                     self.paint_mouse_context_menu(layout, window, cx);
                 });
