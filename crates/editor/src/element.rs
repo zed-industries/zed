@@ -7620,7 +7620,7 @@ impl Element for EditorElement {
                         MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
 
                     let scroll_max = point(
-                        ((scroll_width - editor_width) / em_width).max(0.0),
+                        ((scroll_width - editor_width + content_offset.x) / em_width).max(0.0),
                         max_scroll_top,
                     );
 
