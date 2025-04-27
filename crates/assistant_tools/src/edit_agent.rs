@@ -231,6 +231,7 @@ impl SearchMatrix {
 mod tests {
     use super::*;
     use client::{Client, UserStore};
+    use collections::HashSet;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
@@ -248,6 +249,14 @@ mod tests {
         },
     };
     use util::path;
+
+    #[derive(Clone)]
+    struct Eval {
+        input_path: PathBuf,
+        input_content: String,
+        instructions: String,
+        expected_output_variants: Vec<String>,
+    }
 
     #[gpui::test]
     async fn test_basic(cx: &mut TestAppContext) {
@@ -286,12 +295,13 @@ mod tests {
 
     #[test]
     fn test_delete_run_git_blame() {
-        eval(100, 0.9, async |cx| {
-            let test = agent_test(cx).await;
-            let new_content = apply_edits(
-                "root/blame.rs",
-                include_str!("fixtures/delete_run_git_blame/before.rs"),
-                indoc! {r#"
+        eval(
+            100,
+            0.9,
+            Eval {
+                input_path: "root/blame.rs".into(),
+                input_content: include_str!("fixtures/delete_run_git_blame/before.rs").into(),
+                instructions: indoc! {r#"
                     Let's delete the `run_git_blame` function while keeping all other code intact:
 
                     // ... existing code ...
@@ -301,34 +311,37 @@ mod tests {
                     #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
                     pub struct BlameEntry {
                     // ... existing code ...
-               "#},
-                &test,
-                cx,
-            )
-            .await;
-            (
-                new_content,
-                include_str!("fixtures/delete_run_git_blame/after.rs").into(),
-            )
-        });
+                "#}
+                .into(),
+                expected_output_variants: vec![
+                    include_str!("fixtures/delete_run_git_blame/after.rs").into(),
+                ],
+            },
+        );
     }
 
-    fn eval<F>(iterations: usize, expected_pass_ratio: f32, f: F)
-    where
-        F: 'static + Send + Sync + AsyncFn(&mut TestAppContext) -> (String, String),
-    {
+    fn eval(iterations: usize, expected_pass_ratio: f32, eval: Eval) {
         let executor = gpui::background_executor();
-        let f = Arc::new(f);
         let (tx, rx) = mpsc::channel();
         for _ in 0..iterations {
-            let f = f.clone();
+            let eval = eval.clone();
             let tx = tx.clone();
             executor
                 .spawn(async move {
                     let dispatcher = gpui::TestDispatcher::new(StdRng::from_entropy());
                     let mut cx = TestAppContext::build(dispatcher, None);
-                    let result = cx.executor().block_test(f(&mut cx));
-                    tx.send(result).unwrap();
+                    let output = cx.executor().block_test(async {
+                        let test = agent_test(&mut cx).await;
+                        apply_edits(
+                            eval.input_path,
+                            eval.input_content,
+                            eval.instructions,
+                            &test,
+                            &mut cx,
+                        )
+                        .await
+                    });
+                    tx.send(output).unwrap();
                 })
                 .detach();
         }
@@ -338,16 +351,22 @@ mod tests {
         report_progress(finished_count, iterations);
 
         let mut failed_count = 0;
-        let mut failed = String::new();
-        while let Ok((actual, expected)) = rx.recv() {
-            if actual != expected {
+        let mut failed_message = String::new();
+        let mut failed_outputs = HashSet::default();
+        while let Ok(output) = rx.recv() {
+            if !eval.expected_output_variants.contains(&output) {
                 failed_count += 1;
-                writeln!(
-                    failed,
-                    "=======\n{}\n=======",
-                    pretty_assertions::StrComparison::new(&actual, &expected)
-                )
-                .unwrap();
+                if failed_outputs.insert(output.clone()) {
+                    writeln!(
+                        failed_message,
+                        "=======\n{}\n=======",
+                        pretty_assertions::StrComparison::new(
+                            &output,
+                            &eval.expected_output_variants[0]
+                        )
+                    )
+                    .unwrap();
+                }
             }
 
             finished_count += 1;
@@ -360,7 +379,7 @@ mod tests {
             "Expected pass ratio: {}\nActual pass ratio: {}\nFailures: {}",
             expected_pass_ratio,
             actual_pass_ratio,
-            failed.trim_end()
+            failed_message
         );
     }
 
@@ -512,7 +531,7 @@ mod tests {
                 let models = LanguageModelRegistry::read_global(cx);
                 let model = models
                     .available_models(cx)
-                    .find(|model| model.id().0 == "gemini-2.5-flash-preview-04-17")
+                    .find(|model| model.id().0 == "gemini-2.0-flash")
                     .unwrap();
 
                 let provider = models.provider(&model.provider_id()).unwrap();
