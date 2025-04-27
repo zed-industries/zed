@@ -1,16 +1,17 @@
 use std::{sync::Arc, thread::JoinHandle};
 
 use anyhow::Context;
-use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use parking_lot::Mutex;
 use release_channel::app_identifier;
 use util::ResultExt;
 use windows::{
+    core::HSTRING,
     Win32::{
-        Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_WRITE, GetLastError, HANDLE},
+        Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, GENERIC_WRITE, HANDLE},
         Storage::FileSystem::{
-            CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING,
-            PIPE_ACCESS_INBOUND, ReadFile, WriteFile,
+            CreateFileW, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE,
+            OPEN_EXISTING, PIPE_ACCESS_INBOUND,
         },
         System::{
             Pipes::{
@@ -20,10 +21,7 @@ use windows::{
             Threading::CreateMutexW,
         },
     },
-    core::HSTRING,
 };
-
-use crate::{Args, OpenListener};
 
 use crate::{Args, OpenListener};
 

@@ -18042,8 +18042,6 @@ dependencies = [
  "winapi",
  "windows-core 0.61.0",
  "windows-numerics",
- "windows-result 0.3.2",
- "windows-strings 0.4.0",
  "windows-sys 0.48.0",
  "windows-sys 0.52.0",
  "windows-sys 0.59.0",
