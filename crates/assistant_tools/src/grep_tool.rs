@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, fmt::Write, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -75,7 +75,7 @@ impl Tool for GrepTool {
         match serde_json::from_value::<GrepToolInput>(input.clone()) {
             Ok(input) => {
                 let page = input.page();
-                let regex_str = MarkdownString::inline_code(&input.regex);
+                let regex_str = MarkdownInlineCode(&input.regex);
                 let case_info = if input.case_sensitive {
                     " (case-sensitive)"
                 } else {
