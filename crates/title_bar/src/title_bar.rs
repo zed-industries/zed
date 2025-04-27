@@ -536,6 +536,9 @@ impl TitleBar {
                 .color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
+                .icon(IconName::GitBranch)
+                .icon_position(IconPosition::Start)
+                .icon_color(Color::Muted)
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
