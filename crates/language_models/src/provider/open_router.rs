@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
-use collections::{BTreeMap, HashMap};
+use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
@@ -146,7 +146,7 @@ impl State {
             let model_entries = get_models(http_client.as_ref(), &api_url).await?;
 
             // Convert ModelEntry objects to our Model objects
-            let mut models: Vec<open_router::Model> = model_entries
+            let models: Vec<open_router::Model> = model_entries
                 .into_iter()
                 .map(|entry| {
                     let max_tokens = entry.context_length as usize;
@@ -159,9 +159,6 @@ impl State {
                     )
                 })
                 .collect();
-
-            // Sort models by name for better display
-            models.sort_by(|a, b| a.name.cmp(&b.name));
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
@@ -235,32 +232,41 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: BTreeMap<String, open_router::Model> = BTreeMap::default();
+        let mut models_from_api = self.state.read(cx).available_models.clone();
+        let mut settings_models = Vec::new();
 
-        // Add models from the OpenRouter API
-        for model in self.state.read(cx).available_models.iter() {
-            models.insert(model.name.clone(), model.clone());
-        }
-
-        // Override with available models from settings
+        // Add models from settings
         for model in &AllLanguageModelSettings::get_global(cx)
             .open_router
             .available_models
         {
-            models.insert(
-                model.name.clone(),
-                open_router::Model {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    supports_tool_calls: false,
-                    excels_at_coding: false,
-                },
-            );
+            settings_models.push(open_router::Model {
+                name: model.name.clone(),
+                display_name: model.display_name.clone(),
+                max_tokens: model.max_tokens,
+                supports_tool_calls: false,
+                excels_at_coding: false,
+            });
         }
 
-        models
-            .into_values()
+        // Override any API models with settings models
+        for settings_model in &settings_models {
+            if let Some(pos) = models_from_api
+                .iter()
+                .position(|m| m.name == settings_model.name)
+            {
+                models_from_api[pos] = settings_model.clone();
+            } else {
+                models_from_api.push(settings_model.clone());
+            }
+        }
+
+        // Sort by whether the model excels at coding (descending), then alphabetically by name
+        models_from_api
+            .sort_by(|a, b| (b.excels_at_coding(), &a.name).cmp(&(a.excels_at_coding(), &b.name)));
+
+        models_from_api
+            .into_iter()
             .map(|model| self.create_language_model(model))
             .collect()
     }
