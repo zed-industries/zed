@@ -49,7 +49,7 @@ pub use item::{
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
-use language::{LanguageRegistry, Rope};
+use language::{Buffer, LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
@@ -96,7 +96,7 @@ use std::{
     sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
     time::Duration,
 };
-use task::{DebugTaskDefinition, SpawnInTerminal};
+use task::{DebugScenario, SpawnInTerminal, TaskContext};
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -140,7 +140,15 @@ pub trait TerminalProvider {
 }
 
 pub trait DebuggerProvider {
-    fn start_session(&self, definition: DebugTaskDefinition, window: &mut Window, cx: &mut App);
+    // `active_buffer` is used to resolve build task's name against language-specific tasks.
+    fn start_session(
+        &self,
+        definition: DebugScenario,
+        task_context: TaskContext,
+        active_buffer: Option<Entity<Buffer>>,
+        window: &mut Window,
+        cx: &mut App,
+    );
 }
 
 actions!(

@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use dap::adapters::DebugTaskDefinition;
 use dap::{DebugRequest, client::DebugAdapterClient};
 use gpui::{Entity, TestAppContext, WindowHandle};
 use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
-use task::DebugTaskDefinition;
+use task::TaskContext;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
@@ -104,7 +105,13 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
 ) -> Result<Entity<Session>> {
     let _subscription = project::debugger::test::intercept_debug_sessions(cx, configure);
     workspace.update(cx, |workspace, window, cx| {
-        workspace.start_debug_session(config, window, cx)
+        workspace.start_debug_session(
+            config.to_scenario(),
+            TaskContext::default(),
+            None,
+            window,
+            cx,
+        )
     })?;
     cx.run_until_parked();
     let session = workspace.read_with(cx, |workspace, cx| {
@@ -128,9 +135,9 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
         workspace,
         cx,
         DebugTaskDefinition {
-            adapter: "fake-adapter".to_string(),
+            adapter: "fake-adapter".into(),
             request: DebugRequest::Launch(Default::default()),
-            label: "test".to_string(),
+            label: "test".into(),
             initialize_args: None,
             tcp_connection: None,
             stop_on_entry: None,
