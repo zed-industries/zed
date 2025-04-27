@@ -2,6 +2,7 @@ mod application_menu;
 mod collab;
 mod onboarding_banner;
 mod platforms;
+mod title_bar_settings;
 mod window_controls;
 
 #[cfg(feature = "stories")]
@@ -31,6 +32,7 @@ use settings::Settings as _;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
+use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
@@ -52,7 +54,13 @@ const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 actions!(collab, [ToggleUserMenu, ToggleProjectMenu, SwitchBranch]);
 
+pub fn init_settings(cx: &mut App) {
+    TitleBarSettings::register(cx);
+}
+
 pub fn init(cx: &mut App) {
+    init_settings(cx);
+
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -531,29 +539,34 @@ impl TitleBar {
                 })
         }?;
 
-        Some(
-            Button::new("project_branch_trigger", branch_name)
-                .color(Color::Muted)
-                .style(ButtonStyle::Subtle)
-                .label_size(LabelSize::Small)
+        let mut branch_button = Button::new("project_branch_trigger", branch_name)
+            .color(Color::Muted)
+            .style(ButtonStyle::Subtle)
+            .label_size(LabelSize::Small)
+            .tooltip(move |window, cx| {
+                Tooltip::with_meta(
+                    "Recent Branches",
+                    Some(&zed_actions::git::Branch),
+                    "Local branches only",
+                    window,
+                    cx,
+                )
+            })
+            .on_click(move |_, window, cx| {
+                let _ = workspace.update(cx, |_this, cx| {
+                    window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
+                });
+            });
+
+        let show_branch_icon = TitleBarSettings::get_global(cx).show_branch_icon;
+        if show_branch_icon {
+            branch_button = branch_button
                 .icon(IconName::GitBranch)
                 .icon_position(IconPosition::Start)
-                .icon_color(Color::Muted)
-                .tooltip(move |window, cx| {
-                    Tooltip::with_meta(
-                        "Recent Branches",
-                        Some(&zed_actions::git::Branch),
-                        "Local branches only",
-                        window,
-                        cx,
-                    )
-                })
-                .on_click(move |_, window, cx| {
-                    let _ = workspace.update(cx, |_this, cx| {
-                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-                    });
-                }),
-        )
+                .icon_color(Color::Muted);
+        }
+
+        Some(branch_button)
     }
 
     fn window_activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {

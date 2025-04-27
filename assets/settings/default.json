@@ -303,6 +303,11 @@
     // Whether to show the Selections menu in the editor toolbar
     "selections_menu": true
   },
+  // Titlebar related settings
+  "title_bar": {
+    // Whether to show the branch icon beside branch switcher in the title bar.
+    "show_branch_icon": true
+  },
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor.
