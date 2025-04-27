@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
@@ -63,7 +63,7 @@ impl Tool for ListDirectoryTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ListDirectoryToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::inline_code(&input.path);
+                let path = MarkdownInlineCode(&input.path);
                 format!("List the {path} directory's contents")
             }
             Err(_) => "List directory".to_string(),

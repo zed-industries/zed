@@ -43,7 +43,7 @@ use ui::{
     Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, TextSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownCodeBlock;
 use workspace::Workspace;
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -882,7 +882,11 @@ impl ActiveThread {
         });
         rendered.input.update(cx, |this, cx| {
             this.replace(
-                MarkdownString::code_block("json", tool_input).to_string(),
+                MarkdownCodeBlock {
+                    tag: "json",
+                    text: tool_input,
+                }
+                .to_string(),
                 cx,
             );
         });

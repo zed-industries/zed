@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateFileToolInput {
@@ -73,7 +73,7 @@ impl Tool for CreateFileTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CreateFileToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::inline_code(&input.path);
+                let path = MarkdownInlineCode(&input.path);
                 format!("Create file {path}")
             }
             Err(_) => DEFAULT_UI_TEXT.to_string(),
