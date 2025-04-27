@@ -378,7 +378,7 @@ fn main() {
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let client = Client::production(cx);
-        cx.set_http_client(client.http_client().clone());
+        cx.set_http_client(client.http_client());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
