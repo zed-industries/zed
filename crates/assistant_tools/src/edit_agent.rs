@@ -2,16 +2,16 @@ mod edit_parser;
 
 use crate::{Template, Templates};
 use anyhow::{Result, anyhow};
+use assistant_tool::ActionLog;
 use edit_parser::EditParser;
-use futures::{Stream, StreamExt, TryStreamExt, stream};
+use futures::{Stream, StreamExt, stream};
 use gpui::{AsyncApp, Entity};
 use language::{Anchor, Bias, Buffer, BufferSnapshot};
 use language_model::{
     LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
-use project::{Project, ProjectPath};
 use serde::Serialize;
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use std::{ops::Range, path::PathBuf, sync::Arc};
 
 #[derive(Serialize)]
@@ -26,30 +26,70 @@ impl Template for EditAgentTemplate {
 }
 
 pub struct EditAgent {
-    project: Entity<Project>,
     model: Arc<dyn LanguageModel>,
+    action_log: Entity<ActionLog>,
     templates: Arc<Templates>,
 }
 
 impl EditAgent {
     pub fn new(
         model: Arc<dyn LanguageModel>,
-        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
     ) -> Self {
         EditAgent {
-            project,
             model,
+            action_log,
             templates,
         }
     }
 
-    pub async fn interpret(
+    pub async fn edit(
         &self,
         buffer: Entity<Buffer>,
         instructions: String,
         cx: &mut AsyncApp,
-    ) -> Result<impl Stream<Item = Result<(Range<Anchor>, String)>>> {
+    ) -> Result<()> {
+        let edits = self.stream_edits(buffer.clone(), instructions, cx).await?;
+        self.apply_edits(buffer, edits, cx).await?;
+        Ok(())
+    }
+
+    async fn apply_edits(
+        &self,
+        buffer: Entity<Buffer>,
+        edits: impl Stream<Item = Result<(Range<Anchor>, String)>>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        // todo!("group all edits into one transaction")
+        // todo!("add tests for this")
+
+        // Ensure the buffer is tracked by the action log.
+        self.action_log
+            .update(cx, |log, cx| log.track_buffer(buffer.clone(), cx))?;
+
+        futures::pin_mut!(edits);
+        while let Some(edit) = edits.next().await {
+            let (range, content) = edit?;
+            // Edit the buffer and report the edit as part of the same effect cycle, otherwise
+            // the edit will be reported as if the user made it.
+            cx.update(|cx| {
+                buffer.update(cx, |buffer, cx| buffer.edit([(range, content)], None, cx));
+                self.action_log
+                    .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    async fn stream_edits(
+        &self,
+        buffer: Entity<Buffer>,
+        instructions: String,
+        cx: &mut AsyncApp,
+    ) -> Result<impl use<> + Stream<Item = Result<(Range<Anchor>, String)>>> {
+        println!("{}\n\n", instructions);
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
         let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
         // todo!("move to background")
@@ -74,16 +114,14 @@ impl EditAgent {
             let mut error = None;
             let snapshot = snapshot.clone();
             match chunk {
-                Ok(chunk) => {
-                    edits = parser.push(&chunk);
-                    // print!("{}", chunk);
-                }
+                Ok(chunk) => edits = parser.push(&chunk),
                 Err(err) => error = Some(Err(anyhow!(err))),
             }
             stream::iter(
                 edits
                     .into_iter()
                     .map(move |edit| {
+                        dbg!(&edit);
                         let range = Self::resolve_location(&snapshot, &edit.old_text);
                         Ok((range, edit.new_text))
                     })
@@ -236,6 +274,7 @@ mod tests {
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
     use language_model::LanguageModelRegistry;
+    use project::Project;
     use rand::prelude::*;
     use reqwest_client::ReqwestClient;
     use serde_json::json;
@@ -262,9 +301,7 @@ mod tests {
                     // ... existing code ...
                 "#}
                 .into(),
-                expected_output_variants: vec![
-                    include_str!("fixtures/delete_run_git_blame/after.rs").into(),
-                ],
+                expected_output: include_str!("fixtures/delete_run_git_blame/after.rs").into(),
             },
         );
     }
@@ -335,9 +372,7 @@ mod tests {
                     // ... existing code ...
                 "#}
                 .into(),
-                expected_output_variants: vec![
-                    include_str!("fixtures/extract_handle_command_output/after.rs").into(),
-                ],
+                expected_output: include_str!("fixtures/extract_handle_command_output/after.rs").into()
             },
         );
     }
@@ -347,7 +382,7 @@ mod tests {
         input_path: PathBuf,
         input_content: String,
         instructions: String,
-        expected_output_variants: Vec<String>,
+        expected_output: String,
     }
 
     fn eval(iterations: usize, expected_pass_ratio: f32, eval: Eval) {
@@ -377,30 +412,27 @@ mod tests {
         }
         drop(tx);
 
-        let mut finished_count = 0;
-        report_progress(finished_count, iterations);
+        let mut evaluated_count = 0;
+        report_progress(evaluated_count, iterations);
 
         let mut failed_count = 0;
         let mut failed_message = String::new();
         let mut failed_outputs = HashSet::default();
         while let Ok(output) = rx.recv() {
-            if !eval.expected_output_variants.contains(&output) {
+            if output != eval.expected_output {
                 failed_count += 1;
                 if failed_outputs.insert(output.clone()) {
                     writeln!(
                         failed_message,
                         "=======\n{}\n=======",
-                        pretty_assertions::StrComparison::new(
-                            &output,
-                            &eval.expected_output_variants[0]
-                        )
+                        pretty_assertions::StrComparison::new(&output, &eval.expected_output)
                     )
                     .unwrap();
                 }
             }
 
-            finished_count += 1;
-            report_progress(finished_count, iterations);
+            evaluated_count += 1;
+            report_progress(evaluated_count, iterations);
         }
 
         let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
@@ -414,89 +446,10 @@ mod tests {
         );
     }
 
-    fn report_progress(finished_count: usize, iterations: usize) {
-        print!("\r\x1b[KFinished {}/{}", finished_count, iterations);
+    fn report_progress(evaluated_count: usize, iterations: usize) {
+        print!("\r\x1b[KEvaluated {}/{}", evaluated_count, iterations);
         std::io::stdout().flush().unwrap();
     }
-
-    // #[gpui::test]
-    // async fn test_extract_method(cx: &mut TestAppContext) {
-    //     let EditAgentTest { fs, agent } = agent_test(cx).await;
-    //     fs.insert_file(
-    //         "/root/blame.rs",
-    //         include_bytes!("../../git/src/blame.rs").into(),
-    //     )
-    //     .await;
-    //     let path = agent
-    //         .project
-    //         .read_with(cx, |project, cx| {
-    //             project.find_project_path("root/blame.rs", cx)
-    //         })
-    //         .unwrap();
-    //     agent
-    //         .interpret(
-    //             path,
-    //             indoc! {r#"
-    //                 // ... existing code ...
-
-    //                 async fn run_git_blame(
-    //                     git_binary: &Path,
-    //                     working_directory: &Path,
-    //                     path: &Path,
-    //                     contents: &Rope,
-    //                 ) -> Result<String> {
-    //                     let mut child = util::command::new_smol_command(git_binary)
-    //                         .current_dir(working_directory)
-    //                         .arg("blame")
-    //                         .arg("--incremental")
-    //                         .arg("--contents")
-    //                         .arg("-")
-    //                         .arg(path.as_os_str())
-    //                         .stdin(Stdio::piped())
-    //                         .stdout(Stdio::piped())
-    //                         .stderr(Stdio::piped())
-    //                         .spawn()
-    //                         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
-
-    //                     let stdin = child
-    //                         .stdin
-    //                         .as_mut()
-    //                         .context("failed to get pipe to stdin of git blame command")?;
-
-    //                     for chunk in contents.chunks() {
-    //                         stdin.write_all(chunk.as_bytes()).await?;
-    //                     }
-    //                     stdin.flush().await?;
-
-    //                     let output = child
-    //                         .output()
-    //                         .await
-    //                         .map_err(|e| anyhow!("Failed to read git blame output: {}", e))?;
-
-    //                     handle_git_blame_result(output)
-    //                 }
-
-    //                 fn handle_git_blame_result(output: std::process::Output) -> Result<String> {
-    //                     if !output.status.success() {
-    //                         let stderr = String::from_utf8_lossy(&output.stderr);
-    //                         let trimmed = stderr.trim();
-    //                         if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
-    //                             return Ok(String::new());
-    //                         }
-    //                         return Err(anyhow!("git blame process failed: {}", stderr));
-    //                     }
-
-    //                     Ok(String::from_utf8(output.stdout)?)
-    //                 }
-
-    //                 // ... existing code ...
-    //             "#}
-    //             .into(),
-    //             &mut cx.to_async(),
-    //         )
-    //         .await
-    //         .unwrap();
-    // }
 
     async fn apply_edits(
         path: impl AsRef<Path>,
@@ -506,36 +459,25 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> String {
         let path = test
-            .agent
             .project
             .read_with(cx, |project, cx| project.find_project_path(path, cx))
             .unwrap();
         let buffer = test
-            .agent
             .project
             .update(cx, |project, cx| project.open_buffer(path, cx))
             .await
             .unwrap();
         buffer.update(cx, |buffer, cx| buffer.set_text(content, cx));
-        let edits = test
-            .agent
-            .interpret(buffer.clone(), instructions.into(), &mut cx.to_async())
+        test.agent
+            .edit(buffer.clone(), instructions.into(), &mut cx.to_async())
             .await
-            .unwrap()
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>>>()
             .unwrap();
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits, None, cx);
-            buffer.text()
-        })
+        buffer.update(cx, |buffer, _cx| buffer.text())
     }
 
     struct EditAgentTest {
-        fs: Arc<FakeFs>,
         agent: EditAgent,
+        project: Entity<Project>,
     }
 
     async fn agent_test(cx: &mut TestAppContext) -> EditAgentTest {
@@ -574,10 +516,11 @@ mod tests {
                 })
             })
             .await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
         EditAgentTest {
-            fs,
-            agent: EditAgent::new(model, project, Templates::new()),
+            agent: EditAgent::new(model, action_log, Templates::new()),
+            project,
         }
     }
 }

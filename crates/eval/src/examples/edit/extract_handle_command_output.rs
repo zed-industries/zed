@@ -26,6 +26,7 @@ impl Example for ExtractHandleCommandOutput {
             "#
         ));
         cx.run_to_end().await?;
+        // todo!("add assertions")
 
         Ok(())
     }

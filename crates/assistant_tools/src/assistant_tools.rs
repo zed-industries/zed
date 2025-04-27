@@ -18,7 +18,6 @@ mod now_tool;
 mod open_tool;
 mod read_file_tool;
 mod rename_tool;
-mod replace;
 mod schema;
 mod symbol_info_tool;
 mod templates;

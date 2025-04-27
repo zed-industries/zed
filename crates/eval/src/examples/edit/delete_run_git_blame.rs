@@ -26,6 +26,7 @@ impl Example for DeleteRunGitBlame {
             "#
         ));
         cx.run_to_end().await?;
+        // todo!("add assertions")
 
         Ok(())
     }
