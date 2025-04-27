@@ -1042,7 +1042,7 @@ impl App {
         }
     }
 
-    /// Obtains a reference to the executor, which can be used to spawn futures.
+    /// Obtains a reference to the background executor, which can be used to spawn futures.
     pub fn background_executor(&self) -> &BackgroundExecutor {
         &self.background_executor
     }

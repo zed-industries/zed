@@ -54,7 +54,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     // Test a tool calls that's likely to complete *after* streaming stops.
     let events = agent
         .update(cx, |agent, cx| {
-            agent.remove_tool(&Tool::name(&EchoTool));
+            agent.remove_tool(&AgentTool::name(&EchoTool));
             agent.add_tool(DelayTool);
             agent.send(
                 model.clone(),

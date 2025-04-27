@@ -33,6 +33,7 @@ settings.workspace = true
 smol.workspace = true
 thiserror.workspace = true
 util.workspace = true
+worktree.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
@@ -45,3 +46,4 @@ language_model = { workspace = true, "features" = ["test-support"] }
 project = { workspace = true, "features" = ["test-support"] }
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
+worktree = { workspace = true, "features" = ["test-support"] }

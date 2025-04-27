@@ -2,6 +2,7 @@ mod prompts;
 mod templates;
 #[cfg(test)]
 mod tests;
+mod tools;
 
 use anyhow::{anyhow, Result};
 use futures::{channel::mpsc, future};
@@ -39,7 +40,7 @@ pub struct Agent {
     /// we run tools, report their results.
     running_turn: Option<Task<()>>,
     system_prompts: Vec<Arc<dyn Prompt>>,
-    tools: BTreeMap<SharedString, Arc<dyn ErasedTool>>,
+    tools: BTreeMap<SharedString, Arc<dyn AgentToolErased>>,
     templates: Arc<Templates>,
     // project: Entity<Project>,
     // action_log: Entity<ActionLog>,
@@ -60,7 +61,7 @@ impl Agent {
         &self.messages
     }
 
-    pub fn add_tool(&mut self, tool: impl Tool) {
+    pub fn add_tool(&mut self, tool: impl AgentTool) {
         self.tools.insert(tool.name(), tool.erase());
     }
 
@@ -93,7 +94,7 @@ impl Agent {
                 // Perform one request, then keep looping if the model makes tool calls.
                 loop {
                     let request =
-                        thread.update(cx, |thread, _cx| thread.build_completion_request())?;
+                        thread.update(cx, |thread, cx| thread.build_completion_request(cx))?;
 
                     // println!(
                     //     "request: {}",
@@ -293,7 +294,7 @@ impl Agent {
         self.messages.last_mut().unwrap()
     }
 
-    fn build_completion_request(&self) -> LanguageModelRequest {
+    fn build_completion_request(&self, cx: &mut App) -> LanguageModelRequest {
         LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
@@ -304,7 +305,7 @@ impl Agent {
                 .filter_map(|tool| {
                     Some(LanguageModelRequestTool {
                         name: tool.name().to_string(),
-                        description: tool.description().to_string(),
+                        description: tool.description(cx).to_string(),
                         input_schema: tool
                             .input_schema(LanguageModelToolSchemaFormat::JsonSchema)
                             .log_err()?,
@@ -328,14 +329,14 @@ impl Agent {
     }
 }
 
-pub trait Tool
+pub trait AgentTool
 where
     Self: 'static + Sized,
 {
     type Input: for<'de> Deserialize<'de> + JsonSchema;
 
     fn name(&self) -> SharedString;
-    fn description(&self) -> SharedString {
+    fn description(&self, cx: &mut App) -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
         schema
             .schema
@@ -352,30 +353,30 @@ where
     /// Runs the tool with the provided input.
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>;
 
-    fn erase(self) -> Arc<dyn ErasedTool> {
+    fn erase(self) -> Arc<dyn AgentToolErased> {
         Arc::new(Erased(Arc::new(self)))
     }
 }
 
 pub struct Erased<T>(T);
 
-pub trait ErasedTool {
+pub trait AgentToolErased {
     fn name(&self) -> SharedString;
-    fn description(&self) -> SharedString;
+    fn description(&self, cx: &mut App) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
     fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>>;
 }
 
-impl<T> ErasedTool for Erased<Arc<T>>
+impl<T> AgentToolErased for Erased<Arc<T>>
 where
-    T: Tool,
+    T: AgentTool,
 {
     fn name(&self) -> SharedString {
         self.0.name()
     }
 
-    fn description(&self) -> SharedString {
-        self.0.description()
+    fn description(&self, cx: &mut App) -> SharedString {
+        self.0.description(cx)
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

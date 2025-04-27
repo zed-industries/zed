@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use gpui::SharedString;
 use handlebars::Handlebars;
 use rust_embed::RustEmbed;
 use serde::Serialize;
@@ -45,4 +46,13 @@ impl Template for BaseTemplate {
 #[derive(Serialize)]
 pub struct WorktreeData {
     pub root_name: String,
+}
+
+#[derive(Serialize)]
+pub struct GlobTemplate {
+    pub project_roots: String,
+}
+
+impl Template for GlobTemplate {
+    const TEMPLATE_NAME: &'static str = "glob.hbs";
 }

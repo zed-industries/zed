@@ -9,7 +9,7 @@ pub struct EchoToolInput {
 
 pub struct EchoTool;
 
-impl Tool for EchoTool {
+impl AgentTool for EchoTool {
     type Input = EchoToolInput;
 
     fn name(&self) -> SharedString {
@@ -30,7 +30,7 @@ pub struct DelayToolInput {
 
 pub struct DelayTool;
 
-impl Tool for DelayTool {
+impl AgentTool for DelayTool {
     type Input = DelayToolInput;
 
     fn name(&self) -> SharedString {
@@ -70,7 +70,7 @@ pub struct WordListInput {
 
 pub struct WordListTool;
 
-impl Tool for WordListTool {
+impl AgentTool for WordListTool {
     type Input = WordListInput;
 
     fn name(&self) -> SharedString {
