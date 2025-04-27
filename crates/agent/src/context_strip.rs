@@ -14,7 +14,7 @@ use project::ProjectItem;
 use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::Workspace;
 
-use crate::context::{AgentContext, ContextKind};
+use crate::context::{ContextHandle, ContextKind};
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
@@ -288,7 +288,7 @@ impl ContextStrip {
         best.map(|(index, _, _)| index)
     }
 
-    fn open_context(&mut self, context: &AgentContext, window: &mut Window, cx: &mut App) {
+    fn open_context(&mut self, context: &ContextHandle, window: &mut Window, cx: &mut App) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };

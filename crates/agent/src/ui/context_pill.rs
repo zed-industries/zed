@@ -7,7 +7,7 @@ use prompt_store::PromptStore;
 use text::OffsetRangeExt;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
-use crate::context::{AgentContext, ContextKind, ImageStatus};
+use crate::context::{ContextHandle, ContextKind, ImageStatus};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -266,7 +266,7 @@ pub enum ContextStatus {
 //
 // #[derive(RegisterComponent)]
 pub struct AddedContext {
-    pub context: AgentContext,
+    pub context: ContextHandle,
     pub kind: ContextKind,
     pub name: SharedString,
     pub parent: Option<SharedString>,
@@ -282,13 +282,13 @@ impl AddedContext {
     ///
     /// TODO: `None` cases are unremovable from `ContextStore` and so are a very minor memory leak.
     pub fn new(
-        context: AgentContext,
+        context: ContextHandle,
         prompt_store: Option<&Entity<PromptStore>>,
         project: &Project,
         cx: &App,
     ) -> Option<AddedContext> {
         match context {
-            AgentContext::File(ref file_context) => {
+            ContextHandle::File(ref file_context) => {
                 let full_path = file_context.buffer.read(cx).file()?.full_path(cx);
                 let full_path_string: SharedString =
                     full_path.to_string_lossy().into_owned().into();
@@ -312,7 +312,7 @@ impl AddedContext {
                 })
             }
 
-            AgentContext::Directory(ref directory_context) => {
+            ContextHandle::Directory(ref directory_context) => {
                 let worktree = project
                     .worktree_for_entry(directory_context.entry_id, cx)?
                     .read(cx);
@@ -340,7 +340,7 @@ impl AddedContext {
                 })
             }
 
-            AgentContext::Symbol(ref symbol_context) => Some(AddedContext {
+            ContextHandle::Symbol(ref symbol_context) => Some(AddedContext {
                 kind: ContextKind::Symbol,
                 name: symbol_context.symbol.clone(),
                 parent: None,
@@ -351,7 +351,7 @@ impl AddedContext {
                 context,
             }),
 
-            AgentContext::Selection(ref selection_context) => {
+            ContextHandle::Selection(ref selection_context) => {
                 let buffer = selection_context.buffer.read(cx);
                 let full_path = buffer.file()?.full_path(cx);
                 let mut full_path_string = full_path.to_string_lossy().into_owned();
@@ -399,7 +399,7 @@ impl AddedContext {
                 })
             }
 
-            AgentContext::FetchedUrl(ref fetched_url_context) => Some(AddedContext {
+            ContextHandle::FetchedUrl(ref fetched_url_context) => Some(AddedContext {
                 kind: ContextKind::FetchedUrl,
                 name: fetched_url_context.url.clone(),
                 parent: None,
@@ -410,7 +410,7 @@ impl AddedContext {
                 context,
             }),
 
-            AgentContext::Thread(ref thread_context) => Some(AddedContext {
+            ContextHandle::Thread(ref thread_context) => Some(AddedContext {
                 kind: ContextKind::Thread,
                 name: thread_context.name(cx),
                 parent: None,
@@ -431,7 +431,7 @@ impl AddedContext {
                 context,
             }),
 
-            AgentContext::Rules(ref user_rules_context) => {
+            ContextHandle::Rules(ref user_rules_context) => {
                 let name = prompt_store
                     .as_ref()?
                     .read(cx)
@@ -449,7 +449,7 @@ impl AddedContext {
                 })
             }
 
-            AgentContext::Image(ref image_context) => Some(AddedContext {
+            ContextHandle::Image(ref image_context) => Some(AddedContext {
                 kind: ContextKind::Image,
                 name: "Image".into(),
                 parent: None,

@@ -35,7 +35,7 @@ use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 
-use crate::context::{AgentContext, ContextLoadResult, LoadedContext};
+use crate::context::{ContextHandle, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse, SharedProjectContext,
@@ -661,7 +661,7 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &AgentContext> {
+    pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &ContextHandle> {
         self.messages
             .iter()
             .find(|message| message.id == id)
