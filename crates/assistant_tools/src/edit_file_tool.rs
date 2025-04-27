@@ -28,7 +28,7 @@ use workspace::Workspace;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
-    /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
+    /// A user-friendly markdown description of the edit. This will be shown in the UI.
     ///
     /// <example>Fix API endpoint URLs</example>
     /// <example>Update copyright year in `page_footer`</example>
@@ -58,8 +58,34 @@ pub struct EditFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// Edit instructions that a less intelligent model will interpret to modify
-    /// the given path.
+    /// Edit instructions that will be interpreted by a less intelligent model,
+    /// which will quickly apply the edits. You should make it clear what the
+    /// edits are, while also minimizing the unchanged code you write. The model
+    /// does not have access to this conversation, so you must make sure the
+    /// instructions are self-contained and do not rely on external context.
+    ///
+    /// Insert `// ... existing code ...` comments in your output to represent
+    /// unchanged code ABOVE, BELOW, and IN BETWEEN edited lines.
+    ///
+    /// Bias towards repeating as few lines of the original file as possible to
+    /// convey the change. However, each edit should contain sufficient context
+    /// of unchanged lines to resolve ambiguity. When you want to delete a piece
+    /// of code, indicate a few lines above and below the code you want to
+    /// delete (surrounded by `// ... existing code ...`).
+    ///
+    /// Never forget to include `// ... existing code ...` comments to represent
+    /// unchanged lines, otherwise the small model may not understand the
+    /// context of your edit and will delete important code!
+    ///
+    /// <your_output>
+    /// // ... existing code ...
+    /// FIRST_EDIT
+    /// // ... existing code ...
+    /// SECOND_EDIT
+    /// // ... existing code ...
+    /// THIRD_EDIT
+    /// // ... existing code ...
+    /// </your_output>
     pub edit_instructions: String,
 }
 
@@ -101,10 +127,11 @@ impl Tool for EditFileTool {
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<EditFileToolInput>(input.clone()) {
-            Ok(input) => input.display_description,
-            Err(_) => "Editing file".to_string(),
-        }
+        "Editing file".to_string()
+        // match serde_json::from_value::<EditFileToolInput>(input.clone()) {
+        //     Ok(input) => input.display_description,
+        //     Err(_) => "Editing file".to_string(),
+        // }
     }
 
     // fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
@@ -139,7 +166,7 @@ impl Tool for EditFileTool {
 
         println!("{}", input.display_description);
         println!("{}", input.edit_instructions);
-        panic!();
+        Task::ready(Ok("Done!".to_string())).into()
 
         // let card = window.and_then(|window| {
         //     window

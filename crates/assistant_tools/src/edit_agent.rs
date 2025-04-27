@@ -239,59 +239,8 @@ mod tests {
     use rand::prelude::*;
     use reqwest_client::ReqwestClient;
     use serde_json::json;
-    use std::{
-        fmt::Write as _,
-        io::Write as _,
-        path::Path,
-        sync::{
-            atomic::{self, AtomicUsize},
-            mpsc,
-        },
-    };
+    use std::{fmt::Write as _, io::Write as _, path::Path, sync::mpsc};
     use util::path;
-
-    #[derive(Clone)]
-    struct Eval {
-        input_path: PathBuf,
-        input_content: String,
-        instructions: String,
-        expected_output_variants: Vec<String>,
-    }
-
-    #[gpui::test]
-    async fn test_basic(cx: &mut TestAppContext) {
-        let test = agent_test(cx).await;
-        apply_edits(
-            "root/blame.rs",
-            indoc! {"
-                struct User {
-                    id: u32,
-                    name: String,
-                }
-
-                impl User {
-                    pub fn new(id: u32, name: String) -> Self {
-                        User { id, name }
-                    }
-
-                    pub fn id(&self) -> u32 {
-                        self.id
-                    }
-
-                    pub fn name(&self) -> &str {
-                        &self.name
-                    }
-                }
-            "},
-            indoc! {"
-                Introduce a new field `age: u8`, add it to the constructor
-                and also add a getter method for it.
-            "},
-            &test,
-            cx,
-        )
-        .await;
-    }
 
     #[test]
     fn test_delete_run_git_blame() {
@@ -318,6 +267,87 @@ mod tests {
                 ],
             },
         );
+    }
+
+    #[test]
+    fn test_extract_handle_command_output() {
+        eval(
+            100,
+            0.9,
+            Eval {
+                input_path: "root/blame.rs".into(),
+                input_content: include_str!("fixtures/extract_handle_command_output/before.rs").into(),
+                instructions: indoc! {r#"
+                    Extract `handle_command_output` method from `run_git_blame`.
+
+                    // ... existing code ...
+
+                    async fn run_git_blame(
+                        git_binary: &Path,
+                        working_directory: &Path,
+                        path: &Path,
+                        contents: &Rope,
+                    ) -> Result<String> {
+                        let mut child = util::command::new_smol_command(git_binary)
+                            .current_dir(working_directory)
+                            .arg("blame")
+                            .arg("--incremental")
+                            .arg("--contents")
+                            .arg("-")
+                            .arg(path.as_os_str())
+                            .stdin(Stdio::piped())
+                            .stdout(Stdio::piped())
+                            .stderr(Stdio::piped())
+                            .spawn()
+                            .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
+
+                        let stdin = child
+                            .stdin
+                            .as_mut()
+                            .context("failed to get pipe to stdin of git blame command")?;
+
+                        for chunk in contents.chunks() {
+                            stdin.write_all(chunk.as_bytes()).await?;
+                        }
+                        stdin.flush().await?;
+
+                        let output = child
+                            .output()
+                            .await
+                            .map_err(|e| anyhow!("Failed to read git blame output: {}", e))?;
+
+                        handle_command_output(output)
+                    }
+
+                    fn handle_command_output(output: std::process::Output) -> Result<String> {
+                        if !output.status.success() {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            let trimmed = stderr.trim();
+                            if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
+                                return Ok(String::new());
+                            }
+                            return Err(anyhow!("git blame process failed: {}", stderr));
+                        }
+
+                        Ok(String::from_utf8(output.stdout)?)
+                    }
+
+                    // ... existing code ...
+                "#}
+                .into(),
+                expected_output_variants: vec![
+                    include_str!("fixtures/extract_handle_command_output/after.rs").into(),
+                ],
+            },
+        );
+    }
+
+    #[derive(Clone)]
+    struct Eval {
+        input_path: PathBuf,
+        input_content: String,
+        instructions: String,
+        expected_output_variants: Vec<String>,
     }
 
     fn eval(iterations: usize, expected_pass_ratio: f32, eval: Eval) {
@@ -374,6 +404,7 @@ mod tests {
         }
 
         let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
+        println!("Actual pass ratio: {}\n", actual_pass_ratio);
         assert!(
             actual_pass_ratio >= expected_pass_ratio,
             "Expected pass ratio: {}\nActual pass ratio: {}\nFailures: {}",

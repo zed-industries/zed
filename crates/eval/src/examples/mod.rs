@@ -20,6 +20,7 @@ pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
         Rc::new(file_search::FileSearchExample),
         Rc::new(add_arg_to_trait_method::AddArgToTraitMethod),
         Rc::new(edit::DeleteRunGitBlame),
+        Rc::new(edit::ExtractHandleCommandOutput),
     ];
 
     for example_path in list_declarative_examples(examples_dir).unwrap() {
