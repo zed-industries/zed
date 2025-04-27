@@ -1,7 +1,9 @@
 use std::{rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
-use gpui::{Animation, AnimationExt as _, ClickEvent, Entity, MouseButton, pulsating_between};
+use gpui::{
+    Animation, AnimationExt as _, AnyView, ClickEvent, Entity, MouseButton, pulsating_between,
+};
 use project::Project;
 use prompt_store::PromptStore;
 use text::OffsetRangeExt;
@@ -171,14 +173,9 @@ impl RenderOnce for ContextPill {
                                     .when_some(
                                         context.render_preview.as_ref(),
                                         |element, render_preview| {
-                                            element.hoverable_tooltip({
-                                                let render_preview = render_preview.clone();
-                                                move |_, cx| {
-                                                    cx.new(|_| ContextPillPreview {
-                                                        render_preview: render_preview.clone(),
-                                                    })
-                                                    .into()
-                                                }
+                                            let render_preview = render_preview.clone();
+                                            element.hoverable_tooltip(move |window, cx| {
+                                                render_preview(window, cx)
                                             })
                                         },
                                     )
@@ -277,7 +274,7 @@ pub struct AddedContext {
     pub tooltip: Option<SharedString>,
     pub icon_path: Option<SharedString>,
     pub status: ContextStatus,
-    pub render_preview: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>>,
+    pub render_preview: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
 impl AddedContext {
@@ -309,15 +306,16 @@ impl AddedContext {
         project: &Project,
         cx: &App,
     ) -> Option<AddedContext> {
-        Self::new_from_handle(context.handle(), prompt_store, project, cx)
-        /*
         match context {
-            AgentContext::Selection(selection_context) => {
-                Self::new_selection(selection_context.handle, cx)
-            }
-            AgentContext::Image(image_context) => Some(Self::new_image(image_context)),
+            AgentContext::File(context) => Self::new_file(context.handle, cx),
+            AgentContext::Directory(context) => Self::new_directory(context.handle, project, cx),
+            AgentContext::Symbol(context) => Some(Self::new_symbol(context.handle)),
+            AgentContext::Selection(context) => Self::new_selection(context.handle, cx),
+            AgentContext::FetchedUrl(handle) => Some(Self::new_fetched_url(handle)),
+            AgentContext::Thread(context) => Some(Self::new_thread(context.handle, cx)),
+            AgentContext::Rules(context) => Self::new_rules(context.handle, prompt_store, cx),
+            AgentContext::Image(handle) => Some(Self::new_image(handle)),
         }
-        */
     }
 
     pub fn new_file(file_context: FileContextHandle, cx: &App) -> Option<AddedContext> {
@@ -415,21 +413,27 @@ impl AddedContext {
             tooltip: None,
             icon_path: FileIcons::get_icon(&full_path, cx),
             status: ContextStatus::Ready,
-            render_preview: None,
-            /*
             render_preview: Some(Rc::new({
-                let content = selection_context.text.clone();
+                let buffer = selection_context.buffer.clone();
+                let range = selection_context.range.clone();
                 move |_, cx| {
-                    div()
-                        .id("context-pill-selection-preview")
-                        .overflow_scroll()
-                        .max_w_128()
-                        .max_h_96()
-                        .child(Label::new(content.clone()).buffer_font(cx))
-                        .into_any_element()
+                    let text: SharedString = buffer
+                        .read(cx)
+                        .text_for_range(range.clone())
+                        .collect::<String>()
+                        .into();
+                    ContextPillPreview::new(cx, move |_, cx| {
+                        div()
+                            .id("context-pill-selection-preview")
+                            .overflow_scroll()
+                            .max_w_128()
+                            .max_h_96()
+                            .child(Label::new(text.clone()).buffer_font(cx))
+                            .into_any_element()
+                    })
+                    .into()
                 }
             })),
-            */
             handle: ContextHandle::Selection(selection_context),
         })
     }
@@ -509,12 +513,16 @@ impl AddedContext {
                 ImageStatus::Ready => ContextStatus::Ready,
             },
             render_preview: Some(Rc::new({
-                let original_image = image_context.original_image.clone();
-                move |_, _| {
-                    gpui::img(original_image.clone())
-                        .max_w_96()
-                        .max_h_96()
-                        .into_any_element()
+                let image = image_context.original_image.clone();
+                move |_, cx| {
+                    let image = image.clone();
+                    ContextPillPreview::new(cx, move |_, _| {
+                        gpui::img(image.clone())
+                            .max_w_96()
+                            .max_h_96()
+                            .into_any_element()
+                    })
+                    .into()
                 }
             })),
             handle: ContextHandle::Image(image_context),
@@ -523,7 +531,18 @@ impl AddedContext {
 }
 
 struct ContextPillPreview {
-    render_preview: Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+    render_preview: Box<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+}
+
+impl ContextPillPreview {
+    fn new(
+        cx: &mut App,
+        render_preview: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Entity<Self> {
+        cx.new(|_| Self {
+            render_preview: Box::new(render_preview),
+        })
+    }
 }
 
 impl Render for ContextPillPreview {
