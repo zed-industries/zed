@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow};
+use futures::join;
 use futures::{
     AsyncBufReadExt, AsyncReadExt, StreamExt,
     io::BufReader,
@@ -52,7 +53,6 @@ impl From<Role> for String {
     }
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
@@ -250,13 +250,6 @@ pub struct ChoiceDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-pub enum ResponseStreamResult {
-    Ok(ResponseStreamEvent),
-    Err { error: String },
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -283,60 +276,26 @@ pub struct Choice {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 pub struct ListModelsResponse {
     pub data: Vec<ModelEntry>,
 }
 
-fn is_false(v: &bool) -> bool {
-    !*v
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
     pub name: String,
-    pub created: i64,
+    pub created: usize,
     pub description: String,
-    pub context_length: i64,
-    pub architecture: Architecture,
-    pub pricing: Pricing,
-    pub top_provider: TopProvider,
-    pub per_request_limits: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<usize>,
+
     /// Indicates whether the model can handle OpenAI‑style tool/function calls.
     #[serde(default, skip_serializing_if = "is_false")]
     pub supports_tool_calls: bool,
     /// Indicates whether the model is generally strong at code‑related tasks.
     #[serde(default, skip_serializing_if = "is_false")]
     pub excels_at_coding: bool,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Architecture {
-    pub modality: String,
-    pub input_modalities: Vec<String>,
-    pub output_modalities: Vec<String>,
-    pub tokenizer: String,
-    pub instruct_type: Option<String>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Pricing {
-    pub prompt: String,
-    pub completion: String,
-    pub request: Option<String>,
-    pub image: Option<String>,
-    pub web_search: Option<String>,
-    pub internal_reasoning: Option<String>,
-    pub input_cache_read: Option<String>,
-    pub input_cache_write: Option<String>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TopProvider {
-    pub context_length: Option<i64>,
-    pub max_completion_tokens: Option<i64>,
-    pub is_moderated: bool,
 }
 
 pub async fn complete(
@@ -562,18 +521,28 @@ pub async fn stream_completion(
 }
 
 pub async fn get_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<ModelEntry>> {
-    // Get base model list
-    let mut models = fetch_models(client, api_url, None).await?;
+    // Fetch all three model lists in parallel
+    let (base_models_result, tool_models_result, coding_models_result) = join!(
+        fetch_models(client, api_url, None),
+        fetch_models(client, api_url, Some("supported_parameters=tools")),
+        fetch_models(client, api_url, Some("category=programming"))
+    );
 
-    // Get models that support tool calls
-    let tool_models = fetch_models(client, api_url, Some("supported_parameters=tools")).await?;
-    let tool_model_ids: Vec<String> = tool_models.iter().map(|m| m.id.clone()).collect();
+    // Get the base model list
+    let mut models = base_models_result?;
 
-    // Get models that excel at coding
-    let coding_models = fetch_models(client, api_url, Some("category=programming")).await?;
-    let coding_model_ids: Vec<String> = coding_models.iter().map(|m| m.id.clone()).collect();
+    // Create HashSets of model IDs for efficient lookups
+    let tool_model_ids = tool_models_result?
+        .into_iter()
+        .map(|m| m.id)
+        .collect::<std::collections::HashSet<_>>();
 
-    // Update model flags based on the specialized queries
+    let coding_model_ids = coding_models_result?
+        .into_iter()
+        .map(|m| m.id)
+        .collect::<std::collections::HashSet<_>>();
+
+    // Update model flags based on presence in specialized sets
     for model in &mut models {
         model.supports_tool_calls = tool_model_ids.contains(&model.id);
         model.excels_at_coding = coding_model_ids.contains(&model.id);

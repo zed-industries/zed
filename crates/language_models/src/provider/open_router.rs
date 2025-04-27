@@ -143,13 +143,15 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
+            // This now uses the optimized get_models function that performs parallel API requests
             let model_entries = get_models(http_client.as_ref(), &api_url).await?;
 
             // Convert ModelEntry objects to our Model objects
             let models: Vec<open_router::Model> = model_entries
                 .into_iter()
                 .map(|entry| {
-                    let max_tokens = entry.context_length as usize;
+                    // Safely unwrap context_length with a default value
+                    let max_tokens = entry.context_length.unwrap_or(2048) as usize;
                     open_router::Model::new(
                         &entry.id,
                         Some(&entry.name),
