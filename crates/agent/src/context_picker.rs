@@ -388,7 +388,7 @@ impl ContextPicker {
                 ContextMenuItem::custom_entry(
                     move |_window, cx| {
                         render_file_context_entry(
-                            ElementId::NamedInteger("ctx-recent".into(), ix),
+                            ElementId::named_usize("ctx-recent", ix),
                             worktree_id,
                             &path,
                             &path_prefix,
