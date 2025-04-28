@@ -622,6 +622,8 @@ pub struct SerializedThreadMetadata {
     pub id: ThreadId,
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_opened_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -629,6 +631,8 @@ pub struct SerializedThread {
     pub version: String,
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub last_opened_at: Option<DateTime<Utc>>,
     pub messages: Vec<SerializedMessage>,
     #[serde(default)]
     pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
@@ -768,6 +772,7 @@ impl LegacySerializedThread {
             version: SerializedThread::VERSION.to_string(),
             summary: self.summary,
             updated_at: self.updated_at,
+            last_opened_at: None,
             messages: self.messages.into_iter().map(|msg| msg.upgrade()).collect(),
             initial_project_snapshot: self.initial_project_snapshot,
             cumulative_token_usage: TokenUsage::default(),
@@ -889,6 +894,7 @@ impl ThreadsDatabase {
                     id: key,
                     summary: value.summary,
                     updated_at: value.updated_at,
+                    last_opened_at: value.last_opened_at,
                 });
             }
 

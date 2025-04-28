@@ -41,7 +41,7 @@ use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
-use crate::history_store::{HistoryEntry, HistoryStore};
+use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
@@ -50,6 +50,7 @@ use crate::ui::UsageBanner;
 use crate::{
     AddContextServer, AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
+    ToggleNavigationMenu,
 };
 
 pub fn init(cx: &mut App) {
@@ -278,6 +279,7 @@ pub struct AssistantPanel {
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
     assistant_dropdown_menu_handle: PopoverMenuHandle<ContextMenu>,
+    assistant_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     width: Option<Pixels>,
     height: Option<Pixels>,
 }
@@ -435,6 +437,7 @@ impl AssistantPanel {
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
+            assistant_navigation_menu_handle: PopoverMenuHandle::default(),
             width: None,
             height: None,
         }
@@ -921,6 +924,32 @@ impl AssistantPanel {
         let current_is_history = matches!(self.active_view, ActiveView::History);
         let new_is_history = matches!(new_view, ActiveView::History);
 
+        match &self.active_view {
+            ActiveView::Thread { .. } => self.history_store.update(cx, |store, cx| {
+                let thread_id = self.active_thread(cx).read(cx).id();
+                let summary = self.active_thread(cx).read(cx).summary_or_default();
+
+                store.push_recently_opened_entry(
+                    RecentEntry::Thread(thread_id.clone(), summary),
+                    cx,
+                );
+            }),
+            ActiveView::PromptEditor { context_editor, .. } => {
+                self.history_store.update(cx, |store, cx| {
+                    let context = context_editor.read(cx).context().read(cx);
+                    if let Some(path) = context.path() {
+                        let summary = context.summary_or_default();
+
+                        store.push_recently_opened_entry(
+                            RecentEntry::Context(path.into(), summary),
+                            cx,
+                        )
+                    }
+                })
+            }
+            _ => {}
+        }
+
         if current_is_history && !new_is_history {
             self.active_view = new_view;
         } else if !current_is_history && new_is_history {
@@ -1110,11 +1139,14 @@ impl AssistantPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let recently_opened = self
+            .history_store
+            .update(cx, |this, cx| this.recently_opened_entries(6, cx));
         let active_thread = self.thread.read(cx);
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
-        let is_history = matches!(self.active_view, ActiveView::History);
+        // let is_history = matches!(self.active_view, ActiveView::History);
 
         let show_token_count = match &self.active_view {
             ActiveView::Thread { .. } => !is_empty,
@@ -1126,25 +1158,23 @@ impl AssistantPanel {
 
         let go_back_button = match &self.active_view {
             ActiveView::History | ActiveView::Configuration => Some(
-                div().pl_1().child(
-                    IconButton::new("go-back", IconName::ArrowLeft)
-                        .icon_size(IconSize::Small)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.go_back(&workspace::GoBack, window, cx);
-                        }))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Go Back",
-                                    &workspace::GoBack,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        }),
-                ),
+                IconButton::new("go-back", IconName::ArrowLeft)
+                    .icon_size(IconSize::Small)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.go_back(&workspace::GoBack, window, cx);
+                    }))
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Go Back",
+                                &workspace::GoBack,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    }),
             ),
             _ => None,
         };
@@ -1159,10 +1189,49 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
+
             .child(
                 h_flex()
                     .w_full()
+                    .pl_1()
                     .gap_1()
+                    .child(
+                        PopoverMenu::new("agent-nav-menu")
+                            .trigger_with_tooltip(
+                                IconButton::new("agent-nav-menu", IconName::MenuAlt)
+                                    .icon_size(IconSize::Small)
+                                    .style(ui::ButtonStyle::Subtle),
+                                {
+                                    let focus_handle = focus_handle.clone();
+                                    move |window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Toggle Panel Menu",
+                                            &ToggleNavigationMenu,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                },
+                            )
+                            .anchor(Corner::TopRight)
+                            .with_handle(self.assistant_navigation_menu_handle.clone())
+                            .menu(move |window, cx| {
+                                Some(ContextMenu::build(
+                                    window,
+                                    cx,
+                                    |menu, _window, _cx| {
+                                        let mut menu = menu.header("Recently Opened");
+                                        for thread in recently_opened.iter() {
+                                            menu = menu.action(thread.title(), OpenHistory.boxed_clone(/* FIXME */))
+                                        }
+                                        menu
+                                            .separator()
+                                            .action("View All", Box::new(OpenHistory))
+                                    }
+                                ))
+                            }),
+                    )
                     .children(go_back_button)
                     .child(self.render_title_view(window, cx)),
             )
@@ -1200,27 +1269,27 @@ impl AssistantPanel {
                                         );
                                     }),
                             )
-                            .child(
-                                IconButton::new("open-history", IconName::HistoryRerun)
-                                    .icon_size(IconSize::Small)
-                                    .toggle_state(is_history)
-                                    .selected_icon_color(Color::Accent)
-                                    .tooltip({
-                                        let focus_handle = self.focus_handle(cx);
-                                        move |window, cx| {
-                                            Tooltip::for_action_in(
-                                                "History",
-                                                &OpenHistory,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                        }
-                                    })
-                                    .on_click(move |_event, window, cx| {
-                                        window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                                    }),
-                            )
+                            // .child(
+                            //     IconButton::new("open-history", IconName::HistoryRerun)
+                            //         .icon_size(IconSize::Small)
+                            //         .toggle_state(is_history)
+                            //         .selected_icon_color(Color::Accent)
+                            //         .tooltip({
+                            //             let focus_handle = self.focus_handle(cx);
+                            //             move |window, cx| {
+                            //                 Tooltip::for_action_in(
+                            //                     "History",
+                            //                     &OpenHistory,
+                            //                     &focus_handle,
+                            //                     window,
+                            //                     cx,
+                            //                 )
+                            //             }
+                            //         })
+                            //         .on_click(move |_event, window, cx| {
+                            //             window.dispatch_action(OpenHistory.boxed_clone(), cx);
+                            //         }),
+                            // )
                             .child(
                                 PopoverMenu::new("assistant-menu")
                                     .trigger_with_tooltip(

@@ -1,10 +1,16 @@
+use std::{path::Path, sync::Arc};
+
 use assistant_context_editor::SavedContextMetadata;
 use chrono::{DateTime, Utc};
 use gpui::{Entity, prelude::*};
+use ui::SharedString;
 
-use crate::thread_store::{SerializedThreadMetadata, ThreadStore};
+use crate::{
+    thread::ThreadId,
+    thread_store::{SerializedThreadMetadata, ThreadStore},
+};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum HistoryEntry {
     Thread(SerializedThreadMetadata),
     Context(SavedContextMetadata),
@@ -19,9 +25,25 @@ impl HistoryEntry {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum RecentEntry {
+    Thread(ThreadId, SharedString),
+    Context(Arc<Path>, SharedString),
+}
+
+impl RecentEntry {
+    pub fn title(&self) -> SharedString {
+        match self {
+            RecentEntry::Thread(_, title) => title.clone(),
+            RecentEntry::Context(_, title) => title.clone(),
+        }
+    }
+}
+
 pub struct HistoryStore {
     thread_store: Entity<ThreadStore>,
     context_store: Entity<assistant_context_editor::ContextStore>,
+    recently_opened_entries: Vec<RecentEntry>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -36,9 +58,25 @@ impl HistoryStore {
             cx.observe(&context_store, |_, _, cx| cx.notify()),
         ];
 
+        let recently_opened_entries = {
+            let mut entries = Vec::new();
+            for thread in thread_store.update(cx, |this, _cx| this.reverse_chronological_threads())
+            {
+                entries.push(RecentEntry::Thread(thread.id, thread.summary.clone()));
+            }
+            for context in context_store.update(cx, |this, _cx| this.contexts()) {
+                entries.push(RecentEntry::Context(
+                    context.path.into(),
+                    context.title.into(),
+                ));
+            }
+            entries
+        };
+
         Self {
             thread_store,
             context_store,
+            recently_opened_entries,
             _subscriptions: subscriptions,
         }
     }
@@ -68,5 +106,25 @@ impl HistoryStore {
 
     pub fn recent_entries(&self, limit: usize, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
         self.entries(cx).into_iter().take(limit).collect()
+    }
+
+    pub fn push_recently_opened_entry(&mut self, entry: RecentEntry, _cx: &mut Context<Self>) {
+        self.recently_opened_entries.push(entry);
+    }
+
+    pub fn recently_opened_entries(
+        &self,
+        limit: usize,
+        _cx: &mut Context<Self>,
+    ) -> Vec<RecentEntry> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_THREAD_HISTORY").is_ok() {
+            return Vec::new();
+        }
+
+        let start = self.recently_opened_entries.len().saturating_sub(limit);
+        let mut entries = self.recently_opened_entries[start..].to_owned();
+        entries.reverse();
+        entries
     }
 }

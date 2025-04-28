@@ -156,6 +156,7 @@ pub enum IconName {
     MailOpen,
     Maximize,
     Menu,
+    MenuAlt,
     MessageBubbles,
     Mic,
     MicMute,

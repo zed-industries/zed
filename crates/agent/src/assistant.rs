@@ -50,6 +50,7 @@ actions!(
     [
         NewTextThread,
         ToggleContextPicker,
+        ToggleNavigationMenu,
         ToggleProfileSelector,
         RemoveAllContext,
         ExpandMessageEditor,

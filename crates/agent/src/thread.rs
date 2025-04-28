@@ -287,6 +287,7 @@ pub enum TokenUsageRatio {
 pub struct Thread {
     id: ThreadId,
     updated_at: DateTime<Utc>,
+    last_opened_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
     detailed_summary_state: DetailedSummaryState,
@@ -336,6 +337,7 @@ impl Thread {
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
+            last_opened_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
             detailed_summary_state: DetailedSummaryState::NotGenerated,
@@ -391,6 +393,7 @@ impl Thread {
         Self {
             id,
             updated_at: serialized.updated_at,
+            last_opened_at: serialized.last_opened_at.unwrap_or(serialized.updated_at),
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
             detailed_summary_state: serialized.detailed_summary_state,
@@ -854,6 +857,7 @@ impl Thread {
                 version: SerializedThread::VERSION.to_string(),
                 summary: this.summary_or_default(),
                 updated_at: this.updated_at(),
+                last_opened_at: Some(this.last_opened_at),
                 messages: this
                     .messages()
                     .map(|message| SerializedMessage {
