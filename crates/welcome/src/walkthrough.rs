@@ -1,16 +1,13 @@
-use client::{TelemetrySettings, telemetry::Telemetry};
+use client::telemetry::Telemetry;
 
 use gpui::{
-    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    ParentElement, Render, Styled, Subscription, WeakEntity, Window, svg,
+    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior,
+    ListState, ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
 };
-use language::language_settings::{EditPredictionProvider, all_language_settings};
 use persistence::WALKTHROUGH_DB;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use std::sync::Arc;
-use ui::{CheckboxWithLabel, ElevationIndex, Tooltip, prelude::*};
-use util::ResultExt;
-use vim_mode_setting::VimModeSetting;
+use ui::prelude::*;
 use workspace::{
     SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
     item::{Item, ItemEvent},
@@ -29,35 +26,62 @@ pub fn init(cx: &mut App) {
     register_serializable_item::<Walkthrough>(cx);
 }
 
+const STEPS: [&'static dyn WalkthroughStep; 5] = [
+    &ThemeStep,
+    &SettingsStep,
+    &AiIntegrations,
+    &DataSharing,
+    &OpenProject,
+];
+
 pub struct Walkthrough {
+    active_step: usize,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    telemetry: Arc<Telemetry>,
-    // steps: ListState,
+    _telemetry: Arc<Telemetry>,
+    steps: ListState,
     _settings_subscription: Subscription,
 }
 
+impl Walkthrough {
+    pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
+        let this = cx.new(|cx| {
+            let this = cx.weak_entity();
+            Walkthrough {
+                focus_handle: cx.focus_handle(),
+                workspace: workspace.weak_handle(),
+                _telemetry: workspace.client().telemetry().clone(),
+                _settings_subscription: cx
+                    .observe_global::<SettingsStore>(move |_: &mut Walkthrough, cx| cx.notify()),
+                steps: ListState::new(
+                    STEPS.len(),
+                    gpui::ListAlignment::Top,
+                    px(1000.),
+                    move |ix, window, cx| {
+                        this.update(cx, |this, cx| {
+                            STEPS[ix].render_checkbox(ix, this, window, cx)
+                        })
+                        .unwrap_or_else(|_| div().into_any())
+                    },
+                ),
+                active_step: 0,
+            }
+        });
+
+        this
+    }
+}
+
 impl Render for Walkthrough {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let edit_prediction_provider_is_zed =
-            all_language_settings(None, cx).edit_predictions.provider
-                == EditPredictionProvider::Zed;
-
-        let edit_prediction_label = if edit_prediction_provider_is_zed {
-            "Edit Prediction Enabled"
-        } else {
-            "Try Edit Prediction"
-        };
-
-        h_flex()
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .justify_center()
             .size_full()
             .bg(cx.theme().colors().editor_background)
-            .key_context("Welcome")
+            .key_context("Walkthrough")
             .track_focus(&self.focus_handle(cx))
             .child(
                 v_flex()
-                    .gap_8()
-                    .mx_auto()
                     .child(
                         v_flex()
                             .w_full()
@@ -86,254 +110,182 @@ impl Render for Walkthrough {
                     )
                     .child(
                         h_flex()
-                            .items_start()
-                            .gap_8()
+                            .flex_wrap()
+                            .justify_center()
                             .child(
-                                v_flex()
-                                    .gap_2()
-                                    .pr_8()
-                                    .border_r_1()
-                                    .border_color(cx.theme().colors().border_variant)
-                                    .child(
-                                        self.section_label( cx).child(
-                                            Label::new("Get Started")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        ),
-                                    )
-                                    .child(
-                                        Button::new("choose-theme", "Choose a Theme")
-                                            .icon(IconName::SwatchBook)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                telemetry::event!("Welcome Theme Changed");
-                                                this.workspace
-                                                    .update(cx, |_workspace, cx| {
-                                                        window.dispatch_action(zed_actions::theme_selector::Toggle::default().boxed_clone(), cx);
-                                                    })
-                                                    .ok();
-                                            })),
-                                    )
-
-                                    .child(
-                                        Button::new(
-                                            "try-zed-edit-prediction",
-                                            edit_prediction_label,
-                                        )
-                                        .disabled(edit_prediction_provider_is_zed)
-                                        .icon(IconName::ZedPredict)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(
-                                            cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Screen Try Edit Prediction clicked");
-                                                window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
-                                            }),
-                                        ),
-                                    )
-                                    .child(
-                                        Button::new("edit settings", "Edit Settings")
-                                            .icon(IconName::Settings)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Settings Edited");
-                                                window.dispatch_action(Box::new(
-                                                    zed_actions::OpenSettings,
-                                                ), cx);
-                                            })),
-                                    )
-
+                                list(self.steps.clone())
+                                    .with_sizing_behavior(ListSizingBehavior::Infer),
                             )
-                            .child(
-                                v_flex()
-                                    .gap_2()
-                                    .child(
-                                        self.section_label(cx).child(
-                                            Label::new("Resources")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        ),
-                                    )
-                                    .when(cfg!(target_os = "macos"), |el| {
-                                        el.child(
-                                            Button::new("install-cli", "Install the CLI")
-                                                .icon(IconName::Terminal)
-                                                .icon_size(IconSize::XSmall)
-                                                .icon_color(Color::Muted)
-                                                .icon_position(IconPosition::Start)
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    telemetry::event!("Welcome CLI Installed");
-                                                    this.workspace.update(cx, |_, cx|{
-                                                        install_cli::install_cli(window, cx);
-                                                    }).log_err();
-                                                })),
-                                        )
-                                    })
-
-                                    .child(
-                                        Button::new("explore-extensions", "Explore Extensions")
-                                            .icon(IconName::Blocks)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Extensions Page Opened");
-                                                window.dispatch_action(Box::new(
-                                                    zed_actions::Extensions::default(),
-                                                ), cx);
-                                            })),
-                                    )
-
-                            ),
-                    )
-                    .child(
-                        v_container()
-                            .px_2()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .justify_between()
-                                    .child(
-                                        CheckboxWithLabel::new(
-                                            "enable-vim",
-                                            Label::new("Enable Vim Mode"),
-                                            if VimModeSetting::get_global(cx).0 {
-                                                ui::ToggleState::Selected
-                                            } else {
-                                                ui::ToggleState::Unselected
-                                            },
-                                            cx.listener(move |this, selection, _window, cx| {
-                                                telemetry::event!("Welcome Vim Mode Toggled");
-                                                this.update_settings::<VimModeSetting>(
-                                                    selection,
-                                                    cx,
-                                                    |setting, value| *setting = Some(value),
-                                                );
-                                            }),
-                                        )
-                                        .fill()
-                                        .elevation(ElevationIndex::ElevatedSurface),
-                                    )
-                                    .child(
-                                        IconButton::new("vim-mode", IconName::Info)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .tooltip(
-                                                Tooltip::text(
-                                                    "You can also toggle Vim Mode via the command palette or Editor Controls menu.")
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                CheckboxWithLabel::new(
-                                    "enable-crash",
-                                    Label::new("Send Crash Reports"),
-                                    if TelemetrySettings::get_global(cx).diagnostics {
-                                        ui::ToggleState::Selected
-                                    } else {
-                                        ui::ToggleState::Unselected
-                                    },
-                                    cx.listener(move |this, selection, _window, cx| {
-                                        telemetry::event!("Welcome Diagnostic Telemetry Toggled");
-                                        this.update_settings::<TelemetrySettings>(selection, cx, {
-                                            move |settings, value| {
-                                                settings.diagnostics = Some(value);
-                                                telemetry::event!(
-                                                    "Settings Changed",
-                                                    setting = "diagnostic telemetry",
-                                                    value
-                                                );
-                                            }
-                                        });
-                                    }),
-                                )
-                                .fill()
-                                .elevation(ElevationIndex::ElevatedSurface),
-                            )
-                            .child(
-                                CheckboxWithLabel::new(
-                                    "enable-telemetry",
-                                    Label::new("Send Telemetry"),
-                                    if TelemetrySettings::get_global(cx).metrics {
-                                        ui::ToggleState::Selected
-                                    } else {
-                                        ui::ToggleState::Unselected
-                                    },
-                                    cx.listener(move |this, selection, _window, cx| {
-                                        telemetry::event!("Welcome Metric Telemetry Toggled");
-                                        this.update_settings::<TelemetrySettings>(selection, cx, {
-                                            move |settings, value| {
-                                                settings.metrics = Some(value);
-                                                telemetry::event!(
-                                                    "Settings Changed",
-                                                    setting = "metric telemetry",
-                                                    value
-                                                );
-                                            }
-                                        });
-                                    }),
-                                )
-                                .fill()
-                                .elevation(ElevationIndex::ElevatedSurface),
-                            ),
+                            .child(STEPS[self.active_step].render_subpane(
+                                self.active_step,
+                                self,
+                                window,
+                                cx,
+                            )),
                     ),
             )
     }
 }
 
-impl Walkthrough {
-    pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
-        let this = cx.new(|cx| {
-            // cx.on_release(|_: &mut Self, _| {
-            //     telemetry::event!("Welcome Page Closed");
-            // }
-            // .detach();
+trait WalkthroughStep {
+    fn render_checkbox(
+        &self,
+        ix: usize,
+        walkthrough: &mut Walkthrough,
+        window: &mut Window,
+        cx: &mut Context<Walkthrough>,
+    ) -> AnyElement;
+    fn render_subpane(
+        &self,
+        ix: usize,
+        walkthrough: &mut Walkthrough,
+        window: &mut Window,
+        cx: &mut Context<Walkthrough>,
+    ) -> AnyElement;
+}
 
-            Walkthrough {
-                focus_handle: cx.focus_handle(),
-                workspace: workspace.weak_handle(),
-                telemetry: workspace.client().telemetry().clone(),
-                _settings_subscription: cx
-                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-                // steps
-                // steps_list: ListState::new(steps.len(), ListAlignment::Top, px(todo!()), || todo!()),
-            }
-        });
+fn select_step(
+    ix: usize,
+    cx: &mut Context<Walkthrough>,
+) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    cx.listener(move |walkthrough, _, _, cx| {
+        walkthrough.active_step = ix;
+        cx.notify();
+    })
+}
 
-        this
-    }
-
-    fn section_label(&self, cx: &mut App) -> Div {
+struct ThemeStep;
+impl WalkthroughStep for ThemeStep {
+    fn render_checkbox(
+        &self,
+        ix: usize,
+        _walkthrough: &mut Walkthrough,
+        window: &mut Window,
+        cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
         div()
-            .pl_1()
-            .font_buffer(cx)
-            .text_color(Color::Muted.color(cx))
+            .child(Label::new("Pick a Theme").render(window, cx))
+            .id(ix)
+            .on_click(select_step(ix, cx))
+            .into_any_element()
     }
 
-    fn update_settings<T: Settings>(
-        &mut self,
-        selection: &ToggleState,
-        cx: &mut Context<Self>,
-        callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
-    ) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            let fs = workspace.read(cx).app_state().fs.clone();
-            let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
-                let value = match selection {
-                    ToggleState::Unselected => false,
-                    ToggleState::Selected => true,
-                    _ => return,
-                };
+    fn render_subpane(
+        &self,
+        _ix: usize,
+        _walkthrough: &mut Walkthrough,
+        _window: &mut Window,
+        _cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div().size_20().bg(gpui::blue()).into_any()
+    }
+}
 
-                callback(settings, value)
-            });
-        }
+struct SettingsStep;
+impl WalkthroughStep for SettingsStep {
+    fn render_checkbox(
+        &self,
+        ix: usize,
+        _walkthrough: &mut Walkthrough,
+        window: &mut Window,
+        cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div()
+            .child(Label::new("Configure Zed").render(window, cx))
+            .id(ix)
+            .on_click(select_step(ix, cx))
+            .into_any_element()
+    }
+
+    fn render_subpane(
+        &self,
+        _ix: usize,
+        _walkthrough: &mut Walkthrough,
+        _window: &mut Window,
+        _cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div().size_20().bg(gpui::red()).into_any()
+    }
+}
+
+struct AiIntegrations;
+impl WalkthroughStep for AiIntegrations {
+    fn render_checkbox(
+        &self,
+        ix: usize,
+        _walkthrough: &mut Walkthrough,
+        window: &mut Window,
+        cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div()
+            .child(Label::new("AI Setup").render(window, cx))
+            .id(ix)
+            .on_click(select_step(ix, cx))
+            .into_any_element()
+    }
+
+    fn render_subpane(
+        &self,
+        _ix: usize,
+        _walkthrough: &mut Walkthrough,
+        _window: &mut Window,
+        _cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div().size_20().bg(gpui::green()).into_any()
+    }
+}
+
+struct DataSharing;
+impl WalkthroughStep for DataSharing {
+    fn render_checkbox(
+        &self,
+        ix: usize,
+        _walkthrough: &mut Walkthrough,
+        window: &mut Window,
+        cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div()
+            .child(Label::new("Data Sharing").render(window, cx))
+            .id(ix)
+            .on_click(select_step(ix, cx))
+            .into_any_element()
+    }
+
+    fn render_subpane(
+        &self,
+        _ix: usize,
+        _walkthrough: &mut Walkthrough,
+        _window: &mut Window,
+        _cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div().size_20().bg(gpui::yellow()).into_any()
+    }
+}
+
+struct OpenProject;
+impl WalkthroughStep for OpenProject {
+    fn render_checkbox(
+        &self,
+        ix: usize,
+        _walkthrough: &mut Walkthrough,
+        window: &mut Window,
+        cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div()
+            .child(Label::new("Open a Project").render(window, cx))
+            .id(ix)
+            .on_click(select_step(ix, cx))
+            .into_any_element()
+    }
+
+    fn render_subpane(
+        &self,
+        _ix: usize,
+        _walkthrough: &mut Walkthrough,
+        _window: &mut Window,
+        _cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div().size_20().bg(gpui::rgba(0x87ceeb)).into_any()
     }
 }
 
@@ -366,12 +318,9 @@ impl Item for Walkthrough {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| Walkthrough {
-            focus_handle: cx.focus_handle(),
-            workspace: self.workspace.clone(),
-            telemetry: self.telemetry.clone(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        }))
+        self.workspace
+            .update(cx, |workspace, cx| Walkthrough::new(workspace, cx))
+            .ok()
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
