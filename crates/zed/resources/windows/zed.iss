@@ -1380,9 +1380,6 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  UpdateResultCode: Integer;
-	StartServiceResultCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
