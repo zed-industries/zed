@@ -1,21 +1,29 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use futures::io::BufReader;
-use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
-use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
+use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use futures::{
+    AsyncBufReadExt, SinkExt, StreamExt,
+    channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
+    io::BufReader,
+    stream::SelectAll,
+};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Entity, StyledText, Task, TextLayout, WeakEntity, Window,
+};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::future;
-use util::get_system_shell;
+use std::{path::Path, process::Stdio, sync::Arc};
+use ui::{IconName, prelude::*};
+use util::{
+    command::new_smol_command,
+    get_system_shell,
+    markdown::{MarkdownInlineCode, MarkdownString},
+};
+use workspace::Workspace;
 
-use std::path::Path;
-use std::sync::Arc;
-use ui::IconName;
-use util::command::new_smol_command;
-use util::markdown::MarkdownInlineCode;
+const COMMAND_OUTPUT_LIMIT: usize = 16 * 1024;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
@@ -89,9 +97,134 @@ impl Tool for TerminalTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        cx.background_spawn(run_command_limited(working_dir, input.command))
-            .into()
+        let (line_sender, line_receiver) = unbounded();
+
+        let output = spawn_command_and_stream(working_dir, input.command, line_sender, cx);
+        let output = match output {
+            Ok(ok) => ok,
+            Err(err) => return Task::ready(Err(err)).into(),
+        };
+
+        let card = cx.new(|cx| TerminalToolCard::new(line_receiver, cx));
+
+        ToolResult {
+            output,
+            card: Some(card.into()),
+        }
     }
+}
+
+/// Run a command until completion and return the output.
+///
+/// Also stream each line through a channel that can be accessed via the returned
+/// receiver, the channel will only receive updates if the future is awaited.
+fn spawn_command_and_stream(
+    working_dir: Arc<Path>,
+    command: String,
+    mut line_sender: UnboundedSender<Result<String>>,
+    cx: &mut App,
+) -> Result<Task<Result<String>>> {
+    let shell = get_system_shell();
+
+    let mut cmd = new_smol_command(&shell)
+        .args(["-c", &command])
+        .current_dir(working_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to execute terminal command")?;
+
+    let mut line_stream = SelectAll::new();
+    line_stream.push(
+        BufReader::new(cmd.stdout.take().context("Failed to get stdout")?)
+            .lines()
+            .boxed(),
+    );
+    line_stream.push(
+        BufReader::new(cmd.stderr.take().context("Failed to get stderr")?)
+            .lines()
+            .boxed(),
+    );
+
+    let fut = cx.background_spawn(async move {
+        let mut combined_output = String::with_capacity(COMMAND_OUTPUT_LIMIT + 1);
+
+        let mut truncated = false;
+
+        while let Some(line) = line_stream.next().await {
+            let line = match line {
+                Ok(line) => line,
+                Err(err) => {
+                    let err = format!("Failed to read line: {err}");
+                    let _ = line_sender.send(Err(anyhow!(err.clone()))).await;
+                    return Err(anyhow!(err));
+                }
+            };
+
+            truncated |= combined_output.len() + line.len() > COMMAND_OUTPUT_LIMIT;
+
+            let line = if truncated {
+                let remaining_capacity = COMMAND_OUTPUT_LIMIT.saturating_sub(combined_output.len());
+                &line[..remaining_capacity]
+            } else {
+                &line
+            };
+
+            combined_output.push_str(line);
+            combined_output.push('\n');
+            let send_result = line_sender.send(Ok(line.to_owned())).await;
+
+            if truncated || send_result.is_err() {
+                break;
+            }
+        }
+
+        let truncated_output = if truncated {
+            let last_line_ix = combined_output.rfind('\n');
+            // Don't truncate mid-line, clear the remainder of the last line
+            let output = &combined_output[..last_line_ix.unwrap_or(combined_output.len())];
+
+            format!(
+                "Command output too long. The first {} bytes:\n\n{}",
+                output.len(),
+                output_block(&output),
+            )
+        } else {
+            output_block(&combined_output)
+        };
+
+        let status = match cmd.status().await {
+            Ok(status) => status,
+            Err(err) => {
+                // Error occurred getting status (potential interruption), include partial output
+                let partial_output = output_block(&combined_output);
+                let error_message = format!(
+                    "Command failed or was interrupted.\nPartial output captured:\n\n{}",
+                    partial_output,
+                );
+                return Err(anyhow!(err).context(error_message));
+            }
+        };
+
+        let output_with_status = if status.success() {
+            if truncated_output.is_empty() {
+                "Command executed successfully.".to_string()
+            } else {
+                truncated_output.to_string()
+            }
+        } else {
+            format!(
+                "Command failed with exit code {} (shell: {}).\n\n{}",
+                status.code().unwrap_or(-1),
+                shell,
+                truncated_output,
+            )
+        };
+
+        Ok(output_with_status)
+    });
+
+    Ok(fut)
 }
 
 fn working_dir(
@@ -136,141 +269,6 @@ fn working_dir(
     }
 }
 
-const LIMIT: usize = 16 * 1024;
-
-async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
-    let shell = get_system_shell();
-
-    let mut cmd = new_smol_command(&shell)
-        .arg("-c")
-        .arg(&command)
-        .current_dir(working_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Failed to execute terminal command")?;
-
-    let mut combined_buffer = String::with_capacity(LIMIT + 1);
-
-    let mut out_reader = BufReader::new(cmd.stdout.take().context("Failed to get stdout")?);
-    let mut out_tmp_buffer = String::with_capacity(512);
-    let mut err_reader = BufReader::new(cmd.stderr.take().context("Failed to get stderr")?);
-    let mut err_tmp_buffer = String::with_capacity(512);
-
-    let mut out_line = Box::pin(
-        out_reader
-            .read_line(&mut out_tmp_buffer)
-            .left_future()
-            .fuse(),
-    );
-    let mut err_line = Box::pin(
-        err_reader
-            .read_line(&mut err_tmp_buffer)
-            .left_future()
-            .fuse(),
-    );
-
-    let mut has_stdout = true;
-    let mut has_stderr = true;
-    while (has_stdout || has_stderr) && combined_buffer.len() < LIMIT + 1 {
-        futures::select_biased! {
-            read = out_line => {
-                drop(out_line);
-                combined_buffer.extend(out_tmp_buffer.drain(..));
-                if read? == 0 {
-                    out_line = Box::pin(future::pending().right_future().fuse());
-                    has_stdout = false;
-                } else {
-                    out_line = Box::pin(out_reader.read_line(&mut out_tmp_buffer).left_future().fuse());
-                }
-            }
-            read = err_line => {
-                drop(err_line);
-                combined_buffer.extend(err_tmp_buffer.drain(..));
-                if read? == 0 {
-                    err_line = Box::pin(future::pending().right_future().fuse());
-                    has_stderr = false;
-                } else {
-                    err_line = Box::pin(err_reader.read_line(&mut err_tmp_buffer).left_future().fuse());
-                }
-            }
-        };
-    }
-
-    drop((out_line, err_line));
-
-    let truncated = combined_buffer.len() > LIMIT;
-    combined_buffer.truncate(LIMIT);
-
-    consume_reader(out_reader, truncated).await?;
-    consume_reader(err_reader, truncated).await?;
-
-    // Handle potential errors during status retrieval, including interruption.
-    match cmd.status().await {
-        Ok(status) => {
-            let output_string = if truncated {
-                // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
-                // multi-byte characters.
-                let last_line_ix = combined_buffer.bytes().rposition(|b| b == b'\n');
-                let buffer_content =
-                    &combined_buffer[..last_line_ix.unwrap_or(combined_buffer.len())];
-
-                format!(
-                    "Command output too long. The first {} bytes:\n\n{}",
-                    buffer_content.len(),
-                    output_block(buffer_content),
-                )
-            } else {
-                output_block(&combined_buffer)
-            };
-
-            let output_with_status = if status.success() {
-                if output_string.is_empty() {
-                    "Command executed successfully.".to_string()
-                } else {
-                    output_string
-                }
-            } else {
-                format!(
-                    "Command failed with exit code {} (shell: {}).\n\n{}",
-                    status.code().unwrap_or(-1),
-                    shell,
-                    output_string,
-                )
-            };
-
-            Ok(output_with_status)
-        }
-        Err(err) => {
-            // Error occurred getting status (potential interruption). Include partial output.
-            let partial_output = output_block(&combined_buffer);
-            let error_message = format!(
-                "Command failed or was interrupted.\nPartial output captured:\n\n{}",
-                partial_output
-            );
-            Err(anyhow!(err).context(error_message))
-        }
-    }
-}
-
-async fn consume_reader<T: AsyncReadExt + Unpin>(
-    mut reader: BufReader<T>,
-    truncated: bool,
-) -> Result<(), std::io::Error> {
-    loop {
-        let skipped_bytes = reader.fill_buf().await?;
-        if skipped_bytes.is_empty() {
-            break;
-        }
-        let skipped_bytes_len = skipped_bytes.len();
-        reader.consume_unpin(skipped_bytes_len);
-
-        // Should only skip if we went over the limit
-        debug_assert!(truncated);
-    }
-    Ok(())
-}
-
 fn output_block(output: &str) -> String {
     format!(
         "```\n{}{}```",
@@ -279,107 +277,110 @@ fn output_block(output: &str) -> String {
     )
 }
 
-#[cfg(test)]
-#[cfg(not(windows))]
-mod tests {
-    use gpui::TestAppContext;
+struct TerminalToolCardElement {
+    // card: Entity<TerminalToolCard>,
+    // styled_text: StyledText,
+}
 
-    use super::*;
+struct TerminalToolCard {
+    failed: bool,
+    contents: String,
+    _task: Task<()>,
+}
 
-    #[gpui::test(iterations = 10)]
-    async fn test_run_command_simple(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
+impl TerminalToolCard {
+    fn new(mut line_receiver: UnboundedReceiver<Result<String>>, cx: &mut Context<Self>) -> Self {
+        let _task = cx.spawn(async move |this, cx| {
+            while let Some(line) = line_receiver.next().await {
+                let is_entity_released = this
+                    .update(cx, |card, cx| {
+                        let line = match line {
+                            Ok(line) => line,
+                            Err(_) => {
+                                card.failed = true;
+                                return; // stop receiving
+                            }
+                        };
 
-        let result =
-            run_command_limited(Path::new(".").into(), "echo 'Hello, World!'".to_string()).await;
+                        card.contents += &line;
+                        cx.notify();
+                    })
+                    .is_err();
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "```\nHello, World!\n```");
+                if is_entity_released {
+                    return;
+                }
+            }
+        });
+
+        Self {
+            failed: false,
+            contents: String::new(),
+            _task,
+        }
+    }
+}
+
+impl ToolCard for TerminalToolCard {
+    fn render(
+        &mut self,
+        _status: &ToolUseStatus,
+        _window: &mut Window,
+        _workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        TerminalToolCardElement {
+            // card: cx.entity(),
+            // styled_text: StyledText::,
+        }
+    }
+}
+
+impl IntoElement for TerminalToolCardElement {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for TerminalToolCardElement {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
     }
 
-    #[gpui::test(iterations = 10)]
-    async fn test_interleaved_stdout_stderr(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let command = "echo 'stdout 1' && sleep 0.01 && echo 'stderr 1' >&2 && sleep 0.01 && echo 'stdout 2' && sleep 0.01 && echo 'stderr 2' >&2";
-        let result = run_command_limited(Path::new(".").into(), command.to_string()).await;
-
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            "```\nstdout 1\nstderr 1\nstdout 2\nstderr 2\n```"
-        );
+    fn request_layout(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        todo!()
     }
 
-    #[gpui::test(iterations = 10)]
-    async fn test_multiple_output_reads(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        // Command with multiple outputs that might require multiple reads
-        let result = run_command_limited(
-            Path::new(".").into(),
-            "echo '1'; sleep 0.01; echo '2'; sleep 0.01; echo '3'".to_string(),
-        )
-        .await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "```\n1\n2\n3\n```");
+    fn prepaint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        bounds: gpui::Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        todo!()
     }
 
-    #[gpui::test(iterations = 10)]
-    async fn test_output_truncation_single_line(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let cmd = format!("echo '{}'; sleep 0.01;", "X".repeat(LIMIT * 2));
-
-        let result = run_command_limited(Path::new(".").into(), cmd).await;
-
-        assert!(result.is_ok());
-        let output = result.unwrap();
-
-        let content_start = output.find("```\n").map(|i| i + 4).unwrap_or(0);
-        let content_end = output.rfind("\n```").unwrap_or(output.len());
-        let content_length = content_end - content_start;
-
-        // Output should be exactly the limit
-        assert_eq!(content_length, LIMIT);
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_output_truncation_multiline(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let cmd = format!("echo '{}'; ", "X".repeat(120)).repeat(160);
-        let result = run_command_limited(Path::new(".").into(), cmd).await;
-
-        assert!(result.is_ok());
-        let output = result.unwrap();
-
-        assert!(output.starts_with("Command output too long. The first 16334 bytes:\n\n"));
-
-        let content_start = output.find("```\n").map(|i| i + 4).unwrap_or(0);
-        let content_end = output.rfind("\n```").unwrap_or(output.len());
-        let content_length = content_end - content_start;
-
-        assert!(content_length <= LIMIT);
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_command_failure(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let result = run_command_limited(Path::new(".").into(), "exit 42".to_string()).await;
-
-        assert!(result.is_ok());
-        let output = result.unwrap();
-
-        // Extract the shell name from path for cleaner test output
-        let shell_path = std::env::var("SHELL").unwrap_or("bash".to_string());
-
-        let expected_output = format!(
-            "Command failed with exit code 42 (shell: {}).\n\n```\n\n```",
-            shell_path
-        );
-        assert_eq!(output, expected_output);
+    fn paint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        bounds: gpui::Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        todo!()
     }
 }
