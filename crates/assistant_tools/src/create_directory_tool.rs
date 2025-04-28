@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateDirectoryToolInput {
@@ -53,10 +53,7 @@ impl Tool for CreateDirectoryTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CreateDirectoryToolInput>(input.clone()) {
             Ok(input) => {
-                format!(
-                    "Create directory {}",
-                    MarkdownString::inline_code(&input.path)
-                )
+                format!("Create directory {}", MarkdownInlineCode(&input.path))
             }
             Err(_) => "Create directory".to_string(),
         }
