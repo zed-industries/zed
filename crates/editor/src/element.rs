@@ -946,18 +946,29 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_anchor(new_point, Bias::Left);
 
-            if position_map
+            if let Some((buffer_snapshot, file)) = position_map
                 .snapshot
                 .buffer_snapshot
                 .buffer_for_excerpt(buffer_anchor.excerpt_id)
-                .is_some_and(|buffer| buffer.file().is_some())
+                .and_then(|buffer| buffer.file().map(|file| (buffer, file)))
             {
                 let was_hovered = editor.gutter_breakpoint_indicator.0.is_some();
+                let as_point = text::ToPoint::to_point(&buffer_anchor.text_anchor, buffer_snapshot);
                 let is_visible = editor
                     .gutter_breakpoint_indicator
                     .0
-                    .map_or(false, |(_, is_active)| is_active);
-                editor.gutter_breakpoint_indicator.0 = Some((new_point, is_visible));
+                    .map_or(false, |(_, is_active, _)| is_active);
+
+                let has_existing_breakpoint =
+                    editor.breakpoint_store.as_ref().map_or(false, |store| {
+                        store
+                            .read(cx)
+                            .breakpoint_at_row(&file.full_path(cx), as_point.row, cx)
+                            .is_some()
+                    });
+                dbg!(has_existing_breakpoint);
+                editor.gutter_breakpoint_indicator.0 =
+                    Some((new_point, is_visible, has_existing_breakpoint));
 
                 editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
                     cx.spawn(async move |this, cx| {
@@ -968,7 +979,7 @@ impl EditorElement {
                         }
 
                         this.update(cx, |this, cx| {
-                            if let Some((_, is_active)) =
+                            if let Some((_, is_active, _)) =
                                 this.gutter_breakpoint_indicator.0.as_mut()
                             {
                                 *is_active = true;
@@ -7063,23 +7074,28 @@ impl Element for EditorElement {
                     // line numbers so we don't paint a line number debug accent color if a user
                     // has their mouse over that line when a breakpoint isn't there
                     if cx.has_flag::<DebuggerFeatureFlag>() {
-                        let gutter_breakpoint_indicator =
-                            self.editor.read(cx).gutter_breakpoint_indicator.0;
-                        if let Some((gutter_breakpoint_point, _)) =
-                            gutter_breakpoint_indicator.filter(|(_, is_active)| *is_active)
-                        {
-                            breakpoint_rows
-                                .entry(gutter_breakpoint_point.row())
-                                .or_insert_with(|| {
-                                    let position = snapshot.display_point_to_anchor(
-                                        gutter_breakpoint_point,
-                                        Bias::Right,
-                                    );
-                                    let breakpoint = Breakpoint::new_standard();
-
-                                    (position, breakpoint)
-                                });
-                        }
+                        self.editor.update(cx, |editor, cx| {
+                            if let Some((gutter_breakpoint_point, _, has_existing_breakpoint)) =
+                                &mut editor
+                                    .gutter_breakpoint_indicator
+                                    .0
+                                    .filter(|(_, is_active, _)| *is_active)
+                            {
+                                // Is there a non-phantom breakpoint on this line?
+                                *has_existing_breakpoint = true;
+                                breakpoint_rows
+                                    .entry(gutter_breakpoint_point.row())
+                                    .or_insert_with(|| {
+                                        let position = snapshot.display_point_to_anchor(
+                                            *gutter_breakpoint_point,
+                                            Bias::Right,
+                                        );
+                                        let breakpoint = Breakpoint::new_standard();
+                                        *has_existing_breakpoint = false;
+                                        (position, breakpoint)
+                                    });
+                            }
+                        })
                     }
 
                     let mut expand_toggles =

@@ -966,7 +966,7 @@ pub struct Editor {
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
-    gutter_breakpoint_indicator: (Option<(DisplayPoint, bool)>, Option<Task<()>>),
+    gutter_breakpoint_indicator: (Option<(DisplayPoint, bool, bool)>, Option<Task<()>>),
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -6965,6 +6965,12 @@ impl Editor {
         breakpoint: &Breakpoint,
         cx: &mut Context<Self>,
     ) -> IconButton {
+        // Is it a breakpoint that shows up when hovering over gutter?
+        let is_phantom = self.gutter_breakpoint_indicator.0.is_some_and(
+            |(point, is_visible, has_existing_breakpoint_on_line)| {
+                is_visible && point.row() == row && dbg!(!has_existing_breakpoint_on_line)
+            },
+        );
         let (color, icon) = {
             let icon = match (&breakpoint.message.is_some(), breakpoint.is_disabled()) {
                 (false, false) => ui::IconName::DebugBreakpoint,
@@ -6973,11 +6979,7 @@ impl Editor {
                 (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
-            let color = if self
-                .gutter_breakpoint_indicator
-                .0
-                .is_some_and(|(point, is_visible)| is_visible && point.row() == row)
-            {
+            let color = if is_phantom {
                 Color::Hint
             } else {
                 Color::Debugger
@@ -6988,6 +6990,28 @@ impl Editor {
 
         let breakpoint = Arc::from(breakpoint.clone());
 
+        let tooltip_state_content = if breakpoint.is_enabled() {
+            "disable"
+        } else {
+            "enable"
+        };
+
+        let alt_as_text = gpui::Keystroke {
+            modifiers: Modifiers::secondary_key(),
+            ..Default::default()
+        };
+        let primary_action_text = if is_phantom { "set" } else { "unset" };
+        let mut primary_text = format!("Click to {primary_action_text}");
+        if !is_phantom {
+            use std::fmt::Write;
+            write!(
+                primary_text,
+                ", {alt_as_text}-click to {tooltip_state_content}"
+            )
+            .ok();
+        }
+        let primary_text = SharedString::from(primary_text);
+        let focus_handle = self.focus_handle.clone();
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
@@ -7021,6 +7045,16 @@ impl Editor {
                     cx,
                 );
             }))
+            .tooltip(move |window, cx| {
+                Tooltip::with_meta_in(
+                    primary_text.clone(),
+                    None,
+                    "Right-click for more options",
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            })
     }
 
     fn build_tasks_context(
