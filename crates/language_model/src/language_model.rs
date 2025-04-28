@@ -240,6 +240,26 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports tools.
     fn supports_tools(&self) -> bool;
 
+    /// Returns whether this model supports "max mode";
+    fn supports_max_mode(&self) -> bool {
+        if self.provider_id().0 != ZED_CLOUD_PROVIDER_ID {
+            return false;
+        }
+
+        const MAX_MODE_CAPABLE_MODELS: &[CloudModel] = &[
+            CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
+            CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+        ];
+
+        for model in MAX_MODE_CAPABLE_MODELS {
+            if self.id().0 == model.id() {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }
