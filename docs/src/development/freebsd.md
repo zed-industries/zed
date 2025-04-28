@@ -1,43 +1,47 @@
-# Zed
+# Unofficial FreeBSD port for Zed Editor
 
-[![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)
+This is an unofficial FreeBSD port for [Zed Editor](https://github.com/zed-industries/zed).
 
-Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+I noticed that there has been great progress around FreeBSD support for Zed recently:
+
+- [Zed running on FreeBSD! (#10247)](https://github.com/zed-industries/zed/discussions/10247)
+- [Add initial FreeBSD support (#20480)](https://github.com/zed-industries/zed/pull/20480)
+- [FreeBSD support for remote sessions (#25601)](https://github.com/zed-industries/zed/discussions/25601)
+
+As a Arch Linux user, I'm familiar with the AUR (Arch User Repository) ecosystem.
+I want to approaching this FreeBSD port effort with a similar mindset.
 
 ---
 
-### Installation
+## Goals
 
-<a href="https://repology.org/project/zed-editor/versions">
-    <img src="https://repology.org/badge/vertical-allrepos/zed-editor.svg?minversion=0.143.5" alt="Packaging status" align="right">
-</a>
+- Build and run Zed on FreeBSD 14.2-RELEASE (amd64)
+- Package it as a FreeBSD port (`editors/zed-editor` or similar)
+- Track upstream changes and maintain patches as needed
+- Help with upstream FreeBSD compatibility improvements if appropriate
 
-On macOS and Linux you can [download Zed directly](https://zed.dev/download) or [install Zed via your local package manager](https://zed.dev/docs/linux#installing-via-a-package-manager).
+---
 
-Other platforms are not yet available:
+## Roadmap
 
-- Windows ([tracking issue](https://github.com/zed-industries/zed/issues/5394))
-- Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
+- [x] Study previous discussions and pull requests
+- [ ] Compile Zed natively on FreeBSD
+- [ ] Identify and patch platform-specific issues
+- [ ] Write initial FreeBSD port Makefile and patches
+- [ ] Test installation via ports system
+- [ ] Share working port for community feedback
 
-### Developing Zed
+---
 
-- [Building Zed for macOS](./docs/src/development/macos.md)
-- [Building Zed for Linux](./docs/src/development/linux.md)
-- [Building Zed for Windows](./docs/src/development/windows.md)
-- [Running Collaboration Locally](./docs/src/development/local-collaboration.md)
+This will initially be an **unofficial** effort.  
+However, if maintainers are interested, I'd be happy to collaborate further to make FreeBSD a supported platform in the future!
 
-### Contributing
+Thanks again for this amazing editor.  
+I'm excited to help bring it to more users!
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
+---
 
-Also... we're hiring! Check out our [jobs](https://zed.dev/jobs) page for open roles.
+*Environment:  
+FreeBSD 14.2-RELEASE  
+Architecture: amd64 (x86_64)*
 
-### Licensing
-
-License information for third party dependencies must be correctly provided for CI to pass.
-
-We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automatically comply with open source licenses. If CI is failing, check the following:
-
-- Is it showing a `no license specified` error for a crate you've created? If so, add `publish = false` under `[package]` in your crate's Cargo.toml.
-- Is the error `failed to satisfy license requirements` for a dependency? If so, first determine what license the project has and whether this system is sufficient to comply with this license's requirements. If you're unsure, ask a lawyer. Once you've verified that this system is acceptable add the license's SPDX identifier to the `accepted` array in `script/licenses/zed-licenses.toml`.
-- Is `cargo-about` unable to find the license for a dependency? If so, add a clarification field at the end of `script/licenses/zed-licenses.toml`, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
