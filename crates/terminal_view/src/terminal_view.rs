@@ -34,7 +34,7 @@ use ui::{
 use util::{ResultExt, debug_panic, paths::PathWithPosition};
 use workspace::{
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenOptions, OpenVisible, ToolbarItemLocation,
-    Workspace, WorkspaceId,
+    Workspace, WorkspaceId, delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
@@ -1582,14 +1582,10 @@ impl SerializableItem for TerminalView {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<workspace::ItemId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        window.spawn(cx, async move |_| {
-            TERMINAL_DB
-                .delete_unloaded_items(workspace_id, alive_items)
-                .await
-        })
+        delete_unloaded_items(alive_items, workspace_id, "terminals", &*TERMINAL_DB, cx)
     }
 
     fn serialize(

@@ -23,7 +23,7 @@ use project::Project;
 use ui::{Divider, HighlightedLabel, ListItem, ListSubHeader, prelude::*};
 
 use ui_input::SingleLineInput;
-use workspace::{AppState, ItemId, SerializableItem};
+use workspace::{AppState, ItemId, SerializableItem, delete_unloaded_items};
 use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
@@ -860,11 +860,13 @@ impl SerializableItem for ComponentPreview {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        cx.background_spawn(async move {
-            COMPONENT_PREVIEW_DB
-                .delete_unloaded_items(workspace_id, alive_items)
-                .await
-        })
+        delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "component_previews",
+            &*COMPONENT_PREVIEW_DB,
+            cx,
+        )
     }
 
     fn serialize(

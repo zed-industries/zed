@@ -1014,12 +1014,10 @@ impl SerializableItem for Editor {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        window.spawn(cx, async move |_| {
-            DB.delete_unloaded_items(workspace_id, alive_items).await
-        })
+        workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &*DB, cx)
     }
 
     fn deserialize(
