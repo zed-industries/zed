@@ -131,8 +131,9 @@ pub enum MaybeNavigationTarget {
     PathLike(PathLikeTarget),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum InternalEvent {
+    Initialized,
     Resize(TerminalBounds),
     Clear,
     // FocusNextMatch,
@@ -371,6 +372,10 @@ impl TerminalBuilder {
             release_channel::AppVersion::global(cx).to_string(),
         );
 
+        if let Some(path) = env.get("PATH").cloned() {
+            env.insert("ZED_ORIGINAL_PATH".to_string(), path);
+        }
+
         let mut terminal_title_override = None;
 
         let pty_options = {
@@ -503,6 +508,7 @@ impl TerminalBuilder {
             vi_mode_enabled: false,
             is_ssh_terminal,
             python_venv_directory,
+            pending_initialization: cfg!(not(target_os = "windows")),
         };
 
         Ok(TerminalBuilder {
@@ -659,6 +665,7 @@ pub struct Terminal {
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     is_ssh_terminal: bool,
+    pub pending_initialization: bool,
 }
 
 pub struct TaskState {
@@ -778,6 +785,9 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) {
         match event {
+            &InternalEvent::Initialized => {
+                self.pending_initialization = false;
+            }
             &InternalEvent::Resize(mut new_bounds) => {
                 new_bounds.bounds.size.height =
                     cmp::max(new_bounds.line_height, new_bounds.height());
@@ -1240,6 +1250,10 @@ impl Terminal {
         self.write_bytes_to_pty(input);
     }
 
+    pub fn initialized(&mut self) {
+        self.events.push_back(InternalEvent::Initialized);
+    }
+
     pub fn toggle_vi_mode(&mut self) {
         self.events.push_back(InternalEvent::ToggleViMode);
     }
@@ -1386,7 +1400,10 @@ impl Terminal {
         let mut terminal = term.lock_unfair();
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
-            self.process_terminal_event(&e, &mut terminal, window, cx)
+            println!("processing event");
+            dbg!(&e);
+            self.process_terminal_event(&e, &mut terminal, window, cx);
+            dbg!(&self.pending_initialization);
         }
 
         self.last_content = Self::make_content(&terminal, &self.last_content);
