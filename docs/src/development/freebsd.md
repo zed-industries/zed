@@ -33,6 +33,13 @@ I want to approaching this FreeBSD port effort with a similar mindset.
 
 ---
 
+## step
+
+Clone down the Zed [repository](https://github.com/zed-industries/zed).
+run `script/linux`
+
+---
+
 This will initially be an **unofficial** effort.  
 However, if maintainers are interested, I'd be happy to collaborate further to make FreeBSD a supported platform in the future!
 

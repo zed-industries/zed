@@ -243,7 +243,8 @@ fi
 pkg=$(command -v pkg || true)
 if [[ -n $pkg ]]; then
   deps=(
-
+    gcc
+    cmake
   )
   $maysudo "$pkg" install "${deps[@]}"
   finalize
