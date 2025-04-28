@@ -1536,23 +1536,25 @@ impl ActiveThread {
         const RESPONSE_PADDING_X: Pixels = px(18.);
 
         let feedback_container = h_flex()
+            .group("feedback_container")
             .py_2()
             .px(RESPONSE_PADDING_X)
             .gap_1()
             .flex_wrap()
-            .justify_between();
+            .justify_end();
         let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
-                    Label::new(match feedback {
-                        ThreadFeedback::Positive => "Thanks for your feedback!",
-                        ThreadFeedback::Negative => {
-                            "We appreciate your feedback and will use it to improve."
-                        }
-                    })
+                    div().mr_1().visible_on_hover("feedback_container").child(
+                        Label::new(match feedback {
+                            ThreadFeedback::Positive => "Thanks for your feedback!",
+                            ThreadFeedback::Negative => {
+                                "We appreciate your feedback and will use it to improve."
+                            }
+                        })
                     .color(Color::Muted)
                     .size(LabelSize::XSmall)
-                    .truncate(),
+                    .truncate())
                 )
                 .child(
                     h_flex()
@@ -1599,12 +1601,13 @@ impl ActiveThread {
                 .into_any_element(),
             None => feedback_container
                 .child(
-                    Label::new(
-                        "Rating the thread sends all of your current conversation to the Zed team.",
-                    )
-                    .color(Color::Muted)
+                    div().mr_1().visible_on_hover("feedback_container").child(
+                        Label::new(
+                            "Rating the thread sends all of your current conversation to the Zed team.",
+                        )
+                        .color(Color::Muted)
                     .size(LabelSize::XSmall)
-                    .truncate(),
+                    .truncate())
                 )
                 .child(
                     h_flex()
@@ -1650,6 +1653,7 @@ impl ActiveThread {
 
         let message_content = has_content.then(|| {
             v_flex()
+                .w_full()
                 .gap_1()
                 .when(!message_is_empty, |parent| {
                     parent.child(
@@ -1673,6 +1677,8 @@ impl ActiveThread {
                                 .on_action(cx.listener(Self::cancel_editing_message))
                                 .on_action(cx.listener(Self::confirm_editing_message))
                                 .min_h_6()
+                                .flex_grow()
+                                .w_full()
                                 .child(EditorElement::new(
                                     &edit_message_editor,
                                     EditorStyle {
@@ -1722,13 +1728,7 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .map(|this| {
-                    if is_first_message {
-                        this.pt_2()
-                    } else {
-                        this.pt_4()
-                    }
-                })
+                .pt_2()
                 .pl_2()
                 .pr_2p5()
                 .pb_4()
@@ -1742,48 +1742,62 @@ impl ActiveThread {
                         .border_color(colors.border)
                         .hover(|hover| hover.border_color(colors.text_accent.opacity(0.5)))
                         .cursor_pointer()
-                        .child(div().p_2().pt_2p5().children(message_content))
-                        .when_some(edit_message_editor.clone(), |this, edit_editor| {
-                            let focus_handle = edit_editor.focus_handle(cx);
-
-                            this.child(
-                                h_flex()
-                                    .p_1()
-                                    .border_t_1()
-                                    .border_color(colors.border_variant)
-                                    .gap_1()
-                                    .justify_end()
-                                    .child(
-                                        Button::new("cancel-edit-message", "Cancel")
-                                            .label_size(LabelSize::Small)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Cancel,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
+                        .child(
+                            h_flex()
+                                .p_2()
+                                .pt_3()
+                                .gap_1()
+                                .children(message_content)
+                                .when_some(edit_message_editor.clone(), |this, edit_editor| {
+                                    let edit_editor_clone = edit_editor.clone();
+                                    this.w_full().justify_between().child(
+                                        h_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                IconButton::new(
+                                                    "cancel-edit-message",
+                                                    IconName::Close,
                                                 )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                                .shape(ui::IconButtonShape::Square)
+                                                .icon_color(Color::Error)
+                                                .tooltip(move |window, cx| {
+                                                    let focus_handle =
+                                                        edit_editor_clone.focus_handle(cx);
+                                                    Tooltip::for_action_in(
+                                                        "Cancel Edit",
+                                                        &menu::Cancel,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(cx.listener(Self::handle_cancel_click)),
                                             )
-                                            .on_click(cx.listener(Self::handle_cancel_click)),
+                                            .child(
+                                                IconButton::new(
+                                                    "confirm-edit-message",
+                                                    IconName::Check,
+                                                )
+                                                .disabled(edit_editor.read(cx).is_empty(cx))
+                                                .shape(ui::IconButtonShape::Square)
+                                                .icon_color(Color::Success)
+                                                .tooltip(move |window, cx| {
+                                                    let focus_handle = edit_editor.focus_handle(cx);
+                                                    Tooltip::for_action_in(
+                                                        "Regenerate",
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(
+                                                    cx.listener(Self::handle_regenerate_click),
+                                                ),
+                                            ),
                                     )
-                                    .child(
-                                        Button::new("confirm-edit-message", "Regenerate")
-                                            .disabled(edit_editor.read(cx).is_empty(cx))
-                                            .label_size(LabelSize::Small)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Confirm,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
-                                            )
-                                            .on_click(cx.listener(Self::handle_regenerate_click)),
-                                    ),
-                            )
-                        })
+                                }),
+                        )
                         .when(edit_message_editor.is_none(), |this| {
                             this.tooltip(Tooltip::text("Click To Edit"))
                         })
