@@ -1,5 +1,8 @@
 use gpui::{
-    div, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement, IntoElement, ParentElement, PromptButton, PromptHandle, PromptLevel, PromptResponse, Refineable, Render, RenderablePromptHandle, SharedString, Styled, TextStyleRefinement, Window
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    InteractiveElement, IntoElement, ParentElement, PromptButton, PromptHandle, PromptLevel,
+    PromptResponse, Refineable, Render, RenderablePromptHandle, SharedString, Styled,
+    TextStyleRefinement, Window, div,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
