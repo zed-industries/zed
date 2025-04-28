@@ -101,7 +101,11 @@ impl Model {
     }
 
     pub fn supports_tools(&self) -> bool {
-        self.capabilities.supports.tool_calls && matches!(self.vendor, ModelVendor::Anthropic)
+        self.capabilities.supports.tool_calls
+            && match self.vendor {
+                ModelVendor::OpenAI | ModelVendor::Anthropic => true,
+                ModelVendor::Google => false,
+            }
     }
 
     pub fn vendor(&self) -> ModelVendor {
