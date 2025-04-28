@@ -114,7 +114,7 @@ impl ConfigureContextServerModal {
                     installation_instructions: manifest.installation_instructions.clone().into(),
                     settings_editor: cx.new(|cx| {
                         let mut editor = Editor::auto_height(16, window, cx);
-                        editor.set_text(manifest.settings_schema, window, cx);
+                        editor.set_text(manifest.default_settings, window, cx);
                         if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                             buffer.update(cx, |buffer, cx| buffer.set_language(jsonc_language, cx))
                         }

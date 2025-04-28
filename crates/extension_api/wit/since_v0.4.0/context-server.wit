@@ -5,5 +5,7 @@ interface context-server {
         installation-instructions: string,
         ///
         settings-schema: string,
+        ///
+        default-settings: string,
     }
 }

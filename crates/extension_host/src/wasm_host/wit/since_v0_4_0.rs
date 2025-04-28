@@ -251,6 +251,7 @@ impl From<ContextServerConfiguration> for extension::ContextServerConfiguration 
     fn from(value: ContextServerConfiguration) -> Self {
         Self {
             installation_instructions: value.installation_instructions,
+            default_settings: value.default_settings,
             settings_schema: value.settings_schema,
         }
     }
