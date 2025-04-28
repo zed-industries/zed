@@ -3768,7 +3768,7 @@ pub fn make_lsp_adapter_delegate(
         let Some(worktree) = project.worktrees(cx).next() else {
             return Ok(None::<Arc<dyn LspAdapterDelegate>>);
         };
-        let http_client = project.client().http_client().clone();
+        let http_client = project.client().http_client();
         project.lsp_store().update(cx, |_, cx| {
             Ok(Some(LocalLspAdapterDelegate::new(
                 project.languages().clone(),

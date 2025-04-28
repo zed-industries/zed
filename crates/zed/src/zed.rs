@@ -4245,11 +4245,7 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
-            copilot::copilot_chat::init(
-                app_state.fs.clone(),
-                app_state.client.http_client().clone(),
-                cx,
-            );
+            copilot::copilot_chat::init(app_state.fs.clone(), app_state.client.http_client(), cx);
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
             language_models::init(
