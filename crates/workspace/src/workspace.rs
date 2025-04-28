@@ -1460,6 +1460,27 @@ impl Workspace {
         &self.project
     }
 
+    pub fn recently_activated_items(&self, cx: &App) -> HashMap<EntityId, usize> {
+        let mut history: HashMap<EntityId, usize> = HashMap::default();
+
+        for pane_handle in &self.panes {
+            let pane = pane_handle.read(cx);
+
+            for entry in pane.activation_history() {
+                history.insert(
+                    entry.entity_id,
+                    history
+                        .get(&entry.entity_id)
+                        .cloned()
+                        .unwrap_or(0)
+                        .max(entry.timestamp),
+                );
+            }
+        }
+
+        history
+    }
+
     pub fn recent_navigation_history_iter(
         &self,
         cx: &App,
@@ -2105,7 +2126,7 @@ impl Workspace {
             .flat_map(|pane| {
                 pane.read(cx).items().filter_map(|item| {
                     if item.is_dirty(cx) {
-                        item.tab_description(0, cx);
+                        item.tab_content_text(0, cx);
                         Some((pane.downgrade(), item.boxed_clone()))
                     } else {
                         None
@@ -9022,6 +9043,9 @@ mod tests {
 
         impl Item for TestPngItemView {
             type Event = ();
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "".into()
+            }
         }
         impl EventEmitter<()> for TestPngItemView {}
         impl Focusable for TestPngItemView {
@@ -9094,6 +9118,9 @@ mod tests {
 
         impl Item for TestIpynbItemView {
             type Event = ();
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "".into()
+            }
         }
         impl EventEmitter<()> for TestIpynbItemView {}
         impl Focusable for TestIpynbItemView {
@@ -9137,6 +9164,9 @@ mod tests {
 
         impl Item for TestAlternatePngItemView {
             type Event = ();
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "".into()
+            }
         }
 
         impl EventEmitter<()> for TestAlternatePngItemView {}
