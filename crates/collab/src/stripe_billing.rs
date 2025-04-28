@@ -20,7 +20,7 @@ struct StripeBillingState {
     price_ids_by_meter_id: HashMap<String, stripe::PriceId>,
 }
 
-pub struct StripeModel {
+pub struct StripeModelTokenPrices {
     input_tokens_price: StripeBillingPrice,
     input_cache_creation_tokens_price: StripeBillingPrice,
     input_cache_read_tokens_price: StripeBillingPrice,
@@ -75,36 +75,39 @@ impl StripeBilling {
         Ok(())
     }
 
-    pub async fn register_model(&self, model: &llm::db::model::Model) -> Result<StripeModel> {
+    pub async fn register_model_for_token_based_usage(
+        &self,
+        model: &llm::db::model::Model,
+    ) -> Result<StripeModelTokenPrices> {
         let input_tokens_price = self
-            .get_or_insert_price(
+            .get_or_insert_token_price(
                 &format!("model_{}/input_tokens", model.id),
                 &format!("{} (Input Tokens)", model.name),
                 Cents::new(model.price_per_million_input_tokens as u32),
             )
             .await?;
         let input_cache_creation_tokens_price = self
-            .get_or_insert_price(
+            .get_or_insert_token_price(
                 &format!("model_{}/input_cache_creation_tokens", model.id),
                 &format!("{} (Input Cache Creation Tokens)", model.name),
                 Cents::new(model.price_per_million_cache_creation_input_tokens as u32),
             )
             .await?;
         let input_cache_read_tokens_price = self
-            .get_or_insert_price(
+            .get_or_insert_token_price(
                 &format!("model_{}/input_cache_read_tokens", model.id),
                 &format!("{} (Input Cache Read Tokens)", model.name),
                 Cents::new(model.price_per_million_cache_read_input_tokens as u32),
             )
             .await?;
         let output_tokens_price = self
-            .get_or_insert_price(
+            .get_or_insert_token_price(
                 &format!("model_{}/output_tokens", model.id),
                 &format!("{} (Output Tokens)", model.name),
                 Cents::new(model.price_per_million_output_tokens as u32),
             )
             .await?;
-        Ok(StripeModel {
+        Ok(StripeModelTokenPrices {
             input_tokens_price,
             input_cache_creation_tokens_price,
             input_cache_read_tokens_price,
@@ -112,7 +115,7 @@ impl StripeBilling {
         })
     }
 
-    async fn get_or_insert_price(
+    async fn get_or_insert_token_price(
         &self,
         meter_event_name: &str,
         price_description: &str,
@@ -211,7 +214,7 @@ impl StripeBilling {
     pub async fn subscribe_to_model(
         &self,
         subscription_id: &stripe::SubscriptionId,
-        model: &StripeModel,
+        model: &StripeModelTokenPrices,
     ) -> Result<()> {
         let subscription =
             stripe::Subscription::retrieve(&self.client, &subscription_id, &[]).await?;
@@ -272,7 +275,7 @@ impl StripeBilling {
     pub async fn bill_model_token_usage(
         &self,
         customer_id: &stripe::CustomerId,
-        model: &StripeModel,
+        model: &StripeModelTokenPrices,
         event: &llm::db::billing_event::Model,
     ) -> Result<()> {
         let timestamp = Utc::now().timestamp();
@@ -347,7 +350,7 @@ impl StripeBilling {
     pub async fn bill_model_request_usage(
         &self,
         customer_id: &stripe::CustomerId,
-        model: &StripeModel,
+        model: &StripeModelTokenPrices,
         requests: i32,
     ) -> Result<()> {
         let timestamp = Utc::now().timestamp();
@@ -374,7 +377,7 @@ impl StripeBilling {
         &self,
         customer_id: stripe::CustomerId,
         github_login: &str,
-        model: &StripeModel,
+        model: &StripeModelTokenPrices,
         success_url: &str,
     ) -> Result<String> {
         let first_of_next_month = Utc::now()

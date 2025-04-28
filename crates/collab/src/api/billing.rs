@@ -393,7 +393,9 @@ async fn create_billing_subscription(
                 zed_llm_client::LanguageModelProvider::Anthropic,
                 "claude-3-7-sonnet",
             )?;
-            let stripe_model = stripe_billing.register_model(default_model).await?;
+            let stripe_model = stripe_billing
+                .register_model_for_token_based_usage(default_model)
+                .await?;
             stripe_billing
                 .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
                 .await?
@@ -1303,7 +1305,9 @@ async fn sync_token_usage_with_stripe(
             .parse()
             .context("failed to parse stripe customer id from db")?;
 
-        let stripe_model = stripe_billing.register_model(&model).await?;
+        let stripe_model = stripe_billing
+            .register_model_for_token_based_usage(&model)
+            .await?;
         stripe_billing
             .subscribe_to_model(&stripe_subscription_id, &stripe_model)
             .await?;
