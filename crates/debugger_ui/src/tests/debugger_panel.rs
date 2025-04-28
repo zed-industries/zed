@@ -14,7 +14,7 @@ use dap::{
     },
 };
 use editor::{
-    DebugCurrentRowHighlight, Editor, EditorMode, MultiBuffer,
+    ActiveDebugLine, Editor, EditorMode, MultiBuffer,
     actions::{self},
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -1586,9 +1586,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     cx.run_until_parked();
 
     main_editor.update_in(cx, |editor, window, cx| {
-        let active_debug_lines: Vec<_> = editor
-            .highlighted_rows::<DebugCurrentRowHighlight>()
-            .collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
 
         assert_eq!(
             active_debug_lines.len(),
@@ -1605,9 +1603,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     });
 
     second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor
-            .highlighted_rows::<DebugCurrentRowHighlight>()
-            .collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1665,9 +1661,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     cx.run_until_parked();
 
     second_editor.update_in(cx, |editor, window, cx| {
-        let active_debug_lines: Vec<_> = editor
-            .highlighted_rows::<DebugCurrentRowHighlight>()
-            .collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
 
         assert_eq!(
             active_debug_lines.len(),
@@ -1684,9 +1678,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     });
 
     main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor
-            .highlighted_rows::<DebugCurrentRowHighlight>()
-            .collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1709,9 +1701,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     shutdown_session.await.unwrap();
 
     main_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor
-            .highlighted_rows::<DebugCurrentRowHighlight>()
-            .collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
 
         assert!(
             active_debug_lines.is_empty(),
@@ -1720,9 +1710,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     });
 
     second_editor.update(cx, |editor, _| {
-        let active_debug_lines: Vec<_> = editor
-            .highlighted_rows::<DebugCurrentRowHighlight>()
-            .collect();
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
 
         assert!(
             active_debug_lines.is_empty(),
