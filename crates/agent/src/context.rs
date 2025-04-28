@@ -519,7 +519,7 @@ pub struct ThreadContextHandle {
 #[derive(Debug, Clone)]
 pub struct ThreadContext {
     pub handle: ThreadContextHandle,
-    pub name: SharedString,
+    pub title: SharedString,
     pub text: SharedString,
 }
 
@@ -541,7 +541,7 @@ impl ThreadContextHandle {
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
         let context = AgentContext::Thread(ThreadContext {
-            name: self.title(cx),
+            title: self.title(cx),
             text: self.thread.read(cx).latest_detailed_summary_or_text(),
             handle: self,
         });
@@ -552,7 +552,7 @@ impl ThreadContextHandle {
 impl Display for ThreadContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // TODO: Better format for this - doesn't distinguish title and contents.
-        write!(f, "{}\n{}\n", &self.name, &self.text.trim())
+        write!(f, "{}\n{}\n", &self.title, &self.text.trim())
     }
 }
 

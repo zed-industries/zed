@@ -487,7 +487,13 @@ impl AddedContext {
             } else {
                 ContextStatus::Ready
             },
-            render_hover: None,
+            render_hover: {
+                let thread = handle.thread.clone();
+                Some(Rc::new(move |_, cx| {
+                    let text = thread.read(cx).latest_detailed_summary_or_text();
+                    text_hover_view(text.clone(), cx).into()
+                }))
+            },
             handle: AgentContextHandle::Thread(handle),
         }
     }
@@ -495,12 +501,17 @@ impl AddedContext {
     fn attached_thread(context: &ThreadContext) -> AddedContext {
         AddedContext {
             kind: ContextKind::Thread,
-            name: context.name.clone(),
+            name: context.title.clone(),
             parent: None,
             tooltip: None,
             icon_path: None,
             status: ContextStatus::Ready,
-            render_hover: None,
+            render_hover: {
+                let text = context.text.clone();
+                Some(Rc::new(move |_, cx| {
+                    text_hover_view(text.clone(), cx).into()
+                }))
+            },
             handle: AgentContextHandle::Thread(context.handle.clone()),
         }
     }
@@ -510,7 +521,7 @@ impl AddedContext {
         prompt_store: Option<&Entity<PromptStore>>,
         cx: &App,
     ) -> Option<AddedContext> {
-        let name = prompt_store
+        let title = prompt_store
             .as_ref()?
             .read(cx)
             .metadata(handle.prompt_id.into())?
@@ -518,7 +529,7 @@ impl AddedContext {
             .unwrap_or_else(|| "Unnamed Rule".into());
         Some(AddedContext {
             kind: ContextKind::Rules,
-            name: name.clone(),
+            name: title.clone(),
             parent: None,
             tooltip: None,
             icon_path: None,
@@ -529,17 +540,23 @@ impl AddedContext {
     }
 
     fn attached_rules(context: &RulesContext) -> AddedContext {
+        let title = context
+            .title
+            .clone()
+            .unwrap_or_else(|| "Unnamed Rule".into());
         AddedContext {
             kind: ContextKind::Rules,
-            name: context
-                .title
-                .clone()
-                .unwrap_or_else(|| "Unnamed Rule".into()),
+            name: title,
             parent: None,
             tooltip: None,
             icon_path: None,
             status: ContextStatus::Ready,
-            render_hover: None,
+            render_hover: {
+                let text = context.text.clone();
+                Some(Rc::new(move |_, cx| {
+                    text_hover_view(text.clone(), cx).into()
+                }))
+            },
             handle: AgentContextHandle::Rules(context.handle.clone()),
         }
     }
@@ -642,7 +659,7 @@ impl ContextFileExcerpt {
                 )
                 .child(
                     div()
-                        .id("context-pill-file-hover-contents")
+                        .id("context-pill-hover-contents")
                         .overflow_scroll()
                         .max_w_128()
                         .max_h_96()
@@ -651,6 +668,18 @@ impl ContextFileExcerpt {
                 .into_any_element()
         })
     }
+}
+
+fn text_hover_view(content: SharedString, cx: &mut App) -> Entity<ContextPillHover> {
+    ContextPillHover::new(cx, move |_, _| {
+        div()
+            .id("context-pill-hover-contents")
+            .overflow_scroll()
+            .max_w_128()
+            .max_h_96()
+            .child(content.clone())
+            .into_any_element()
+    })
 }
 
 struct ContextPillHover {
