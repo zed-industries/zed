@@ -295,10 +295,10 @@ impl AddedContext {
             AgentContextHandle::Directory(handle) => Self::pending_directory(handle, project, cx),
             AgentContextHandle::Symbol(handle) => Self::pending_symbol(handle, cx),
             AgentContextHandle::Selection(handle) => Self::pending_selection(handle, cx),
-            AgentContextHandle::FetchedUrl(handle) => Some(Self::new_fetched_url(handle)),
+            AgentContextHandle::FetchedUrl(handle) => Some(Self::fetched_url(handle)),
             AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
             AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
-            AgentContextHandle::Image(handle) => Some(Self::new_image(handle)),
+            AgentContextHandle::Image(handle) => Some(Self::image(handle)),
         }
     }
 
@@ -308,23 +308,23 @@ impl AddedContext {
             AgentContext::Directory(context) => Self::attached_directory(context),
             AgentContext::Symbol(context) => Self::attached_symbol(context, cx),
             AgentContext::Selection(context) => Self::attached_selection(context, cx),
-            AgentContext::FetchedUrl(context) => Self::new_fetched_url(context.clone()),
+            AgentContext::FetchedUrl(context) => Self::fetched_url(context.clone()),
             AgentContext::Thread(context) => Self::attached_thread(context),
             AgentContext::Rules(context) => Self::attached_rules(context),
-            AgentContext::Image(context) => Self::new_image(context.clone()),
+            AgentContext::Image(context) => Self::image(context.clone()),
         }
     }
 
-    pub fn pending_file(handle: FileContextHandle, cx: &App) -> Option<AddedContext> {
+    fn pending_file(handle: FileContextHandle, cx: &App) -> Option<AddedContext> {
         let full_path = handle.buffer.read(cx).file()?.full_path(cx);
-        Some(Self::new_file(handle, &full_path, cx))
+        Some(Self::file(handle, &full_path, cx))
     }
 
-    pub fn attached_file(context: &FileContext, cx: &App) -> AddedContext {
-        Self::new_file(context.handle.clone(), &context.full_path, cx)
+    fn attached_file(context: &FileContext, cx: &App) -> AddedContext {
+        Self::file(context.handle.clone(), &context.full_path, cx)
     }
 
-    pub fn new_file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
+    fn file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
         let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
         let name = full_path
             .file_name()
@@ -346,7 +346,7 @@ impl AddedContext {
         }
     }
 
-    pub fn pending_directory(
+    fn pending_directory(
         handle: DirectoryContextHandle,
         project: &Project,
         cx: &App,
@@ -354,14 +354,14 @@ impl AddedContext {
         let worktree = project.worktree_for_entry(handle.entry_id, cx)?.read(cx);
         let entry = worktree.entry_for_id(handle.entry_id)?;
         let full_path = worktree.full_path(&entry.path);
-        Some(Self::new_directory(handle, &full_path))
+        Some(Self::directory(handle, &full_path))
     }
 
-    pub fn attached_directory(context: &DirectoryContext) -> AddedContext {
-        Self::new_directory(context.handle.clone(), &context.full_path)
+    fn attached_directory(context: &DirectoryContext) -> AddedContext {
+        Self::directory(context.handle.clone(), &context.full_path)
     }
 
-    pub fn new_directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
+    fn directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
         let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
         let name = full_path
             .file_name()
@@ -460,7 +460,7 @@ impl AddedContext {
         }
     }
 
-    fn new_fetched_url(context: FetchedUrlContext) -> AddedContext {
+    fn fetched_url(context: FetchedUrlContext) -> AddedContext {
         AddedContext {
             kind: ContextKind::FetchedUrl,
             name: context.url.clone(),
@@ -561,7 +561,7 @@ impl AddedContext {
         }
     }
 
-    fn new_image(context: ImageContext) -> AddedContext {
+    fn image(context: ImageContext) -> AddedContext {
         AddedContext {
             kind: ContextKind::Image,
             name: "Image".into(),
@@ -721,43 +721,34 @@ impl Component for AddedContext {
         let mut next_context_id = ContextId::zero();
         let image_ready = (
             "Ready",
-            AddedContext::new_attached(
-                &AgentContext::Image(ImageContext {
-                    context_id: next_context_id.post_inc(),
-                    original_image: Arc::new(Image::empty()),
-                    image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
-                }),
-                cx,
-            ),
+            AddedContext::image(ImageContext {
+                context_id: next_context_id.post_inc(),
+                original_image: Arc::new(Image::empty()),
+                image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
+            }),
         );
 
         let image_loading = (
             "Loading",
-            AddedContext::new_attached(
-                &AgentContext::Image(ImageContext {
-                    context_id: next_context_id.post_inc(),
-                    original_image: Arc::new(Image::empty()),
-                    image_task: cx
-                        .background_spawn(async move {
-                            smol::Timer::after(Duration::from_secs(60 * 5)).await;
-                            Some(LanguageModelImage::empty())
-                        })
-                        .shared(),
-                }),
-                cx,
-            ),
+            AddedContext::image(ImageContext {
+                context_id: next_context_id.post_inc(),
+                original_image: Arc::new(Image::empty()),
+                image_task: cx
+                    .background_spawn(async move {
+                        smol::Timer::after(Duration::from_secs(60 * 5)).await;
+                        Some(LanguageModelImage::empty())
+                    })
+                    .shared(),
+            }),
         );
 
         let image_error = (
             "Error",
-            AddedContext::new_attached(
-                &AgentContext::Image(ImageContext {
-                    context_id: next_context_id.post_inc(),
-                    original_image: Arc::new(Image::empty()),
-                    image_task: Task::ready(None).shared(),
-                }),
-                cx,
-            ),
+            AddedContext::image(ImageContext {
+                context_id: next_context_id.post_inc(),
+                original_image: Arc::new(Image::empty()),
+                image_task: Task::ready(None).shared(),
+            }),
         );
 
         Some(

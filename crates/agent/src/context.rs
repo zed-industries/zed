@@ -48,7 +48,7 @@ impl ContextKind {
     }
 }
 
-/// Handle for context that can be added to a user message.
+/// Handle for context that can be attached to a user message.
 ///
 /// This uses IDs that are stable enough for tracking renames and identifying when context has
 /// already been added to the thread. To use this in a set, wrap it in `AgentContextKey` to opt in
@@ -84,6 +84,8 @@ impl AgentContextHandle {
     }
 }
 
+/// Loaded context that can be attached to a user message. This can be thought of as a
+/// snapshot of the context along with an `AgentContextHandle`.
 #[derive(Debug, Clone)]
 pub enum AgentContext {
     File(FileContext),
