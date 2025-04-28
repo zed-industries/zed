@@ -53,7 +53,7 @@ use crate::platform::{
         LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
         platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
         reveal_path_internal,
-        x11::clipboard2::Clipboard,
+        x11::clipboard::Clipboard,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
     scap_screen_capture::scap_screen_sources,
@@ -1499,8 +1499,8 @@ impl LinuxClient for X11Client {
             .clipboard
             .set_text(
                 std::borrow::Cow::Owned(item.text().unwrap_or_default()),
-                super::clipboard2::LinuxClipboardKind::Primary,
-                super::clipboard2::WaitConfig::None,
+                super::clipboard::LinuxClipboardKind::Primary,
+                super::clipboard::WaitConfig::None,
             )
             .context("Failed to write to clipboard (primary)")
             .log_with_level(log::Level::Debug);
@@ -1512,8 +1512,8 @@ impl LinuxClient for X11Client {
             .clipboard
             .set_text(
                 std::borrow::Cow::Owned(item.text().unwrap_or_default()),
-                super::clipboard2::LinuxClipboardKind::Clipboard,
-                super::clipboard2::WaitConfig::None,
+                super::clipboard::LinuxClipboardKind::Clipboard,
+                super::clipboard::WaitConfig::None,
             )
             .context("Failed to write to clipboard (clipboard)")
             .log_with_level(log::Level::Debug);
@@ -1524,7 +1524,7 @@ impl LinuxClient for X11Client {
         let state = self.0.borrow_mut();
         return state
             .clipboard
-            .get_any(super::clipboard2::LinuxClipboardKind::Primary)
+            .get_any(super::clipboard::LinuxClipboardKind::Primary)
             .context("Failed to read from clipboard (primary)")
             .log_with_level(log::Level::Debug);
     }
@@ -1535,13 +1535,13 @@ impl LinuxClient for X11Client {
         // which has metadata attached.
         if state
             .clipboard
-            .is_owner(super::clipboard2::LinuxClipboardKind::Clipboard)
+            .is_owner(super::clipboard::LinuxClipboardKind::Clipboard)
         {
             return state.clipboard_item.clone();
         }
         return state
             .clipboard
-            .get_any(super::clipboard2::LinuxClipboardKind::Clipboard)
+            .get_any(super::clipboard::LinuxClipboardKind::Clipboard)
             .context("Failed to read from clipboard (clipboard)")
             .log_with_level(log::Level::Debug);
     }

@@ -1,5 +1,5 @@
 mod client;
-mod clipboard2;
+mod clipboard;
 mod display;
 mod event;
 mod window;
