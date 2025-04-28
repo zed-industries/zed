@@ -13,10 +13,10 @@ use rope::Point;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
 use crate::context::{
-    AgentContext, ContextHandle, ContextId, ContextKind, DirectoryContext, DirectoryContextHandle,
-    FetchedUrlContext, FileContext, FileContextHandle, ImageContext, ImageStatus, RulesContext,
-    RulesContextHandle, SelectionContext, SelectionContextHandle, SymbolContext,
-    SymbolContextHandle, ThreadContext, ThreadContextHandle,
+    AgentContext, AgentContextHandle, ContextId, ContextKind, DirectoryContext,
+    DirectoryContextHandle, FetchedUrlContext, FileContext, FileContextHandle, ImageContext,
+    ImageStatus, RulesContext, RulesContextHandle, SelectionContext, SelectionContextHandle,
+    SymbolContext, SymbolContextHandle, ThreadContext, ThreadContextHandle,
 };
 
 #[derive(IntoElement)]
@@ -269,7 +269,7 @@ pub enum ContextStatus {
 
 #[derive(RegisterComponent)]
 pub struct AddedContext {
-    pub handle: ContextHandle,
+    pub handle: AgentContextHandle,
     pub kind: ContextKind,
     pub name: SharedString,
     pub parent: Option<SharedString>,
@@ -285,34 +285,33 @@ impl AddedContext {
     ///
     /// TODO: `None` cases are unremovable from `ContextStore` and so are a very minor memory leak.
     pub fn new_pending(
-        handle: ContextHandle,
+        handle: AgentContextHandle,
         prompt_store: Option<&Entity<PromptStore>>,
         project: &Project,
         cx: &App,
     ) -> Option<AddedContext> {
         match handle {
-            ContextHandle::File(handle) => Self::pending_file(handle, cx),
-            ContextHandle::Directory(handle) => Self::pending_directory(handle, project, cx),
-            ContextHandle::Symbol(handle) => Self::pending_symbol(handle, cx),
-            ContextHandle::Selection(handle) => Self::pending_selection(handle, cx),
-            ContextHandle::FetchedUrl(handle) => Some(Self::new_fetched_url(handle)),
-            ContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
-            ContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
-            ContextHandle::Image(handle) => Some(Self::new_image(handle)),
+            AgentContextHandle::File(handle) => Self::pending_file(handle, cx),
+            AgentContextHandle::Directory(handle) => Self::pending_directory(handle, project, cx),
+            AgentContextHandle::Symbol(handle) => Self::pending_symbol(handle, cx),
+            AgentContextHandle::Selection(handle) => Self::pending_selection(handle, cx),
+            AgentContextHandle::FetchedUrl(handle) => Some(Self::new_fetched_url(handle)),
+            AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
+            AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
+            AgentContextHandle::Image(handle) => Some(Self::new_image(handle)),
         }
     }
 
-    // todo! can this take an &AgentContext?
-    pub fn new_attached(context: AgentContext, cx: &App) -> AddedContext {
+    pub fn new_attached(context: &AgentContext, cx: &App) -> AddedContext {
         match context {
             AgentContext::File(context) => Self::attached_file(context, cx),
             AgentContext::Directory(context) => Self::attached_directory(context),
             AgentContext::Symbol(context) => Self::attached_symbol(context, cx),
             AgentContext::Selection(context) => Self::attached_selection(context, cx),
-            AgentContext::FetchedUrl(context) => Self::new_fetched_url(context),
+            AgentContext::FetchedUrl(context) => Self::new_fetched_url(context.clone()),
             AgentContext::Thread(context) => Self::attached_thread(context),
             AgentContext::Rules(context) => Self::attached_rules(context),
-            AgentContext::Image(context) => Self::new_image(context),
+            AgentContext::Image(context) => Self::new_image(context.clone()),
         }
     }
 
@@ -321,8 +320,8 @@ impl AddedContext {
         Some(Self::new_file(handle, &full_path, cx))
     }
 
-    pub fn attached_file(context: FileContext, cx: &App) -> AddedContext {
-        Self::new_file(context.handle, &context.full_path, cx)
+    pub fn attached_file(context: &FileContext, cx: &App) -> AddedContext {
+        Self::new_file(context.handle.clone(), &context.full_path, cx)
     }
 
     pub fn new_file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
@@ -343,7 +342,7 @@ impl AddedContext {
             icon_path: FileIcons::get_icon(&full_path, cx),
             status: ContextStatus::Ready,
             render_hover: None,
-            handle: ContextHandle::File(handle),
+            handle: AgentContextHandle::File(handle),
         }
     }
 
@@ -358,8 +357,8 @@ impl AddedContext {
         Some(Self::new_directory(handle, &full_path))
     }
 
-    pub fn attached_directory(context: DirectoryContext) -> AddedContext {
-        Self::new_directory(context.handle, &context.full_path)
+    pub fn attached_directory(context: &DirectoryContext) -> AddedContext {
+        Self::new_directory(context.handle.clone(), &context.full_path)
     }
 
     pub fn new_directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
@@ -380,7 +379,7 @@ impl AddedContext {
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: None,
-            handle: ContextHandle::Directory(handle),
+            handle: AgentContextHandle::Directory(handle),
         }
     }
 
@@ -390,8 +389,7 @@ impl AddedContext {
         Some(AddedContext {
             kind: ContextKind::Symbol,
             name: handle.symbol.clone(),
-            // todo! does this look good?
-            parent: excerpt.parent_name.clone(),
+            parent: Some(excerpt.file_name_and_range.clone()),
             tooltip: None,
             icon_path: None,
             status: ContextStatus::Ready,
@@ -401,17 +399,16 @@ impl AddedContext {
                     excerpt.hover_view(handle.text(cx), cx).into()
                 }))
             },
-            handle: ContextHandle::Symbol(handle),
+            handle: AgentContextHandle::Symbol(handle),
         })
     }
 
-    fn attached_symbol(context: SymbolContext, cx: &App) -> AddedContext {
-        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range, cx);
+    fn attached_symbol(context: &SymbolContext, cx: &App) -> AddedContext {
+        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range.clone(), cx);
         AddedContext {
             kind: ContextKind::Symbol,
             name: context.handle.symbol.clone(),
-            // todo! does this look good?
-            parent: excerpt.parent_name.clone(),
+            parent: Some(excerpt.file_name_and_range.clone()),
             tooltip: None,
             icon_path: None,
             status: ContextStatus::Ready,
@@ -421,7 +418,7 @@ impl AddedContext {
                     excerpt.hover_view(text.clone(), cx).into()
                 }))
             },
-            handle: ContextHandle::Symbol(context.handle),
+            handle: AgentContextHandle::Symbol(context.handle.clone()),
         }
     }
 
@@ -440,12 +437,12 @@ impl AddedContext {
                     excerpt.hover_view(handle.text(cx), cx).into()
                 }))
             },
-            handle: ContextHandle::Selection(handle),
+            handle: AgentContextHandle::Selection(handle),
         })
     }
 
-    fn attached_selection(context: SelectionContext, cx: &App) -> AddedContext {
-        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range, cx);
+    fn attached_selection(context: &SelectionContext, cx: &App) -> AddedContext {
+        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range.clone(), cx);
         AddedContext {
             kind: ContextKind::Selection,
             name: excerpt.file_name_and_range.clone(),
@@ -459,7 +456,7 @@ impl AddedContext {
                     excerpt.hover_view(text.clone(), cx).into()
                 }))
             },
-            handle: ContextHandle::Selection(context.handle),
+            handle: AgentContextHandle::Selection(context.handle.clone()),
         }
     }
 
@@ -472,14 +469,14 @@ impl AddedContext {
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: None,
-            handle: ContextHandle::FetchedUrl(context),
+            handle: AgentContextHandle::FetchedUrl(context),
         }
     }
 
     fn pending_thread(handle: ThreadContextHandle, cx: &App) -> AddedContext {
         AddedContext {
             kind: ContextKind::Thread,
-            name: handle.name(cx),
+            name: handle.title(cx),
             parent: None,
             tooltip: None,
             icon_path: None,
@@ -491,20 +488,20 @@ impl AddedContext {
                 ContextStatus::Ready
             },
             render_hover: None,
-            handle: ContextHandle::Thread(handle),
+            handle: AgentContextHandle::Thread(handle),
         }
     }
 
-    fn attached_thread(context: ThreadContext) -> AddedContext {
+    fn attached_thread(context: &ThreadContext) -> AddedContext {
         AddedContext {
             kind: ContextKind::Thread,
-            name: context.name,
+            name: context.name.clone(),
             parent: None,
             tooltip: None,
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: None,
-            handle: ContextHandle::Thread(context.handle),
+            handle: AgentContextHandle::Thread(context.handle.clone()),
         }
     }
 
@@ -527,20 +524,23 @@ impl AddedContext {
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: None,
-            handle: ContextHandle::Rules(handle),
+            handle: AgentContextHandle::Rules(handle),
         })
     }
 
-    fn attached_rules(context: RulesContext) -> AddedContext {
+    fn attached_rules(context: &RulesContext) -> AddedContext {
         AddedContext {
             kind: ContextKind::Rules,
-            name: context.title.unwrap_or_else(|| "Unnamed Rule".into()),
+            name: context
+                .title
+                .clone()
+                .unwrap_or_else(|| "Unnamed Rule".into()),
             parent: None,
             tooltip: None,
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: None,
-            handle: ContextHandle::Rules(context.handle),
+            handle: AgentContextHandle::Rules(context.handle.clone()),
         }
     }
 
@@ -573,7 +573,7 @@ impl AddedContext {
                     .into()
                 }
             })),
-            handle: ContextHandle::Image(context),
+            handle: AgentContextHandle::Image(context),
         }
     }
 }
@@ -693,7 +693,7 @@ impl Component for AddedContext {
         let image_ready = (
             "Ready",
             AddedContext::new_attached(
-                AgentContext::Image(ImageContext {
+                &AgentContext::Image(ImageContext {
                     context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
@@ -705,7 +705,7 @@ impl Component for AddedContext {
         let image_loading = (
             "Loading",
             AddedContext::new_attached(
-                AgentContext::Image(ImageContext {
+                &AgentContext::Image(ImageContext {
                     context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: cx
@@ -722,7 +722,7 @@ impl Component for AddedContext {
         let image_error = (
             "Error",
             AddedContext::new_attached(
-                AgentContext::Image(ImageContext {
+                &AgentContext::Image(ImageContext {
                     context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(None).shared(),

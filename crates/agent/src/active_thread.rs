@@ -1,4 +1,4 @@
-use crate::context::{ContextHandle, RULES_ICON};
+use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
@@ -1495,7 +1495,7 @@ impl ActiveThread {
         let checkpoint = thread.checkpoint_for_message(message_id);
         let added_context = thread
             .context_for_message(message_id)
-            .map(|context| AddedContext::new_attached(context.clone(), cx))
+            .map(|context| AddedContext::new_attached(context, cx))
             .collect::<Vec<_>>();
 
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
@@ -3167,13 +3167,13 @@ impl Render for ActiveThread {
 }
 
 pub(crate) fn open_context(
-    context: &ContextHandle,
+    context: &AgentContextHandle,
     workspace: Entity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) {
     match context {
-        ContextHandle::File(file_context) => {
+        AgentContextHandle::File(file_context) => {
             if let Some(project_path) = file_context.project_path(cx) {
                 workspace.update(cx, |workspace, cx| {
                     workspace
@@ -3183,7 +3183,7 @@ pub(crate) fn open_context(
             }
         }
 
-        ContextHandle::Directory(directory_context) => {
+        AgentContextHandle::Directory(directory_context) => {
             let entry_id = directory_context.entry_id;
             workspace.update(cx, |workspace, cx| {
                 workspace.project().update(cx, |_project, cx| {
@@ -3192,7 +3192,7 @@ pub(crate) fn open_context(
             })
         }
 
-        ContextHandle::Symbol(symbol_context) => {
+        AgentContextHandle::Symbol(symbol_context) => {
             let buffer = symbol_context.buffer.read(cx);
             if let Some(project_path) = buffer.project_path(cx) {
                 let snapshot = buffer.snapshot();
@@ -3202,7 +3202,7 @@ pub(crate) fn open_context(
             }
         }
 
-        ContextHandle::Selection(selection_context) => {
+        AgentContextHandle::Selection(selection_context) => {
             let buffer = selection_context.buffer.read(cx);
             if let Some(project_path) = buffer.project_path(cx) {
                 let snapshot = buffer.snapshot();
@@ -3213,11 +3213,11 @@ pub(crate) fn open_context(
             }
         }
 
-        ContextHandle::FetchedUrl(fetched_url_context) => {
+        AgentContextHandle::FetchedUrl(fetched_url_context) => {
             cx.open_url(&fetched_url_context.url);
         }
 
-        ContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
+        AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     let thread_id = thread_context.thread.read(cx).id().clone();
@@ -3228,14 +3228,14 @@ pub(crate) fn open_context(
             }
         }),
 
-        ContextHandle::Rules(rules_context) => window.dispatch_action(
+        AgentContextHandle::Rules(rules_context) => window.dispatch_action(
             Box::new(OpenRulesLibrary {
                 prompt_to_select: Some(rules_context.prompt_id.0),
             }),
             cx,
         ),
 
-        ContextHandle::Image(_) => {}
+        AgentContextHandle::Image(_) => {}
     }
 }
 

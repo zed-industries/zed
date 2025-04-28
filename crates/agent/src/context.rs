@@ -53,10 +53,8 @@ impl ContextKind {
 /// This uses IDs that are stable enough for tracking renames and identifying when context has
 /// already been added to the thread. To use this in a set, wrap it in `AgentContextKey` to opt in
 /// to `PartialEq` and `Hash` impls that use the subset of the fields used for this stable identity.
-///
-/// todo! rename to AgentContextHandle
 #[derive(Debug, Clone)]
-pub enum ContextHandle {
+pub enum AgentContextHandle {
     File(FileContextHandle),
     Directory(DirectoryContextHandle),
     Symbol(SymbolContextHandle),
@@ -67,7 +65,7 @@ pub enum ContextHandle {
     Image(ImageContext),
 }
 
-impl ContextHandle {
+impl AgentContextHandle {
     fn id(&self) -> ContextId {
         match self {
             Self::File(context) => context.context_id,
@@ -99,16 +97,20 @@ pub enum AgentContext {
 }
 
 impl AgentContext {
-    pub fn handle(&self) -> ContextHandle {
+    pub fn handle(&self) -> AgentContextHandle {
         match self {
-            AgentContext::File(context) => ContextHandle::File(context.handle.clone()),
-            AgentContext::Directory(context) => ContextHandle::Directory(context.handle.clone()),
-            AgentContext::Symbol(context) => ContextHandle::Symbol(context.handle.clone()),
-            AgentContext::Selection(context) => ContextHandle::Selection(context.handle.clone()),
-            AgentContext::FetchedUrl(context) => ContextHandle::FetchedUrl(context.clone()),
-            AgentContext::Thread(context) => ContextHandle::Thread(context.handle.clone()),
-            AgentContext::Rules(context) => ContextHandle::Rules(context.handle.clone()),
-            AgentContext::Image(context) => ContextHandle::Image(context.clone()),
+            AgentContext::File(context) => AgentContextHandle::File(context.handle.clone()),
+            AgentContext::Directory(context) => {
+                AgentContextHandle::Directory(context.handle.clone())
+            }
+            AgentContext::Symbol(context) => AgentContextHandle::Symbol(context.handle.clone()),
+            AgentContext::Selection(context) => {
+                AgentContextHandle::Selection(context.handle.clone())
+            }
+            AgentContext::FetchedUrl(context) => AgentContextHandle::FetchedUrl(context.clone()),
+            AgentContext::Thread(context) => AgentContextHandle::Thread(context.handle.clone()),
+            AgentContext::Rules(context) => AgentContextHandle::Rules(context.handle.clone()),
+            AgentContext::Image(context) => AgentContextHandle::Image(context.clone()),
         }
     }
 }
@@ -489,7 +491,7 @@ impl FetchedUrlContext {
     }
 
     pub fn lookup_key(url: SharedString) -> AgentContextKey {
-        AgentContextKey(ContextHandle::FetchedUrl(FetchedUrlContext {
+        AgentContextKey(AgentContextHandle::FetchedUrl(FetchedUrlContext {
             url,
             text: "".into(),
             context_id: ContextId::for_lookup(),
@@ -504,8 +506,6 @@ impl FetchedUrlContext {
 impl Display for FetchedUrlContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO: Better format - url and contents are not delimited.
-        //
-        // todo! Make sure that text is trimmed
         write!(f, "{}\n{}\n", self.url, self.text)
     }
 }
@@ -532,8 +532,7 @@ impl ThreadContextHandle {
         self.thread.hash(state)
     }
 
-    // todo! rename to title?
-    pub fn name(&self, cx: &App) -> SharedString {
+    pub fn title(&self, cx: &App) -> SharedString {
         self.thread
             .read(cx)
             .summary()
@@ -542,7 +541,7 @@ impl ThreadContextHandle {
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
         let context = AgentContext::Thread(ThreadContext {
-            name: self.name(cx),
+            name: self.title(cx),
             text: self.thread.read(cx).latest_detailed_summary_or_text(),
             handle: self,
         });
@@ -580,7 +579,7 @@ impl RulesContextHandle {
     }
 
     pub fn lookup_key(prompt_id: UserPromptId) -> AgentContextKey {
-        AgentContextKey(ContextHandle::Rules(RulesContextHandle {
+        AgentContextKey(AgentContextHandle::Rules(RulesContextHandle {
             prompt_id,
             context_id: ContextId::for_lookup(),
         }))
@@ -715,7 +714,7 @@ impl LoadedContext {
 
 /// Loads and formats a collection of contexts.
 pub fn load_context(
-    contexts: Vec<ContextHandle>,
+    contexts: Vec<AgentContextHandle>,
     project: &Entity<Project>,
     prompt_store: &Option<Entity<PromptStore>>,
     cx: &mut App,
@@ -724,14 +723,16 @@ pub fn load_context(
 
     for context in contexts.iter().cloned() {
         match context {
-            ContextHandle::File(context) => load_tasks.push(context.load(cx)),
-            ContextHandle::Directory(context) => load_tasks.push(context.load(project.clone(), cx)),
-            ContextHandle::Symbol(context) => load_tasks.push(context.load(cx)),
-            ContextHandle::Selection(context) => load_tasks.push(context.load(cx)),
-            ContextHandle::FetchedUrl(context) => load_tasks.push(context.load()),
-            ContextHandle::Thread(context) => load_tasks.push(context.load(cx)),
-            ContextHandle::Rules(context) => load_tasks.push(context.load(prompt_store, cx)),
-            ContextHandle::Image(context) => load_tasks.push(context.load(cx)),
+            AgentContextHandle::File(context) => load_tasks.push(context.load(cx)),
+            AgentContextHandle::Directory(context) => {
+                load_tasks.push(context.load(project.clone(), cx))
+            }
+            AgentContextHandle::Symbol(context) => load_tasks.push(context.load(cx)),
+            AgentContextHandle::Selection(context) => load_tasks.push(context.load(cx)),
+            AgentContextHandle::FetchedUrl(context) => load_tasks.push(context.load()),
+            AgentContextHandle::Thread(context) => load_tasks.push(context.load(cx)),
+            AgentContextHandle::Rules(context) => load_tasks.push(context.load(prompt_store, cx)),
+            AgentContextHandle::Image(context) => load_tasks.push(context.load(cx)),
         }
     }
 
@@ -911,10 +912,10 @@ fn codeblock_tag(full_path: &Path, line_range: Option<Range<Point>>) -> String {
 /// needed for stable context identity.
 #[derive(Debug, Clone, RefCast)]
 #[repr(transparent)]
-pub struct AgentContextKey(pub ContextHandle);
+pub struct AgentContextKey(pub AgentContextHandle);
 
-impl AsRef<ContextHandle> for AgentContextKey {
-    fn as_ref(&self) -> &ContextHandle {
+impl AsRef<AgentContextHandle> for AgentContextKey {
+    fn as_ref(&self) -> &AgentContextHandle {
         &self.0
     }
 }
@@ -924,43 +925,43 @@ impl Eq for AgentContextKey {}
 impl PartialEq for AgentContextKey {
     fn eq(&self, other: &Self) -> bool {
         match &self.0 {
-            ContextHandle::File(context) => {
-                if let ContextHandle::File(other_context) = &other.0 {
+            AgentContextHandle::File(context) => {
+                if let AgentContextHandle::File(other_context) = &other.0 {
                     return context.eq_for_key(other_context);
                 }
             }
-            ContextHandle::Directory(context) => {
-                if let ContextHandle::Directory(other_context) = &other.0 {
+            AgentContextHandle::Directory(context) => {
+                if let AgentContextHandle::Directory(other_context) = &other.0 {
                     return context.eq_for_key(other_context);
                 }
             }
-            ContextHandle::Symbol(context) => {
-                if let ContextHandle::Symbol(other_context) = &other.0 {
+            AgentContextHandle::Symbol(context) => {
+                if let AgentContextHandle::Symbol(other_context) = &other.0 {
                     return context.eq_for_key(other_context);
                 }
             }
-            ContextHandle::Selection(context) => {
-                if let ContextHandle::Selection(other_context) = &other.0 {
+            AgentContextHandle::Selection(context) => {
+                if let AgentContextHandle::Selection(other_context) = &other.0 {
                     return context.eq_for_key(other_context);
                 }
             }
-            ContextHandle::FetchedUrl(context) => {
-                if let ContextHandle::FetchedUrl(other_context) = &other.0 {
+            AgentContextHandle::FetchedUrl(context) => {
+                if let AgentContextHandle::FetchedUrl(other_context) = &other.0 {
                     return context.eq_for_key(other_context);
                 }
             }
-            ContextHandle::Thread(context) => {
-                if let ContextHandle::Thread(other_context) = &other.0 {
+            AgentContextHandle::Thread(context) => {
+                if let AgentContextHandle::Thread(other_context) = &other.0 {
                     return context.eq_for_key(other_context);
                 }
             }
-            ContextHandle::Rules(context) => {
-                if let ContextHandle::Rules(other_context) = &other.0 {
+            AgentContextHandle::Rules(context) => {
+                if let AgentContextHandle::Rules(other_context) = &other.0 {
                     return context.eq_for_key(other_context);
                 }
             }
-            ContextHandle::Image(context) => {
-                if let ContextHandle::Image(other_context) = &other.0 {
+            AgentContextHandle::Image(context) => {
+                if let AgentContextHandle::Image(other_context) = &other.0 {
                     return context.eq_for_key(other_context);
                 }
             }
@@ -972,14 +973,14 @@ impl PartialEq for AgentContextKey {
 impl Hash for AgentContextKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match &self.0 {
-            ContextHandle::File(context) => context.hash_for_key(state),
-            ContextHandle::Directory(context) => context.hash_for_key(state),
-            ContextHandle::Symbol(context) => context.hash_for_key(state),
-            ContextHandle::Selection(context) => context.hash_for_key(state),
-            ContextHandle::FetchedUrl(context) => context.hash_for_key(state),
-            ContextHandle::Thread(context) => context.hash_for_key(state),
-            ContextHandle::Rules(context) => context.hash_for_key(state),
-            ContextHandle::Image(context) => context.hash_for_key(state),
+            AgentContextHandle::File(context) => context.hash_for_key(state),
+            AgentContextHandle::Directory(context) => context.hash_for_key(state),
+            AgentContextHandle::Symbol(context) => context.hash_for_key(state),
+            AgentContextHandle::Selection(context) => context.hash_for_key(state),
+            AgentContextHandle::FetchedUrl(context) => context.hash_for_key(state),
+            AgentContextHandle::Thread(context) => context.hash_for_key(state),
+            AgentContextHandle::Rules(context) => context.hash_for_key(state),
+            AgentContextHandle::Image(context) => context.hash_for_key(state),
         }
     }
 }
