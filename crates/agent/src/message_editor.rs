@@ -59,10 +59,11 @@ pub struct MessageEditor {
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
     last_loaded_context: Option<ContextLoadResult>,
-    load_context_task: Option<Shared<Task<()>>>,
+    context_load_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
     editor_is_expanded: bool,
+    waiting_for_summaries_to_send: bool,
     last_estimated_token_count: Option<usize>,
     update_token_count_task: Option<Task<anyhow::Result<()>>>,
     _subscriptions: Vec<Subscription>,
@@ -147,8 +148,7 @@ impl MessageEditor {
                 _ => {}
             }),
             cx.observe(&context_store, |this, _, cx| {
-                // When context changes, reload it for token counting.
-                let _ = this.reload_context(cx);
+                let _ = this.start_context_load(cx);
             }),
         ];
 
@@ -162,7 +162,7 @@ impl MessageEditor {
             prompt_store,
             context_strip,
             context_picker_menu_handle,
-            load_context_task: None,
+            context_load_task: None,
             last_loaded_context: None,
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
@@ -176,6 +176,7 @@ impl MessageEditor {
             }),
             edits_expanded: false,
             editor_is_expanded: false,
+            waiting_for_summaries_to_send: false,
             profile_selector: cx
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
             last_estimated_token_count: None,
@@ -287,7 +288,7 @@ impl MessageEditor {
         let thread = self.thread.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
-        let context_task = self.reload_context(cx);
+        let context_task = self.load_context(cx);
         let window_handle = window.window_handle();
 
         cx.spawn(async move |_this, cx| {
@@ -316,9 +317,20 @@ impl MessageEditor {
             if let Some(wait_for_summaries) = context_store
                 .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
                 .ok()
-                .flatten()
             {
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries_to_send = true;
+                    cx.notify();
+                })
+                .ok();
+
                 wait_for_summaries.await;
+
+                this.update(cx, |this, cx| {
+                    this.waiting_for_summaries_to_send = false;
+                    cx.notify();
+                })
+                .ok();
             }
         })
     }
@@ -619,31 +631,31 @@ impl MessageEditor {
                                                     })
                                                     .when(!is_editor_empty, |parent| {
                                                         parent.child(
-                                                            IconButton::new(
-                                                                "send-message",
-                                                                IconName::Send,
-                                                            )
-                                                            .icon_color(Color::Accent)
-                                                            .style(ButtonStyle::Filled)
-                                                            .disabled(!is_model_selected)
-                                                            .on_click({
-                                                                let focus_handle =
-                                                                    focus_handle.clone();
-                                                                move |_event, window, cx| {
-                                                                    focus_handle.dispatch_action(
-                                                                        &Chat, window, cx,
-                                                                    );
-                                                                }
-                                                            })
-                                                            .tooltip(move |window, cx| {
-                                                                Tooltip::for_action(
-                                                                    "Stop and Send New Message",
-                                                                    &Chat,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                            }),
+                                                    IconButton::new("send-message", IconName::Send)
+                                                        .icon_color(Color::Accent)
+                                                        .style(ButtonStyle::Filled)
+                                                        .disabled(
+                                                            !is_model_selected
+                                                                || self
+                                                                    .waiting_for_summaries_to_send,
                                                         )
+                                                        .on_click({
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |_event, window, cx| {
+                                                                focus_handle.dispatch_action(
+                                                                    &Chat, window, cx,
+                                                                );
+                                                            }
+                                                        })
+                                                        .tooltip(move |window, cx| {
+                                                            Tooltip::for_action(
+                                                                "Stop and Send New Message",
+                                                                &Chat,
+                                                                window,
+                                                                cx,
+                                                            )
+                                                        }),
+                                                )
                                                     })
                                             } else {
                                                 parent.child(
@@ -651,7 +663,10 @@ impl MessageEditor {
                                                         .icon_color(Color::Accent)
                                                         .style(ButtonStyle::Filled)
                                                         .disabled(
-                                                            is_editor_empty || !is_model_selected,
+                                                            is_editor_empty
+                                                                || !is_model_selected
+                                                                || self
+                                                                    .waiting_for_summaries_to_send,
                                                         )
                                                         .on_click({
                                                             let focus_handle = focus_handle.clone();
@@ -993,23 +1008,16 @@ impl MessageEditor {
         self.update_token_count_task.is_some()
     }
 
-    fn reload_context(&mut self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
-        let context_store = self.context_store.clone();
+    fn handle_message_changed(&mut self, cx: &mut Context<Self>) {
+        self.message_or_context_changed(true, cx);
+    }
+
+    fn start_context_load(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
+        let summaries_task = self.wait_for_summaries(cx);
         let load_task = cx.spawn(async move |this, cx| {
             // Waits for detailed summaries before `load_context`, as it directly reads these from
-            // the thread.
-            //
-            // TODO: Would be cleaner to have `load_context` await on summarization.
-
-            // todo! This does not work because load_context_task gets replaced, and
-            // wait_for_summaries takes all pending summary tasks.
-            if let Some(wait_for_summaries) = context_store
-                .update(cx, |context_store, cx| context_store.wait_for_summaries(cx))
-                .ok()
-                .flatten()
-            {
-                wait_for_summaries.await;
-            }
+            // the thread. TODO: Would be cleaner to have context loading await on summarization.
+            summaries_task.await;
             let Ok(load_task) = this.update(cx, |this, cx| {
                 let new_context = this.context_store.read_with(cx, |context_store, cx| {
                     context_store.new_context_for_thread(this.thread.read(cx))
@@ -1020,26 +1028,26 @@ impl MessageEditor {
             };
             let result = load_task.await;
             this.update(cx, |this, cx| {
-                // todo! Just use a Shared<Task<Option<ContextLoadResult>> or so
                 this.last_loaded_context = Some(result);
-                this.load_context_task = None;
+                this.context_load_task = None;
                 this.message_or_context_changed(false, cx);
             })
             .ok();
         });
         // Replace existing load task, if any, causing it to be cancelled.
         let load_task = load_task.shared();
-        self.load_context_task = Some(load_task.clone());
+        self.context_load_task = Some(load_task.clone());
+        load_task
+    }
+
+    fn load_context(&mut self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
+        let context_load_task = self.start_context_load(cx);
         cx.spawn(async move |this, cx| {
-            load_task.await;
+            context_load_task.await;
             this.read_with(cx, |this, _cx| this.last_loaded_context.clone())
                 .ok()
                 .flatten()
         })
-    }
-
-    fn handle_message_changed(&mut self, cx: &mut Context<Self>) {
-        self.message_or_context_changed(true, cx);
     }
 
     fn message_or_context_changed(&mut self, debounce: bool, cx: &mut Context<Self>) {
@@ -1141,6 +1149,41 @@ impl Render for MessageEditor {
 
         v_flex()
             .size_full()
+            .when(self.waiting_for_summaries_to_send, |parent| {
+                parent.child(
+                    h_flex().py_3().w_full().justify_center().child(
+                        h_flex()
+                            .flex_none()
+                            .px_2()
+                            .py_2()
+                            .bg(cx.theme().colors().editor_background)
+                            .border_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .rounded_lg()
+                            .shadow_md()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(gpui::Transformation::rotate(
+                                                gpui::percentage(delta),
+                                            ))
+                                        },
+                                    ),
+                            )
+                            .child(
+                                Label::new("Summarizing context…")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+                )
+            })
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })

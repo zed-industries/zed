@@ -228,16 +228,12 @@ impl ContextStore {
         }
     }
 
-    pub fn wait_for_summaries(&mut self, cx: &App) -> Option<Task<()>> {
+    pub fn wait_for_summaries(&mut self, cx: &App) -> Task<()> {
         let tasks = std::mem::take(&mut self.thread_summary_tasks);
 
-        if tasks.is_empty() {
-            None
-        } else {
-            Some(cx.spawn(async move |_cx| {
-                join_all(tasks).await;
-            }))
-        }
+        cx.spawn(async move |_cx| {
+            join_all(tasks).await;
+        })
     }
 
     pub fn add_rules(
