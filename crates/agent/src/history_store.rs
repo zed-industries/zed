@@ -66,7 +66,7 @@ impl HistoryStore {
             }
             for context in context_store.update(cx, |this, _cx| this.contexts()) {
                 entries.push(RecentEntry {
-                    id: RecentEntryId::Context(context.path.into()),
+                    id: RecentEntryId::Context(context.path),
                     title: context.title.into(),
                 });
             }
