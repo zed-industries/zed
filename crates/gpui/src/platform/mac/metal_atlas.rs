@@ -164,7 +164,7 @@ impl MetalAtlasState {
 
         let mut size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
 
-        // Make sure the size is a multiple of MAX_SIZE, to avoid waste VRAM by creating too many textures.
+        // Make sure the size is a multiple of MIN_SIZE, to avoid waste VRAM by creating too many textures.
         //
         // In most cases, the `min_size` (This actually size of the imgs, icons or paths etc.), it less than 1024x1024.
         //
