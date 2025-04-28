@@ -295,10 +295,10 @@ impl ContextStore {
                 self.context_thread_ids
                     .insert(thread_context.thread.read(cx).id().clone());
                 // Summarize the thread even if there is no thread store for persistence.
-                let thread_store = self.thread_store.as_ref().map_or_else(
-                    || WeakEntity::new_invalid(),
-                    |thread_store| thread_store.clone(),
-                );
+                let thread_store = self
+                    .thread_store
+                    .as_ref()
+                    .map_or_else(WeakEntity::new_invalid, |thread_store| thread_store.clone());
                 thread_context.thread.update(cx, |thread, cx| {
                     thread.start_generating_detailed_summary_if_needed(thread_store, cx);
                 });
