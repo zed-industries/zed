@@ -155,17 +155,19 @@ pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,
     #[serde(default)]
+    pub whole_word_enabled: Option<bool>,
+    #[serde(default)]
+    pub match_case_enabled: Option<bool>,
+    #[serde(default)]
+    pub regex_enabled: Option<bool>,
+
+    // only for project search
+    #[serde(default)]
     pub filter_enabled: bool,
     #[serde(default)]
-    pub whole_word_enabled: bool,
+    pub only_open_enabled: Option<bool>,
     #[serde(default)]
-    pub match_case_enabled: bool,
-    #[serde(default)]
-    pub regex_enabled: bool,
-    #[serde(default)]
-    pub only_open_enabled: bool,
-    #[serde(default)]
-    pub include_ignored_enabled: bool,
+    pub include_ignored_enabled: Option<bool>,
 }
 
 impl_actions!(
@@ -212,6 +214,7 @@ impl DeploySearch {
     pub fn find() -> Self {
         Self {
             replace_enabled: false,
+            ..Default::default()
         }
     }
 }

@@ -1563,6 +1563,12 @@ impl ProjectSearchBar {
                 window.refresh();
                 cx.notify();
             });
+            this.filter_enabled = !this.filter_enabled;
+            let editor_to_focus = if this.filter_enabled {
+                this.filter_editor.focus_handle(cx)
+            } else {
+                this.query_editor.focus_handle(cx)
+            };
             cx.notify();
             true
         } else {
