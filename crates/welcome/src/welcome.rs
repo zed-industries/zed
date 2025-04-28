@@ -15,7 +15,7 @@ use ui::{CheckboxWithLabel, ElevationIndex, Tooltip, prelude::*};
 use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::{
-    AppState, Welcome, Workspace, WorkspaceId,
+    AppState, Welcome, Workspace, WorkspaceId, WorkspaceSettings,
     dock::DockPosition,
     item::{Item, ItemEvent},
     open_new,
@@ -86,6 +86,8 @@ impl Render for WelcomePage {
             "Try Edit Prediction"
         };
 
+        let minimal = WorkspaceSettings::get_global(cx).minimal_welcome;
+
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -121,7 +123,8 @@ impl Render for WelcomePage {
                                 ),
                             ),
                     )
-                    .child(
+                    .when(!minimal, |this| {
+                        this.child(
                         h_flex()
                             .items_start()
                             .gap_8()
@@ -355,7 +358,8 @@ impl Render for WelcomePage {
                                 .fill()
                                 .elevation(ElevationIndex::ElevatedSurface),
                             ),
-                    ),
+                    )
+            })
             )
     }
 }

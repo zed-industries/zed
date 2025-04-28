@@ -115,6 +115,8 @@
   "hover_popover_delay": 350,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
+  // Whether to hide links in the welcome splash
+  "minimal_welcome": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_session",
   // Whether to attempt to restore previous file's state when opening it again.

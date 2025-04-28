@@ -64,12 +64,12 @@ use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use welcome::{BaseKeymap, MultibufferHint};
+use welcome::{BaseKeymap, MultibufferHint, WelcomePage};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
-    AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
-    create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new,
+    AppState, NewFile, NewWindow, OpenLog, RestoreOnStartupBehavior, Toast, Workspace,
+    WorkspaceSettings, create_and_open_local_file, dock::DockPosition,
+    notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{CloseIntent, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
@@ -841,11 +841,26 @@ fn register_actions(
                 if let Some(app_state) = app_state.upgrade() {
                     open_new(
                         Default::default(),
-                        app_state,
+                        app_state.clone(),
                         cx,
                         |workspace, window, cx| {
                             cx.activate(true);
-                            Editor::new_file(workspace, &Default::default(), window, cx)
+                            match WorkspaceSettings::get_global(cx).restore_on_startup {
+                                RestoreOnStartupBehavior::Welcome => {
+                                    workspace.toggle_dock(DockPosition::Left, window, cx);
+                                    let welcome_page = WelcomePage::new(workspace, cx);
+                                    workspace.add_item_to_center(
+                                        Box::new(welcome_page.clone()),
+                                        window,
+                                        cx,
+                                    );
+
+                                    window.focus(&welcome_page.focus_handle(cx));
+
+                                    cx.notify();
+                                }
+                                _ => Editor::new_file(workspace, &Default::default(), window, cx),
+                            };
                         },
                     )
                     .detach();

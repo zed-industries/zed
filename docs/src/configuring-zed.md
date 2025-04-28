@@ -193,6 +193,16 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Minimal Welcome
+
+- Description: Whether to hide buttons for a more minimal welcome screen.
+- Setting: `minimal_welcome`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Restore on Startup
 
 - Description: Controls session restoration on startup.
@@ -217,7 +227,15 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
-3. Always start with an empty editor:
+3. Always start with the welcome screen:
+
+```json
+{
+  "restore_on_startup": "welcome"
+}
+```
+
+4. Always start with an empty editor:
 
 ```json
 {

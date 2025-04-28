@@ -2647,9 +2647,10 @@ impl Editor {
                     data.selections = inmemory_selections;
                 });
 
-                if WorkspaceSettings::get(None, cx).restore_on_startup
-                    != RestoreOnStartupBehavior::None
-                {
+                if !matches!(
+                    WorkspaceSettings::get(None, cx).restore_on_startup,
+                    RestoreOnStartupBehavior::None | RestoreOnStartupBehavior::Welcome
+                ) {
                     if let Some(workspace_id) =
                         self.workspace.as_ref().and_then(|workspace| workspace.1)
                     {
@@ -2686,7 +2687,10 @@ impl Editor {
         use text::ToOffset as _;
         use text::ToPoint as _;
 
-        if WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None {
+        if matches!(
+            WorkspaceSettings::get(None, cx).restore_on_startup,
+            RestoreOnStartupBehavior::None | RestoreOnStartupBehavior::Welcome
+        ) {
             return;
         }
 
@@ -18616,7 +18620,10 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         if self.is_singleton(cx)
-            && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
+            && !matches!(
+                WorkspaceSettings::get(None, cx).restore_on_startup,
+                RestoreOnStartupBehavior::None | RestoreOnStartupBehavior::Welcome
+            )
         {
             let buffer_snapshot = OnceCell::new();
 

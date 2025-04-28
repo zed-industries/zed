@@ -47,7 +47,10 @@ use theme::{
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
-use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
+use workspace::{
+    AppState, RestoreOnStartupBehavior, SerializedWorkspaceLocation, WorkspaceSettings,
+    WorkspaceStore,
+};
 use zed::{
     OpenListener, OpenRequest, app_menus, build_window_options, derive_paths_with_position,
     handle_cli_connection, handle_keymap_file_changes, handle_settings_changed,
@@ -840,6 +843,8 @@ async fn installation_id() -> Result<IdType> {
 }
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
+    let restore_behavior = cx.update(|cx| WorkspaceSettings::get_global(cx).restore_on_startup)?;
+
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
         for location in locations {
             match location {
@@ -875,7 +880,9 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 }
             }
         }
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None))
+        || matches!(restore_behavior, RestoreOnStartupBehavior::Welcome)
+    {
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {

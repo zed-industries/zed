@@ -17,6 +17,7 @@ pub struct WorkspaceSettings {
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
+    pub minimal_welcome: bool,
     pub restore_on_startup: RestoreOnStartupBehavior,
     pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
@@ -113,6 +114,8 @@ impl CloseWindowWhenNoItems {
 pub enum RestoreOnStartupBehavior {
     /// Always start with an empty editor
     None,
+    /// Always start with the welcome splash
+    Welcome,
     /// Restore the workspace that was closed last.
     LastWorkspace,
     /// Restore all workspaces that were open when quitting Zed.
@@ -150,6 +153,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: off
     pub autosave: Option<AutosaveSetting>,
+    /// Whether to hide links in the welcome splash.
+    ///
+    /// Default: false
+    pub minimal_welcome: Option<bool>,
     /// Controls previous session restoration in freshly launched Zed instance.
     /// Values: none, last_workspace, last_session
     /// Default: last_session
