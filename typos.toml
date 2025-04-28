@@ -47,7 +47,7 @@ extend-exclude = [
     # Eval examples for prompts and criteria
     "crates/eval/src/examples/",
     # File type extensions are not typos
-    "crates/zed/resources/windows/installer/zed.iss",
+    "crates/zed/resources/windows/zed.iss",
 ]
 
 [default]
