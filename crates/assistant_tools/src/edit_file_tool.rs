@@ -61,14 +61,17 @@ pub struct EditFileToolInput {
     /// does not have access to this conversation, so you must make sure the
     /// instructions are self-contained and do not rely on external context.
     ///
-    /// Insert `// ... existing code ...` comments in your output to represent
-    /// unchanged code ABOVE, BELOW, and IN BETWEEN edited lines.
+    /// You must convey the edits as code and only display how you want the
+    /// final code to look like. Insert `// ... existing code ...` comments in
+    /// your output to represent unchanged code ABOVE, BELOW, and IN BETWEEN
+    /// edited lines. You can also add other comments to explain how certain
+    /// lines must be changed.
     ///
     /// Bias towards repeating as few lines of the original file as possible to
     /// convey the change. However, each edit should contain sufficient context
     /// of unchanged lines to resolve ambiguity. When you want to delete a piece
     /// of code, indicate a few lines above and below the code you want to
-    /// delete (surrounded by `// ... existing code ...`).
+    /// delete and surround them with the `// ... existing code ...` marker.
     ///
     /// Never forget to include `// ... existing code ...` comments to represent
     /// unchanged lines, otherwise the small model may not understand the

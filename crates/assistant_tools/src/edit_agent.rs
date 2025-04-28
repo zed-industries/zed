@@ -89,7 +89,6 @@ impl EditAgent {
         instructions: String,
         cx: &mut AsyncApp,
     ) -> Result<impl use<> + Stream<Item = Result<(Range<Anchor>, String)>>> {
-        println!("{}\n\n", instructions);
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
         let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
         // todo!("move to background")
@@ -114,14 +113,17 @@ impl EditAgent {
             let mut error = None;
             let snapshot = snapshot.clone();
             match chunk {
-                Ok(chunk) => edits = parser.push(&chunk),
-                Err(err) => error = Some(Err(anyhow!(err))),
+                Ok(chunk) => {
+                    edits = parser.push(&chunk);
+                }
+                Err(err) => {
+                    error = Some(Err(anyhow!(err)));
+                }
             }
             stream::iter(
                 edits
                     .into_iter()
                     .map(move |edit| {
-                        dbg!(&edit);
                         let range = Self::resolve_location(&snapshot, &edit.old_text);
                         Ok((range, edit.new_text))
                     })
@@ -377,6 +379,173 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_use_wasi_sdk_in_compile_parser_to_wasm() {
+        eval(
+            10,
+            0.9,
+            Eval {
+                input_path: "root/lib.rs.rs".into(),
+                input_content: include_str!("fixtures/use_wasi_sdk_in_compile_parser_to_wasm/before.rs").into(),
+                instructions: indoc! {r#"
+                    // ... existing code ...
+                        pub fn compile_parser_to_wasm(
+                            &self,
+                            language_name: &str,
+                            root_path: Option<&Path>,
+                            src_path: &Path,
+                            scanner_filename: Option<&Path>,
+                            output_path: &Path,
+                            force_docker: bool,
+                        ) -> Result<(), Error> {
+                            use std::fs::File;
+                            use std::io::{self, Read, Write, BufReader, BufWriter, Seek};
+                            use std::path::PathBuf;
+                            use flate2::read::GzDecoder;
+                            use tar::Archive;
+
+                            let root_path = root_path.unwrap_or(src_path);
+
+                            // Determine current platform and architecture
+                            let (arch, platform) = self.get_current_arch_platform();
+
+                            // Determine the appropriate SDK filename
+                            let sdk_filename = format!("wasi-sdk-25.0-{arch}-{platform}.tar.gz");
+                            let sdk_url = format!("https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/{sdk_filename}");
+
+                            // Create a directory for the wasi-sdk within the cache directory
+                            let wasi_sdk_dir = self.cache_path.join("tree-sitter").join("wasi-sdk");
+                            let bin_ext = if platform == "windows" { ".exe" } else { "" };
+                            let clang_path = wasi_sdk_dir.join("bin").join(format!("clang{bin_ext}"));
+
+                            // Download and extract the SDK if needed
+                            if !clang_path.exists() {
+                                // Create directories if they don't exist
+                                fs::create_dir_all(&wasi_sdk_dir)?;
+
+                                // Download the tarball
+                                println!("Downloading wasi-sdk from {}...", sdk_url);
+                                let response = ureq::get(&sdk_url)
+                                    .call()
+                                    .map_err(|e| anyhow!("Failed to download wasi-sdk: {}", e))?;
+
+                                // Create a temporary file to store the downloaded archive
+                                let temp_dir = tempfile::tempdir()?;
+                                let archive_path = temp_dir.path().join(&sdk_filename);
+                                let mut archive_file = File::create(&archive_path)?;
+
+                                // Copy the response body to the file
+                                io::copy(
+                                    &mut BufReader::new(response.into_reader()),
+                                    &mut BufWriter::new(&mut archive_file),
+                                )?;
+                                archive_file.flush()?;
+
+                                // Extract the tarball
+                                println!("Extracting wasi-sdk...");
+                                let archive_file = File::open(&archive_path)?;
+                                let tar = GzDecoder::new(archive_file);
+                                let mut archive = Archive::new(tar);
+
+                                // The archive contains a top-level directory with the SDK name
+                                // We need to extract the contents to our wasi-sdk directory
+                                for entry in archive.entries()? {
+                                    let mut entry = entry?;
+                                    let path = entry.path()?;
+
+                                    // Skip the top-level directory
+                                    let components: Vec<_> = path.components().collect();
+                                    if components.len() <= 1 {
+                                        continue;
+                                    }
+
+                                    // Construct the target path without the top-level directory
+                                    let rel_path: PathBuf = components[1..].iter().collect();
+                                    let target_path = wasi_sdk_dir.join(rel_path);
+
+                                    // Create parent directories if they don't exist
+                                    if let Some(parent) = target_path.parent() {
+                                        fs::create_dir_all(parent)?;
+                                    }
+
+                                    // Extract the file
+                                    entry.unpack(&target_path)?;
+                                }
+                                println!("wasi-sdk extracted successfully");
+                            }
+
+                            // Prepare the clang command
+                            let output_name = "output.wasm";
+                            let mut command = Command::new(&clang_path);
+                            command.current_dir(src_path);
+
+                            // Add the required flags
+                            command.args([
+                                "-fPIC",
+                                "-shared",
+                                "-Os",
+                                "-Wl,--export=tree_sitter_",
+                                language_name,
+                                "-o",
+                                output_name,
+                                "-I",
+                                ".",
+                            ]);
+
+                            // Add source files
+                            if let Some(scanner_filename) = scanner_filename {
+                                command.arg(scanner_filename);
+                            }
+                            command.arg("parser.c");
+
+                            // Execute the command
+                            let status = command
+                                .spawn()
+                                .with_context(|| "Failed to run clang command")?            .wait()?;
+
+                            if !status.success() {
+                                return Err(anyhow!("clang command failed"));
+                            }
+
+                            // Move the output file to the desired location
+                            fs::rename(src_path.join(output_name), output_path)
+                                .context("failed to rename wasm output file")?;
+
+                            Ok(())
+                        }
+
+                        fn get_current_arch_platform(&self) -> (String, String) {
+                            // Determine the current architecture and platform
+                            let arch = if cfg!(target_arch = "x86_64") {
+                                "x86_64"
+                            } else if cfg!(target_arch = "aarch64") {
+                                "arm64"
+                            } else {
+                                // Default to x86_64 if we can't determine the architecture
+                                "x86_64"
+                            };
+
+                            let platform = if cfg!(target_os = "windows") {
+                                "windows"
+                            } else if cfg!(target_os = "macos") {
+                                "macos"
+                            } else if cfg!(target_os = "linux") {
+                                "linux"
+                            } else {
+                                // Default to linux for other platforms
+                                "linux"
+                            };
+
+                            (arch.to_string(), platform.to_string())
+                        }
+                    // ... existing code ...
+                "#}
+                .into(),
+                expected_output: include_str!("fixtures/use_wasi_sdk_in_compile_parser_to_wasm/after.rs").into()
+            },
+        );
+    }
+
     #[derive(Clone)]
     struct Eval {
         input_path: PathBuf,
@@ -504,7 +673,7 @@ mod tests {
                 let models = LanguageModelRegistry::read_global(cx);
                 let model = models
                     .available_models(cx)
-                    .find(|model| model.id().0 == "gemini-2.0-flash")
+                    .find(|model| model.id().0 == "gemini-2.5-flash-preview-04-17")
                     .unwrap();
 
                 let provider = models.provider(&model.provider_id()).unwrap();
