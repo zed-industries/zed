@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, value::RawValue};
+use serde_json::Value;
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
@@ -139,7 +139,7 @@ pub enum OllamaToolCall {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OllamaFunctionCall {
     pub name: String,
-    pub arguments: Box<RawValue>,
+    pub arguments: Value,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -357,5 +357,101 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
             response.status(),
             body,
         ))
+    }
+}
+
+#[test]
+fn parse_completion() {
+    let response = serde_json::json!({
+      "model": "llama3.2",
+      "created_at": "2023-12-12T14:13:43.416799Z",
+      "message": {
+        "role": "assistant",
+        "content": "Hello! How are you today?"
+      },
+      "done": true,
+      "total_duration": 5191566416u64,
+      "load_duration": 2154458,
+      "prompt_eval_count": 26,
+      "prompt_eval_duration": 383809000,
+      "eval_count": 298,
+      "eval_duration": 4799921000u64
+    });
+    let _: ChatResponseDelta = serde_json::from_value(response).unwrap();
+}
+
+#[test]
+fn parse_streaming_completion() {
+    let partial = serde_json::json!({
+      "model": "llama3.2",
+      "created_at": "2023-08-04T08:52:19.385406455-07:00",
+      "message": {
+        "role": "assistant",
+        "content": "The",
+        "images": null
+      },
+      "done": false
+    });
+
+    let _: ChatResponseDelta = serde_json::from_value(partial).unwrap();
+
+    let last = serde_json::json!({
+      "model": "llama3.2",
+      "created_at": "2023-08-04T19:22:45.499127Z",
+      "message": {
+        "role": "assistant",
+        "content": ""
+      },
+      "done": true,
+      "total_duration": 4883583458u64,
+      "load_duration": 1334875,
+      "prompt_eval_count": 26,
+      "prompt_eval_duration": 342546000,
+      "eval_count": 282,
+      "eval_duration": 4535599000u64
+    });
+
+    let _: ChatResponseDelta = serde_json::from_value(last).unwrap();
+}
+
+#[test]
+fn parse_tool_call() {
+    let response = serde_json::json!({
+        "model": "llama3.2:3b",
+        "created_at": "2025-04-28T20:02:02.140489Z",
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "weather",
+                        "arguments": {
+                            "city": "london",
+                        }
+                    }
+                }
+            ]
+        },
+        "done_reason": "stop",
+        "done": true,
+        "total_duration": 2758629166u64,
+        "load_duration": 1770059875,
+        "prompt_eval_count": 147,
+        "prompt_eval_duration": 684637583,
+        "eval_count": 16,
+        "eval_duration": 302561917,
+    });
+
+    let result: ChatResponseDelta = serde_json::from_value(response).unwrap();
+    match result.message {
+        ChatMessage::Assistant {
+            content,
+            tool_calls,
+        } => {
+            assert!(content == "");
+            assert!(tool_calls.is_some_and(|v| !v.is_empty()));
+        }
+        _ => panic!("Deserialized wrong role"),
     }
 }
