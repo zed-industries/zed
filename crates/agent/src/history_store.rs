@@ -25,19 +25,16 @@ impl HistoryEntry {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum RecentEntry {
-    Thread(ThreadId, SharedString),
-    Context(Arc<Path>, SharedString),
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecentEntryId {
+    Thread(ThreadId),
+    Context(Arc<Path>),
 }
 
-impl RecentEntry {
-    pub fn title(&self) -> SharedString {
-        match self {
-            RecentEntry::Thread(_, title) => title.clone(),
-            RecentEntry::Context(_, title) => title.clone(),
-        }
-    }
+#[derive(Clone, Debug)]
+pub struct RecentEntry {
+    pub id: RecentEntryId,
+    pub title: SharedString,
 }
 
 pub struct HistoryStore {
@@ -62,13 +59,16 @@ impl HistoryStore {
             let mut entries = Vec::new();
             for thread in thread_store.update(cx, |this, _cx| this.reverse_chronological_threads())
             {
-                entries.push(RecentEntry::Thread(thread.id, thread.summary.clone()));
+                entries.push(RecentEntry {
+                    id: RecentEntryId::Thread(thread.id),
+                    title: thread.summary.clone(),
+                });
             }
             for context in context_store.update(cx, |this, _cx| this.contexts()) {
-                entries.push(RecentEntry::Context(
-                    context.path.into(),
-                    context.title.into(),
-                ));
+                entries.push(RecentEntry {
+                    id: RecentEntryId::Context(context.path.into()),
+                    title: context.title.into(),
+                });
             }
             entries
         };
@@ -109,12 +109,15 @@ impl HistoryStore {
     }
 
     pub fn push_recently_opened_entry(&mut self, entry: RecentEntry, _cx: &mut Context<Self>) {
+        self.recently_opened_entries
+            .retain(|old_entry| old_entry.id != entry.id);
         self.recently_opened_entries.push(entry);
     }
 
     pub fn recently_opened_entries(
         &self,
         limit: usize,
+        filter: impl Fn(&RecentEntry) -> bool,
         _cx: &mut Context<Self>,
     ) -> Vec<RecentEntry> {
         #[cfg(debug_assertions)]
@@ -122,9 +125,16 @@ impl HistoryStore {
             return Vec::new();
         }
 
-        let start = self.recently_opened_entries.len().saturating_sub(limit);
-        let mut entries = self.recently_opened_entries[start..].to_owned();
-        entries.reverse();
+        let mut entries = Vec::with_capacity(limit);
+        for entry in self.recently_opened_entries.iter().rev() {
+            if filter(entry) {
+                entries.push(entry.clone());
+                if entries.len() == limit {
+                    break;
+                }
+            }
+        }
+
         entries
     }
 }

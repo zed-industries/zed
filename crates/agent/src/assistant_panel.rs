@@ -41,7 +41,7 @@ use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
-use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
+use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry, RecentEntryId};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
@@ -935,7 +935,10 @@ impl AssistantPanel {
                 let summary = active_thread.summary_or_default();
 
                 store.push_recently_opened_entry(
-                    RecentEntry::Thread(thread_id.clone(), summary),
+                    RecentEntry {
+                        id: RecentEntryId::Thread(thread_id.clone()),
+                        title: summary,
+                    },
                     cx,
                 );
             }),
@@ -946,7 +949,10 @@ impl AssistantPanel {
                         let summary = context.summary_or_default();
 
                         store.push_recently_opened_entry(
-                            RecentEntry::Context(path.into(), summary),
+                            RecentEntry {
+                                id: RecentEntryId::Context(path.into()),
+                                title: summary,
+                            },
                             cx,
                         )
                     }
@@ -1144,9 +1150,21 @@ impl AssistantPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let recently_opened = self
-            .history_store
-            .update(cx, |this, cx| this.recently_opened_entries(6, cx));
+        let recently_opened = self.history_store.update(cx, |this, cx| {
+            let active_entry_id = match &self.active_view {
+                ActiveView::Thread { .. } => Some(RecentEntryId::Thread(
+                    self.active_thread(cx).read(cx).id().clone(),
+                )),
+                ActiveView::PromptEditor { context_editor, .. } => context_editor
+                    .read(cx)
+                    .context()
+                    .read(cx)
+                    .path()
+                    .map(|path| RecentEntryId::Context(path.into())),
+                ActiveView::History | ActiveView::Configuration => None,
+            };
+            this.recently_opened_entries(6, |entry| Some(&entry.id) != active_entry_id.as_ref(), cx)
+        });
         let active_thread = self.thread.read(cx);
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
@@ -1183,6 +1201,95 @@ impl AssistantPanel {
             _ => None,
         };
 
+        let recent_entries_menu = PopoverMenu::new("agent-nav-menu")
+            .trigger_with_tooltip(
+                IconButton::new("agent-nav-menu", IconName::MenuAlt)
+                    .icon_size(IconSize::Small)
+                    .style(ui::ButtonStyle::Subtle),
+                {
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Panel Menu",
+                            &ToggleNavigationMenu,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                },
+            )
+            .anchor(Corner::TopRight)
+            .with_handle(self.assistant_navigation_menu_handle.clone())
+            .menu({
+                let this = cx.entity();
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        if recently_opened.is_empty() {
+                            return menu.action("View All", Box::new(OpenHistory));
+                        }
+                        let mut menu = menu.header("Recently Opened");
+                        for entry in recently_opened.iter() {
+                            menu = menu.entry(&entry.title, None, {
+                                let this = this.clone();
+                                let entry = entry.clone();
+                                move |window, cx| {
+                                    this.update(cx, {
+                                        let entry = entry.clone();
+                                        move |this, cx| match entry.id {
+                                            RecentEntryId::Thread(thread_id) => this
+                                                .open_thread(&thread_id, window, cx)
+                                                .detach_and_log_err(cx),
+                                            RecentEntryId::Context(path) => this
+                                                .open_saved_prompt_editor(path, window, cx)
+                                                .detach_and_log_err(cx),
+                                        }
+                                    })
+                                }
+                            });
+                        }
+                        menu.separator().action("View All", Box::new(OpenHistory))
+                    }))
+                }
+            });
+
+        let assistant_menu = PopoverMenu::new("assistant-menu")
+            .trigger_with_tooltip(
+                IconButton::new("new", IconName::Ellipsis)
+                    .icon_size(IconSize::Small)
+                    .style(ButtonStyle::Subtle),
+                Tooltip::text("Toggle Agent Menu"),
+            )
+            .anchor(Corner::TopRight)
+            .with_handle(self.assistant_dropdown_menu_handle.clone())
+            .menu(move |window, cx| {
+                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                    menu.when(!is_empty, |menu| {
+                        menu.action(
+                            "Start New From Summary",
+                            Box::new(NewThread {
+                                from_thread_id: Some(thread_id.clone()),
+                            }),
+                        )
+                        .separator()
+                    })
+                    .action("New Text Thread", NewTextThread.boxed_clone())
+                    .action("Rules Library", Box::new(OpenRulesLibrary::default()))
+                    .action("Settings", Box::new(OpenConfiguration))
+                    .separator()
+                    .header("MCPs")
+                    .action(
+                        "View Server Extensions",
+                        Box::new(zed_actions::Extensions {
+                            category_filter: Some(
+                                zed_actions::ExtensionCategoryFilter::ContextServers,
+                            ),
+                        }),
+                    )
+                    .action("Add Custom Server", Box::new(AddContextServer))
+                }))
+            });
+
         h_flex()
             .id("assistant-toolbar")
             .h(Tab::container_height(cx))
@@ -1193,65 +1300,12 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
-
             .child(
                 h_flex()
                     .w_full()
                     .pl_1()
                     .gap_1()
-                    .child(
-                        PopoverMenu::new("agent-nav-menu")
-                            .trigger_with_tooltip(
-                                IconButton::new("agent-nav-menu", IconName::MenuAlt)
-                                    .icon_size(IconSize::Small)
-                                    .style(ui::ButtonStyle::Subtle),
-                                {
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Toggle Panel Menu",
-                                            &ToggleNavigationMenu,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }
-                                },
-                            )
-                            .anchor(Corner::TopRight)
-                            .with_handle(self.assistant_navigation_menu_handle.clone())
-                            .menu({
-                                let this = cx.entity();
-                                move |window, cx| {
-                                Some(ContextMenu::build(
-                                    window,
-                                    cx,
-                                    |menu, _window, _cx| {
-                                        let mut menu = menu.header("Recently Opened");
-                                        for entry in recently_opened.iter() {
-                                            menu = menu.entry(entry.title(), None, {
-                                                let this = this.clone();
-                                                let entry = entry.clone();
-                                                move |window, cx| {
-                                                    this.update(cx, {
-                                                        let entry = entry.clone();
-                                                        move |this, cx| {
-                                                            match entry  {
-                                                                RecentEntry::Thread(thread_id, _) => this.open_thread(&thread_id, window, cx).detach_and_log_err(cx),
-                                                                RecentEntry::Context(path, _) => this.open_saved_prompt_editor(path, window, cx).detach_and_log_err(cx),
-                                                            }
-                                                        }
-                                                    })
-                                                }
-                                            });
-                                        }
-                                        menu
-                                            .separator()
-                                            .action("View All", Box::new(OpenHistory))
-                                    }
-                                ))
-                            }}),
-                    )
+                    .child(recent_entries_menu)
                     .children(go_back_button)
                     .child(self.render_title_view(window, cx)),
             )
@@ -1259,9 +1313,9 @@ impl AssistantPanel {
                 h_flex()
                     .h_full()
                     .gap_2()
-                    .when(show_token_count, |parent|
+                    .when(show_token_count, |parent| {
                         parent.children(self.render_token_count(&thread, cx))
-                    )
+                    })
                     .child(
                         h_flex()
                             .h_full()
@@ -1289,51 +1343,7 @@ impl AssistantPanel {
                                         );
                                     }),
                             )
-                            .child(
-                                PopoverMenu::new("assistant-menu")
-                                    .trigger_with_tooltip(
-                                        IconButton::new("new", IconName::Ellipsis)
-                                            .icon_size(IconSize::Small)
-                                            .style(ButtonStyle::Subtle),
-                                        Tooltip::text("Toggle Agent Menu"),
-                                    )
-                                    .anchor(Corner::TopRight)
-                                    .with_handle(self.assistant_dropdown_menu_handle.clone())
-                                    .menu(move |window, cx| {
-                                        Some(ContextMenu::build(
-                                            window,
-                                            cx,
-                                            |menu, _window, _cx| {
-                                                menu
-                                                    .when(!is_empty, |menu| {
-                                                        menu.action(
-                                                            "Start New From Summary",
-                                                            Box::new(NewThread {
-                                                                from_thread_id: Some(thread_id.clone()),
-                                                            }),
-                                                        ).separator()
-                                                    })
-                                                    .action(
-                                                    "New Text Thread",
-                                                    NewTextThread.boxed_clone(),
-                                                )
-                                                .action("Rules Library", Box::new(OpenRulesLibrary::default()))
-                                                .action("Settings", Box::new(OpenConfiguration))
-                                                .separator()
-                                                .header("MCPs")
-                                                .action(
-                                                    "View Server Extensions",
-                                                    Box::new(zed_actions::Extensions {
-                                                        category_filter: Some(
-                                                            zed_actions::ExtensionCategoryFilter::ContextServers,
-                                                        ),
-                                                        }),
-                                                )
-                                                .action("Add Custom Server", Box::new(AddContextServer))
-                                            },
-                                        ))
-                                    }),
-                            ),
+                            .child(assistant_menu),
                     ),
             )
     }
