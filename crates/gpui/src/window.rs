@@ -3684,8 +3684,7 @@ impl Window {
     ) -> oneshot::Receiver<usize> {
         let (sender, receiver) = oneshot::channel();
         let handle = PromptHandle::new(sender);
-        let answers = answers.iter().map(|a| a.label().as_ref()).collect::<Vec<_>>();
-        let handle = (prompt_builder)(level, message, detail, &answers, handle, self, cx);
+        let handle = (prompt_builder)(level, message, detail, answers, handle, self, cx);
         self.prompt = Some(handle);
         receiver
     }

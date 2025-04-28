@@ -74,7 +74,7 @@ pub fn fallback_prompt_renderer(
     level: PromptLevel,
     message: &str,
     detail: Option<&str>,
-    actions: &[&str],
+    actions: &[PromptButton],
     handle: PromptHandle,
     window: &mut Window,
     cx: &mut App,
@@ -83,10 +83,7 @@ pub fn fallback_prompt_renderer(
         _level: level,
         message: message.to_string(),
         detail: detail.map(ToString::to_string),
-        actions: actions
-            .into_iter()
-            .map(|action| (*action).into())
-            .collect::<Vec<_>>(),
+        actions: actions.to_vec(),
         focus: cx.focus_handle(),
     });
 
@@ -205,7 +202,7 @@ pub(crate) enum PromptBuilder {
                 PromptLevel,
                 &str,
                 Option<&str>,
-                &[&str],
+                &[PromptButton],
                 PromptHandle,
                 &mut Window,
                 &mut App,
@@ -219,7 +216,7 @@ impl Deref for PromptBuilder {
         PromptLevel,
         &str,
         Option<&str>,
-        &[&str],
+        &[PromptButton],
         PromptHandle,
         &mut Window,
         &mut App,
