@@ -1,6 +1,6 @@
 use crate::examples::{collect_examples, read_example_file};
 use crate::markdown::read_markdown_file;
-use crate::templates::{create_template_stubs, DocInfo, SiteContent, TemplateEngine};
+use crate::templates::{DocInfo, SiteContent, TemplateEngine};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,9 +12,6 @@ pub fn generate_site(gpui_dir: &Path, output_dir: &Path) -> Result<()> {
     fs::create_dir_all(output_dir.join("docs"))?;
     fs::create_dir_all(output_dir.join("css"))?;
     fs::create_dir_all(output_dir.join("js"))?;
-
-    // Create template stubs
-    create_template_stubs(output_dir)?;
 
     // Collect examples
     let examples = collect_examples(gpui_dir)?;

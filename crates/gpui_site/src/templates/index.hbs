@@ -1,0 +1,17 @@
+{{#> base}}
+<section class="content">
+    {{{content}}}
+</section>
+
+<section class="examples-grid">
+    <h2>Examples</h2>
+    <div class="grid">
+        {{#each examples}}
+        <a href="examples/{{this.path}}" class="example-card">
+            <h3>{{this.title}}</h3>
+            <p>{{this.description}}</p>
+        </a>
+        {{/each}}
+    </div>
+</section>
+{{/base}}

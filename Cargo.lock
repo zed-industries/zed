@@ -6289,9 +6289,9 @@ dependencies = [
  "clap",
  "fs_extra",
  "gpui",
+ "handlebars 4.5.0",
  "html-escape",
  "markdown 0.3.0",
- "minijinja",
  "pulldown-cmark 0.9.6",
  "serde",
  "serde_json",
@@ -8810,15 +8810,6 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
-]
-
-[[package]]
-name = "minijinja"
-version = "1.0.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55e877d961d4f96ce13615862322df7c0b6d169d40cab71a7ef3f9b9e594451e"
-dependencies = [
- "serde",
 ]
 
 [[package]]

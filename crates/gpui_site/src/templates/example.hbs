@@ -1,0 +1,16 @@
+{{#> base_subdir}}
+<article class="example">
+    <h1>{{example.title}}</h1>
+    <p>{{example.description}}</p>
+
+    <div class="code-container">
+        {{{code}}}
+    </div>
+
+    <div class="example-info">
+        <h3>Running this example</h3>
+        <p>You can run this example with:</p>
+        <pre><code>cargo run --example {{example.name}}</code></pre>
+    </div>
+</article>
+{{/base_subdir}}

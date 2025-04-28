@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}} - gpui</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <a href="index.html" class="logo">gpui</a>
+            <nav>
+                <ul>
+                    <li><a href="index.html">Home</a></li>
+                    <li>
+                        <span>Examples</span>
+                        <ul>
+                            {{#each examples}}
+                            <li><a href="examples/{{this.path}}">{{this.title}}</a></li>
+                            {{/each}}
+                        </ul>
+                    </li>
+                    <li>
+                        <span>Docs</span>
+                        <ul>
+                            {{#each docs}}
+                            <li><a href="docs/{{this.path}}">{{this.title}}</a></li>
+                            {{/each}}
+                        </ul>
+                    </li>
+                    <li><a href="https://github.com/zed-industries/zed/tree/main/crates/gpui">GitHub</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        {{> @partial-block}}
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>gpui is part of the <a href="https://github.com/zed-industries/zed">Zed</a> project © Zed Industries, Inc.</p>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
