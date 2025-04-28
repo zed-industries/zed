@@ -967,25 +967,7 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
-        let mut request = self.to_completion_request(cx);
-
-        if model.supports_tools() {
-            request.tools = self
-                .tools()
-                .read(cx)
-                .enabled_tools(cx)
-                .into_iter()
-                .filter_map(|tool| {
-                    // Skip tools that cannot be supported
-                    let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
-                    Some(LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema,
-                    })
-                })
-                .collect();
-        }
+        let request = self.to_completion_request(model.clone(), cx);
 
         self.stream_completion(request, model, window, cx);
     }
