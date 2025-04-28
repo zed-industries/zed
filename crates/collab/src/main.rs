@@ -8,7 +8,9 @@ use axum::{
 };
 
 use collab::api::CloudflareIpCountryHeader;
-use collab::api::billing::sync_llm_token_usage_with_stripe_periodically;
+use collab::api::billing::{
+    sync_llm_request_usage_with_stripe_periodically, sync_llm_token_usage_with_stripe_periodically,
+};
 use collab::llm::db::LlmDatabase;
 use collab::migrations::run_database_migrations;
 use collab::user_backfiller::spawn_user_backfiller;
@@ -152,6 +154,7 @@ async fn main() -> Result<()> {
 
                     if let Some(mut llm_db) = llm_db {
                         llm_db.initialize().await?;
+                        sync_llm_request_usage_with_stripe_periodically(state.clone());
                         sync_llm_token_usage_with_stripe_periodically(state.clone());
                     }
 

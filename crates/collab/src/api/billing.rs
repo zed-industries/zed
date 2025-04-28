@@ -1315,3 +1315,77 @@ async fn sync_token_usage_with_stripe(
 
     Ok(())
 }
+
+const SYNC_LLM_REQUEST_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
+
+pub fn sync_llm_request_usage_with_stripe_periodically(app: Arc<AppState>) {
+    let Some(stripe_billing) = app.stripe_billing.clone() else {
+        log::warn!("failed to retrieve Stripe billing object");
+        return;
+    };
+    let Some(llm_db) = app.llm_db.clone() else {
+        log::warn!("failed to retrieve LLM database");
+        return;
+    };
+
+    let executor = app.executor.clone();
+    executor.spawn_detached({
+        let executor = executor.clone();
+        async move {
+            loop {
+                sync_model_request_usage_with_stripe(&app, &llm_db, &stripe_billing)
+                    .await
+                    .context("failed to sync LLM request usage to Stripe")
+                    .trace_err();
+                executor
+                    .sleep(SYNC_LLM_REQUEST_USAGE_WITH_STRIPE_INTERVAL)
+                    .await;
+            }
+        }
+    });
+}
+
+async fn sync_model_request_usage_with_stripe(
+    app: &Arc<AppState>,
+    llm_db: &Arc<LlmDatabase>,
+    stripe_billing: &Arc<StripeBilling>,
+) -> anyhow::Result<()> {
+    let usage_meters = llm_db
+        .get_current_subscription_usage_meters(Utc::now())
+        .await?;
+    let user_ids = usage_meters
+        .iter()
+        .map(|(_, usage)| usage.user_id)
+        .collect::<HashSet<UserId>>();
+    let billing_subscriptions = app
+        .db
+        .get_active_zed_pro_billing_subscriptions(user_ids)
+        .await?;
+
+    for (usage_meter, usage) in usage_meters {
+        let Some((billing_customer, billing_subscription)) =
+            billing_subscriptions.get(&usage.user_id)
+        else {
+            tracing::warn!(
+                user_id = usage.user_id.0,
+                "Attempted to sync usage meter for user who is not a Stripe customer."
+            );
+            continue;
+        };
+
+        let stripe_customer_id = billing_customer
+            .stripe_customer_id
+            .parse::<stripe::CustomerId>()
+            .context("failed to parse Stripe customer ID from database")?;
+        let stripe_subscription_id = billing_subscription
+            .stripe_subscription_id
+            .parse::<stripe::SubscriptionId>()
+            .context("failed to parse Stripe subscription ID from database")?;
+
+        // stripe_billing
+        //     .bill_model_request_usage(&stripe_customer_id, model, usage_meter.requests)
+        //     .await?;
+    }
+
+    Ok(())
+}

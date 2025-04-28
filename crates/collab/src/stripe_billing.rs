@@ -7,6 +7,7 @@ use collections::HashMap;
 use serde::{Deserialize, Serialize};
 use stripe::PriceId;
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 pub struct StripeBilling {
     state: RwLock<StripeBillingState>,
@@ -339,6 +340,32 @@ impl StripeBilling {
             )
             .await?;
         }
+
+        Ok(())
+    }
+
+    pub async fn bill_model_request_usage(
+        &self,
+        customer_id: &stripe::CustomerId,
+        model: &StripeModel,
+        requests: i32,
+    ) -> Result<()> {
+        let timestamp = Utc::now().timestamp();
+        let idempotency_key = Uuid::new_v4();
+
+        StripeMeterEvent::create(
+            &self.client,
+            StripeCreateMeterEventParams {
+                identifier: &format!("model_requests/{}", idempotency_key),
+                event_name: &model.input_cache_creation_tokens_price.meter_event_name,
+                payload: StripeCreateMeterEventPayload {
+                    value: requests as u64,
+                    stripe_customer_id: customer_id,
+                },
+                timestamp: Some(timestamp),
+            },
+        )
+        .await?;
 
         Ok(())
     }
