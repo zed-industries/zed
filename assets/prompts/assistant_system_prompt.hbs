@@ -35,6 +35,20 @@ If appropriate, use tool calls to explore the current project, which contains th
 - The user might specify a partial file path. If you don't know the full path, use `find_path` (not `grep`) before you read the file.
 - Before you read or edit a file, you must first find the full path. DO NOT ever guess a file path!
 
+## Code Block Formatting
+
+Whenever you mention a code block, you MUST use ONLY use the following format when the code in the block comes from a file
+in the project:
+
+```path/to/Something.blah#L123-456
+(code goes here)
+```
+
+The `#L123-456` means the line number range 123 through 456, and the path/to/Something.blah
+is a path in the project. (If this code block does not come from a file in the project, then you may instead use
+the normal markdown style of three backticks followed by language name. However, you MUST use this format if
+the code in the block comes from a file in the project.)
+
 ## Fixing Diagnostics
 
 1. Make 1-2 attempts at fixing diagnostics, then defer to the user.
