@@ -48,7 +48,14 @@ use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::{any::TypeId, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    any::TypeId,
+    cmp,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use text::SelectionGoal;
 use ui::{
     ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
@@ -139,7 +146,7 @@ pub trait AssistantPanelDelegate {
     fn open_saved_context(
         &self,
         workspace: &mut Workspace,
-        path: PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>>;

@@ -1,5 +1,5 @@
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -632,13 +632,13 @@ impl AssistantPanel {
 
     pub(crate) fn open_saved_prompt_editor(
         &mut self,
-        path: PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let context = self
             .context_store
-            .update(cx, |store, cx| store.open_local_context(path.clone(), cx));
+            .update(cx, |store, cx| store.open_local_context(path, cx));
         let fs = self.fs.clone();
         let project = self.project.clone();
         let workspace = self.workspace.clone();
@@ -908,7 +908,7 @@ impl AssistantPanel {
 
     pub(crate) fn delete_context(
         &mut self,
-        path: PathBuf,
+        path: Arc<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.context_store
@@ -926,8 +926,13 @@ impl AssistantPanel {
 
         match &self.active_view {
             ActiveView::Thread { .. } => self.history_store.update(cx, |store, cx| {
-                let thread_id = self.active_thread(cx).read(cx).id();
-                let summary = self.active_thread(cx).read(cx).summary_or_default();
+                let active_thread = self.active_thread(cx).read(cx);
+                if active_thread.is_empty() {
+                    return;
+                }
+
+                let thread_id = active_thread.id();
+                let summary = active_thread.summary_or_default();
 
                 store.push_recently_opened_entry(
                     RecentEntry::Thread(thread_id.clone(), summary),
@@ -1146,7 +1151,6 @@ impl AssistantPanel {
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
-        // let is_history = matches!(self.active_view, ActiveView::History);
 
         let show_token_count = match &self.active_view {
             ActiveView::Thread { .. } => !is_empty,
@@ -1216,21 +1220,37 @@ impl AssistantPanel {
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(self.assistant_navigation_menu_handle.clone())
-                            .menu(move |window, cx| {
+                            .menu({
+                                let this = cx.entity();
+                                move |window, cx| {
                                 Some(ContextMenu::build(
                                     window,
                                     cx,
                                     |menu, _window, _cx| {
                                         let mut menu = menu.header("Recently Opened");
-                                        for thread in recently_opened.iter() {
-                                            menu = menu.action(thread.title(), OpenHistory.boxed_clone(/* FIXME */))
+                                        for entry in recently_opened.iter() {
+                                            menu = menu.entry(entry.title(), None, {
+                                                let this = this.clone();
+                                                let entry = entry.clone();
+                                                move |window, cx| {
+                                                    this.update(cx, {
+                                                        let entry = entry.clone();
+                                                        move |this, cx| {
+                                                            match entry  {
+                                                                RecentEntry::Thread(thread_id, _) => this.open_thread(&thread_id, window, cx).detach_and_log_err(cx),
+                                                                RecentEntry::Context(path, _) => this.open_saved_prompt_editor(path, window, cx).detach_and_log_err(cx),
+                                                            }
+                                                        }
+                                                    })
+                                                }
+                                            });
                                         }
                                         menu
                                             .separator()
                                             .action("View All", Box::new(OpenHistory))
                                     }
                                 ))
-                            }),
+                            }}),
                     )
                     .children(go_back_button)
                     .child(self.render_title_view(window, cx)),
@@ -1269,27 +1289,6 @@ impl AssistantPanel {
                                         );
                                     }),
                             )
-                            // .child(
-                            //     IconButton::new("open-history", IconName::HistoryRerun)
-                            //         .icon_size(IconSize::Small)
-                            //         .toggle_state(is_history)
-                            //         .selected_icon_color(Color::Accent)
-                            //         .tooltip({
-                            //             let focus_handle = self.focus_handle(cx);
-                            //             move |window, cx| {
-                            //                 Tooltip::for_action_in(
-                            //                     "History",
-                            //                     &OpenHistory,
-                            //                     &focus_handle,
-                            //                     window,
-                            //                     cx,
-                            //                 )
-                            //             }
-                            //         })
-                            //         .on_click(move |_event, window, cx| {
-                            //             window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                            //         }),
-                            // )
                             .child(
                                 PopoverMenu::new("assistant-menu")
                                     .trigger_with_tooltip(
@@ -2118,7 +2117,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn open_saved_context(
         &self,
         workspace: &mut Workspace,
-        path: std::path::PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {

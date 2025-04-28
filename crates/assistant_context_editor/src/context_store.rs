@@ -20,14 +20,7 @@ use prompt_store::PromptBuilder;
 use regex::Regex;
 use rpc::AnyProtoClient;
 use std::sync::LazyLock;
-use std::{
-    cmp::Reverse,
-    ffi::OsStr,
-    mem,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{cmp::Reverse, ffi::OsStr, mem, path::Path, sync::Arc, time::Duration};
 use util::{ResultExt, TryFutureExt};
 
 pub(crate) fn init(client: &AnyProtoClient) {
@@ -430,7 +423,7 @@ impl ContextStore {
 
     pub fn open_local_context(
         &mut self,
-        path: PathBuf,
+        path: Arc<Path>,
         cx: &Context<Self>,
     ) -> Task<Result<Entity<AssistantContext>>> {
         if let Some(existing_context) = self.loaded_context_for_path(&path, cx) {
@@ -478,7 +471,7 @@ impl ContextStore {
 
     pub fn delete_local_context(
         &mut self,
-        path: PathBuf,
+        path: Arc<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let fs = self.fs.clone();
@@ -501,7 +494,7 @@ impl ContextStore {
                         != Some(&path)
                 });
                 this.contexts_metadata
-                    .retain(|context| context.path != path);
+                    .retain(|context| context.path.as_ref() != path.as_ref());
             })?;
 
             Ok(())
@@ -794,7 +787,7 @@ impl ContextStore {
                     {
                         contexts.push(SavedContextMetadata {
                             title: title.to_string(),
-                            path,
+                            path: path.into(),
                             mtime: metadata.mtime.timestamp_for_user().into(),
                         });
                     }
